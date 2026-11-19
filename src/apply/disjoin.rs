@@ -238,6 +238,7 @@ impl crate::Engine {
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn nor_many(&self, operands: Vec<Tdd>) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
+        for f in &operands { f.require_structure()?; }
         let operands = crate::apply::extend::on_one(self, operands.into_iter().map(Cow::Owned).collect::<Vec<_>>())?;
         let (live, a_false_one) = live_operands(operands.into_iter().map(Cow::into_owned).collect())?;
         if live.is_empty() {
@@ -274,6 +275,7 @@ impl crate::Engine {
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn or_many(&self, operands: Vec<Tdd>) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
+        for f in &operands { f.require_structure()?; }
         let operands = crate::apply::extend::on_one(self, operands.into_iter().map(Cow::Owned).collect::<Vec<_>>())?;
         let operands = operands.into_iter().map(Cow::into_owned).collect();
         crate::apply::extend::trimmed(self, disjoin_many_on(self, operands)?)

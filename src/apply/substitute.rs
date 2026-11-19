@@ -100,6 +100,9 @@ impl Engine {
     #[cold]
     fn substitute_across(&self, f: Tdd, replacements: &[(VarId, &Tdd)]) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
+        for &(_, diagram) in replacements {
+            diagram.require_structure()?;
+        }
         let operands = std::iter::once(std::borrow::Cow::Owned(f))
             .chain(replacements.iter().map(|&(_, diagram)| std::borrow::Cow::Borrowed(diagram)))
             .collect();

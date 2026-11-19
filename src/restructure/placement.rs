@@ -286,9 +286,9 @@ impl<'a> MovePlacement<'a> {
     /// Lift an integer region through a join with a free sibling at `at`,
     /// the foot of a chain of joins under `parent`, which reads the chain on
     /// `side`: one node per slot of the region, at the same index, then one
-    /// per inline value `parent` holds on `side`, which it names instead.
-    /// An inline value is no slot, so the nodes for them are new. Hands back
-    /// a refusal; `parent` is rewritten whole or not at all.
+    /// per distinct inline value `parent` holds on `side`, which it names
+    /// instead. An inline value is no slot, so the nodes for them are new.
+    /// Hands back a refusal; `parent` is rewritten whole or not at all.
     #[cold]
     pub(super) fn pass_over_region(&mut self, at: VtreeIdx, free_side: ChildSide, parent: VtreeIdx, side: ChildSide) -> Result<(), OperationError> {
         let lim = self.eng.limits();
@@ -307,6 +307,8 @@ impl<'a> MovePlacement<'a> {
                 }
             }
         }
+        inline.sort_unstable_by_key(|r| r.0);
+        inline.dedup();
         for (left, right) in through.pairs() {
             self.join(at, left, right)?;
         }
@@ -319,12 +321,11 @@ impl<'a> MovePlacement<'a> {
         if inline.is_empty() {
             return Ok(());
         }
-        let mut next = slots;
         crate::diagram::for_each_side_ref_mut(lim, &mut levels[parent.idx()], side, |r| {
             let encoded = crate::diagram::EncodedChildRef(*r);
             if !encoded.is_reserved() && matches!(decoder.value(encoded), crate::diagram::ValueRef::Inline(_)) {
-                *r = next;
-                next += 1;
+                let at = inline.binary_search_by_key(r, |v| v.0).expect("an inline value of `parent` was collected");
+                *r = slots + at as u32;
             }
         })?;
         levels[parent.idx()].set_has_value_refs(side, false);

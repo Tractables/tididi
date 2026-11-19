@@ -16,9 +16,9 @@ impl Engine {
     /// [`OperationError::OverBudget`].
     pub fn equivalent(&self, f: &Tdd, g: &Tdd) -> Result<bool, OperationError> {
         let _op = self.limits().enter()?;
-        let [f, g] = crate::apply::extend::on_one(self, [Cow::Borrowed(f), Cow::Borrowed(g)])?;
         f.require_structure()?;
         g.require_structure()?;
+        let [f, g] = crate::apply::extend::on_one(self, [Cow::Borrowed(f), Cow::Borrowed(g)])?;
         if f.is_zero() || g.is_zero() {
             return Ok(f.is_zero() == g.is_zero());
         }
@@ -40,9 +40,9 @@ impl Engine {
     /// [`OperationError::OutputCap`].
     pub fn implies(&self, f: &Tdd, g: &Tdd) -> Result<bool, OperationError> {
         let _op = self.limits().enter()?;
-        let [f, g] = crate::apply::extend::on_one(self, [Cow::Borrowed(f), Cow::Borrowed(g)])?;
         f.require_structure()?;
         g.require_structure()?;
+        let [f, g] = crate::apply::extend::on_one(self, [Cow::Borrowed(f), Cow::Borrowed(g)])?;
         if f.is_zero() || std::ptr::eq(&*f, &*g) {
             return Ok(true);
         }

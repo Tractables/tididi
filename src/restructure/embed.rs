@@ -662,8 +662,9 @@ fn refuse_free_region(into: &Vtree, targets: &[Target]) -> Result<(), EmbedError
 pub(crate) enum Free {
     /// Build each: one node, true on both sides. A free region is refused.
     Build,
-    /// Build each internal one and leave a free region empty, for an
-    /// operation that takes another operand's region there.
+    /// Build each internal one; a free region keeps an empty level that is
+    /// not summed out and is named `One`, as a free variable leaf is, for an
+    /// operand that another operand's sum meets there.
     Operand,
     /// Leave each empty, for a conjunction that reads it as the level it
     /// stands for and takes the other operand's level there; a projection,

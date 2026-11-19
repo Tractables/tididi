@@ -141,6 +141,9 @@ impl Engine {
 
 /// `f + g` of two owned operands on one vtree, minimized.
 fn add_on(eng: &Engine, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
+    if !f.is_zero() && !g.is_zero() && (f.has_marginal_level() || g.has_marginal_level()) && crate::apply::extend::needed([&f, &g]) {
+        refuse_unshared_sums(&f, &g)?;
+    }
     let [mut f, mut g] = crate::apply::extend::on_one(eng, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
     crate::apply::prepare_weights(&mut [&mut f, &mut g])?;
     eng.limits().check_stop()?;
@@ -307,6 +310,24 @@ fn joined_store(
         }
     }
     Ok((counts, big))
+}
+
+/// Refuse operands on two projections where one has summed out a leaf or a
+/// region the other lacks: the other reads it as true over its variables,
+/// not summed, which the sum cannot add to a summed value.
+#[cold]
+fn refuse_unshared_sums(f: &Tdd, g: &Tdd) -> Result<(), OperationError> {
+    for (a, b) in [(f, g), (g, f)] {
+        let (av, bv) = (a.vtree(), b.vtree());
+        let lacks = |t: VtreeIdx| match (av.on_home(), bv.on_home()) {
+            (true, true) => bv.node_at_home(av.home_node(t)).is_none_or(|u| !summed(b, u)),
+            _ => false,
+        };
+        if let Some(t) = av.bottomup().find(|&t| av.node(t).is_leaf() && summed(a, t) && lacks(t)) {
+            return Err(OperationError::MarginalLevel(t));
+        }
+    }
+    Ok(())
 }
 
 /// Whether a level of `vtree` is summed out in `f`, which the caller has

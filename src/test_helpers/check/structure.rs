@@ -28,7 +28,7 @@ pub fn validate_vtree_structure(tdd: &Tdd) -> Result<(), String> {
         return Ok(());
     }
 
-    let root_width = tdd.reference_slot_count(vtree.root());
+    let root_width = super::checked_width(tdd, vtree.root());
     if tdd.output.local.idx() >= root_width {
         return Err(format!(
             "output local index {} >= root width {}",
@@ -46,8 +46,8 @@ pub fn validate_vtree_structure(tdd: &Tdd) -> Result<(), String> {
         }
     }
     for (t, left, right) in vtree.internal_bottomup() {
-        let left_width = tdd.reference_slot_count(left);
-        let right_width = tdd.reference_slot_count(right);
+        let left_width = super::checked_width(tdd, left);
+        let right_width = super::checked_width(tdd, right);
         let level = tdd.level(t);
         let left_view = tdd.level(left).child_decoder();
         let right_view = tdd.level(right).child_decoder();
