@@ -183,6 +183,11 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for EmitLoneColumns<'_, '_
         _eng: &Engine,
         row: WholeRow<'_, '_, L, R>,
     ) -> Result<usize, OperationError> {
+        // A row of one cell costs less as that cell: `lone_row` opens its
+        // arena row and gate count for every row.
+        if self.lone.len() == 1 {
+            return Ok(0);
+        }
         match row.f_pairs.len() {
             1 => lone_row::<1, L, R>(&mut self.sink, self.lone, row),
             2 => lone_row::<2, L, R>(&mut self.sink, self.lone, row),

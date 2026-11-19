@@ -77,12 +77,14 @@ impl<'a> Assembly<'a> {
         self.seed_or_return(output, Dirty::default(), None, changed).map_err(|(e, _)| e)
     }
 
-    /// [`finish`](Self::finish) that hands the assembly back, levels intact,
-    /// when the worklist growth is refused.
+    /// [`finish_changed`](Self::finish_changed) that hands the assembly
+    /// back, levels intact, when the worklist growth is refused.
     #[inline]
     #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
-    pub(crate) fn finish_or_return(self, output: TddNodeId) -> Result<Tdd, (OperationError, Self)> {
-        self.seed_or_return(output, Dirty::default(), None, None)
+    pub(crate) fn finish_changed_or_return(
+        self, output: TddNodeId, changed: Option<&[VtreeIdx]>,
+    ) -> Result<Tdd, (OperationError, Self)> {
+        self.seed_or_return(output, Dirty::default(), None, changed)
     }
 
     /// [`finish`](Self::finish) with the worklists supplied by the caller

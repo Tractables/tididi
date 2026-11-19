@@ -168,6 +168,16 @@ fn identity_carrier(moved: u8) -> u8 {
     }
 }
 
+/// [`SweepLists::seat_closes`] on a level's [`SweepLists::moved`] entry.
+#[inline]
+fn seat_closes(moved: u8, closed: Operands<bool>) -> bool {
+    match moved {
+        0 => true,
+        _ if moved & RELABELLED == 0 => false,
+        _ => !if moved & MOVED_F != 0 { closed.f } else { closed.g },
+    }
+}
+
 /// What one sweep lists as it goes, kept between conjunctions in the
 /// [`ApplyWorkspace`]: every list empty and `moved` all zero between
 /// conjunctions, which [`clear`](Self::clear) restores by the levels
@@ -252,6 +262,23 @@ impl SweepLists {
                 .copied()
                 .filter(|t| identity_carrier(moved[t.idx()]) == 0),
         );
+    }
+
+    /// Whether the seat closes level `t`, given whether `f` and `g` were
+    /// closed when the sweep began: a level the sweep built, or one the
+    /// relabelling route moved from a carrier that was not closed. A level
+    /// either route moved untouched otherwise is as its carrier's last
+    /// close left it.
+    #[inline]
+    pub(super) fn seat_closes(&self, t: usize, closed: Operands<bool>) -> bool {
+        seat_closes(self.moved[t], closed)
+    }
+
+    /// Keep in `built` only the levels the seat closes
+    /// ([`seat_closes`](Self::seat_closes)).
+    pub(super) fn keep_seat_closes(&mut self, closed: Operands<bool>) {
+        let Self { built, moved, .. } = self;
+        built.retain(|t| seat_closes(moved[t.idx()], closed));
     }
 
     /// Empty every list and zero `moved` where `carried` set it, for the

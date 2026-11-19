@@ -656,6 +656,8 @@ fn apply_and_held(
         owed::split_built(&vtree, &mut run);
         loose
     } else {
+        run.lists.collect_built(cone.built);
+        run.lists.keep_seat_closes(closed);
         None
     };
     let lists = run.lists;
@@ -684,18 +686,11 @@ fn apply_and_held(
             crate::diagram::Pass::LeafContract,
             lists.twin_free.iter().map(|t| t.0),
         );
-        // A level the relabelling route moved is as its carrier's last close
-        // left it; where that diagram was closed when the sweep began, the
-        // live pairs it keeps are left for the seat's close.
         // The levels it built are also all it changed, and so all the seat
         // closes: a carried level, and a free one, is as the operand's end
-        // left it.
-        let levels = assembly.parts_mut().0;
-        for &(t, from_f) in &lists.carried {
-            if (if from_f { closed.f } else { closed.g }) && lists.identity_carrier(t) == 0 {
-                levels[t].leave_kept_pairs();
-            }
-        }
+        // left it, as is a level the relabelling route moved from a closed
+        // carrier.
+        lists.keep_seat_closes(closed);
         assembly
             .finish_with_or_return(output, owed, &lists.owed_twins, Some(&lists.built[..]))
             .map(|mut out| {
@@ -717,18 +712,33 @@ fn apply_and_held(
         // no marginal level, and so no ref to inline; leaving its levels
         // alone keeps them known closed.
         //
+        // The seat closes what a plain one closes and the carried levels
+        // the inlining or the leaf canonicalization rewrote.
+        //
         // The subtrees both operands are constant true at are `f`'s levels
         // as `f`'s end left them, with no marginal level and no level above
         // them: no ref there points into a marginal level. The result owes
         // contraction what `f` owed there and the levels the conjunction
-        // visited, which are also all the seat closes.
+        // visited.
+        for &leaf in &canon_leaves {
+            if let Some(parent) = vtree.node(VtreeIdx(leaf as u32)).parent()
+                && !lists.seat_closes(parent.idx(), closed)
+            {
+                lists.built.push(parent);
+            }
+        }
         let levels = assembly.parts_mut().0;
-        match crate::diagram::inline_small_marginal_refs_in(lim, &vtree, levels, cone.built, None) {
+        let rewrote = |t: VtreeIdx| {
+            if !lists.seat_closes(t.idx(), closed) {
+                lists.built.push(t);
+            }
+        };
+        match crate::diagram::inline_small_marginal_refs_in(lim, &vtree, levels, cone.built, None, rewrote) {
             Ok(()) if cone.constant => {
                 let owed = crate::diagram::Dirty::stacked(&Default::default(), f.dirty(), cone.built.len());
-                assembly.finish_with_or_return(output, owed, cone.built, Some(cone.built))
+                assembly.finish_with_or_return(output, owed, cone.built, Some(&lists.built[..]))
             }
-            Ok(()) => assembly.finish_or_return(output),
+            Ok(()) => assembly.finish_changed_or_return(output, Some(&lists.built[..])),
             Err(e) => Err((e, assembly)),
         }
     };
