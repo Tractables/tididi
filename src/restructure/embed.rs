@@ -23,7 +23,7 @@ use crate::diagram::{
     WeightValue, return_levels, try_take_levels,
 };
 use crate::limits::OperationError;
-use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx};
+use crate::vtree::{Home, VarId, Vtree, VtreeError, VtreeIdx};
 
 /// A validated placement of a source vtree into a destination vtree.
 ///
@@ -627,15 +627,15 @@ impl Plan {
 
     /// Check the renaming against both trees and record the correspondence.
     ///
-    /// Matches the two trees in one bottom-up pass over `into`, carrying to
-    /// each node the source node whose leaves are the renamed variables under
-    /// it. A node with renamed variables on one side only is a pass-through
-    /// carrying that side's source node, which is exactly the node
-    /// [`Vtree::project_to_vars`] splices out. A node with renamed variables
-    /// on both sides is the image of the parent of the two source nodes its
-    /// children carry, which must be siblings, and is mirrored when the left
-    /// child carries the right sibling, which an exact match refuses.
-    /// `O(nodes of into)`.
+    /// Carries to each node of `into` the source node whose leaves are the
+    /// renamed variables under it. A node with renamed variables on one side
+    /// only is a pass-through carrying that side's source node, which is
+    /// exactly the node [`Vtree::project_to_vars`] splices out. A node with
+    /// renamed variables on both sides is the image of the parent of the two
+    /// source nodes its children carry, which must be siblings, and is
+    /// mirrored when the left child carries the right sibling, which an exact
+    /// match refuses. Linear in the nodes of `into` with a renamed variable
+    /// under them, plus the two tables.
     ///
     /// The work clock is charged one unit for each source leaf, one for each
     /// internal node of `into`, and one for each internal node of `into` with
@@ -651,59 +651,57 @@ impl Plan {
         map: impl Fn(VarId) -> VarId,
         mirror: bool,
     ) -> Result<Plan, EmbedError> {
+        Self::build_as(eng, source, into, map, mirror, true)
+    }
+
+    /// [`build`](Self::build), or without `climb` by a [`Vtree::leaf_of`] per
+    /// leaf and one pass over every internal node of `into`, which the tests
+    /// compare it with.
+    fn build_as(
+        eng: &Engine,
+        source: &Vtree,
+        into: &Vtree,
+        map: impl Fn(VarId) -> VarId,
+        mirror: bool,
+        climb: bool,
+    ) -> Result<Plan, EmbedError> {
         let lim = eng.limits();
         let (mut targets, mut embedding) = (Vec::new(), Vec::new());
         lim.try_resize(&mut targets, into.num_nodes(), Target::Free)?;
         lim.try_resize(&mut embedding, source.num_nodes(), into.root())?;
         let mut gate = lim.gate();
-        for (leaf, var) in source.leaf_bottomup() {
-            gate.poll(1)?;
-            let image = map(var);
-            let target = into.leaf_of(image).ok_or(EmbedError::VariableOutOfRange {
-                variable: image,
-                num_vars: into.num_vars(),
-            })?;
-            if targets[target.idx()] != Target::Free {
-                return Err(VtreeError::OverlappingVariable(image).into());
+        if climb
+            && let Some((home, ranks)) = into.leaf_ranks()
+            && Self::match_by_rank(source, home, ranks, &map, &mut targets, &mut embedding)
+        {
+            gate.poll_each(source.num_leaves() as u64)?;
+        } else {
+            for (leaf, var) in source.leaf_bottomup() {
+                gate.poll(1)?;
+                let image = map(var);
+                let target = into.leaf_of(image).ok_or(EmbedError::VariableOutOfRange {
+                    variable: image,
+                    num_vars: into.num_vars(),
+                })?;
+                if targets[target.idx()] != Target::Free {
+                    return Err(VtreeError::OverlappingVariable(image).into());
+                }
+                embedding[leaf.idx()] = target;
+                targets[target.idx()] = Target::Image { source: leaf, mirrored: false };
             }
-            embedding[leaf.idx()] = target;
-            targets[target.idx()] = Target::Image { source: leaf, mirrored: false };
         }
         if source.has_regions() {
             map_regions(source, into, &mut targets, &mut embedding)?;
         }
         gate.poll_each(into.internal_bottomup_slice().len() as u64)?;
-
-        let carried = |target: Target| match target {
-            Target::Free => None,
-            Target::Image { source, .. } | Target::PassThrough(source) => Some(source),
+        let climbed = match climb {
+            true => climb_from_leaves(source, into, mirror, &mut targets, &mut embedding),
+            false => None,
         };
-        let mut visited = source.num_leaves() as u64;
-        let (mut mirrors, mut pass_throughs) = (false, 0);
-        let mut refused = None;
-        for &t in into.internal_bottomup_slice() {
-            let (left, right) = into.children(t);
-            targets[t.idx()] = match (carried(targets[left.idx()]), carried(targets[right.idx()])) {
-                (None, None) => continue,
-                (Some(s), None) | (None, Some(s)) => {
-                    visited += 1;
-                    pass_throughs += 1;
-                    Target::PassThrough(s)
-                }
-                (Some(a), Some(b)) => {
-                    visited += 1;
-                    let p = source.node(a).parent().expect("a source node beside another is not the root");
-                    let swapped = source.children(p).1 == a;
-                    if source.node(b).parent() != Some(p) || (swapped && !mirror) {
-                        refused = Some(p);
-                        break;
-                    }
-                    embedding[p.idx()] = t;
-                    mirrors |= swapped;
-                    Target::Image { source: p, mirrored: swapped }
-                }
-            };
-        }
+        let Matched { mirrors, pass_throughs, visited, refused } = match climbed {
+            Some(matched) => matched,
+            None => match_by_pass(source, into, mirror, &mut targets, &mut embedding),
+        };
         gate.poll_each(visited)?;
         if let Some(s) = refused {
             return Err(EmbedError::NotIsomorphic { source: s });
@@ -726,6 +724,210 @@ impl Plan {
             chain_from: 0,
         })
     }
+
+    /// [`build`](Self::build)'s leaf match when `into` is a projection of
+    /// `home` without regions, by home rank in `ranks`, `into`'s, instead of
+    /// a [`Vtree::leaf_of`] per leaf. A projection of the same home is read
+    /// in rank order, so under the identity the match is one merge; a rank
+    /// below the last one matched is found by binary search. Returns `false`,
+    /// with `targets` all free again, at the first leaf it cannot place, for
+    /// `build`'s own loop to report; it charges no work.
+    #[inline(never)]
+    fn match_by_rank(
+        source: &Vtree,
+        home: &Home,
+        ranks: &[u32],
+        map: &impl Fn(VarId) -> VarId,
+        targets: &mut [Target],
+        embedding: &mut [VtreeIdx],
+    ) -> bool {
+        let mut cursor = RankCursor { ranks, next: 0 };
+        let placed = match source.leaf_ranks() {
+            Some((own, own_ranks)) if Arc::ptr_eq(own.vtree(), home.vtree()) => {
+                own_ranks.iter().enumerate().all(|(i, &rank)| {
+                    let leaf = VtreeIdx(i as u32);
+                    let var = source.leaf_var(leaf);
+                    let image = map(var);
+                    let rank = if image == var { Some(rank) } else { home.rank(image) };
+                    cursor.place(leaf, rank, targets, embedding)
+                })
+            }
+            _ => source
+                .leaf_bottomup()
+                .all(|(leaf, var)| cursor.place(leaf, home.rank(map(var)), targets, embedding)),
+        };
+        if !placed {
+            targets.fill(Target::Free);
+        }
+        placed
+    }
+}
+
+/// The internal match of [`Plan::build`]: whether any image is mirrored, the
+/// number of pass-throughs, the work units, and the source node refused.
+struct Matched {
+    mirrors: bool,
+    pass_throughs: usize,
+    visited: u64,
+    refused: Option<VtreeIdx>,
+}
+
+/// [`Plan::build`]'s internal match from the images of `source`'s childless
+/// nodes upward, in `targets` and `embedding`. The image of each internal
+/// source node is where the climbs from its children's images meet,
+/// stepping each side in turn; a node a climb passes is a pass-through, and
+/// the steps the longer side took past the meeting are undone. `None` where
+/// a climb reaches a node marked for another source node, or a mirrored
+/// image `mirror` refuses: [`match_by_pass`] then decides, overwriting what
+/// was written.
+fn climb_from_leaves(
+    source: &Vtree,
+    into: &Vtree,
+    mirror: bool,
+    targets: &mut [Target],
+    embedding: &mut [VtreeIdx],
+) -> Option<Matched> {
+    let carries = |target: Target, s: VtreeIdx| matches!(target, Target::Image { source, .. } | Target::PassThrough(source) if source == s);
+    let (mut mirrors, mut pass_throughs) = (false, 0usize);
+    for &s in source.internal_bottomup_slice() {
+        let (a, b) = source.children(s);
+        let sides = [a, b];
+        let mut ends = [embedding[a.idx()], embedding[b.idx()]];
+        let mut side = 0;
+        let meet = loop {
+            let up = match into.node(ends[side]).parent() {
+                Some(up) => up,
+                None => {
+                    side ^= 1;
+                    into.node(ends[side]).parent()?
+                }
+            };
+            match targets[up.idx()] {
+                Target::Free => {
+                    targets[up.idx()] = Target::PassThrough(sides[side]);
+                    pass_throughs += 1;
+                    ends[side] = up;
+                    side ^= 1;
+                }
+                Target::PassThrough(other) if other == sides[side ^ 1] => break up,
+                _ => return None,
+            }
+        };
+        let mut past = meet;
+        while past != ends[side ^ 1] {
+            past = into.node(past).parent().expect("a climb's end is above where it met the other");
+            targets[past.idx()] = Target::Free;
+            pass_throughs -= 1;
+        }
+        pass_throughs -= 1;
+        let swapped = carries(targets[into.children(meet).0.idx()], b);
+        if swapped && !mirror {
+            return None;
+        }
+        mirrors |= swapped;
+        targets[meet.idx()] = Target::Image { source: s, mirrored: swapped };
+        embedding[s.idx()] = meet;
+    }
+    if source.num_nodes() > 0 {
+        let top = source.root();
+        let mut u = embedding[top.idx()];
+        while let Some(up) = into.node(u).parent() {
+            if targets[up.idx()] != Target::Free {
+                return None;
+            }
+            targets[up.idx()] = Target::PassThrough(top);
+            pass_throughs += 1;
+            u = up;
+        }
+    }
+    let visited = (source.num_leaves() as usize + source.internal_bottomup_slice().len() + pass_throughs) as u64;
+    Some(Matched { mirrors, pass_throughs, visited, refused: None })
+}
+
+/// [`Plan::build`]'s internal match in one bottom-up pass over every internal
+/// node of `into`, whatever `targets` holds there.
+#[cold]
+#[inline(never)]
+fn match_by_pass(source: &Vtree, into: &Vtree, mirror: bool, targets: &mut [Target], embedding: &mut [VtreeIdx]) -> Matched {
+    let carried = |target: Target| match target {
+        Target::Free => None,
+        Target::Image { source, .. } | Target::PassThrough(source) => Some(source),
+    };
+    let mut visited = source.num_leaves() as u64;
+    let (mut mirrors, mut pass_throughs) = (false, 0);
+    for &t in into.internal_bottomup_slice() {
+        let (left, right) = into.children(t);
+        targets[t.idx()] = match (carried(targets[left.idx()]), carried(targets[right.idx()])) {
+            (None, None) => Target::Free,
+            (Some(s), None) | (None, Some(s)) => {
+                visited += 1;
+                pass_throughs += 1;
+                Target::PassThrough(s)
+            }
+            (Some(a), Some(b)) => {
+                visited += 1;
+                let p = source.node(a).parent().expect("a source node beside another is not the root");
+                let swapped = source.children(p).1 == a;
+                if source.node(b).parent() != Some(p) || (swapped && !mirror) {
+                    return Matched { mirrors, pass_throughs, visited, refused: Some(p) };
+                }
+                embedding[p.idx()] = t;
+                mirrors |= swapped;
+                Target::Image { source: p, mirrored: swapped }
+            }
+        };
+    }
+    Matched { mirrors, pass_throughs, visited, refused: None }
+}
+
+/// `into`'s leaves by home rank, `ranks` being `into`'s by node index, and
+/// the index after the last one matched.
+struct RankCursor<'a> {
+    ranks: &'a [u32],
+    next: usize,
+}
+
+impl RankCursor<'_> {
+    /// Make `into`'s leaf of home rank `rank` the image of source leaf
+    /// `leaf`; `false` when `into` has no such leaf or it is an image already.
+    #[inline(always)]
+    fn place(&mut self, leaf: VtreeIdx, rank: Option<u32>, targets: &mut [Target], embedding: &mut [VtreeIdx]) -> bool {
+        let Some(rank) = rank else { return false };
+        if self.ranks.get(self.next) != Some(&rank) {
+            match seek(self.ranks, self.next, rank) {
+                Some(i) => self.next = i,
+                None => return false,
+            }
+        }
+        let target = VtreeIdx(self.next as u32);
+        self.next += 1;
+        if targets[target.idx()] != Target::Free {
+            return false;
+        }
+        embedding[leaf.idx()] = target;
+        targets[target.idx()] = Target::Image { source: leaf, mirrored: false };
+        true
+    }
+}
+
+/// The index of `rank` in `ranks`, ascending, where `ranks[from]` is not
+/// it: by steps doubling from `from` when it is larger, else by binary
+/// search below `from`.
+#[inline(never)]
+fn seek(ranks: &[u32], from: usize, rank: u32) -> Option<usize> {
+    let i = match ranks.get(from) {
+        Some(&r) if r < rank => {
+            let (mut lo, mut step) = (from, 1);
+            while lo + step < ranks.len() && ranks[lo + step] < rank {
+                lo += step;
+                step *= 2;
+            }
+            let end = (lo + step + 1).min(ranks.len());
+            lo + 1 + ranks[lo + 1..end].partition_point(|&r| r < rank)
+        }
+        _ => ranks[..from].partition_point(|&r| r < rank),
+    };
+    (ranks.get(i) == Some(&rank)).then_some(i)
 }
 
 /// Map each region of `source` to its image in [`Plan::fill`]: the region of

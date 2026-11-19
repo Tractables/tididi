@@ -786,6 +786,14 @@ impl Vtree {
         }
     }
 
+    /// A projection without regions: its home and the home rank of each
+    /// leaf, by node index, ascending. `None` on a root vtree or a projection
+    /// with regions.
+    #[inline]
+    pub(crate) fn leaf_ranks(&self) -> Option<(&Home, &[u32])> {
+        self.home.as_ref().filter(|link| link.regions.is_empty()).map(|link| (&link.home, link.ranks()))
+    }
+
     /// The own node standing for home node `h`, if this vtree has one; on a
     /// root vtree, `h` itself when it is a node. Logarithmic in
     /// [`num_leaves`](Self::num_leaves).
