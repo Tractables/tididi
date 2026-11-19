@@ -179,7 +179,7 @@ impl crate::Engine {
     /// Returns the linked operation's errors, [`OperationError::Stopped`] on
     /// cancellation, or [`OperationError::OverBudget`] on allocation refusal.
     pub fn condition(&self, f: Tdd, assignment: impl IntoIterator<Item = impl TryInto<crate::diagram::Literal, Error: Into<OperationError>>>) -> Result<Tdd, OperationError> {
-        crate::apply::exit::result(self, condition_on(self, f, assignment)?)
+        crate::apply::exit::outcome(self, condition_on(self, f, assignment))
     }
 
     /// Run [`Tdd::condition_var`](crate::Tdd::condition_var) using this batch's scratch and resource limits.
@@ -189,7 +189,7 @@ impl crate::Engine {
     /// Returns the linked operation's errors, [`OperationError::Stopped`] on
     /// cancellation, or [`OperationError::OverBudget`] on allocation refusal.
     pub fn condition_var(&self, f: Tdd, x: VarId, value: bool) -> Result<Tdd, OperationError> {
-        crate::apply::exit::result(self, crate::apply::condition::condition_vars_on(self, f, &[x], value)?)
+        crate::apply::exit::outcome(self, crate::apply::condition::condition_vars_on(self, f, &[x], value))
     }
 
     /// Run [`Tdd::condition_vars`](crate::Tdd::condition_vars) using this batch's scratch and resource limits.
@@ -199,6 +199,6 @@ impl crate::Engine {
     /// Returns the linked operation's errors, [`OperationError::Stopped`] on
     /// cancellation, or [`OperationError::OverBudget`] on allocation refusal.
     pub fn condition_vars(&self, f: Tdd, vars: &[VarId], value: bool) -> Result<Tdd, OperationError> {
-        crate::apply::exit::result(self, crate::apply::condition::condition_vars_on(self, f, vars, value)?)
+        crate::apply::exit::outcome(self, crate::apply::condition::condition_vars_on(self, f, vars, value))
     }
 }

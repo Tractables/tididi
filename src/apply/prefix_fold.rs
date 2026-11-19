@@ -400,7 +400,7 @@ impl Engine {
             folds.len(),
         )?;
         drop(folds);
-        Ok(crate::apply::exit::result(self, fold.emit(self, &into, &mapped, &codes)?)?)
+        Ok(crate::apply::exit::outcome(self, fold.emit(self, &into, &mapped, &codes))?)
     }
 }
 

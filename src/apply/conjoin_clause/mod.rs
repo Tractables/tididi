@@ -466,7 +466,7 @@ impl crate::Engine {
         }
         gate.flush()?;
         let one = self.cube(vtree, std::iter::empty::<Literal>())?;
-        crate::apply::exit::result(self, conjoin_clause_on(self, one, &clause)?)
+        crate::apply::exit::outcome(self, conjoin_clause_on(self, one, &clause))
     }
 
     /// Run [`Tdd::and_clause`](crate::Tdd::and_clause) using this batch's scratch and resource limits.

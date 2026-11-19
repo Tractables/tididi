@@ -209,7 +209,7 @@ impl Engine {
         let mut condition = SharedCircuit::new(condition, 2);
         let yes = super::conjoin::conjoin_either(self, condition.take(self)?.into(), then_branch.into())?;
         let no = overlay_reduced(self, Overlay::AndNot, else_branch, condition.take(self)?)?;
-        super::exit::result(self, overlay_on(self, Overlay::Or, yes, no)?)
+        super::exit::outcome(self, overlay_on(self, Overlay::Or, yes, no))
     }
 
     /// Run [`xor`] using this batch's scratch and resource limits.
@@ -228,7 +228,7 @@ impl Engine {
         let mut g = SharedCircuit::new(g, 2);
         let only_f = overlay_reduced(self, Overlay::AndNot, f.take(self)?, g.take(self)?)?;
         let only_g = overlay_reduced(self, Overlay::AndNot, g.take(self)?, f.take(self)?)?;
-        super::exit::result(self, overlay_on(self, Overlay::Or, only_f, only_g)?)
+        super::exit::outcome(self, overlay_on(self, Overlay::Or, only_f, only_g))
     }
 
     /// Run [`and_exists`] using this batch's scratch and resource limits.
@@ -291,9 +291,9 @@ impl Engine {
         // The product's close can leave a target's leaf.
         let targets = super::project::quantification_targets(self, product.vtree(), vars)?;
         if targets.is_empty() || product.is_zero() {
-            return super::exit::result(self, super::extend::trimmed(self, product)?);
+            return super::exit::outcome(self, super::extend::trimmed(self, product));
         }
-        super::exit::result(self, super::extend::trimmed(self, super::project::exists_targets_on(self, product, &targets, None)?)?)
+        super::exit::outcome(self, super::extend::trimmed(self, super::project::exists_targets_on(self, product, &targets, None)?))
     }
 }
 

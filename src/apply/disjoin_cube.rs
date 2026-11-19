@@ -404,7 +404,7 @@ impl Engine {
     /// the output-node cap return [`OperationError::Stopped`],
     /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn or_cube<L: crate::LiteralInput>(&self, f: Tdd, cube: &[L]) -> Result<Tdd, OperationError> {
-        crate::apply::exit::result(self, disjoin_cube_on(self, f, cube)?)
+        crate::apply::exit::outcome(self, disjoin_cube_on(self, f, cube))
     }
 }
 

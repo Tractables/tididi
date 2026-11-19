@@ -113,11 +113,11 @@ impl RestrictionOutcome {
     }
 
     fn exit(self, eng: &Engine) -> Result<Self, OperationError> {
-        use crate::apply::exit::result;
+        use crate::apply::exit::outcome;
         Ok(match self {
-            RestrictionOutcome::Unchanged(f) => RestrictionOutcome::Unchanged(result(eng, f)?),
-            RestrictionOutcome::Shrunk(f) => RestrictionOutcome::Shrunk(result(eng, f)?),
-            RestrictionOutcome::Unsatisfiable(f) => RestrictionOutcome::Unsatisfiable(result(eng, f)?),
+            RestrictionOutcome::Unchanged(f) => RestrictionOutcome::Unchanged(outcome(eng, Ok(f))?),
+            RestrictionOutcome::Shrunk(f) => RestrictionOutcome::Shrunk(outcome(eng, Ok(f))?),
+            RestrictionOutcome::Unsatisfiable(f) => RestrictionOutcome::Unsatisfiable(outcome(eng, Ok(f))?),
         })
     }
 }

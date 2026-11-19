@@ -25,7 +25,7 @@ impl Engine {
         } else {
             self.substitute_with(f, replacements.iter().map(|&(var, diagram)| (var, Replacement::Diagram(diagram))))?
         };
-        super::exit::result(self, super::extend::trimmed(self, result)?)
+        super::exit::outcome(self, super::extend::trimmed(self, result))
     }
 
     /// Run [`Tdd::rename_vars`](crate::Tdd::rename_vars) using this batch's scratch and resource limits.
@@ -41,8 +41,8 @@ impl Engine {
             renames
                 .iter()
                 .map(|&(source, target)| (source, Replacement::Literal(Literal::pos(target)))),
-        )?;
-        super::exit::result(self, result)
+        );
+        super::exit::outcome(self, result)
     }
 
     /// Validate replacements into one leaf-indexed table and rebuild through the Boolean kernels.

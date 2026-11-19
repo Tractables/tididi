@@ -1022,9 +1022,9 @@ impl crate::Engine {
         // On a home's root, an internal summed-out level is a form a
         // projection cannot hold, so the trim would refuse it.
         if out.has_marginal_level() {
-            return crate::apply::exit::result(self, out);
+            return crate::apply::exit::outcome(self, Ok(out));
         }
-        crate::apply::exit::result(self, extend::trimmed(self, out)?)
+        crate::apply::exit::outcome(self, extend::trimmed(self, out))
     }
 
     /// Conjoin two diagrams and sum out the variables `summable` names.
@@ -1071,7 +1071,7 @@ impl crate::Engine {
         summable: impl Fn(VarId) -> bool,
     ) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-crate::apply::exit::result(self, marginalizing_where(self, f.into(), g.into(), &summable)?)
+        crate::apply::exit::outcome(self, marginalizing_where(self, f.into(), g.into(), &summable))
     }
 
     /// Count the models of `f ∧ g` without keeping the conjunction.

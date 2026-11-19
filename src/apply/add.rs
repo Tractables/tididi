@@ -137,7 +137,7 @@ impl Engine {
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn add(&self, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        crate::apply::exit::result(self, add_on(self, f, g)?)
+        crate::apply::exit::outcome(self, add_on(self, f, g))
     }
 }
 

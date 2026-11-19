@@ -82,7 +82,7 @@ impl crate::Engine {
     /// The rewrite checks allocation and cancellation while regrouping nodes. Its
     /// output cap counts emitted intermediate nodes, including the final root union.
     pub fn exists_var(&self, f: Tdd, x: VarId) -> Result<Tdd, OperationError> {
-        crate::apply::exit::result(self, exists_vars_on(self, f, &[x], None, true)?)
+        crate::apply::exit::outcome(self, exists_vars_on(self, f, &[x], None, true))
     }
 
     /// Run [`Tdd::exists_vars`](crate::Tdd::exists_vars) using this batch's scratch and resource limits.
@@ -93,7 +93,7 @@ impl crate::Engine {
     /// the output-node cap return [`OperationError::Stopped`],
     /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn exists_vars(&self, f: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
-        crate::apply::exit::result(self, exists_vars_on(self, f, vars, None, true)?)
+        crate::apply::exit::outcome(self, exists_vars_on(self, f, vars, None, true))
     }
 
     /// Run [`Tdd::forall_vars`](crate::Tdd::forall_vars) using this batch's scratch and resource limits.
@@ -106,7 +106,7 @@ impl crate::Engine {
     pub fn forall_vars(&self, f: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
         if quantification_targets(self, f.vtree(), vars)?.is_empty() {
-            return crate::apply::exit::result(self, f);
+            return crate::apply::exit::outcome(self, Ok(f));
         }
         // The complement of false is the constant, on no leaf on a home.
         if f.is_zero() {
@@ -118,6 +118,6 @@ impl crate::Engine {
         // The complement's reduction can leave a target's leaf.
         let targets = quantification_targets(self, complement.vtree(), vars)?;
         let projected = exists_targets_on(self, complement, &targets, Some(ReductionPlan::default()))?;
-        crate::apply::exit::result(self, negate_closed(self, std::borrow::Cow::Owned(projected))?)
+        crate::apply::exit::outcome(self, negate_closed(self, std::borrow::Cow::Owned(projected)))
     }
 }

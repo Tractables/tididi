@@ -495,7 +495,7 @@ impl Limits {
 
 
     /// Whether every operation minimizes its result; read by
-    /// [`crate::apply::exit::result`] alone.
+    /// [`crate::apply::exit::outcome`] alone.
     #[inline]
     pub(crate) fn canonical_results(&self) -> bool {
         self.canonical_results.get()

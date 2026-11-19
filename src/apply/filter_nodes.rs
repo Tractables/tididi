@@ -104,7 +104,7 @@ impl Engine {
         }
         let mut tdd = assembly.finish(TddNodeId { vtree: root.vtree, local })?;
         self.close(&mut tdd, &[])?;
-        Ok(FilterOutcome::Filtered { tdd: crate::apply::exit::result(self, tdd)?, stats })
+        Ok(FilterOutcome::Filtered { tdd: crate::apply::exit::outcome(self, Ok(tdd))?, stats })
     }
 }
 

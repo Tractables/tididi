@@ -634,7 +634,7 @@ impl Engine {
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn and_not(&self, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        crate::apply::exit::result(self, overlay_on(self, Overlay::AndNot, f, g)?)
+        crate::apply::exit::outcome(self, overlay_on(self, Overlay::AndNot, f, g))
     }
 }
 
