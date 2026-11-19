@@ -338,25 +338,28 @@ pub(super) fn fill_pair_columns(
     {
         return false;
     }
+    let mut total = 0;
+    for j in 0..g_width {
+        total += level.pair_count_at(j);
+        if total > ROW_COLUMNS_MAX_WIDTH {
+            return false;
+        }
+    }
     out.pairs.clear();
     out.col_of.clear();
     out.cols.clear();
     out.col_pairs.clear();
-    if lim.reserve_exact(&mut out.cols, g_width).is_err() || lim.reserve_exact(&mut out.col_pairs, g_width).is_err() {
+    if lim.reserve_exact(&mut out.pairs, total).is_err()
+        || lim.reserve_exact(&mut out.col_of, total).is_err()
+        || lim.reserve_exact(&mut out.cols, g_width).is_err()
+        || lim.reserve_exact(&mut out.col_pairs, g_width).is_err()
+    {
         return false;
     }
     let decode = views.left.is_marginal() || views.right.is_marginal();
     let (mut n, mut one, mut tops, mut inner) = (0, true, 0u64, 0u64);
-    let fits = level.try_for_each_node(0..g_width, |j, pairs| {
+    level.try_for_each_node::<std::convert::Infallible>(0..g_width, |j, pairs| {
         let end = n + pairs.len();
-        if end > ROW_COLUMNS_MAX_WIDTH {
-            return Err(());
-        }
-        if lim.reserve_exact(&mut out.pairs, pairs.len()).is_err()
-            || lim.reserve_exact(&mut out.col_of, pairs.len()).is_err()
-        {
-            return Err(());
-        }
         out.pairs.extend(pairs.iter().map(|&p| if decode { decoded(p, views.left, views.right) } else { p }));
         out.col_of.extend(std::iter::repeat_n(j as u8, pairs.len()));
         out.cols.push(((1u64 << end) - 1) & !((1u64 << n) - 1));
@@ -368,11 +371,12 @@ pub(super) fn fill_pair_columns(
         one &= pairs.len() == 1;
         n = end;
         Ok(())
-    });
+    }).unwrap_or_else(|never| match never {});
+    debug_assert_eq!(n, total);
     out.one = one;
     out.tops = tops;
     out.inner = inner;
-    fits.is_ok()
+    true
 }
 
 /// The flag bit of a [row columns](build_row_columns) word: the row has a
