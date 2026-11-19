@@ -606,6 +606,13 @@ pub(crate) fn settle_loose(
     settle_loose_in(eng, &tdd.vtree, &|t| &tdd.levels[t.idx()], listed)
 }
 
+/// Per level in [`settle_loose_in`], whether it stays listed (`AT`) and
+/// whether a level strictly under it stays listed (`UNDER`): set on the
+/// levels above each one that stays, up to the first set already, whose own
+/// levels above are set.
+const AT: usize = 0;
+const UNDER: usize = 1;
+
 /// [`settle_loose`] of the diagram on `vtree` whose level at each node is
 /// `level` of it.
 pub(crate) fn settle_loose_in<'a>(
@@ -618,13 +625,9 @@ pub(crate) fn settle_loose_in<'a>(
         return Ok(Vec::new());
     }
     let lim = eng.limits();
-    // Per level, whether it stays listed (`AT`) and whether a level strictly
-    // under it stays listed (`UNDER`): set on the levels above each one that
-    // stays, up to the first set already, whose own levels above are set.
-    const AT: usize = 0;
-    const UNDER: usize = 1;
     // The prune's scratch, which a prune checks out after this returns: a
-    // read clears the block of marks it takes.
+    // read clears the block of marks it takes. Every flag is clear between
+    // calls, so the table only grows and a call clears what it set.
     let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
     let PruneScratch {
         settle_counts: counts,
@@ -632,8 +635,39 @@ pub(crate) fn settle_loose_in<'a>(
         settle_parents: parents,
         ..
     } = &mut *scratch;
-    flags.clear();
-    lim.try_resize(flags, vtree.num_nodes(), [false; 2])?;
+    if flags.len() < vtree.num_nodes() {
+        lim.try_resize(flags, vtree.num_nodes(), [false; 2])?;
+    }
+    parents.clear();
+    let settled = settle_flagged(lim, vtree, level, listed, counts, flags, parents);
+    for &t in listed {
+        flags[t as usize][AT] = false;
+    }
+    for &p in parents.iter() {
+        let (left, right) = vtree.children(p);
+        flags[left.idx()][AT] = false;
+        flags[right.idx()][AT] = false;
+        let mut up = Some(p);
+        while let Some(t) = up.filter(|t| flags[t.idx()][UNDER]) {
+            flags[t.idx()][UNDER] = false;
+            up = vtree.node(t).parent();
+        }
+    }
+    settled
+}
+
+/// The body of [`settle_loose_in`] on its scratch, `flags` clear and
+/// `parents` empty on entry; what it sets of `flags` lies on `listed`, the
+/// children of `parents` and the levels above `parents`.
+fn settle_flagged<'a>(
+    lim: &crate::limits::Limits,
+    vtree: &Vtree,
+    level: &dyn Fn(VtreeIdx) -> &'a TddLevel,
+    listed: &[u32],
+    counts: &mut Vec<u32>,
+    flags: &mut [[bool; 2]],
+    parents: &mut Vec<VtreeIdx>,
+) -> Result<Vec<u32>, OperationError> {
     for &t in listed {
         flags[t as usize][AT] = true;
     }

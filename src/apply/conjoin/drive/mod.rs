@@ -99,6 +99,13 @@ fn sweep_levels(
     // were built in their places bottom-up.
     let mut output_nodes = 0u64;
     for (k, &t) in cone.built.iter().enumerate() {
+        if k > 0 && k >= cone.stop_from && kept_above(run, cone.built[k - 1]) {
+            (run.cone.built, run.kept) = cone.built.split_at(k);
+            if lim.output_node_cap().is_some() {
+                run.cone.free_nodes += run.kept.iter().map(|s| run.f_widths[s.idx()] as u64).sum::<u64>();
+            }
+            break;
+        }
         let (left, right) = vtree.children(t);
         if progress {
             // The level's place among all internal levels, from 1.
@@ -124,7 +131,18 @@ fn sweep_levels(
         sweep.ws.as_deref_mut(),
     )?;
     // The root has no following level boundary at which to check its output.
-    lim.level_done(output_nodes + cone.free_nodes)
+    lim.level_done(output_nodes + run.cone.free_nodes)
+}
+
+/// Whether the parent of `v`, a level of the chain from `g`'s top to the
+/// root, and every level above it are `f`'s as stored: `g` has one node at
+/// `v` and the products there are `f`'s nodes in order, so no node of `f`
+/// died at `v` and the levels above read the same nodes. The test reads
+/// the child, never the level it decides on: at `g`'s top a node of `f` can
+/// lose a pair and no node.
+#[inline]
+fn kept_above(run: &ApplyRun, v: VtreeIdx) -> bool {
+    run.g_widths[v.idx()] == 1 && run.products.is_complete(v.idx())
 }
 
 /// Build the level at `t` from its children's, by the route it is given, and
@@ -302,8 +320,10 @@ pub(crate) enum ConjoinMode<'a> {
     /// Build into an owned `f`'s level array, `g` read through a view whose
     /// plan [`Plan::cone`](crate::restructure::embed::Plan::cone) built:
     /// `cone` lists the internal levels with a leaf of `g` under them,
-    /// children first, and `free` holds the others, `g`'s free levels.
-    Adopt { free: VtreeMask<'a>, cone: &'a [VtreeIdx] },
+    /// children first, and `free` holds the others, `g`'s free levels;
+    /// from `stop_from` on `cone` is the chain from `g`'s top to the root
+    /// ([`Cone::stop_from`](super::setup::Cone)).
+    Adopt { free: VtreeMask<'a>, cone: &'a [VtreeIdx], stop_from: usize },
 }
 
 /// Conjoin a plain owned `f` and a plain `g` read through a view whose leaves
@@ -315,10 +335,10 @@ pub(crate) fn apply_and_adopting(
     f: &mut Held<'_>,
     g: &mut Held<'_>,
     free: VtreeMask<'_>,
-    cone: &[VtreeIdx],
+    (cone, stop_from): (&[VtreeIdx], usize),
 ) -> Result<Tdd, OperationError> {
     debug_assert!(f.owned().is_some() && g.is_viewed());
-    apply_and_held(eng, f, g, VtreeMask::default(), ConjoinMode::Adopt { free, cone }).map(Conjoined::diagram)
+    apply_and_held(eng, f, g, VtreeMask::default(), ConjoinMode::Adopt { free, cone, stop_from }).map(Conjoined::diagram)
 }
 
 /// Conjoin structural, unweighted operands, returning them intact on refusal,
@@ -435,7 +455,7 @@ fn apply_and_held(
 ) -> Result<Conjoined, OperationError> {
     let (free, listed) = match mode {
         ConjoinMode::Restore { free } => (free, None),
-        ConjoinMode::Adopt { free, cone } => (Operands { f: VtreeMask::default(), g: free }, Some(cone)),
+        ConjoinMode::Adopt { free, cone, stop_from } => (Operands { f: VtreeMask::default(), g: free }, Some((cone, stop_from))),
         _ => (Operands::default(), None),
     };
     debug_assert!(
@@ -626,6 +646,8 @@ fn apply_and_held(
         }
         return Err(e);
     }
+    // The levels the sweep built, short of the chain where it stopped.
+    let cone = run.cone;
     if let Some(count) = sweep.counted {
         return Ok(Conjoined::Counted(count));
     }

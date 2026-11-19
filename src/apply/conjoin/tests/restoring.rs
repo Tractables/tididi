@@ -164,6 +164,43 @@ fn every_stop_gives_the_operands_back() {
     }
 }
 
+/// A conjunction that adopts an owned `f`, refused at each reserve in
+/// turn, leaves the engine's workspace so that the next one is right: `g`
+/// spread over `f`'s vtree, and `g` on two variables deep in it, where the
+/// sweep may stop below the root.
+#[test]
+fn a_refused_adopting_conjunction_leaves_the_next_one_right() {
+    let eng = Engine::new();
+    let home = Home::new(Arc::new(Vtree::linear(13)));
+    let (f, spread) = nested(&eng);
+    let deep = build(&eng, &projection(&home, 11..=12), &[&[11, -12]]);
+    let on_linear = build(&eng, &projection(&home, 1..=12), F_CLAUSES);
+    for (f, g) in [(&f, &spread), (&on_linear, &deep)] {
+        let expected = eng.and(f.clone(), g).unwrap();
+        let mut refusals = 0;
+        for n in 0.. {
+            let given = f.clone();
+            eng.refuse_nth_reserve(n);
+            let outcome = eng.and(given, g);
+            let pending = eng.limits().refusal_pending();
+            eng.limits().grant_every_reserve();
+            let next = eng.and(f.clone(), g).unwrap();
+            assert!(eng.equivalent(&next, &expected).unwrap(), "after a refusal at {n}");
+            match outcome {
+                Ok(out) => {
+                    assert!(eng.equivalent(&out, &expected).unwrap(), "granted at {n}");
+                    if pending {
+                        break;
+                    }
+                }
+                Err(_) => refusals += 1,
+            }
+            assert!(n < 10_000, "never granted");
+        }
+        assert!(refusals > 3, "only {refusals} refusal points");
+    }
+}
+
 #[test]
 fn a_granted_conjunction_matches_and() {
     let eng = Engine::new();

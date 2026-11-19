@@ -104,7 +104,7 @@ fn conjoin_nested<'a>(eng: &Engine, f: Tdd, g: Cow<'a, Tdd>) -> Result<Result<Td
         &mut Held::of(&mut f, None),
         &mut Held::of(&mut g, Some(&mut view)),
         VtreeMask::free_of(&plan),
-        plan.cone_nodes(),
+        (plan.cone_nodes(), plan.chain_from()),
     );
     recycle(eng, f);
     recycle(eng, g);
@@ -112,6 +112,7 @@ fn conjoin_nested<'a>(eng: &Engine, f: Tdd, g: Cow<'a, Tdd>) -> Result<Result<Td
     *targets = plan.release();
     let mut out = out?;
     crate::reduce::close_constant(eng, &mut out);
+    out.levels.know_no_marginal();
     Ok(Ok(out))
 }
 

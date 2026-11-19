@@ -188,6 +188,12 @@ pub(super) fn loose_levels(
             loose.push(c.0);
         }
     }
+    // A level kept above the sweep's stop is `f`'s, and so is each level
+    // under it, node for node.
+    for &p in run.kept {
+        let (left, right) = vtree.children(p);
+        loose.extend([left, right].into_iter().filter(|&c| internal(c) && loose_in[c.idx()] & 1 != 0).map(|c| c.0));
+    }
     // In the order of the levels' parents bottom-up, the left child first,
     // as a walk of every level lists them: the levels under the free ones
     // are sorted into those under the levels of the cone, which are in that

@@ -87,6 +87,11 @@ pub(super) struct Cone<'a> {
     pub(super) constant: bool,
     /// Each operand's free levels.
     masks: Operands<VtreeMask<'a>>,
+    /// The index in `built` from which each level is the parent of the one
+    /// before it and `g` has one node there, read as its output only: the
+    /// sweep stops before such a level when its child's products are `f`'s
+    /// nodes in order (`drive::sweep_levels`). `usize::MAX` for none.
+    pub(super) stop_from: usize,
 }
 
 impl Cone<'_> {
@@ -372,6 +377,10 @@ pub(super) struct ApplyRun<'a, 'r> {
     /// only each region's top from `f`, and the finish moves the levels it
     /// visited into `f`'s array (`drive::apply_and_held`).
     pub(super) adopted: bool,
+    /// The levels of the chain from `g`'s top the sweep stopped short of
+    /// ([`Cone::stop_from`]), the root's included, `f`'s as stored, and so
+    /// is the output; empty where it did not stop.
+    pub(super) kept: &'r [VtreeIdx],
     /// Whether nothing but pairs changes hands: no weights, no summed-out
     /// or marginal level. Only such a conjunction
     /// reads [`SweepLists::as_operand`].
@@ -700,6 +709,7 @@ fn survey<'r, L: Levels + ?Sized>(
             free_nodes: 0,
             constant: false,
             masks,
+            stop_from: usize::MAX,
         };
         let snapshot = Snapshot {
             total_cells,
@@ -776,6 +786,7 @@ fn survey<'r, L: Levels + ?Sized>(
         free_nodes,
         constant: false,
         masks,
+        stop_from: usize::MAX,
     };
     let snapshot = Snapshot {
         total_cells,
@@ -784,6 +795,10 @@ fn survey<'r, L: Levels + ?Sized>(
     };
     Ok((snapshot, cone))
 }
+
+/// The levels an adopting conjunction sweeps, children first, and the index
+/// among them of [`Cone::stop_from`].
+pub(super) type Listed<'r> = (&'r [VtreeIdx], usize);
 
 /// [`survey`] of plain operands of which `g` is free at every internal level
 /// but those of `listed`, children first: only those levels, their leaf
@@ -796,7 +811,7 @@ fn survey_listed<'r>(
     vtree: &'r Vtree,
     ops: Operands<&Held<'_>>,
     masks: Operands<VtreeMask<'r>>,
-    listed: &'r [VtreeIdx],
+    (listed, stop_from): Listed<'r>,
     min_grid: usize,
     widths: Operands<&mut [usize]>,
     lists: &'r mut ConeLists,
@@ -853,6 +868,7 @@ fn survey_listed<'r>(
         free_nodes,
         constant: false,
         masks,
+        stop_from,
     };
     Ok((Snapshot { total_cells, any_entry_marginal: false, might_use_sparse }, cone))
 }
@@ -947,7 +963,7 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
     eng: &Engine,
     vtree: &'r Vtree,
     ops: Operands<&Held<'_>>,
-    (targets, free, found_free, listed): (VtreeMask<'_>, Operands<VtreeMask<'r>>, bool, Option<&'r [VtreeIdx]>),
+    (targets, free, found_free, listed): (VtreeMask<'_>, Operands<VtreeMask<'r>>, bool, Option<Listed<'r>>),
     kind: crate::value::StreamKind,
     levels: &'a mut [TddLevel],
     scratch: &'r mut ApplyWorkspace,
@@ -1059,6 +1075,7 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
         lists,
         restoring: false,
         adopted: false,
+        kept: &[],
         plain: false,
         built_marginal: false,
         cone,
