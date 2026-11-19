@@ -754,9 +754,9 @@ impl Dirty {
         rebuilt: impl Iterator<Item = VtreeIdx>,
         eng: Option<&crate::Engine>,
     ) -> Result<Self, crate::OperationError> {
-        // Which levels an assembly left loose is its own to say; see
-        // `set_loose`.
-        self.loose = None;
+        // Which levels an assembly left loose is its own to say (`set_loose`),
+        // except on a vtree with no level below the root.
+        self.loose = (vtree.num_nodes() <= 1).then(Vec::new);
         self.fused.clear();
         self.seed_rebuilt(rebuilt, eng)?;
         self.dedup_above(vtree.num_nodes());

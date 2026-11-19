@@ -75,13 +75,9 @@ pub(crate) fn constant_padded_on(eng: &Engine, vtree: &Arc<Vtree>, value: bool) 
 pub(crate) fn constant_without_leaf(vtree: &Arc<Vtree>, value: bool) -> Tdd {
     debug_assert_eq!(vtree.num_nodes(), 0);
     let local = if value { TRUE } else { ZERO };
-    Tdd {
-        vtree: Arc::clone(vtree),
-        levels: Vec::new().into(),
-        output: TddNodeId { vtree: vtree.root(), local },
-        dirty: Default::default(),
-        weights: None,
-    }
+    let mut dirty = Dirty::default();
+    dirty.set_loose(Some(Vec::new()));
+    Tdd { vtree: Arc::clone(vtree), levels: Vec::new().into(), output: TddNodeId { vtree: vtree.root(), local }, dirty, weights: None }
 }
 
 /// A constant over the operand's vtree ([`constant_on`]) with its weight

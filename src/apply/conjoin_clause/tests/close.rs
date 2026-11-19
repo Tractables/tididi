@@ -80,3 +80,25 @@ fn or_cube_on_a_home_ends_trimmed() {
     failed.extend(closed(&eng, &home, &got, &x_or_z).err().map(|e| format!("typed: {e}")));
     assert_all(failed);
 }
+
+/// A literal on a home knows its loose levels, and a literal or a diagram
+/// trimmed to one leaf lists every loose one where it knows them.
+#[test]
+fn one_leaf_results_list_their_loose_levels() {
+    let eng = Engine::new();
+    let mut rng = crate::test_helpers::Lcg::new(0x1005e);
+    let mut failed = Vec::new();
+    for seed in 0..40u64 {
+        let home = Home::new(Vtree::random(6, seed));
+        let lit = 1 + rng.below(6) as i32;
+        let x = Tdd::clause(home.vtree(), [lit]).unwrap();
+        let one_leaf = trimmed(&home, eng.and_clause(eng.clause(home.vtree(), [lit, 1 + lit % 6]).unwrap(), &[lit]).unwrap());
+        for (what, got) in [("a literal on a home", x), ("trimmed to one leaf", one_leaf)] {
+            if what == "a literal on a home" && got.dirty.loose().is_none() {
+                failed.push(format!("seed {seed}, {what}: loose levels not known"));
+            }
+            failed.extend(check_trimmed(&got, false).err().map(|e| format!("seed {seed}, {what}: {e}")));
+        }
+    }
+    assert_all(failed);
+}

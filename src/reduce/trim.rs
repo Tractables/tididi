@@ -608,6 +608,7 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, dropped: Option<&[Vtr
 
     if m == 1 {
         f.dirty = Default::default();
+        f.dirty.set_loose(Some(Vec::new()));
     } else {
         f.dirty.remap_keeping(&map, |t| shape.kind[t] == Kind::Both);
         f.dirty.dedup_above(m);
