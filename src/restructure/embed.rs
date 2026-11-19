@@ -17,7 +17,7 @@ use super::{
 };
 
 use crate::Engine;
-use crate::apply::conjoin::view::{moved_dirty, reserve_moved, Slot, View};
+use crate::apply::conjoin::view::{copied_dirty, moved_dirty, reserve_moved, Slot, View};
 use crate::diagram::{
     ChildSide, LeafLabel, NEG_LEAF_IDX, NodeIdx, ONE_LEAF_IDX, POS_LEAF_IDX, Tdd, TddLevel, WeightStore,
     WeightValue, return_levels, try_take_levels,
@@ -947,9 +947,9 @@ fn seat_view<'a>(
     // A moved diagram's worklists are taken, with room made in place.
     let carried = match &mut tdd {
         Cow::Owned(moved) => reserve_moved(eng, &mut moved.dirty, &moved.vtree, !tops.is_empty()).map(|listed| (None, listed)),
-        Cow::Borrowed(source) => source.dirty.clone_on(eng).and_then(|mut copied| {
-            reserve_moved(eng, &mut copied, source.vtree(), !tops.is_empty()).map(|listed| (Some(copied), listed))
-        }),
+        Cow::Borrowed(source) => {
+            copied_dirty(eng, &source.dirty, source.vtree(), into, plan, &tops).map(|copied| (Some(copied), Vec::new()))
+        }
     };
     let borrowed = match &tdd {
         Cow::Borrowed(source) => Some(*source),
@@ -968,7 +968,7 @@ fn seat_view<'a>(
         }
     };
     let own = |d: VtreeIdx| matches!(at[d.idx()], Slot::Own(_));
-    let (weights, carried) = match &mut tdd {
+    let (weights, dirty) = match &mut tdd {
         Cow::Owned(moved) => {
             let source = &mut moved.levels[..];
             for (s, &d) in plan.embedding.levels.iter().enumerate() {
@@ -976,11 +976,11 @@ fn seat_view<'a>(
                     std::mem::swap(&mut levels[d.idx()], &mut source[s]);
                 }
             }
-            (moved.weights.take(), moved.take_worklists())
+            let carried = moved.take_worklists();
+            (moved.weights.take(), moved_dirty(carried, listed, &moved.vtree, into, plan, &tops))
         }
         Cow::Borrowed(_) => (weights, copied.expect("a borrowed diagram's worklists are copied")),
     };
-    let dirty = moved_dirty(carried, listed, tdd.vtree(), into, plan, &tops);
     if free == Free::Build {
         for &t in into.internal_bottomup_slice() {
             if plan.is_free(t) {

@@ -621,6 +621,25 @@ impl Dirty {
         Ok(out)
     }
 
+    /// The lists [`remap`](Self::remap) leaves, in new lists of their exact
+    /// length, the inner pass's with room for
+    /// [`leaf_owes_inner`](Self::leaf_owes_inner) where `owing`; the loose
+    /// levels unknown.
+    pub(crate) fn remapped_on(&self, eng: &crate::Engine, map: &[VtreeIdx], owing: bool) -> Result<Self, crate::OperationError> {
+        let mut out = Self::default();
+        let owed = if owing { self.lists[Pass::LeafContract as usize].len() } else { 0 };
+        for pass in Pass::ALL {
+            let from = &self.lists[pass as usize];
+            let room = if pass == Pass::Contract { owed } else { 0 };
+            if from.len() + room > 0 {
+                let to = out.list(pass);
+                eng.limits().reserve_exact(to, from.len() + room)?;
+                to.extend(from.iter().map(|&t| map[t as usize].0));
+            }
+        }
+        Ok(out)
+    }
+
     /// Rename every entry through `map`, old level index to new, for levels
     /// moved to other indices of another vtree.
     pub(crate) fn remap(&mut self, map: &[VtreeIdx]) {
