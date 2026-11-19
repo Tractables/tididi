@@ -239,12 +239,10 @@ impl View {
         gate.flush()?;
         view.renumber(lim, tdd, plan, &literal_tops)?;
         literal_tops.sort_unstable();
-        if worklists {
-            let mut carried = tdd.dirty.clone_on(eng)?;
-            let listed = reserve_moved(eng, &mut carried, tdd.vtree(), !literal_tops.is_empty())?;
-            view.dirty = moved_dirty(carried, listed, tdd.vtree(), into, plan, &literal_tops);
+        match worklists {
+            true => view.dirty = copied_dirty(eng, &tdd.dirty, tdd.vtree(), into, plan, &literal_tops)?,
+            false => view.tops = literal_tops,
         }
-        view.tops = literal_tops;
         Ok(())
     }
 
@@ -456,8 +454,12 @@ fn marginal_leaf(plan: &Plan, carried: VtreeIdx) -> OperationError {
 /// `chains` (a chain over a leaf read as `Pos` and `Neg`) may list them.
 pub(crate) fn reserve_moved(eng: &Engine, carried: &mut Dirty, source: &Vtree, chains: bool) -> Result<Vec<u32>, OperationError> {
     carried.reserve_leaf_owes_inner(eng)?;
+    listed_room(eng, carried.loose(), source, chains)
+}
+
+fn listed_room(eng: &Engine, loose: Option<&[u32]>, source: &Vtree, chains: bool) -> Result<Vec<u32>, OperationError> {
     let mut listed = Vec::new();
-    if carried.loose().is_some_and(|loose| !loose.is_empty() || chains) {
+    if loose.is_some_and(|loose| !loose.is_empty() || chains) {
         // `moved_loose` lists at most the two children of each image of an
         // internal level.
         eng.limits().reserve_exact(&mut listed, 2 * source.internal_bottomup_slice().len())?;
@@ -471,14 +473,56 @@ pub(crate) fn reserve_moved(eng: &Engine, carried: &mut Dirty, source: &Vtree, c
 /// `Pos` and `Neg`.
 pub(crate) fn moved_dirty(
     mut carried: Dirty,
-    mut listed: Vec<u32>,
+    listed: Vec<u32>,
     source: &Vtree,
     into: &Vtree,
     plan: &Plan,
     tops: &[VtreeIdx],
 ) -> Dirty {
-    let loose = carried.take_loose();
+    let loose = carried.take_loose().map(|mut loose| {
+        loose.sort_unstable();
+        loose
+    });
     carried.remap(&plan.embedding.levels);
+    finish_moved(&mut carried, loose.as_deref(), listed, source, into, plan, tops);
+    carried
+}
+
+/// [`moved_dirty`] of a copy of `from`, renamed as it is copied.
+pub(crate) fn copied_dirty(
+    eng: &Engine,
+    from: &Dirty,
+    source: &Vtree,
+    into: &Vtree,
+    plan: &Plan,
+    tops: &[VtreeIdx],
+) -> Result<Dirty, OperationError> {
+    let mut carried = from.remapped_on(eng, &plan.embedding.levels, !tops.is_empty())?;
+    let listed = listed_room(eng, from.loose(), source, !tops.is_empty())?;
+    let mut sorted = Vec::new();
+    let loose = match from.loose() {
+        Some(loose) if !loose.is_sorted() => {
+            eng.limits().reserve_exact(&mut sorted, loose.len())?;
+            sorted.extend_from_slice(loose);
+            sorted.sort_unstable();
+            Some(&sorted[..])
+        }
+        loose => loose,
+    };
+    finish_moved(&mut carried, loose, listed, source, into, plan, tops);
+    Ok(carried)
+}
+
+/// The steps of [`moved_dirty`] after the lists are renamed; `loose` sorted.
+fn finish_moved(
+    carried: &mut Dirty,
+    loose: Option<&[u32]>,
+    mut listed: Vec<u32>,
+    source: &Vtree,
+    into: &Vtree,
+    plan: &Plan,
+    tops: &[VtreeIdx],
+) {
     if !tops.is_empty() {
         carried.leaf_owes_inner(|t| {
             let (left, right) = into.children(VtreeIdx(t));
@@ -486,10 +530,8 @@ pub(crate) fn moved_dirty(
         });
     }
     carried.dedup_above(into.num_nodes());
-    if let Some(mut loose) = loose {
-        loose.sort_unstable();
-        moved_loose(source, into, plan, &loose, tops, &mut listed);
+    if let Some(loose) = loose {
+        moved_loose(source, into, plan, loose, tops, &mut listed);
         carried.set_loose(Some(listed));
     }
-    carried
 }
