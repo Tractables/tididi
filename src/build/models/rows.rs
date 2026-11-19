@@ -179,7 +179,7 @@ pub(super) fn sorted_distinct(
     for &k in &order {
         gate.poll(w as u64)?;
         let row = row_at(&packed, w, k);
-        if out.len() < w || &out[out.len() - w..] != row {
+        if out.len() < w || !same_row(&out[out.len() - w..], row) {
             out.extend_from_slice(row);
         }
     }
@@ -199,6 +199,13 @@ fn compare_row(packed: &[u64], w: usize, a: u32, b: u32) -> std::cmp::Ordering {
         }
     }
     std::cmp::Ordering::Equal
+}
+
+/// Whether two rows of one width are equal. A row is a few words, which
+/// this compares in less time than a call to `memcmp` takes.
+#[inline]
+pub(super) fn same_row(a: &[u64], b: &[u64]) -> bool {
+    a.iter().zip(b).fold(0, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// Row `k` of a buffer of `w`-word rows.
