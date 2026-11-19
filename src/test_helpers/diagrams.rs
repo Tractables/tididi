@@ -67,33 +67,16 @@ pub fn inline_marginal() -> (Tdd, [VtreeIdx; 3]) {
 }
 
 /// Bonsai's donor of a level with two count slots, 2^31 and 2^32, too large
-/// to sit inline: the right child of the balanced vtree over 64 variables,
-/// summed out under an output that reads it through its first two nodes.
+/// to sit inline: the right child of the balanced vtree over 68 variables,
+/// summed out under `x1 x35 x36 + ¬x1 x35 ¬x36 x37`. Its two nodes there are
+/// disjoint, as a level's nodes are, so the source needs more than 32
+/// variables.
 fn marginal_slot_donor(eng: &Engine) -> (Tdd, VtreeIdx) {
-    let vtree = Arc::new(Vtree::balanced(64));
-    let mut builder = Tdd::builder(eng, &vtree).unwrap();
-    let mut labels = vec![[ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX]; vtree.num_nodes()];
-    for level in vtree.bottomup() {
-        if vtree.node(level).is_leaf() { continue; }
-        let (left, right) = vtree.children(level);
-        let right_true = labels[right.idx()][0];
-        labels[level.idx()] = std::array::from_fn(|label| {
-            // A level names its leaf child in one form: true over it by its
-            // two literals.
-            if label == 0 && vtree.node(left).is_leaf() {
-                let pairs = [ChildPair::new(POS_LEAF_IDX, right_true), ChildPair::new(NEG_LEAF_IDX, right_true)];
-                return builder.push(eng, level, &pairs).unwrap();
-            }
-            builder.push(eng, level, &[ChildPair::new(labels[left.idx()][label], right_true)]).unwrap()
-        });
-    }
-    let root = vtree.root();
-    let (left, source) = vtree.children(root);
-    let output = builder.push(eng, root, &[
-        ChildPair::new(labels[left.idx()][1], labels[source.idx()][0]),
-        ChildPair::new(labels[left.idx()][2], labels[source.idx()][1]),
-    ]).unwrap();
-    let mut donor = builder.finish(TddNodeId { vtree: root, local: output }).unwrap();
+    let vtree = Arc::new(Vtree::balanced(68));
+    let source = vtree.children(vtree.root()).1;
+    let first = eng.cube(&vtree, [1, 35, 36]).unwrap();
+    let second = eng.cube(&vtree, [-1, 35, -36, 37]).unwrap();
+    let mut donor = eng.or(first, second).unwrap();
     eng.marginalize_levels(&mut donor, &[source]).unwrap();
     let mut counts = donor.level(source).marginal_counts().unwrap().to_vec();
     counts.sort_unstable();
