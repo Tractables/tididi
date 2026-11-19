@@ -288,11 +288,11 @@ fn single_rows<const W: usize>(
         if q.left.0 == NO_PRODUCT {
             return None;
         }
-        let lc = left.get_in_row(node_idx, lrow, q.left.0);
+        let lc = left.get_in_view(node_idx, lrow, q.left.0);
         if lc == NO_PRODUCT {
             return None;
         }
-        let rc = right.get_in_row(node_idx, rrow, q.right.0);
+        let rc = right.get_in_view(node_idx, rrow, q.right.0);
         (rc != NO_PRODUCT).then_some((lc, rc))
     };
     let mut next = 0;

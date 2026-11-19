@@ -679,9 +679,9 @@ fn emit_row<L: ChildLookup, R: ChildLookup, S: PairSink>(
         super::rows_stream::charge(gate, &mut due_at, &mut due, (k * m) as u64)?;
         if k * m == 1 {
             let ((l, r), q) = (rows[0], &g_pairs[0]);
-            let lc = left.get_in_row(node_idx, l, q.left.0);
+            let lc = left.get_in_view(node_idx, l, q.left.0);
             if !left.kills() || lc != NO_PRODUCT {
-                let rc = right.get_in_row(node_idx, r, q.right.0);
+                let rc = right.get_in_view(node_idx, r, q.right.0);
                 if !right.kills() || rc != NO_PRODUCT {
                     // Safety: the row was opened for a node a column.
                     unsafe { out.single(node_idx, row_base + j, lc, rc) };
@@ -697,13 +697,14 @@ fn emit_row<L: ChildLookup, R: ChildLookup, S: PairSink>(
             let q = &g_pairs[0];
             for &f_rows in rows {
                 // Safety: the cell fits its `k * m` candidates.
-                unsafe { push_candidate(&mut out, node_idx, (left, right), f_rows, q) };
+                unsafe { push_candidate(&mut out, (left, right), (node_idx, node_idx), f_rows, q) };
             }
         } else {
-            let f_rows = rows[0];
+            let (l, r) = rows[0];
+            let ((ln, l), (rn, r)) = (left.view(node_idx, l), right.view(node_idx, r));
             for q in g_pairs {
                 // Safety: as above.
-                unsafe { push_candidate(&mut out, node_idx, (left, right), f_rows, q) };
+                unsafe { push_candidate(&mut out, (left, right), (ln, rn), (l, r), q) };
             }
         }
         // Safety: the row was opened for a node a column.
@@ -714,8 +715,9 @@ fn emit_row<L: ChildLookup, R: ChildLookup, S: PairSink>(
     Ok(j)
 }
 
-/// Store in `out`'s open cell the candidate of the child rows `(l, r)`
-/// against the g pair `q`, unless a side has no product there.
+/// Store in `out`'s open cell the candidate of the child rows `(l, r)` of
+/// the slabs `(ln, rn)` against the g pair `q`, unless a side has no
+/// product there.
 ///
 /// # Safety
 ///
@@ -723,16 +725,16 @@ fn emit_row<L: ChildLookup, R: ChildLookup, S: PairSink>(
 #[inline(always)]
 unsafe fn push_candidate<L: ChildLookup, R: ChildLookup>(
     out: &mut ArenaRow<'_>,
-    node_idx: &[u32],
     (left, right): (&L, &R),
+    (ln, rn): (&[u32], &[u32]),
     (l, r): (L::Row, R::Row),
     q: &ChildPair,
 ) {
-    let lc = left.get_in_row(node_idx, l, q.left.0);
+    let lc = left.get_in_row(ln, l, q.left.0);
     if left.kills() && lc == NO_PRODUCT {
         return;
     }
-    let rc = right.get_in_row(node_idx, r, q.right.0);
+    let rc = right.get_in_row(rn, r, q.right.0);
     if right.kills() && rc == NO_PRODUCT {
         return;
     }

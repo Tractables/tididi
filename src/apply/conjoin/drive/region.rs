@@ -98,6 +98,9 @@ pub(super) fn take_regions(
 
 /// Move an owned carrier's level at `t`, a free level of the other
 /// operand, into `out`, built first where it is free in both.
+// Forced: with `Held::carry` inlined here, the compiler otherwise calls this
+// once per free level.
+#[inline(always)]
 fn move_region_level(lim: &Limits, carrier: &mut Held<'_>, t: VtreeIdx, both: bool, out: &mut TddLevel) -> Result<(), OperationError> {
     if carrier.is_borrowed() {
         return Ok(());

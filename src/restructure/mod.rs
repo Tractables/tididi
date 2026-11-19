@@ -121,6 +121,13 @@ pub enum EmbedError {
         /// The dropped variable.
         variable: VarId,
     },
+    /// The destination holds a region the diagram has not summed out, so the
+    /// copy has no value to give it. A conjunction with the diagram that
+    /// summed the region ([`Engine::and`](crate::Engine::and)) is defined.
+    UnsummedRegion {
+        /// The region, a node of the destination.
+        region: VtreeIdx,
+    },
     /// An operation the copy runs was refused: a source that has discarded
     /// the structure at a level, a refused allocation, or an armed stop.
     Operation(OperationError),
@@ -210,6 +217,7 @@ impl std::fmt::Display for EmbedError {
             Self::SourceWeights(error) => write!(f, "embedded diagram: {error}"),
             Self::DestinationWeights(error) => write!(f, "embedding destination: {error}"),
             Self::Unsummed { variable } => write!(f, "variable {} is dropped outside every marginal level that sums over it", variable.0),
+            Self::UnsummedRegion { region } => write!(f, "destination node {} is a region the diagram has not summed out", region.idx()),
             Self::Operation(error) => write!(f, "copying the diagram: {error}"),
         }
     }
@@ -221,7 +229,7 @@ impl std::error::Error for EmbedError {
             Self::Vtree(error) => Some(error),
             Self::SourceWeights(error) | Self::DestinationWeights(error) => Some(error),
             Self::Operation(error) => Some(error),
-            Self::VariableOutOfRange { .. } | Self::NotIsomorphic { .. } | Self::Unsummed { .. } => None,
+            Self::VariableOutOfRange { .. } | Self::NotIsomorphic { .. } | Self::Unsummed { .. } | Self::UnsummedRegion { .. } => None,
         }
     }
 }

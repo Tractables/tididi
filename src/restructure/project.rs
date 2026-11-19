@@ -14,7 +14,7 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use super::EmbedError;
-use super::embed::Plan;
+use super::embed::{Free, Plan};
 
 use crate::Engine;
 use crate::diagram::{
@@ -114,7 +114,7 @@ impl Engine {
                 .project_to_vars(&local_of, num_local)
                 .expect("a checked renaming that keeps a variable restricts the vtree"),
         );
-        let plan = Plan::build(self, &into, vtree, |local| original[local.idx()].expect("a leaf of the restriction"), false)?;
+        let plan = Plan::build(self, &into, vtree, |local| original[local.idx()].expect("a leaf of the restriction"), false, Free::Leave)?;
         self.project_along(tdd, &into, &plan, &dropped)
     }
 
@@ -216,7 +216,7 @@ impl Engine {
         if summed {
             check_kept_weights(tdd, weights.as_ref(), &local_of).map_err(EmbedError::SourceWeights)?;
         }
-        let plan = Plan::build(self, into, vtree, |local| original[local.idx()].expect("a leaf of the restriction"), false)?;
+        let plan = Plan::build(self, into, vtree, |local| original[local.idx()].expect("a leaf of the restriction"), false, Free::Leave)?;
         match weights {
             Some(store) if summed => carry_marginal(self, tdd, into, &plan, store),
             weights => self.project_along(tdd, into, &plan, &dropped).and_then(|mut result| {

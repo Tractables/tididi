@@ -386,9 +386,6 @@ impl Vtree {
     /// split. Each side is built by the same rule. Only depth comparisons
     /// matter, so any depth values are accepted; equal depths produce
     /// [`Vtree::linear_from_order`]'s right-linear tree.
-    /// [`Vtree::bottomup`] lists the internal nodes of the result in
-    /// post-order, where the other constructors list them deepest level
-    /// first; a local search sweeps them in that order.
     ///
     /// To project an existing tree onto selected leaves, pass those leaves
     /// in left-to-right order and their adjacent lowest-common-ancestor
@@ -446,23 +443,15 @@ impl Vtree {
                 return Err(VtreeError::OverlappingVariable(var));
             }
         }
-        // Without regions the build numbers leaf i as node i.
-        for (i, &var) in vars.iter().enumerate() {
-            var_to_leaf[var.idx()] = VtreeIdx(i as u32);
-        }
+        // The build numbers internal nodes in post-order; the reindex lays
+        // the tree out as every other constructor does, deepest level first,
+        // the order the local searches and the diagram walks sweep.
         let (nodes, root) = in_order_tree_with(k, |i| depths[i], &[], |i| vars[i], |_, _| ());
-        let topo = crate::vtree::topo::TopoOrder::identity(&nodes, k as u32);
-        let vtree = Vtree {
-            context: std::sync::Arc::new(crate::Context::new()),
-            nodes,
-            root,
-            var_to_leaf,
-            leaf_count: k as u32,
-            topo,
-            home: None,
-            index: Default::default(),
+        let shape = |t: VtreeIdx| match nodes[t.idx()] {
+            VtreeNode::Leaf { var, .. } => Shape::Leaf(var),
+            VtreeNode::Internal { left, right, .. } => Shape::Internal(left, right),
         };
-        debug_assert_eq!(vtree.validate(), Ok(()));
+        let (vtree, _) = reindex(root, nodes.len(), num_vars, shape).expect("an in-order build is one tree");
         Ok(vtree)
     }
 

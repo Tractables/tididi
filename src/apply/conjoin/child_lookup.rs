@@ -47,6 +47,33 @@ pub(super) trait ChildLookup: Copy {
     /// The child node at `col` of an already-resolved row.
     fn get_in_row(&self, node_idx: &[u32], row: Self::Row, col: u32) -> u32;
 
+    /// `node_idx` and `row` rebased, where the lookup can, so the row starts
+    /// the slab: [`get_in_row`](Self::get_in_row) on the pair then reads a
+    /// column with one indexed load from a pointer a loop holds. The pair
+    /// borrows the slab, so a walk takes it per cell, after the writes of
+    /// the cell before.
+    #[inline(always)]
+    fn view<'a>(&self, node_idx: &'a [u32], row: Self::Row) -> (&'a [u32], Self::Row) {
+        (node_idx, row)
+    }
+
+    /// [`get_in_row`](Self::get_in_row) through [`view`](Self::view): the
+    /// same node, read as `(slab + row)[col]` instead of `slab[row + col]`.
+    /// The two forms compile to different loops, and which is cheaper
+    /// depends on the walk: the pair walk of `pair_rows` keeps
+    /// `get_in_row`, the other walks read through the view.
+    #[inline(always)]
+    fn get_in_view(&self, node_idx: &[u32], row: Self::Row, col: u32) -> u32 {
+        let (n, r) = self.view(node_idx, row);
+        self.get_in_row(n, r, col)
+    }
+
+    /// [`get`](Self::get) read as [`get_in_view`](Self::get_in_view) reads.
+    #[inline(always)]
+    fn get_viewed(&self, node_idx: &[u32], row: u32, col: u32) -> u32 {
+        self.get_in_view(node_idx, self.row(row), col)
+    }
+
     /// This lookup for a side that is not a pass-through carrier: the same
     /// answers wherever [`passthrough`](Self::passthrough) is false, with
     /// no pass-through test.
@@ -168,6 +195,13 @@ impl ChildLookup for DenseLookup {
         // the multiply so the index is exact on 64-bit targets.
         debug_assert!(row + (col as usize) < node_idx.len(), "a grid read is past the child's slab");
         unsafe { *node_idx.get_unchecked(row + col as usize) }
+    }
+
+    #[inline(always)]
+    fn view<'a>(&self, node_idx: &'a [u32], row: usize) -> (&'a [u32], usize) {
+        debug_assert!(row <= node_idx.len(), "a grid read is past the child's slab");
+        // Safety: callers only resolve rows within the child's slab.
+        (unsafe { node_idx.get_unchecked(row..) }, 0)
     }
 }
 

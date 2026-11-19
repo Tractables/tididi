@@ -678,7 +678,7 @@ fn ancestor_depths(vtree: &Vtree, leaves: &[VtreeIdx]) -> Vec<u32> {
 
 /// Built from a subset of a tree's leaves in order and the depths of their
 /// neighbours' lowest common ancestors there, the tree is the projection
-/// `project_to_vars` makes of it, on random trees and
+/// `project_to_vars` makes of it, node for node, on random trees and
 /// subsets of every size; from all the leaves, it is the tree itself.
 #[test]
 fn from_in_order_with_ancestor_depths_is_the_projection() {
@@ -703,13 +703,13 @@ fn from_in_order_with_ancestor_depths_is_the_projection() {
             let leaves: Vec<VtreeIdx> = in_order.iter().copied().filter(|&t| local[vtree.leaf_var(t).0 as usize].is_some()).collect();
             let vars: Vec<VarId> = leaves.iter().map(|&t| local[vtree.leaf_var(t).0 as usize].unwrap()).collect();
             let got = Vtree::from_in_order(&vars, &ancestor_depths(&vtree, &leaves), kept).unwrap();
-            assert!(got.same_tree(&expected), "seed {seed}, vars {vars:?}");
-            assert_eq!((got.leaf_count, got.num_vars()), (expected.leaf_count, expected.num_vars()));
+            assert_eq!(got.nodes, expected.nodes, "seed {seed}, vars {vars:?}");
+            assert_eq!((got.root, got.leaf_count, &got.var_to_leaf), (expected.root, expected.leaf_count, &expected.var_to_leaf));
             assert_eq!(got.validate(), Ok(()));
         }
         let vars: Vec<VarId> = in_order.iter().map(|&t| vtree.leaf_var(t)).collect();
         let whole = Vtree::from_in_order(&vars, &ancestor_depths(&vtree, &in_order), n).unwrap();
-        assert!(whole.same_tree(&vtree), "seed {seed}");
+        assert_eq!(whole.nodes, vtree.nodes, "seed {seed}");
     }
 }
 

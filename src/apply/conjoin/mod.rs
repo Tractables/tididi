@@ -624,7 +624,8 @@ type Placed<'a> = Result<(Cow<'a, Tdd>, Option<Plan>, bool), (EmbedError, Cow<'a
 /// [`Engine::and_onto`](crate::Engine::and_onto), with the plan that embeds
 /// it: as it is, with no plan, when it is on `into` already; with
 /// `viewing`, left as it is for a [`View`] where it is structural,
-/// unweighted, not false and its plan mirrors no image, which the flag says;
+/// unweighted, not false, its plan mirrors no image and, owned, it is
+/// cheaper to view than to place ([`views_cheaper`]), which the flag says;
 /// placed otherwise, free levels left empty, a borrowed one copied into the
 /// placement ([`place`]). `begun` says whether a phase of the operation has
 /// begun, and is set. Refused, the operand comes back as it was given.
@@ -654,16 +655,32 @@ fn place_onto<'a>(
         };
     }
     if viewing && tdd.weights.is_none() && !tdd.is_zero() && tdd.require_structure().is_ok() {
-        let plan = match Plan::build(eng, tdd.vtree(), into, map, true) {
+        let plan = match Plan::build(eng, tdd.vtree(), into, map, true, Free::Leave) {
             Ok(plan) => plan,
             Err(error) => return Err((error, tdd)),
         };
-        if plan.mirrored_images().next().is_none() {
+        let viewed = match tdd {
+            Cow::Borrowed(_) => true,
+            Cow::Owned(_) => views_cheaper(&plan, into),
+        };
+        if viewed && plan.mirrored_images().next().is_none() {
             return Ok((tdd, Some(plan), true));
         }
         return place_by(eng, tdd, into, &plan, Free::Leave).map(|tdd| (Cow::Owned(tdd), Some(plan), false));
     }
     place(eng, tdd, into, map, Free::Leave).map(|(tdd, plan)| (Cow::Owned(tdd), Some(plan), false))
+}
+
+/// Whether an owned operand embedded by `plan` into `into` costs less read
+/// through a view than placed. A pass-through level costs more built and
+/// read in a view than in a placement, and a placement costs more than a
+/// view for each node of `into`; measured, views lose where a quarter of
+/// `into`'s nodes are pass-throughs and win where a tenth are, and the cut
+/// is at a quarter. A borrowed operand is viewed whatever this says:
+/// placing it copies every level.
+#[inline]
+fn views_cheaper(plan: &Plan, into: &Vtree) -> bool {
+    plan.pass_throughs * 4 < into.num_nodes()
 }
 
 /// The view of `tdd` by `plan` where `viewed`, charging the work clock
@@ -884,8 +901,12 @@ impl crate::Engine {
     /// result is the diagram `and_restoring` returns on the two embeddings,
     /// node for node. An operand already on `into` is taken as it is, and
     /// its map is not read. Each operand is owned or borrowed, at the costs
-    /// [`and`] states; a borrowed operand on `into` is read in place, and
-    /// one that is not is copied whole and the copy placed.
+    /// [`and`] states; a borrowed operand on `into` is read in place. One
+    /// that is not is read where it is when it is structural, unweighted
+    /// and its embedding swaps no node's children, a level of it copied only
+    /// where the result takes it, unless it is owned and a quarter or more
+    /// of `into`'s nodes would be pass-through levels of it; otherwise it
+    /// is placed, a borrowed one copied whole first.
     ///
     /// ```
     /// use std::sync::Arc;

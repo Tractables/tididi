@@ -149,6 +149,8 @@ impl Tdd {
     /// [`EmbedError::VariableOutOfRange`] when a renamed variable is not a leaf
     /// of `into`; [`EmbedError::Vtree`] with
     /// [`VtreeError::OverlappingVariable`] when two variables share an image;
+    /// [`EmbedError::UnsummedRegion`] when `into` holds a region this
+    /// diagram has not summed out;
     /// [`EmbedError::Operation`] with [`OperationError::MarginalLevel`] for a
     /// diagram that has discarded the structure at a level, and for a refused
     /// allocation or an armed stop.
@@ -203,7 +205,7 @@ impl Engine {
         map: impl Fn(VarId) -> VarId,
     ) -> Result<EmbeddingPlan, EmbedError> {
         let _op = self.limits().enter()?;
-        let layout = Plan::build(self, source, destination, map, true)?;
+        let layout = Plan::build(self, source, destination, map, true, Free::Build)?;
         Ok(EmbeddingPlan {
             source: source.clone(),
             destination: destination.clone(),
@@ -256,7 +258,7 @@ impl Engine {
     ) -> Result<(Tdd, Embedding), EmbedError> {
         let _op = self.limits().enter()?;
         tdd.require_structure()?;
-        let plan = Plan::build(self, tdd.vtree(), into, map, true)?;
+        let plan = Plan::build(self, tdd.vtree(), into, map, true, Free::Build)?;
         let result = assemble(self, tdd, into, &plan)?;
         Ok((result, plan.embedding))
     }
@@ -409,7 +411,7 @@ impl Engine {
         weights: Option<WeightStore>,
     ) -> Result<(Tdd, Embedding), EmbedError> {
         let _op = self.limits().enter()?;
-        let plan = Plan::build(self, tdd.vtree(), into, &map, !tdd.has_marginal_level())?;
+        let plan = Plan::build(self, tdd.vtree(), into, &map, !tdd.has_marginal_level(), Free::Build)?;
         // Integer counts reach a parent through inline references, which
         // do not survive a new parent; only weighted values are placed.
         if let Some(t) = tdd
@@ -523,13 +525,16 @@ impl Plan {
     /// match fails at, that one included.
     ///
     /// `mirror` is unset where the assembly cannot mirror a level: a
-    /// marginal one, or a projection's.
+    /// marginal one, or a projection's. With [`Free::Build`], a region of
+    /// `into` that is not the image of one of `source`'s is refused
+    /// ([`EmbedError::UnsummedRegion`]).
     pub(crate) fn build(
         eng: &Engine,
         source: &Vtree,
         into: &Vtree,
         map: impl Fn(VarId) -> VarId,
         mirror: bool,
+        free: Free,
     ) -> Result<Plan, EmbedError> {
         let lim = eng.limits();
         let (mut targets, mut embedding) = (Vec::new(), Vec::new());
@@ -551,6 +556,9 @@ impl Plan {
         }
         if source.has_regions() {
             map_regions(source, into, &mut targets, &mut embedding)?;
+        }
+        if free == Free::Build && into.has_regions() {
+            refuse_free_region(into, &targets)?;
         }
         gate.poll_each(into.internal_bottomup_slice().len() as u64)?;
 
@@ -621,14 +629,29 @@ fn map_regions(source: &Vtree, into: &Vtree, targets: &mut [Target], embedding: 
     Ok(())
 }
 
+/// Refuse a region of `into` no source region maps to: the copy would have
+/// to give it a value, and the diagram has none for variables it has not
+/// summed out.
+#[cold]
+fn refuse_free_region(into: &Vtree, targets: &[Target]) -> Result<(), EmbedError> {
+    match into.regions().find(|t| targets[t.idx()] == Target::Free) {
+        Some(region) => Err(EmbedError::UnsummedRegion { region }),
+        None => Ok(()),
+    }
+}
+
 /// What [`place_moving`] does with the free levels, those of the destination
 /// nodes no renamed variable is under.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Free {
-    /// Build each: one node, true on both sides.
+    /// Build each: one node, true on both sides. A free region is refused.
     Build,
+    /// Build each internal one and leave a free region empty, for an
+    /// operation that takes another operand's region there.
+    Operand,
     /// Leave each empty, for a conjunction that reads it as the level it
-    /// stands for and takes the other operand's level there.
+    /// stands for and takes the other operand's level there; a projection,
+    /// whose free nodes are those it drops, builds none either.
     Leave,
 }
 
@@ -674,7 +697,7 @@ pub(crate) fn place<'a>(
     if let Err(e) = require_placeable(&tdd) {
         return Err((e.into(), tdd));
     }
-    let plan = match Plan::build(eng, tdd.vtree(), into, map, true) {
+    let plan = match Plan::build(eng, tdd.vtree(), into, map, true, free) {
         Ok(plan) => plan,
         Err(error) => return Err((error, tdd)),
     };
@@ -996,7 +1019,7 @@ fn build_embedded_levels(
     // here, and a conjunction that builds it carries it as an identity
     // level, which costs nothing there either.
     let built: &[VtreeIdx] = match free {
-        Free::Build => into.internal_bottomup_slice(),
+        Free::Build | Free::Operand => into.internal_bottomup_slice(),
         Free::Leave => &[],
     };
     for &t in built

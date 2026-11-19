@@ -123,11 +123,11 @@ where
         if ITER_F {
             let (c, d) = (g_pairs[0].left.0, g_pairs[0].right.0);
             for p1 in f_pairs {
-                let lc = left.get(node_idx, p1.left.0, c);
+                let lc = left.get_viewed(node_idx, p1.left.0, c);
                 if left.kills() && lc == NO_PRODUCT {
                     continue;
                 }
-                let rc = right.get(node_idx, p1.right.0, d);
+                let rc = right.get_viewed(node_idx, p1.right.0, d);
                 if !right.kills() || rc != NO_PRODUCT {
                     // Safety: the cell was opened for a pair a candidate.
                     unsafe { cell.push(lc, rc) };
@@ -137,11 +137,11 @@ where
             let p1 = &f_pairs[0];
             let (lrow, rrow) = (left.row(p1.left.0), right.row(p1.right.0));
             for p2 in g_pairs {
-                let lc = left.get_in_row(node_idx, lrow, p2.left.0);
+                let lc = left.get_in_view(node_idx, lrow, p2.left.0);
                 if left.kills() && lc == NO_PRODUCT {
                     continue;
                 }
-                let rc = right.get_in_row(node_idx, rrow, p2.right.0);
+                let rc = right.get_in_view(node_idx, rrow, p2.right.0);
                 if !right.kills() || rc != NO_PRODUCT {
                     // Safety: as above.
                     unsafe { cell.push(lc, rc) };
@@ -157,11 +157,11 @@ where
         let (c, d) = (g_pairs[0].left.0, g_pairs[0].right.0);
         let node_idx = &*node_idx;
         push_kept(eng, sink, f_pairs, kills, |p1| {
-            let lc = left.get(node_idx, p1.left.0, c);
+            let lc = left.get_viewed(node_idx, p1.left.0, c);
             if left.kills() && lc == NO_PRODUCT {
                 return (lc, lc);
             }
-            (lc, right.get(node_idx, p1.right.0, d))
+            (lc, right.get_viewed(node_idx, p1.right.0, d))
         })?;
     } else {
         // 1×N: one f pair fixes both child rows for the whole sweep.
@@ -170,11 +170,11 @@ where
         let rrow = right.row(p1.right.0);
         let node_idx = &*node_idx;
         push_kept(eng, sink, g_pairs, kills, |p2| {
-            let lc = left.get_in_row(node_idx, lrow, p2.left.0);
+            let lc = left.get_in_view(node_idx, lrow, p2.left.0);
             if left.kills() && lc == NO_PRODUCT {
                 return (lc, lc);
             }
-            (lc, right.get_in_row(node_idx, rrow, p2.right.0))
+            (lc, right.get_in_view(node_idx, rrow, p2.right.0))
         })?;
     }
     sink.end(eng, node_idx, grid_pos, cell_start)?;
@@ -254,7 +254,7 @@ where
             for &g2_end in g_runs {
                 let g2 = &g_pairs[g2_start..g2_end as usize];
                 g2_start = g2_end as usize;
-                let lc = left.get(node_idx, p1_left.0, g2[0].left.0);
+                let lc = left.get_viewed(node_idx, p1_left.0, g2[0].left.0);
                 if left.kills() && lc == NO_PRODUCT {
                     continue;
                 }
@@ -270,7 +270,7 @@ where
                     let node_idx = &*node_idx;
                     // `lc` is live here, so only the right side can kill.
                     push_kept(eng, sink, g2, right.kills(), |p2| {
-                        (lc, right.get_in_row(node_idx, rrow, p2.right.0))
+                        (lc, right.get_in_view(node_idx, rrow, p2.right.0))
                     })?;
                 }
             }
@@ -299,11 +299,11 @@ where
             let rrow = right.row(p1.right.0);
             let node_idx = &*node_idx;
             push_kept(eng, sink, g_pairs, kills, |p2| {
-                let lc = left.get_in_row(node_idx, lrow, p2.left.0);
+                let lc = left.get_in_view(node_idx, lrow, p2.left.0);
                 if left.kills() && lc == NO_PRODUCT {
                     return (lc, lc);
                 }
-                (lc, right.get_in_row(node_idx, rrow, p2.right.0))
+                (lc, right.get_in_view(node_idx, rrow, p2.right.0))
             })?;
         }
     }
@@ -537,9 +537,9 @@ where
         gate.poll(1)?;
         let p1 = &f_pairs[0];
         let p2 = &g_pairs[0];
-        let lc = left.get(node_idx, p1.left.0, p2.left.0);
+        let lc = left.get_viewed(node_idx, p1.left.0, p2.left.0);
         if !left.kills() || lc != NO_PRODUCT {
-            let rc = right.get(node_idx, p1.right.0, p2.right.0);
+            let rc = right.get_viewed(node_idx, p1.right.0, p2.right.0);
             if !right.kills() || rc != NO_PRODUCT {
                 sink.single(eng, node_idx, grid_pos, lc, rc)?;
             }
