@@ -520,16 +520,11 @@ pub(super) fn group_single_entries(
         *record = (key << node_bits) | node as u64;
     }
 
-    // The nodes ascend below the keys, so a sort of the keys is stable. One
-    // pass a call, least significant digit first: a call of more than one
-    // pass over this many keys places a top digit first and then its runs,
-    // a pass more. The level's grouping charges no work for the sort, which
-    // only orders what the fingerprint pass read.
+    // The nodes ascend below the keys, so a sort of the keys is stable. The
+    // level's grouping charges no work for the sort, which only orders what
+    // the fingerprint pass read.
     records.truncate(width);
-    let (end, digit) = (node_bits + key_bits, crate::sort::RADIX_LARGE_BITS as u32);
-    for lo in (node_bits..end).step_by(digit as usize) {
-        radix.sort_polling(lim, records, lo as usize, digit.min(end - lo) as usize, &mut |_| Ok(()))?;
-    }
+    radix.sort_polling(lim, records, node_bits as usize, key_bits as usize, &mut |_| Ok(()))?;
     let sorted: &[u64] = records;
 
     // The runs of two or more, by their lowest member.

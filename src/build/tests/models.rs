@@ -346,13 +346,10 @@ fn a_wide_sort_of_keys_ascending_in_their_top_digit_sorts_each_run() {
 }
 
 #[test]
-fn a_sort_by_the_top_digit_leaves_the_order_of_a_stable_sort() {
-    // Past the second-level cache a sort of two or three passes places its
-    // top digit first and sorts each digit's run on its own, by passes or,
-    // for a short run, by comparison. Keys ascending in the bits below the
-    // sorted ones and in the bits above among ties, as the split's keys
-    // are; values spread over every top digit, confined to a few, and to
-    // one.
+fn a_sort_of_many_keys_leaves_the_order_of_a_stable_sort() {
+    // Keys ascending in the bits below the sorted ones and in the bits
+    // above among ties, as the split's keys are; values spread over every
+    // top digit, confined to a few, and to one.
     let mut rng = Lcg::new(17);
     for rows in [(1usize << 18) + 37, (1 << 19) + 5] {
         let index_bits = (usize::BITS - rows.leading_zeros()) as usize;
