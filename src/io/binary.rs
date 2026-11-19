@@ -165,9 +165,9 @@ pub fn load_tdd_binary(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd
 ///
 /// On a vtree on a home ([`Vtree::projection`](crate::Vtree::projection)),
 /// the supplied vtree names only the home: the file's vtree must be the
-/// projection of the home on the variables it declares. The reader then looks
-/// for a repeated pair, as the text reader does, seats the levels and their
-/// counts, and moves the result by the trim of
+/// projection of the home on the variables it declares. The reader seats the
+/// levels and their counts over that projection, refuses a pair repeated in
+/// a level, as the text reader does, and moves the result by the trim of
 /// [`TddBuilder::finish`](crate::diagram::TddBuilder::finish) to the
 /// projection on the leaves its pairs use, the counts with it.
 ///
@@ -275,8 +275,12 @@ fn decode(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
 }
 
 /// [`decode_levels`] onto the projection of `vtree`'s home on the leaves the
-/// file declares, the diagram then trimmed; its level counts, if any, are
-/// attached before the trim, which rescales them.
+/// file declares; the seated diagram, its counts attached, is checked for a
+/// repeated pair and then trimmed, which rescales the counts.
+// The header is checked here a second time rather than in a helper shared
+// with `decode_levels`: a second caller of anything inlined there changes
+// the code of the level reader, by about 1% of a query that reads its
+// diagrams from binary files.
 #[cold]
 #[inline(never)]
 fn decode_on_home(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
@@ -284,29 +288,23 @@ fn decode_on_home(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
         return Err(malformed(super::REGION_REFUSED));
     }
     let home = vtree.home().expect("a vtree on a home");
-    let (body, with_counts) = checked_body(bytes)?;
-    let mut body = Body { bytes: body, at: 0 };
-    let (own, order) = read_projection(&mut body, &home)?;
+    let (total, _) = check_header(bytes)?;
+    if bytes.len() < total {
+        return Err(truncated(bytes.len(), total));
+    }
+    let covered = &bytes[..total - TRAILER_BYTES];
+    let stored = u64::from_le_bytes(bytes[covered.len()..total].try_into().expect("eight bytes"));
+    if stored != xxh64(covered) {
+        return Err(malformed(format!("checksum mismatch: the file records {stored:#018x}")));
+    }
+    let mut body = Body { bytes: &covered[HEADER_BYTES..], at: 0 };
+    let own = read_projection(&mut body, &home)?;
     if own.num_nodes() == 0 {
-        let one = match body.varint("output")? {
-            0 => false,
-            1 => true,
-            v => return Err(malformed(format!("output {v} on a vtree with no node is not 0 or 1"))),
-        };
-        if body.left() != 0 {
-            return Err(malformed(format!("{} bytes follow the last record of the body", body.left())));
-        }
-        return Ok(crate::build::constant_without_leaf(&own, one));
+        return decode_without_leaf(bytes, &own);
     }
-    let (levels, local, counts) = parse_levels(&mut body, &own, &order, with_counts)?;
-    let root = own.root();
+    let mut tdd = decode_levels(bytes, &own)?;
     let built = |e: crate::diagram::TddBuildError| malformed(format!("the records do not form a diagram: {e}"));
-    let mut tdd = crate::diagram::TddBuilder::from_levels(own, levels, None)
-        .finish_untrimmed(TddNodeId { vtree: root, local })
-        .map_err(built)?;
-    if let Some(counts) = counts {
-        tdd.levels.keep_counts(counts);
-    }
+    crate::diagram::check_seated_pairs(&tdd).map_err(built)?;
     crate::diagram::trim_on_home(&mut tdd).map_err(built)?;
     Ok(tdd)
 }
@@ -328,14 +326,6 @@ fn decode_without_leaf(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError>
 /// Check the header, the length and the checksum of one whole file, then
 /// parse its body.
 fn decode_levels(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
-    let (body, with_counts) = checked_body(bytes)?;
-    parse_body(body, vtree, with_counts)
-}
-
-/// The body of one whole file whose header, length and checksum hold, and
-/// whether it is a version that holds level counts.
-#[inline(always)]
-fn checked_body(bytes: &[u8]) -> Result<(&[u8], bool), IoError> {
     let (total, version) = check_header(bytes)?;
     if bytes.len() < total {
         return Err(truncated(bytes.len(), total));
@@ -355,7 +345,7 @@ fn checked_body(bytes: &[u8]) -> Result<(&[u8], bool), IoError> {
              {computed:#018x}"
         )));
     }
-    Ok((&covered[HEADER_BYTES..], version == COUNTS_FORMAT_VERSION))
+    parse_body(&covered[HEADER_BYTES..], vtree, version == COUNTS_FORMAT_VERSION)
 }
 
 /// `XXH64` with seed 0, the checksum the trailer records.
@@ -876,10 +866,11 @@ fn check_vtree_header(body: &mut Body<'_>, vtree: &Vtree) -> Result<Vec<VtreeIdx
             VtreeNode::Internal { .. } => 0,
         };
         if token != expected {
+            let describe = |v: u64| if v == 0 { "an internal node".to_string() } else { format!("the leaf of variable {v}") };
             return Err(malformed(format!(
                 "vtree node {k} in postorder is {} in the file and {} in the vtree read against",
-                describe_token(token),
-                describe_token(expected)
+                describe(token),
+                describe(expected)
             )));
         }
     }
@@ -891,22 +882,7 @@ fn check_vtree_header(body: &mut Body<'_>, vtree: &Vtree) -> Result<Vec<VtreeIdx
 fn parse_body(bytes: &[u8], vtree: &Arc<Vtree>, with_counts: bool) -> Result<Tdd, IoError> {
     let mut body = Body { bytes, at: 0 };
     let order = check_vtree_header(&mut body, vtree)?;
-    let (levels, local, counts) = parse_levels(&mut body, vtree, &order, with_counts)?;
-    let mut tdd = crate::diagram::TddBuilder::from_levels(Arc::clone(vtree), levels, None)
-        .finish_trusting_pairs(TddNodeId { vtree: vtree.root(), local })
-        .map_err(|e| malformed(format!("the records do not form a diagram: {e}")))?;
-    if let Some(counts) = counts {
-        tdd.levels.keep_counts(counts);
-    }
-    Ok(tdd)
-}
 
-/// The rest of a body whose vtree is `vtree`, with postorder `order`: the
-/// levels, the output's local index and the counts of a version 2 file.
-#[inline(always)]
-fn parse_levels(
-    body: &mut Body<'_>, vtree: &Vtree, order: &[VtreeIdx], with_counts: bool,
-) -> Result<(Vec<TddLevel>, NodeIdx, Option<LevelCounts>), IoError> {
     let root = vtree.root();
     let output = body.varint("output")?;
     let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
@@ -914,7 +890,7 @@ fn parse_levels(
     if output != 0 {
         for (k, &t) in order.iter().enumerate() {
             let VtreeNode::Internal { left, right, .. } = *vtree.node(t) else { continue };
-            let level = read_level(body, width[left.idx()], width[right.idx()]).map_err(|e| match e {
+            let level = read_level(&mut body, width[left.idx()], width[right.idx()]).map_err(|e| match e {
                 IoError::Format(m) => IoError::Format(format!("{m} (the level of vtree node {k} in postorder)")),
                 other => other,
             })?;
@@ -922,7 +898,7 @@ fn parse_levels(
             levels[t.idx()] = level;
         }
     }
-    let counts = if with_counts && output != 0 { Some(read_counts(body, vtree, order, &width)?) } else { None };
+    let counts = if with_counts && output != 0 { Some(read_counts(&mut body, vtree, &order, &width)?) } else { None };
     if body.left() != 0 {
         return Err(malformed(format!("{} bytes follow the last record of the body", body.left())));
     }
@@ -937,14 +913,20 @@ fn parse_levels(
             )));
         }
     };
-    Ok((levels, local, counts))
+    let mut tdd = crate::diagram::TddBuilder::from_levels(Arc::clone(vtree), levels, None)
+        .finish_trusting_pairs(TddNodeId { vtree: root, local })
+        .map_err(|e| malformed(format!("the records do not form a diagram: {e}")))?;
+    if let Some(counts) = counts {
+        tdd.levels.keep_counts(counts);
+    }
+    Ok(tdd)
 }
 
 /// The stored vtree of a file read onto `home`: the projection of `home` on
-/// the leaves it declares, with its postorder, when the stored tree is that
+/// the leaves it declares, when the stored tree is that
 /// projection's. Its counts are bounded by the home's before a buffer is
 /// sized from them.
-fn read_projection(body: &mut Body<'_>, home: &Home) -> Result<(Arc<Vtree>, Vec<VtreeIdx>), IoError> {
+fn read_projection(body: &mut Body<'_>, home: &Home) -> Result<Arc<Vtree>, IoError> {
     let leaves = body.varint("leaf count")?;
     let nodes = body.varint("vtree node count")?;
     let most = u64::from(home.vtree().num_leaves());
@@ -972,7 +954,7 @@ fn read_projection(body: &mut Body<'_>, home: &Home) -> Result<(Arc<Vtree>, Vec<
         return Err(malformed("the file's vtree declares a variable at two leaves"));
     }
     if ranks.is_empty() {
-        return Ok((Vtree::empty_projection(home), Vec::new()));
+        return Ok(Vtree::empty_projection(home));
     }
     let own = Vtree::projection_on_ranks(home, ranks);
     let order = postorder(&own);
@@ -982,18 +964,15 @@ fn read_projection(body: &mut Body<'_>, home: &Home) -> Result<(Arc<Vtree>, Vec<
             VtreeNode::Internal { .. } => 0,
         };
         if token != expected {
+            let describe = |v: u64| if v == 0 { "an internal node".to_string() } else { format!("the leaf of variable {v}") };
             return Err(malformed(format!(
                 "vtree node {k} in postorder is {} in the file and {} in the projection of the vtree's home on its leaves",
-                describe_token(token),
-                describe_token(expected)
+                describe(token),
+                describe(expected)
             )));
         }
     }
-    Ok((own, order))
-}
-
-fn describe_token(v: u64) -> String {
-    if v == 0 { "an internal node".to_string() } else { format!("the leaf of variable {v}") }
+    Ok(own)
 }
 
 /// The counts section of a version 2 file: per internal level in `order`,

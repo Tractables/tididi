@@ -435,19 +435,13 @@ impl TddBuilder {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn finish(self, output: TddNodeId) -> Result<Tdd, TddBuildError> {
-        let mut tdd = self.finish_untrimmed(output)?;
+        check_storage::<true>(&self.vtree, &self.levels, output, self.weights.as_ref())?;
+        let dirty = self.seed_worklists(Default::default(), None, None).expect("untracked worklists cannot be refused");
+        let mut tdd = self.seat(output, dirty, None);
         if tdd.vtree.on_home() {
             trim_on_home(&mut tdd)?;
         }
         Ok(tdd)
-    }
-
-    /// [`finish`](Self::finish) without the trim on a home, for a reader that
-    /// attaches level counts first.
-    pub(crate) fn finish_untrimmed(self, output: TddNodeId) -> Result<Tdd, TddBuildError> {
-        check_storage::<true>(&self.vtree, &self.levels, output, self.weights.as_ref())?;
-        let dirty = self.seed_worklists(Default::default(), None, None).expect("untracked worklists cannot be refused");
-        Ok(self.seat(output, dirty, None))
     }
 
     /// The checks [`finish`](Self::finish) runs, the repeated-pair check
@@ -528,6 +522,19 @@ impl TddBuilder {
         return_levels(eng, std::mem::take(&mut self.levels));
     }
 
+}
+
+/// The checks of [`TddBuilder::finish`] on a diagram without weights,
+/// seated without the repeated-pair check.
+// The weights are `None` here, not read from the diagram: a second call of
+// `WeightStore::check_levels` takes it out of line in `finish_trusting_pairs`,
+// whose storage loop then costs a query that reads its diagrams from binary
+// files 0.4 to 0.8% more.
+#[cold]
+#[inline(never)]
+pub(crate) fn check_seated_pairs(tdd: &Tdd) -> Result<(), TddBuildError> {
+    debug_assert!(tdd.weights.is_none(), "a diagram read from a file has no weights");
+    check_storage::<true>(&tdd.vtree, &tdd.levels, tdd.output, None)
 }
 
 /// [`Tdd::trim`] of a diagram just seated on a home, unless it has a marginal
