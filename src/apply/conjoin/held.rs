@@ -86,6 +86,36 @@ impl Held<'_> {
         }
     }
 
+    /// Whether the operand passes through `t` ([`View::passes`]).
+    #[inline(always)]
+    pub(crate) fn passes(&self, t: usize) -> bool {
+        self.view.as_deref().is_some_and(|view| view.passes(t))
+    }
+
+    /// Whether a view passes through some node.
+    #[inline]
+    pub(crate) fn passes_any(&self) -> bool {
+        self.view.as_deref().is_some_and(View::passes_any)
+    }
+
+    /// [`View::pinned`].
+    #[inline]
+    pub(crate) fn pinned(&self, t: usize, c: usize) -> Option<u32> {
+        self.view.as_deref().and_then(|view| view.pinned(self.tdd(), t, c))
+    }
+
+    /// [`View::literals`].
+    #[inline]
+    pub(crate) fn literals(&self, t: usize) -> Option<u8> {
+        self.view.as_deref().and_then(|view| view.literals(self.tdd(), t))
+    }
+
+    /// Whether the operand has no variable under `t` of a view's vtree.
+    #[inline]
+    pub(crate) fn is_free(&self, t: usize) -> bool {
+        self.view.as_deref().is_some_and(|view| view.is_free(t))
+    }
+
     /// The operand's level at node `t` of the sweep's vtree.
     #[inline(always)]
     pub(crate) fn level(&self, t: impl LevelAt) -> &TddLevel {
@@ -297,6 +327,20 @@ pub(super) struct Here<'a> {
 /// does not test for one at each level.
 pub(crate) trait Levels {
     fn level_at(&self, t: usize) -> &TddLevel;
+
+    /// The width of the internal level at `t`, where it is not the level's
+    /// width only if [`Levels::passes_any`].
+    #[inline(always)]
+    fn width_at(&self, t: usize) -> usize {
+        self.level_at(t).slot_count()
+    }
+
+    /// Whether the levels are read through a view that passes through some
+    /// node.
+    #[inline(always)]
+    fn passes_any(&self) -> bool {
+        false
+    }
 }
 
 impl Levels for [TddLevel] {
@@ -310,6 +354,19 @@ impl Levels for Held<'_> {
     #[inline(always)]
     fn level_at(&self, t: usize) -> &TddLevel {
         self.level(t)
+    }
+
+    #[inline(always)]
+    fn width_at(&self, t: usize) -> usize {
+        match &self.view {
+            None => self.tdd().levels[t].slot_count(),
+            Some(view) => view.width(self.tdd(), t),
+        }
+    }
+
+    #[inline(always)]
+    fn passes_any(&self) -> bool {
+        Held::passes_any(self)
     }
 }
 

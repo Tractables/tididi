@@ -7,23 +7,22 @@ use std::sync::Arc;
 
 use super::view::{Slot, View};
 use super::{conjoin_kept, Operands, VtreeMask};
-use crate::diagram::{LevelBuffer, Tdd};
+use crate::diagram::Tdd;
 use crate::execution::pool::{Buffers, PoolGuard, PooledScratch, Scratch};
 use crate::limits::{Limits, OperationError};
 use crate::restructure::embed::{Plan, Target};
 use crate::vtree::{Reading, UnionReader, Vtree, VtreeIdx};
 use crate::Engine;
 
-/// One operand's tables, by node of the union: its target, every entry
-/// [`Target::Free`] and every slot [`Slot::Free`] between conjunctions; the
-/// image of each of its nodes; the internal nodes it is not free at,
-/// children before parents.
+/// One operand's tables, by node of the union: its target, its slot and
+/// whether it passes through, every entry [`Target::Free`], [`Slot::Free`]
+/// and false between conjunctions; the image of each of its nodes; the
+/// internal nodes it is not free at, children before parents.
 #[derive(Default)]
 struct Side {
     targets: Vec<Target>,
     slots: Vec<Slot>,
-    /// The levels of its view, every one empty between conjunctions.
-    built: LevelBuffer,
+    passes: Vec<bool>,
     embedding: Vec<VtreeIdx>,
     cone: Vec<VtreeIdx>,
     pass_throughs: usize,
@@ -41,6 +40,9 @@ impl Side {
             lim.reserve_exact(&mut self.slots, more)?;
             self.slots.extend(std::iter::repeat_n(Slot::Free, more));
         }
+        if self.passes.len() < nodes {
+            lim.try_resize(&mut self.passes, nodes, false)?;
+        }
         self.embedding.clear();
         lim.try_resize(&mut self.embedding, own, VtreeIdx(0))?;
         self.cone.clear();
@@ -54,6 +56,7 @@ impl Side {
         match reading {
             Reading::Own(s) => {
                 self.targets[u.idx()] = Target::Image { source: s, mirrored: false };
+                self.slots[u.idx()] = Slot::Own(s.0);
                 self.embedding[s.idx()] = u;
                 if s.idx() >= leaves {
                     self.cone.push(u);
@@ -65,6 +68,8 @@ impl Side {
                     Target::Free => unreachable!("a pass-through carries a side with a leaf"),
                 };
                 self.targets[u.idx()] = Target::PassThrough(carried);
+                self.slots[u.idx()] = Slot::Own(carried.0);
+                self.passes[u.idx()] = true;
                 self.cone.push(u);
                 self.pass_throughs += 1;
             }
@@ -72,11 +77,17 @@ impl Side {
         }
     }
 
-    /// Every target written free again.
+    /// Every entry written free again.
     fn clear(&mut self) {
         for &u in self.embedding.iter().chain(&self.cone) {
             if let Some(target) = self.targets.get_mut(u.idx()) {
                 *target = Target::Free;
+            }
+            if let Some(slot) = self.slots.get_mut(u.idx()) {
+                *slot = Slot::Free;
+            }
+            if let Some(passes) = self.passes.get_mut(u.idx()) {
+                *passes = false;
             }
         }
         self.embedding.clear();
@@ -90,7 +101,7 @@ impl Side {
 
     fn put_back(&mut self, plan: Plan, view: Option<View>) {
         if let Some(view) = view {
-            (self.slots, self.built.levels) = view.release_kept(&plan);
+            (self.slots, self.passes) = view.release_passing(&plan);
         }
         (self.targets, self.embedding, self.cone) = plan.into_parts();
     }
@@ -109,7 +120,7 @@ impl Buffers for UnionTables {
             visit(&mut side.slots);
             visit(&mut side.embedding);
             visit(&mut side.cone);
-            side.built.buffers(visit);
+            visit(&mut side.passes);
         }
     }
 }
@@ -117,7 +128,6 @@ impl Buffers for UnionTables {
 impl PooledScratch for UnionTables {
     fn prepare(&mut self) {}
 
-    /// Each view left its levels empty within [`View::release_kept`]'s room.
     fn retain(&mut self, lim: &Limits) -> usize {
         for side in &mut self.sides {
             side.clear();
@@ -175,8 +185,9 @@ impl UnionReader for Reader<'_> {
     }
 }
 
-/// `f ∧ g` on `into`, their union, with `tables` as the reader of
-/// [`prepare`] left them: each operand read through a view of its plan.
+/// `f ∧ g` on `into`, their union, with `tables` as the reader left them:
+/// each operand read through a view that builds no level
+/// ([`View::passing`]).
 pub(super) fn conjoin_union<'a>(
     eng: &Engine,
     f: Cow<'a, Tdd>,
@@ -188,9 +199,9 @@ pub(super) fn conjoin_union<'a>(
     let [sf, sg] = &mut tables.sides;
     lim.gate().poll_each((sf.cone.len() + sg.cone.len()) as u64)?;
     let (fp, gp) = (sf.plan(), sg.plan());
-    let tables = |side: &mut Side| (std::mem::take(&mut side.slots), std::mem::take(&mut side.built.levels));
-    let fv = View::build_in(eng, &f, into, &fp, tables(sf));
-    let gv = View::build_in(eng, &g, into, &gp, tables(sg));
+    let tables = |side: &mut Side| (std::mem::take(&mut side.slots), std::mem::take(&mut side.passes));
+    let fv = View::passing(eng, &f, into, &fp, tables(sf));
+    let gv = View::passing(eng, &g, into, &gp, tables(sg));
     let (mut fv, mut gv) = match (fv, gv) {
         (Ok(fv), Ok(gv)) => (fv, gv),
         (fv, gv) => {
@@ -198,8 +209,8 @@ pub(super) fn conjoin_union<'a>(
             for (side, plan, view) in [(&mut *sf, fp, fv), (&mut *sg, gp, gv)] {
                 match view {
                     Ok(view) => side.put_back(plan, Some(view)),
-                    Err((e, (slots, built))) => {
-                        (side.slots, side.built.levels) = (slots, built);
+                    Err((e, (slots, passes))) => {
+                        (side.slots, side.passes) = (slots, passes);
                         side.put_back(plan, None);
                         error = Some(e);
                     }

@@ -357,6 +357,7 @@ impl Products {
     /// # Errors
     ///
     /// [`OperationError::OverBudget`] when the map's growth is refused.
+    #[inline(always)]
     pub(super) fn column(
         &self,
         eng: &Engine,
@@ -422,6 +423,36 @@ impl Products {
         }
         self.live_counts[t] = nodes;
         self.complete[t] = nodes == map.len();
+        Ok(())
+    }
+
+    /// Publish a level whose nodes were emitted in cell order: `map` holds
+    /// the output node of each cell `(i, j)` at `i * g_width + j`, or
+    /// `NO_PRODUCT` where the product is false.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::OverBudget`] when the product list's growth is refused.
+    pub(super) fn publish_cells(
+        &mut self, eng: &Engine, t: usize, g_width: usize, map: &[u32], nodes: usize,
+    ) -> Result<(), OperationError> {
+        let complete = nodes == map.len();
+        if let Some(base) = self.arena.materialized(t) {
+            self.arena.slab_mut()[base.idx()..base.idx() + map.len()].copy_from_slice(map);
+        } else if !complete {
+            self.touch(t);
+            let list = &mut self.product_lists[t];
+            list.clear();
+            eng.limits().reserve(list, nodes)?;
+            for (k, &prod) in map.iter().enumerate() {
+                if prod == super::NO_PRODUCT { continue; }
+                let (i, j) = ((k / g_width) as u32, (k % g_width) as u32);
+                list.push(ProductEntry { f_idx: FNodeIdx(i), g_idx: GNodeIdx(j), prod_idx: ProductNodeIdx(prod) });
+            }
+            self.has_pl[t] = true;
+        }
+        self.live_counts[t] = nodes;
+        self.complete[t] = complete;
         Ok(())
     }
 

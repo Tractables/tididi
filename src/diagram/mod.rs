@@ -217,7 +217,7 @@ pub(crate) use level::LevelState;
 
 // pool
 pub(crate) use pool::{reset_level, return_levels, take_levels, try_take_levels};
-pub(crate) use pool::{LevelBuffer, LevelPool};
+pub(crate) use pool::LevelPool;
 
 // tdd
 pub use build_error::TddBuildError;

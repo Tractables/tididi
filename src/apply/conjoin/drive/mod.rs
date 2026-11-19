@@ -119,7 +119,12 @@ fn sweep_levels(
         let before = output_nodes + cone.free_before(k);
         lim.level_done(before)?;
         build_level(eng, run, f, g, sweep, (t, left, right), before)?;
-        output_nodes += run.levels[t.idx()].slot_count() as u64;
+        let nodes = run.levels[t.idx()].slot_count();
+        if nodes == 0 && run.plain && sweep.counted.is_none() {
+            run.dead = true;
+            return Ok(());
+        }
+        output_nodes += nodes as u64;
     }
     if progress {
         lim.conjunction_reached(internal.len() as u32);
@@ -169,8 +174,12 @@ fn build_level(
         drop_dead_children(f, g, shape);
     }
 
-    let taken = take_level_fast_path(eng, run, f, g, shape)?
-        || take_relabel_level(eng, run, f, g, shape, sweep)?;
+    let taken = if run.passing && (f.passes(t.idx()) || g.passes(t.idx())) {
+        super::relabel::take_pass_level(eng, run, f, g, shape, vtree)?;
+        true
+    } else {
+        take_level_fast_path(eng, run, f, g, shape)? || take_relabel_level(eng, run, f, g, shape, sweep)?
+    };
     debug_assert!(
         taken || !run.cone.free_at(t.idx()),
         "a free level at {} takes the other operand's level",
@@ -595,6 +604,10 @@ fn apply_and_held(
     // The levels under a free level are read by no level the sweep builds.
     init_leaf_identity_over(eng, run.g_identity, g, cone.built, cone.tops, cone.leaves)?;
     init_leaf_identity_over(eng, run.f_identity, f, cone.built, cone.tops, cone.leaves)?;
+    run.passing = f.passes_any() || g.passes_any();
+    if run.passing {
+        refute_passed_leaves(&vtree, Operands { f: &*f, g: &*g }, &mut run, cone.built);
+    }
     if run.entry_marginality.any() {
         refuse_summed_leaf_reads(Operands { f: &*f, g: &*g }, Operands { f: run.f_identity, g: run.g_identity }, cone.leaves)?;
     }
@@ -604,10 +617,11 @@ fn apply_and_held(
     // The operands' loose levels as a prune would settle them, read before
     // the sweep drops the operands' levels.
     let operand_loose = match (f.dirty().loose(), g.dirty().loose()) {
-        (Some(lf), Some(lg)) if plain => Some(Operands {
+        (Some(lf), Some(lg)) if plain && !run.passing => Some(Operands {
             f: settle_loose_in(eng, &vtree, &|t| f.level(t), lf)?,
             g: settle_loose_in(eng, &vtree, &|t| g.level(t), lg)?,
         }),
+        (Some(lf), Some(lg)) if plain => Some(listed_loose(eng, Operands { f: lf, g: lg })?),
         _ => None,
     };
 
@@ -645,6 +659,12 @@ fn apply_and_held(
             give_back(run.levels, f, g, run.lists, cone);
         }
         return Err(e);
+    }
+    if run.dead {
+        if run.restoring {
+            give_back(run.levels, f, g, run.lists, run.cone);
+        }
+        return Ok(Conjoined::Built(dead_conjunction(eng, assembly, f.output().vtree)?));
     }
     // The levels the sweep built, short of the chain where it stopped.
     let cone = run.cone;
@@ -853,4 +873,48 @@ fn refuse_summed_leaf_reads(ops: Operands<&Held<'_>>, identity: Operands<&[bool]
         }
     }
     Ok(())
+}
+
+/// Clear each operand's identity flag at a leaf it passes to: the flag was
+/// read off the level a pass-through's slot names, whose pairs are not the
+/// pass-through's.
+#[cold]
+fn refute_passed_leaves(vtree: &Vtree, ops: Operands<&Held<'_>>, run: &mut ApplyRun, built: &[VtreeIdx]) {
+    for &t in built {
+        let (left, right) = vtree.children(t);
+        for (op, identity) in [(ops.f, &mut *run.f_identity), (ops.g, &mut *run.g_identity)] {
+            if op.passes(t.idx()) {
+                for c in [left, right] {
+                    if vtree.node(c).is_leaf() && !op.is_free(c.idx()) {
+                        identity[c.idx()] = false;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The false conjunction a sweep that built an empty level returns at once,
+/// in place of the levels it holds.
+#[cold]
+fn dead_conjunction(eng: &Engine, mut assembly: diagram::Assembly<'_>, root: VtreeIdx) -> Result<Tdd, OperationError> {
+    let levels = assembly.parts_mut().0;
+    let fresh = diagram::try_take_levels(eng, levels.len())?;
+    diagram::return_levels(eng, std::mem::replace(levels, fresh));
+    let mut out = assembly.finish(TddNodeId { vtree: root, local: ZERO })?;
+    out.dirty.set_loose(Some(Vec::new()));
+    Ok(out)
+}
+
+/// Each operand's loose levels as listed: at a view's pass-throughs the
+/// levels read are not the operand's, so a prune does not settle them.
+#[cold]
+fn listed_loose(eng: &Engine, listed: Operands<&[u32]>) -> Result<Operands<Vec<u32>>, OperationError> {
+    let copy = |list: &[u32]| -> Result<Vec<u32>, OperationError> {
+        let mut out = Vec::new();
+        eng.limits().reserve_exact(&mut out, list.len())?;
+        out.extend_from_slice(list);
+        Ok(out)
+    };
+    Ok(Operands { f: copy(listed.f)?, g: copy(listed.g)? })
 }
