@@ -10,7 +10,7 @@ use crate::Engine;
 use crate::apply::conjoin::tests::apply_and_fallible;
 use crate::apply::conjoin::{VtreeMask, apply_and};
 use crate::build::constant_one;
-use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Tdd, WeightStore};
+use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Tdd, Weights};
 use crate::test_helpers::{CnfShape, Lcg, clause_to_tdd, exact_weight, literals, rand_cnf, rat};
 use crate::vtree::{Vtree, VtreeIdx};
 
@@ -71,24 +71,22 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
     let rand_weight =
         |rng: &mut Lcg| -> BigRational { rat(1 + rng.below(9) as i64, 1 + rng.below(9) as i64) };
     for &nvars in &[2u32, 3, 4, 5, 6] {
-        let vtree = Arc::new(Vtree::balanced(nvars));
-        let targets = interior_targets(&vtree);
+        let targets = interior_targets(&Vtree::balanced(nvars));
         for _ in 0..50 {
-            let a = rand_unminimized_tdd(&eng, &vtree, &mut rng, nvars);
-            let b = rand_unminimized_tdd(&eng, &vtree, &mut rng, nvars);
             let weights: Vec<LiteralWeights<BigRational>> = (0..nvars)
                 .map(|_| LiteralWeights {
                     negative: rand_weight(&mut rng),
                     positive: rand_weight(&mut rng),
                 })
                 .collect();
+            let vtree = Arc::new(Vtree::balanced(nvars).with_weights(Weights::new(
+                RationalWeights::from_literals(&weights),
+                Arithmetic::ExactRational,
+            )).unwrap());
+            let a = rand_unminimized_tdd(&eng, &vtree, &mut rng, nvars);
+            let b = rand_unminimized_tdd(&eng, &vtree, &mut rng, nvars);
             let run = |mask: VtreeMask<'_>| {
                 let (mut a_c, mut b_c) = (a.clone(), b.clone());
-                a_c.set_weights(WeightStore::new(
-                    RationalWeights::from_literals(&weights),
-                    Arithmetic::ExactRational,
-                ))
-                .unwrap();
                 let res =
                     apply_and_fallible(&eng, &mut a_c, &mut b_c, mask)
                         .unwrap();

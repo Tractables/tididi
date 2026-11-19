@@ -4,21 +4,15 @@
 use std::sync::Arc;
 
 use crate::{Engine, OperationError, Tdd};
-use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
+use crate::diagram::{Arithmetic, RationalWeights, Weights};
 use crate::test_helpers::{rand_cnf, CnfShape, Lcg};
 use crate::vtree::{Vtree, VtreeIdx};
 
-/// The conjunction of `clauses` over `tree`, weighted by `store` if given.
-fn conjoin_all(eng: &Engine, tree: &Arc<Vtree>, clauses: &[Vec<i32>], store: Option<&WeightStore>) -> Tdd {
+/// The conjunction of `clauses` over `tree`.
+fn conjoin_all(eng: &Engine, tree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
     let mut d = eng.one(tree);
-    if let Some(store) = store {
-        d.set_weights(store.empty_like()).unwrap();
-    }
     for clause in clauses {
-        let mut c = eng.clause(tree, clause.iter().copied()).unwrap();
-        if let Some(store) = store {
-            c.set_weights(store.empty_like()).unwrap();
-        }
+        let c = eng.clause(tree, clause.iter().copied()).unwrap();
         d = eng.and(d, c).unwrap();
     }
     d
@@ -26,7 +20,7 @@ fn conjoin_all(eng: &Engine, tree: &Arc<Vtree>, clauses: &[Vec<i32>], store: Opt
 
 /// The value of a summed-out diagram, as text: a count, or a weight.
 fn value(eng: &Engine, d: &Tdd) -> String {
-    match d.weights.is_some() {
+    match d.weights().is_some() {
         true => format!("{:?}", eng.weighted_value(d).unwrap()),
         false => eng.model_count(d).unwrap().to_string(),
     }
@@ -43,17 +37,21 @@ fn a_streamed_column_past_the_slot_cap_is_refused() {
     let targets: Vec<VtreeIdx> = tree.bottomup().filter(|&t| !tree.node(t).is_leaf()).collect();
     let stores = [
         None,
-        Some(WeightStore::new(RationalWeights::unit(num_vars as usize), Arithmetic::ExactRational)),
-        Some(WeightStore::new(RationalWeights::unit(num_vars as usize), Arithmetic::SignedLog)),
-        Some(WeightStore::new(RationalWeights::unit(num_vars as usize), Arithmetic::ScaledFloat)),
+        Some(Weights::new(RationalWeights::unit(num_vars as usize), Arithmetic::ExactRational)),
+        Some(Weights::new(RationalWeights::unit(num_vars as usize), Arithmetic::SignedLog)),
+        Some(Weights::new(RationalWeights::unit(num_vars as usize), Arithmetic::ScaledFloat)),
     ];
     for store in &stores {
-        let (f, g) = (conjoin_all(&eng, &tree, a, store.as_ref()), conjoin_all(&eng, &tree, b, store.as_ref()));
+        let tree = match store {
+            Some(store) => Arc::new(Vtree::clone(&tree).with_weights(store.clone()).unwrap()),
+            None => Arc::clone(&tree),
+        };
+        let (f, g) = (conjoin_all(&eng, &tree, a), conjoin_all(&eng, &tree, b));
         let expected = value(&eng, &eng.and_marginalizing(f.clone(), g.clone(), &targets).unwrap());
         eng.limits().pin_slot_cap(Some(1));
         let refused = eng.and_marginalizing(f.clone(), g.clone(), &targets);
         eng.limits().pin_slot_cap(None);
-        assert_eq!(refused.err(), Some(OperationError::IndexOverflow), "{:?}", store.as_ref().map(WeightStore::arithmetic));
+        assert_eq!(refused.err(), Some(OperationError::IndexOverflow), "{:?}", store.as_ref().map(Weights::arithmetic));
         let again = eng.and_marginalizing(f, g, &targets).unwrap();
         assert_eq!(value(&eng, &again), expected);
     }

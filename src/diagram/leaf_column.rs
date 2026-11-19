@@ -2,11 +2,11 @@
 //!
 //! A leaf has three label slots — One, Pos, Neg — and a marginalized leaf level
 //! holds one value per slot. The integer column is a constant (`[2, 1, 1]`); the
-//! weighted one is read from the [`WeightStore`]. Both are pinned: no pass
+//! weighted one is read from the [`Weights`]. Both are pinned: no pass
 //! compacts, reorders or appends to them
 //! ([`check_leaf_columns_pinned`](crate::test_helpers::check::marginal::check_leaf_columns_pinned)).
 
-use crate::diagram::{LeafLabel, WeightStore, WeightValue};
+use crate::diagram::{LeafLabel, Weights, WeightValue};
 use crate::vtree::VarId;
 
 /// The pinned column of an integer-marginal vtree leaf: the model count of
@@ -27,10 +27,10 @@ pub(crate) fn leaf_count(label: LeafLabel) -> u128 {
     }
 }
 
-/// The pinned column of a weight-marginal vtree leaf: [`WeightStore::leaf_val`]
+/// The pinned column of a weight-marginal vtree leaf: [`Weights::leaf_val`]
 /// for One/Pos/Neg in [`LeafLabel::from_idx`] slot order (0 = One = w⁺+w⁻,
 /// 1 = Pos = w⁺, 2 = Neg = w⁻).
-pub(crate) fn leaf_column_vals(ws: &WeightStore, var: VarId) -> Vec<WeightValue> {
+pub(crate) fn leaf_column_vals(ws: &Weights, var: VarId) -> Vec<WeightValue> {
     (0..crate::diagram::LEAF_WIDTH)
         .map(|i| ws.leaf_val(var, LeafLabel::from_idx(i)))
         .collect()

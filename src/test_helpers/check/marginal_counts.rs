@@ -12,7 +12,7 @@ use crate::vtree::VtreeIdx;
 /// integer counts, big-overflow entries, and weighted slot carrier as the parent
 /// marginalizes. Returns the levels where any of that data survived: each is
 /// dead memory. A weight-marginal vtree leaf is exempt — its 3-slot column is
-/// the compile-wide `WeightStore::leaf_val` cache that other diagrams decode
+/// the compile-wide `Weights::leaf_val` cache that other diagrams decode
 /// their leaf-label refs against, not per-diagram data.
 pub fn subsumed_marginal_data_violations(tdd: &Tdd) -> Vec<VtreeIdx> {
     let vtree = &tdd.vtree;

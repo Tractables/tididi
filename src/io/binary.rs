@@ -90,7 +90,7 @@ pub fn save_tdd_binary(f: &Tdd, path: impl AsRef<Path>) -> Result<(), IoError> {
 /// The bytes are those [`save_tdd_binary`] writes to a file. Like the text
 /// format, the binary format stores the reachable nodes only, renumbered in
 /// their level order with each node's pairs in their stored order, and no
-/// weights: a diagram carrying a weight store reads back in integer mode. It
+/// weights: a diagram on a weighted vtree reads back in integer mode. It
 /// stores the level counts the diagram keeps
 /// ([`Tdd::attach_level_counts`](crate::Tdd::attach_level_counts)), each
 /// internal level's where every one of them fits 128 bits, in format
@@ -913,7 +913,7 @@ fn parse_body(bytes: &[u8], vtree: &Arc<Vtree>, with_counts: bool) -> Result<Tdd
             )));
         }
     };
-    let mut tdd = crate::diagram::TddBuilder::from_levels(Arc::clone(vtree), levels, None)
+    let mut tdd = crate::diagram::TddBuilder::from_levels(Arc::clone(vtree), levels)
         .finish_trusting_pairs(TddNodeId { vtree: root, local })
         .map_err(|e| malformed(format!("the records do not form a diagram: {e}")))?;
     if let Some(counts) = counts {

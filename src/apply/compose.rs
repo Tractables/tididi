@@ -129,14 +129,6 @@ impl Quantification {
     fn pushes_through(self) -> bool {
         matches!(self, Quantification::Fused)
     }
-
-    /// The setting's name, for an error that names it.
-    fn name(self) -> &'static str {
-        match self {
-            Quantification::Fused => "Quantification::Fused",
-            Quantification::Product => "Quantification::Product",
-        }
-    }
 }
 
 /// Existential conjunction: `exists vars. (f AND g)`.
@@ -148,9 +140,8 @@ impl Quantification {
 /// free in that universe, as in [`Tdd::exists_vars`]. Summing counts with
 /// [`Engine::and_marginalizing`] is a different operation.
 ///
-/// Quantification follows [`Quantification::Fused`] on unweighted operands
-/// and [`Quantification::Product`] on weighted ones; [`Engine::and_exists_with`]
-/// takes the choice.
+/// Quantification follows [`Quantification::Fused`];
+/// [`Engine::and_exists_with`] takes the choice.
 ///
 /// # Errors
 ///
@@ -191,9 +182,8 @@ impl Engine {
         for f in [&condition, &then_branch, &else_branch] {
             f.require_structure()?;
         }
-        let [mut condition, mut then_branch, mut else_branch] =
+        let [condition, then_branch, else_branch] =
             super::extend::on_one(self, [condition, then_branch, else_branch].map(Cow::Owned))?.map(Cow::into_owned);
-        super::prepare_weights(&mut [&mut condition, &mut then_branch, &mut else_branch])?;
         let mut condition = SharedCircuit::new(condition, 2);
         let yes = self.and(condition.take(self)?, then_branch)?;
         let no = self.and_not(else_branch, condition.take(self)?)?;
@@ -210,8 +200,7 @@ impl Engine {
         let _op = self.limits().enter()?;
         f.require_structure()?;
         g.require_structure()?;
-        let [mut f, mut g] = super::extend::on_one(self, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
-        super::prepare_weights(&mut [&mut f, &mut g])?;
+        let [f, g] = super::extend::on_one(self, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
         let mut f = SharedCircuit::new(f, 2);
         let mut g = SharedCircuit::new(g, 2);
         let only_f = self.and_not(f.take(self)?, g.take(self)?)?;
@@ -219,22 +208,15 @@ impl Engine {
         self.or(only_f, only_g)
     }
 
-    /// Run [`and_exists`] using this batch's scratch and resource limits.
-    ///
-    /// Unweighted operands take [`Quantification::Fused`]; weighted operands
-    /// take [`Quantification::Product`], the one setting they admit.
+    /// Run [`and_exists`] using this batch's scratch and resource limits,
+    /// with [`Quantification::Fused`].
     ///
     /// # Errors
     ///
     /// Returns the operation's errors, plus [`OperationError::Stopped`] or
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn and_exists(&self, f: Tdd, g: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
-        let how = if f.weights.is_some() || g.weights.is_some() {
-            Quantification::Product
-        } else {
-            Quantification::default()
-        };
-        self.and_exists_with(f, g, vars, how)
+        self.and_exists_with(f, g, vars, Quantification::default())
     }
 
     /// Run [`and_exists`] with a chosen [`Quantification`], using this batch's
@@ -244,11 +226,7 @@ impl Engine {
     ///
     /// # Errors
     ///
-    /// [`OperationError::InertOption`] when a fused setting is chosen for
-    /// weighted operands: quantifying a variable out of one of them before the
-    /// product would leave the product's weights unresolved, so weighted
-    /// operands admit only [`Quantification::Product`]. Otherwise the
-    /// operation's errors, plus [`OperationError::Stopped`] or
+    /// The operation's errors, plus [`OperationError::Stopped`] or
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn and_exists_with(
         &self,
@@ -284,16 +262,6 @@ impl Engine {
         f.require_structure()?;
         g.require_structure()?;
         let [mut f, mut g] = super::extend::on_one(self, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
-        super::prepare_weights(&mut [&mut f, &mut g])?;
-        // Quantifying a weighted operand away entirely would replace its store
-        // by an empty one, and which of the two stores the product then carries
-        // is a question the rewrites below do not answer.
-        if how.pushes_through() && f.weights.is_some() {
-            return Err(OperationError::InertOption {
-                option: how.name(),
-                needs: "unweighted operands",
-            });
-        }
         let targets = super::project::quantification_targets(self, f.vtree(), vars)?;
         if how.pushes_through() {
             (f, g) = push_local_targets(self, f, g, &targets)?;

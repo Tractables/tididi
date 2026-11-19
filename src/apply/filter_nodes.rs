@@ -10,7 +10,7 @@
 //! are copied whole and leaf references are unchanged.
 
 use crate::Engine;
-use crate::diagram::{Assembly, ChildDecoder, ChildPair, ChildSide, EncodedChildRef, NodeIdx, Tdd, TddNodeId, ValueRef, WeightStore, ZERO};
+use crate::diagram::{Assembly, ChildDecoder, ChildPair, ChildSide, EncodedChildRef, NodeIdx, Tdd, TddNodeId, ValueRef, ZERO};
 use crate::limits::OperationError;
 use crate::reduce::ReductionPlan;
 use crate::vtree::VtreeIdx;
@@ -171,7 +171,6 @@ fn release(eng: &Engine, mut remap: Vec<Vec<u32>>) {
 fn sweep<'e>(eng: &'e Engine, f: &Tdd, remap: &mut [Vec<u32>]) -> Result<(Assembly<'e>, FilterStats), OperationError> {
     let lim = eng.limits();
     let mut out = Assembly::new(eng, &f.vtree)?;
-    *out.parts_mut().1 = f.weights.as_ref().map(WeightStore::empty_like);
     for (i, source) in f.levels.iter().enumerate() {
         let t = VtreeIdx(i as u32);
         if source.is_marginal() { out.replace_level(eng, t, f.level_view(t))?; }
@@ -218,7 +217,7 @@ fn sweep<'e>(eng: &'e Engine, f: &Tdd, remap: &mut [Vec<u32>]) -> Result<(Assemb
             emitted += 1;
         }
         lim.level_done(emitted)?;
-        let level = &mut out.parts_mut().0[t.idx()];
+        let level = &mut out.levels_mut()[t.idx()];
         for side in [ChildSide::Left, ChildSide::Right] {
             level.set_has_value_refs(side, source.has_value_refs(side));
         }

@@ -11,7 +11,7 @@ use super::drive;
 use super::union;
 use super::held::Held;
 use super::view::View;
-use super::{conjoin_cow, conjoin_kept, conjoin_onto, prepare_owned_weights, recycle, AndRefused, Operands, VtreeMask};
+use super::{conjoin_cow, conjoin_kept, conjoin_onto, recycle, AndRefused, Operands, VtreeMask};
 use crate::restructure::embed::Plan;
 use crate::diagram::{return_levels, try_take_levels, Assembly, ChildPair, Dirty, Tdd, TddNodeId};
 use crate::limits::OperationError;
@@ -47,7 +47,6 @@ pub(super) fn conjoin_projections<'a>(eng: &Engine, mut f: Cow<'a, Tdd>, mut g: 
     let into = match sets {
         // The sweep reads the vtree of `f` only, and the two have one layout.
         LeafSets::Equal(_) => {
-            prepare_owned_weights(&mut f, &mut g)?;
             let mut out = conjoin_cow(eng, f, g, VtreeMask::default())?;
             crate::reduce::close_constant(eng, &mut out);
             return Ok(out);
@@ -59,7 +58,6 @@ pub(super) fn conjoin_projections<'a>(eng: &Engine, mut f: Cow<'a, Tdd>, mut g: 
                 && joinable(&f)
                 && joinable(&g)
             {
-                crate::apply::shared_weights([&*f, &*g].into_iter())?;
                 return join_at_root(eng, f, &f_map, g, &g_map, f_left, &into);
             }
             if let Some(tables) = tables.as_deref_mut() {
@@ -76,14 +74,14 @@ pub(super) fn conjoin_projections<'a>(eng: &Engine, mut f: Cow<'a, Tdd>, mut g: 
 /// Operands [`conjoin_nested`] does not take, as given.
 type NotNested<'a> = (Cow<'a, Tdd>, Cow<'a, Tdd>);
 
-/// `f ∧ g` where `f` is owned, both are plain (no weight store, no summed
-/// level, no region, not false) and the leaves of `g` are among fewer than
+/// `f ∧ g` where `f` is owned, both are plain (no summed level, no region,
+/// not false) and the leaves of `g` are among fewer than
 /// all of `f`'s: the sweep reads `g` through a view of the nodes of `f`'s
 /// vtree with a leaf of `g` under them, found from `g`'s leaves upward, and
 /// the result takes `f`'s level array, every other level left as `f` has
 /// it. Other operands come back, as given.
 fn conjoin_nested<'a>(eng: &Engine, f: Tdd, g: Cow<'a, Tdd>) -> Result<Result<Tdd, NotNested<'a>>, OperationError> {
-    let plain = |t: &Tdd| t.weights.is_none() && !t.is_zero() && !t.vtree().has_regions() && !t.has_marginal_level();
+    let plain = |t: &Tdd| !t.is_zero() && !t.vtree().has_regions() && !t.has_marginal_level();
     let lim = eng.limits();
     let mut leaves = eng.scratch.apply.cone_leaves.checkout(eng);
     if !plain(&f) || !plain(&g) || !f.vtree().nested_leaves(g.vtree(), &mut leaves) {
@@ -126,13 +124,12 @@ fn conjoin_nested<'a>(eng: &Engine, f: Tdd, g: Cow<'a, Tdd>) -> Result<Result<Td
 }
 
 /// [`Engine::and_restoring`] of operands not on one vtree allocation, or on
-/// the empty projection. A plain operand, with no weight store and no summed
-/// level, goes through as given where the leaf sets are equal or one holds
-/// the other, as those paths hand it back unchanged; otherwise both are read
-/// borrowed.
+/// the empty projection. A plain operand, with no summed level, goes through
+/// as given where the leaf sets are equal or one holds the other, as those
+/// paths hand it back unchanged; otherwise both are read borrowed.
 #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
 pub(super) fn conjoin_projections_kept<'a>(eng: &Engine, f: Cow<'a, Tdd>, g: Cow<'a, Tdd>) -> Result<Tdd, AndRefused<'a>> {
-    let plain = |t: &Tdd| t.weights.is_none() && !t.has_marginal_level();
+    let plain = |t: &Tdd| !t.has_marginal_level();
     if f.vtree().num_nodes() != 0 && g.vtree().num_nodes() != 0 && plain(&f) && plain(&g) {
         let into = match Vtree::leaf_sets(f.vtree(), g.vtree()) {
             Err(error) => return Err(AndRefused { error, f, g }),
@@ -207,17 +204,10 @@ pub(super) fn conjoin_constant(eng: &Engine, f: Cow<'_, Tdd>, g: Cow<'_, Tdd>) -
         0 => (f, g),
         _ => (g, f),
     };
-    let weights = crate::apply::shared_weights([&*constant, &*other].into_iter())?;
     if constant.is_zero() || other.is_zero() {
-        let mut zero = constant_without_leaf(&Vtree::empty_projection(constant.vtree().link_home().expect("a vtree with no node is a projection")), false);
-        zero.weights = weights;
-        return Ok(zero);
+        return Ok(constant_without_leaf(&Vtree::empty_projection(constant.vtree().link_home().expect("a vtree with no node is a projection")), false));
     }
-    let mut out = extend::into_owned(eng, other)?;
-    if out.weights.is_none() {
-        out.weights = weights;
-    }
-    Ok(out)
+    extend::into_owned(eng, other)
 }
 
 /// Whether [`join_at_root`] takes `tdd`: it moves levels and pairs two
@@ -245,12 +235,11 @@ fn join_at_root(
         true => ChildPair::new(f.output.local, g.output.local),
         false => ChildPair::new(g.output.local, f.output.local),
     };
-    let mut assembly = Assembly::from_levels(eng, Arc::clone(into), try_take_levels(eng, into.num_nodes())?, None);
-    let (levels, weights) = assembly.parts_mut();
+    let mut assembly = Assembly::from_levels(eng, Arc::clone(into), try_take_levels(eng, into.num_nodes())?);
+    let levels = assembly.levels_mut();
     // A moved level owes the reductions it owed in its operand, at its image.
     let mut carried = Dirty::default();
     for (operand, map) in [(f, f_map), (g, g_map)] {
-        if weights.is_none() { *weights = operand.weights.clone(); }
         let mut owed = match operand {
             Cow::Owned(mut moved) => {
                 let source = &mut moved.levels[..];

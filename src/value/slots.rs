@@ -356,7 +356,7 @@ impl SlotValues for WeightFold {
                 continue;
             }
             let slot = ChildDecoder::marginal().index(EncodedChildRef::from_raw(raw));
-            acc.add_assign(&values.expect("weighted pair fusion: marginal level has no WeightStore")[slot]);
+            acc.add_assign(&values.expect("weighted pair fusion: marginal level has no Weights")[slot]);
         }
         acc
     }

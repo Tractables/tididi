@@ -7,8 +7,8 @@ use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::{ToPrimitive, Zero};
 
-use crate::diagram::{Arithmetic, ChildDecoder, ChildPair, EncodedChildRef, TddBuilder, TddLevel, ValueRef, WeightStore, WeightValue, ONE_LEAF_IDX, POS_LEAF_IDX};
-use crate::marginal::tests::region::{operand, under, weights};
+use crate::diagram::{Arithmetic, ChildDecoder, ChildPair, EncodedChildRef, TddBuilder, TddLevel, ValueRef, Weights, WeightValue, ONE_LEAF_IDX, POS_LEAF_IDX};
+use crate::marginal::tests::region::{operand, reweighted, under, weights};
 use crate::test_helpers::check::check_trimmed;
 use crate::test_helpers::deadline_probe;
 use crate::value::CountRead;
@@ -152,7 +152,7 @@ fn named_true(f: &Tdd, leaves: &[(VtreeIdx, u32)], seed: u64) -> Option<(TddBuil
         levels[p.idx()] = level;
     }
     multiples(&v, &mut levels, seed);
-    Some((TddBuilder::from_levels(v, levels, f.weights().cloned()), f.output()))
+    Some((TddBuilder::from_levels(v, levels), f.output()))
 }
 
 /// Whether a summed-out level is at or under each vtree node: where none is,
@@ -302,12 +302,14 @@ fn with_region(case: u64, rng: &mut Lcg) -> Option<(Home, Tdd, Option<Arithmetic
     let modes = [None, Some(Arithmetic::ExactRational), Some(Arithmetic::ScaledFloat)];
     let arithmetic = modes[case as usize % modes.len()];
     let n = 3 + rng.below(8) as u32;
-    let home = Home::new(Vtree::random(n, case));
+    let mut home = Home::new(Vtree::random(n, case));
     let all: Vec<VarId> = home.vtree().leaf_bottomup().map(|(_, var)| var).collect();
     let used: Vec<VarId> = all.iter().copied().filter(|_| rng.below(4) != 0).collect();
     let mut f = operand(&eng, &home, &used, rng);
     if let Some(arithmetic) = arithmetic {
-        f.set_weights(WeightStore::new(weights(n, rng), arithmetic)).unwrap();
+        let weighted = Home::weighted(Vtree::random(n, case), Weights::new(weights(n, rng), arithmetic)).unwrap();
+        f = reweighted(&f, &home, &weighted);
+        home = weighted;
     }
     let h = VtreeIdx(rng.below(home.vtree().num_nodes() as u64) as u32);
     eng.marginalize(&mut f, under(&home, &[h])).ok()?;
@@ -445,7 +447,7 @@ fn a_pair_held_twice_beside_a_full_region(home: &Home, n: u32, fill: impl FnOnce
     levels[root.idx()] = TddLevel::new();
     levels[root.idx()].push_node(eng.limits(), &[ChildPair::new(NodeIdx(0), ONE_LEAF_IDX)]).unwrap();
     let out = TddNodeId { vtree: root, local: NodeIdx(0) };
-    let b = TddBuilder::from_levels(Arc::clone(&v), levels.clone(), None);
+    let b = TddBuilder::from_levels(Arc::clone(&v), levels.clone());
     b.check(out).unwrap();
     let untrimmed = unsafe { b.finish_unchecked(out) };
     let mut t = untrimmed.clone();
@@ -454,7 +456,7 @@ fn a_pair_held_twice_beside_a_full_region(home: &Home, n: u32, fill: impl FnOnce
     assert_eq!(t.vtree().regions().count(), 1);
     assert!(t.vtree().leaf_of(VarId(n)).is_none());
     same_pointwise(&untrimmed, &t, n, false, "trimmed");
-    let built = TddBuilder::from_levels(v, levels, None).finish(out).unwrap();
+    let built = TddBuilder::from_levels(v, levels).finish(out).unwrap();
     check_trimmed(&built, false).unwrap();
     same_pointwise(&untrimmed, &built, n, false, "built");
 }
@@ -512,7 +514,7 @@ fn two_equal_nodes_of_a_dropped_level_both_keep_what_they_name() {
     node(t, &[&named, &named]);
     node(root, &[&[ChildPair::new(NodeIdx(0), POS_LEAF_IDX), ChildPair::new(NodeIdx(1), NEG_LEAF_IDX)]]);
     let out = TddNodeId { vtree: root, local: NodeIdx(0) };
-    let b = TddBuilder::from_levels(v, levels, None);
+    let b = TddBuilder::from_levels(v, levels);
     b.check(out).unwrap();
     let untrimmed = unsafe { b.finish_unchecked(out) };
     let mut trimmed = untrimmed.clone();
@@ -556,7 +558,7 @@ fn an_end_node_two_dropped_nodes_name_beside_a_region_stays_in_both() {
     region.become_marginal(Vec::new(), None);
     levels[r.idx()] = region;
     let out = TddNodeId { vtree: root, local: NodeIdx(0) };
-    let b = TddBuilder::from_levels(v, levels, None);
+    let b = TddBuilder::from_levels(v, levels);
     b.check(out).unwrap();
     let untrimmed = unsafe { b.finish_unchecked(out) };
     let mut trimmed = untrimmed.clone();

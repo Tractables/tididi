@@ -18,7 +18,7 @@ use super::embed::{Free, Plan};
 
 use crate::Engine;
 use crate::diagram::{
-    for_each_side_ref_mut, Assembly, ChildSide, LevelView, NodeIdx, Tdd, TddBuildError, TddNodeId, WeightStore, ONE_LEAF_IDX,
+    for_each_side_ref_mut, Assembly, ChildSide, LevelView, NodeIdx, Tdd, TddBuildError, TddNodeId, Weights, ONE_LEAF_IDX,
 };
 use crate::limits::{Limits, OperationError};
 use crate::vtree::{VarId, Vtree, VtreeError};
@@ -119,21 +119,20 @@ impl Engine {
     }
 
     /// [`project_to_vars`](Self::project_to_vars) onto `into`, for a
-    /// diagram whose levels may hold weighted marginal values, with
-    /// `weights` as the result's store: the inverse of
+    /// diagram whose levels may hold weighted marginal values, read under
+    /// `into`'s weights: the inverse of
     /// [`embed_over`](Self::embed_over).
     ///
     /// `into` is this diagram's vtree restricted to the variables `local_of`
     /// keeps, as [`Vtree::project_to_vars`] restricts it, and `local_of`
     /// gives each of its leaves' variables. A structural diagram is
-    /// projected as by [`project_to_vars`](Self::project_to_vars) and takes
-    /// `weights` as its store when one is given. A diagram with a marginal
+    /// projected as by [`project_to_vars`](Self::project_to_vars). A diagram with a marginal
     /// level keeps its values, which sum over the variables under the
     /// level: each variable it drops must lie under a marginal level that
     /// `into` keeps, and the levels under that level that `into` does not
     /// keep go with the variables. Its weighted value is the source's. It
-    /// needs `weights`, whose table must give each kept variable the
-    /// weights the source's gives it.
+    /// needs `into` weighted ([`Vtree::with_weights`]), its table giving
+    /// each kept variable the weights the source's gives it.
     ///
     /// A walk that sums out finished subtrees of its conjunctions can so
     /// carry one level and two leaves of each such subtree into the
@@ -143,19 +142,18 @@ impl Engine {
     /// use std::sync::Arc;
     /// use num_rational::BigRational;
     /// use tididi::{Engine, Vtree};
-    /// use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+    /// use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
     /// use tididi::vtree::VarId;
     ///
     /// let third = || BigRational::new(1.into(), 3.into());
-    /// let table = |n| RationalWeights::from_literals(&vec![
+    /// let weights = |n| Weights::new(RationalWeights::from_literals(&vec![
     ///     LiteralWeights { negative: third(), positive: third() }; n
-    /// ]);
+    /// ]), Arithmetic::ExactRational);
     /// let engine = Engine::new();
     /// // (x1 ∨ x2 ∨ x3 ∨ x4) ∧ (x4 ∨ x5) on a right-linear vtree, the level
     /// // over x2 to x5 summed out.
-    /// let vtree = Arc::new(Vtree::linear(5));
+    /// let vtree = Arc::new(Vtree::linear(5).with_weights(weights(5))?);
     /// let mut f = engine.and(engine.clause(&vtree, [1, 2, 3, 4])?, engine.clause(&vtree, [4, 5])?)?;
-    /// f.set_weights(WeightStore::new(table(5), Arithmetic::ExactRational))?;
     /// let summed = vtree.children(vtree.root()).1;
     /// engine.marginalize_levels(&mut f, &[summed])?;
     /// let value = f.weighted_value()?.expect("weighted").into_rational();
@@ -167,9 +165,8 @@ impl Engine {
     ///     5 => Some(VarId(3)),
     ///     _ => None,
     /// };
-    /// let into = Arc::new(vtree.project_to_vars(local_of, 3).expect("it keeps a variable"));
-    /// let store = WeightStore::new(table(3), Arithmetic::ExactRational);
-    /// let g = engine.project_over(&f, &into, local_of, Some(store))?;
+    /// let into = Arc::new(vtree.project_to_vars(local_of, 3).expect("it keeps a variable").with_weights(weights(3))?);
+    /// let g = engine.project_over(&f, &into, local_of)?;
     /// assert_eq!(g.vtree().num_leaves(), 3);
     /// assert_eq!(g.weighted_value()?.expect("weighted").into_rational(), value);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -185,21 +182,17 @@ impl Engine {
     /// [`EmbedError::Unsummed`] naming a variable that a diagram with a
     /// marginal level drops outside its marginal levels;
     /// [`OperationError::MarginalLevel`] naming a level that holds integer
-    /// counts; [`EmbedError::SourceWeights`] for a marginal level without
-    /// `weights`, or a table that disagrees with the source's on a kept
-    /// variable; [`EmbedError::DestinationWeights`] for a table that does
-    /// not cover `into`'s variables; [`OperationError::OverBudget`] where
-    /// the copy is refused.
+    /// counts; [`EmbedError::SourceWeights`] for a marginal level when `into`
+    /// has no weights or weights that disagree with the source's on a kept
+    /// variable; [`OperationError::OverBudget`] where the copy is refused.
     pub fn project_over(
         &self,
         tdd: &Tdd,
         into: &Arc<Vtree>,
         local_of: impl Fn(VarId) -> Option<VarId>,
-        weights: Option<WeightStore>,
     ) -> Result<Tdd, EmbedError> {
         let lim = self.limits();
         let _op = lim.enter()?;
-        let (weights, on_weighted_home) = super::embed::destination_weights(into, weights)?;
         let vtree = tdd.vtree();
         let (original, dropped) = renaming(lim, vtree, &local_of, into.num_vars())?;
         if let Some((leaf, _)) = into.leaf_bottomup().find(|&(_, var)| original[var.idx()].is_none()) {
@@ -208,29 +201,15 @@ impl Engine {
         if let Some(t) = vtree.bottomup().find(|&t| tdd.level(t).is_marginal() && !tdd.level(t).is_weight_marginal()) {
             return Err(OperationError::MarginalLevel(t).into());
         }
-        if let Some(store) = &weights {
-            store
-                .check_variables(into.leaf_bottomup().map(|(_, var)| var))
-                .map_err(EmbedError::DestinationWeights)?;
-        }
         let summed = tdd.has_marginal_level();
         if summed {
-            check_kept_weights(tdd, weights.as_ref(), &local_of).map_err(EmbedError::SourceWeights)?;
+            check_kept_weights(tdd, into.weights(), &local_of).map_err(EmbedError::SourceWeights)?;
         }
         let plan = Plan::build(self, into, vtree, |local| original[local.idx()].expect("a leaf of the restriction"), false, Free::Leave)?;
-        let mut result = match weights {
-            Some(store) if summed => carry_marginal(self, tdd, into, &plan, store)?,
-            weights => self.project_along(tdd, into, &plan, &dropped).and_then(|mut result| {
-                if let Some(store) = weights.filter(|_| !on_weighted_home) {
-                    result.set_weights(store).map_err(OperationError::from)?;
-                }
-                Ok(result)
-            })?,
-        };
-        if on_weighted_home {
-            result.weights = None;
+        match into.weights() {
+            Some(weights) if summed => carry_marginal(self, tdd, into, &plan, weights),
+            _ => self.project_along(tdd, into, &plan, &dropped),
         }
-        Ok(result)
     }
 
     /// [`project_to_vars`](Self::project_to_vars) once `into` is matched in
@@ -292,11 +271,11 @@ fn renaming(
     Ok((original, dropped))
 }
 
-/// Check that a diagram with a weight-marginal level has a destination
-/// store, and that the store gives each kept variable the source's weights.
+/// Check that a diagram with a weight-marginal level has destination
+/// weights, and that they give each kept variable the source's weights.
 fn check_kept_weights(
     tdd: &Tdd,
-    destination: Option<&WeightStore>,
+    destination: Option<&Weights>,
     local_of: impl Fn(VarId) -> Option<VarId>,
 ) -> Result<(), TddBuildError> {
     let Some(destination) = destination else {
@@ -311,16 +290,14 @@ fn check_kept_weights(
 }
 
 /// `tdd`, which has a marginal level, on `into` along `plan` (`into`'s
-/// match in `tdd`'s vtree), with `weights` as its store. Every node `into`
+/// match in `tdd`'s vtree), under `weights`, `into`'s. Every node `into`
 /// does not keep lies under a marginal level, whose values sum over the
 /// variables under it and which reads no level under it: each level `into`
 /// keeps is copied with its values, references and all, and the others
 /// are left behind.
-fn carry_marginal(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan, weights: WeightStore) -> Result<Tdd, EmbedError> {
+fn carry_marginal(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan, weights: &Weights) -> Result<Tdd, EmbedError> {
     if tdd.is_zero() {
-        let mut result = crate::build::constant_zero_padded(eng, into);
-        result.weights = Some(weights);
-        return Ok(result);
+        return Ok(crate::build::constant_zero_padded(eng, into));
     }
     let lim = eng.limits();
     let vtree = tdd.vtree();
@@ -340,14 +317,13 @@ fn carry_marginal(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan, weigh
         return Err(EmbedError::Unsummed { variable: vtree.leaf_var(n) });
     }
     let mut assembly = Assembly::new(eng, into)?;
-    let (levels, store) = assembly.parts_mut();
-    let store = store.insert(weights);
+    let levels = assembly.levels_mut();
     for s in into.bottomup() {
         gate.poll(1)?;
         tdd.level(plan.embedding.levels[s.idx()]).try_copy_over(lim, &mut levels[s.idx()])?;
     }
     gate.flush()?;
-    store.check_levels(into, levels).map_err(EmbedError::DestinationWeights)?;
+    weights.check_levels(into, levels).map_err(EmbedError::DestinationWeights)?;
     let output = TddNodeId { vtree: into.root(), local: tdd.output().local };
     Ok(assembly.finish_asserted(output, None)?)
 }
@@ -430,7 +406,7 @@ fn splice(eng: &Engine, f: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<Optio
         let view = LevelView::unweighted(f.level(d)).expect("a structural diagram");
         assembly.replace_level(eng, s, view)?;
         let (dl, dr) = vtree.children(d);
-        let (levels, _) = assembly.parts_mut();
+        let levels = assembly.levels_mut();
         for (child, side) in [(dl, ChildSide::Left), (dr, ChildSide::Right)] {
             if let Some(map) = &chain[child.idx()] {
                 for_each_side_ref_mut(eng.limits(), &mut levels[s.idx()], side, |r| *r = map[*r as usize])?;

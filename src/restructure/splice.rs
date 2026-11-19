@@ -10,7 +10,7 @@ impl Tdd {
     ///
     /// Both diagrams use the same vtree. Move `other`'s right-subtree levels
     /// into `self`, then join their constrained roots with one pair at `t`.
-    /// Weight stores are combined, and so is the reduction work either
+    /// Weight values move with their levels, and so does the reduction work either
     /// diagram still owes; unused levels return to the engine's pool.
     ///
     /// # Safety
@@ -83,10 +83,6 @@ impl Tdd {
         self.dirty.merge_under(other.take_worklists());
         self.dirty.restore_fused(fused, &[]);
         return_levels(eng, std::mem::take(&mut other.levels).into_vec());
-
-        if self.weights.is_none() {
-            self.weights = other.detach_weights();
-        }
     }
 }
 

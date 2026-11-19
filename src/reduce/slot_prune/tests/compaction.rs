@@ -33,7 +33,7 @@ fn weighted_prune_merges_equal_value_slots() {
     // `toy_weighted` → balanced(3), marginal side INTERNAL. Two parent nodes:
     // node0 right-refs slot0,
     // node1 right-refs slot1; both slots hold 3/7.
-    let ws = crate::diagram::WeightStore::new(
+    let ws = crate::diagram::Weights::new(
         RationalWeights::from_literals(&[LiteralWeights { negative: r(1, 2), positive: r(1, 2) }]),
         Arithmetic::ExactRational,
     );
@@ -67,7 +67,7 @@ fn weighted_prune_compacts_orphans() {
     use num_rational::BigRational;
     let r = |a: i64, b: i64| BigRational::new(BigInt::from(a), BigInt::from(b));
 
-    let ws = crate::diagram::WeightStore::new(
+    let ws = crate::diagram::Weights::new(
         RationalWeights::from_literals(&[LiteralWeights { negative: r(1, 2), positive: r(1, 2) }]),
         Arithmetic::ExactRational,
     );
@@ -104,10 +104,9 @@ fn toy_scaled_sevenths(
     use crate::test_helpers::rat;
     let half = LiteralWeights { negative: rat(1, 2), positive: rat(1, 2) };
     let weights = RationalWeights::from_literals(&[half.clone(), half.clone(), half]);
-    let exact = crate::diagram::WeightStore::new(weights.clone(), Arithmetic::ExactRational);
-    let mut tdd = toy_weighted(exact, vals.iter().map(|&v| rat(v, 7)).collect(), nodes);
+    let scaled = crate::diagram::Weights::new(weights, Arithmetic::ScaledFloat);
+    let mut tdd = toy_weighted(scaled, vals.iter().map(|&v| rat(v, 7)).collect(), nodes);
     let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
-    tdd.weights = Some(crate::diagram::WeightStore::new(weights, Arithmetic::ScaledFloat));
     crate::test_helpers::set_weight_column(&mut tdd, v, sevenths(vals).into_iter().map(WeightValue::scaled).collect());
     (tdd, v, parent, side)
 }
@@ -411,7 +410,7 @@ mod compact_store_in_place_tests {
         let (v_a, v_b, v_c) = (wr(1, 7), wr(2, 5), wr(3, 11));
 
         let half = BigRational::new(BigInt::from(1), BigInt::from(2));
-        let ws = crate::diagram::WeightStore::new(
+        let ws = crate::diagram::Weights::new(
             RationalWeights::from_literals(&[LiteralWeights { negative: half.clone(), positive: half }]),
             Arithmetic::ExactRational,
         );
@@ -425,7 +424,7 @@ mod compact_store_in_place_tests {
         let mut remap = vec![u32::MAX; 6];
         let values_merged = {
             let mut storage = crate::diagram::MarginalStorage::new(&mut tdd.levels[v.idx()]);
-            let plan = storage.plan_compact(crate::Engine::new().limits(), tdd.weights.as_ref(), &[1, 2, 3, 5], &mut remap, true).unwrap();
+            let plan = storage.plan_compact(crate::Engine::new().limits(), tdd.vtree.weights(), &[1, 2, 3, 5], &mut remap, true).unwrap();
             storage.compact(&[1, 2, 3, 5], &remap, plan)
         };
 
@@ -469,7 +468,7 @@ fn a_refused_prune_leaves_the_level_untouched() {
     let eng = crate::Engine::new();
     let nodes: &[&[(u32, u32)]] = &[&[(0, 0)], &[(0, 1)], &[(0, 3)]];
     let half = LiteralWeights { negative: rat(1, 2), positive: rat(1, 2) };
-    let exact = crate::diagram::WeightStore::new(RationalWeights::from_literals(&[half]), Arithmetic::ExactRational);
+    let exact = crate::diagram::Weights::new(RationalWeights::from_literals(&[half]), Arithmetic::ExactRational);
     let diagrams = [
         toy(vec![BIG + 5, BIG + 7, BIG + 9, BIG + 5], nodes),
         toy_weighted(exact, vec![rat(3, 7), rat(1, 7), rat(2, 7), rat(3, 7)], nodes),

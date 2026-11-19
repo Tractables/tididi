@@ -98,11 +98,11 @@ impl ClauseSink for Untouched {
 
 #[test]
 fn a_weight_marginal_level_is_refused_before_the_sink_is_called() {
-    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
-    let tree = Arc::new(Vtree::balanced(8));
-    let mut f = Tdd::clause(&tree, [1, 3, 5, 7]).unwrap();
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
     let weights = vec![LiteralWeights { negative: rat(2, 1), positive: rat(3, 1) }; 8];
-    f.set_weights(WeightStore::new(RationalWeights::from_literals(&weights), Arithmetic::ExactRational)).unwrap();
+    let weights = Weights::new(RationalWeights::from_literals(&weights), Arithmetic::ExactRational);
+    let tree = Arc::new(Vtree::balanced(8).with_weights(weights).unwrap());
+    let mut f = Tdd::clause(&tree, [1, 3, 5, 7]).unwrap();
     let forgotten = tree.children(tree.root()).0;
     f.marginalize_levels(&[forgotten]).unwrap();
     assert_canonical(&f);

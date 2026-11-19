@@ -1,7 +1,7 @@
 //! The integer arm of the streaming fold.
 
 use super::*;
-use crate::diagram::{EncodedChildRef, ChildPair, ChildDecoder, PairsIter, ValueRef, TddLevel, WeightStore};
+use crate::diagram::{EncodedChildRef, ChildPair, ChildDecoder, PairsIter, ValueRef, TddLevel, Weights};
 use crate::value::{Count, CountRead, CountRef, CountVec, IntFold};
 use crate::diagram::{LEAF_COUNTS, LeafLabel, leaf_count};
 
@@ -223,7 +223,7 @@ impl ValueDomain for IntFold {
     }
 
     #[inline]
-    fn store_of(_ws: Option<&WeightStore>) -> &() {
+    fn store_of(_ws: Option<&Weights>) -> &() {
         &()
     }
 

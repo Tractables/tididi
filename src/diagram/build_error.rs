@@ -59,10 +59,8 @@ pub enum TddBuildError {
         /// Its structural child.
         child: VtreeIdx,
     },
-    /// A level is weight-marginal, but the diagram has no weight store to hold
-    /// its values: none was attached to the
-    /// [`TddBuilder`](crate::diagram::TddBuilder) with its `set_weights`, or
-    /// [`Tdd::take_weights`](crate::Tdd::take_weights) would leave none.
+    /// A level is weight-marginal, but the diagram's vtree has no weights to
+    /// interpret its values.
     WeightedLevelWithoutStore {
         /// The weight-marginal level.
         level: VtreeIdx,
@@ -115,7 +113,7 @@ pub enum TddBuildError {
 impl std::fmt::Display for TddBuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::CountLevelWithWeights { level } => write!(f, "level {} holds counts; attach weights before marginalizing it", level.idx()),
+            Self::CountLevelWithWeights { level } => write!(f, "level {} holds counts on a weighted vtree", level.idx()),
             Self::InvalidWeightColumn { level, reason } => write!(f, "weight column at level {} {reason}", level.idx()),
             Self::MissingVariableWeight(var) => write!(f, "weight table does not cover variable {}", var.idx()),
             Self::IncompatibleWeights => write!(f, "computed weight columns require the same literal weights and arithmetic"),
@@ -125,7 +123,7 @@ impl std::fmt::Display for TddBuildError {
             Self::NonEmptyLeafLevel(t) => write!(f, "leaf level {} stores nodes", t.idx()),
             Self::WeightedLevelWithoutStore { level } => write!(
                 f,
-                "level {} is weight-marginal, but a diagram assembled here has no weight store",
+                "level {} is weight-marginal, but its vtree has no weights",
                 level.idx()
             ),
             Self::EmptyNode { level, node } => {

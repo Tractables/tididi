@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use crate::{Engine, Tdd};
-use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore, WeightValue};
+use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights, WeightValue};
 
 
 use crate::test_helpers::{assert_canonical, rat};
@@ -9,21 +9,20 @@ use crate::vtree::{VarId, Vtree};
 #[test]
 fn requested_targets_are_completed_after_identity_and_self_conjunction() {
     let eng = Engine::new();
-    for tree in [Vtree::balanced(4), Vtree::linear(4)] {
-        let tree = Arc::new(tree);
-        let (left, _) = tree.children(tree.root());
-        let leaf = tree.leaf_of(VarId(1)).unwrap();
+    for plain in [Vtree::balanced(4), Vtree::linear(4)] {
+        let (left, _) = plain.children(plain.root());
+        let leaf = plain.leaf_of(VarId(1)).unwrap();
         for arithmetic in [None, Some(Arithmetic::ExactRational), Some(Arithmetic::SignedLog), Some(Arithmetic::ScaledFloat)] {
-            let mut f = eng.clause(&tree, [1, 2]).unwrap();
-            let mut disjoint = eng.clause(&tree, [3, 4]).unwrap();
+            let mut tree = plain.clone();
             if let Some(arithmetic) = arithmetic {
                 let weights = RationalWeights::from_literals(&vec![
                     LiteralWeights { negative: rat(1, 3), positive: rat(2, 3) }; 4
                 ]);
-                let store = WeightStore::new(weights, arithmetic);
-                f.set_weights(store.clone()).unwrap();
-                disjoint.set_weights(store).unwrap();
+                tree = tree.with_weights(Weights::new(weights, arithmetic)).unwrap();
             }
+            let tree = Arc::new(tree);
+            let f = eng.clause(&tree, [1, 2]).unwrap();
+            let disjoint = eng.clause(&tree, [3, 4]).unwrap();
             assert_canonical(&f);
             assert_canonical(&disjoint);
             for g in [f.clone(), eng.one(&tree), disjoint] {

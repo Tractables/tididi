@@ -6,17 +6,17 @@ mod compaction;
 #[test]
 fn refused_weight_slot_preserves_values_and_width() {
     use std::sync::Arc;
-    use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
+    use crate::diagram::{Arithmetic, RationalWeights, Weights};
     use crate::test_helpers::{assert_canonical, compile_clauses, rat};
     use crate::Vtree;
 
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let weights = Weights::new(RationalWeights::unit(4), Arithmetic::ExactRational);
+    let vtree = Arc::new(Vtree::balanced(4).with_weights(weights).unwrap());
     let mut tdd = compile_clauses(&vtree, &[
         vec![1, 2], vec![-2, 3], vec![3, 4], vec![-1, -4],
     ]);
     assert_canonical(&tdd);
-    tdd.set_weights(WeightStore::new(RationalWeights::unit(4), Arithmetic::ExactRational)).unwrap();
     let (level, _) = vtree.children(vtree.root());
     eng.marginalize_levels(&mut tdd, &[level]).unwrap();
     assert_canonical(&tdd);

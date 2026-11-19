@@ -1,5 +1,5 @@
 use crate::diagram::TddBuildError;
-use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
 use crate::restructure::GraftError;
 use crate::{Engine, Tdd};
 use std::sync::Arc;
@@ -8,8 +8,8 @@ use crate::test_helpers::{assert_canonical, bounded_log10, rat};
 use crate::vtree::{VarId, Vtree};
 
 /// A uniform table over a fixed variable space.
-fn store(n: usize, weight: i64, arithmetic: Arithmetic) -> WeightStore {
-    WeightStore::new(
+fn store(n: usize, weight: i64, arithmetic: Arithmetic) -> Weights {
+    Weights::new(
         RationalWeights::from_literals(&vec![
             LiteralWeights {
                 negative: rat(weight, 1),
@@ -23,10 +23,8 @@ fn store(n: usize, weight: i64, arithmetic: Arithmetic) -> WeightStore {
 
 /// A weighted clause whose root stores its value.
 fn marginal_part() -> Tdd {
-    let tree = Arc::new(Vtree::balanced(2));
+    let tree = Arc::new(Vtree::balanced(2).with_weights(store(2, 2, Arithmetic::ExactRational)).unwrap());
     let mut f = Tdd::clause(&tree, [1, 2]).unwrap();
-    f.set_weights(store(2, 2, Arithmetic::ExactRational))
-        .unwrap();
     (Engine::new())
         .marginalize_levels(&mut f, &[tree.root()])
         .unwrap();
@@ -225,10 +223,8 @@ fn assert_weighted_value(tdd: &Tdd, expected: i64) {
 
 #[test]
 fn graft_reweights_a_structural_part_in_the_destination() {
-    let tree = Arc::new(Vtree::balanced(2));
-    let mut f = Tdd::clause(&tree, [1]).unwrap();
-    let previous = marginal_part();
-    f.set_weights(previous.weights().unwrap().clone()).unwrap();
+    let tree = Arc::new(Vtree::balanced(2).with_weights(store(2, 2, Arithmetic::ExactRational)).unwrap());
+    let f = Tdd::clause(&tree, [1]).unwrap();
     assert_canonical(&f);
     let (mut result, _) = Tdd::graft_over(
         &Engine::new(),
@@ -250,7 +246,6 @@ fn graft_reweights_a_structural_part_in_the_destination() {
 
 #[test]
 fn graft_preserves_renamed_marginal_roots_in_both_arithmetics() {
-    let local = Arc::new(Vtree::balanced(2));
     let eng = Engine::new();
     for arithmetic in [
         Arithmetic::ExactRational,
@@ -267,12 +262,11 @@ fn graft_preserves_renamed_marginal_roots_in_both_arithmetics() {
                 positive: rat(7, 1),
             },
         ];
+        let local = Vtree::balanced(2)
+            .with_weights(Weights::new(RationalWeights::from_literals(&weights), arithmetic))
+            .unwrap();
+        let local = Arc::new(local);
         let mut f = Tdd::clause(&local, [1, 2]).unwrap();
-        f.set_weights(WeightStore::new(
-            RationalWeights::from_literals(&weights),
-            arithmetic,
-        ))
-        .unwrap();
         eng.marginalize_levels(&mut f, &[local.root()]).unwrap();
         assert_canonical(&f);
         let global = [
@@ -288,7 +282,7 @@ fn graft_preserves_renamed_marginal_roots_in_both_arithmetics() {
             vec![(f, vec![VarId(2), VarId(1)])],
             &[VarId(3)],
             3,
-            Some(WeightStore::new(
+            Some(Weights::new(
                 RationalWeights::from_literals(&global),
                 arithmetic,
             )),
@@ -324,15 +318,14 @@ fn graft_boundary_cleanup_observes_the_engine_budget() {
 #[test]
 fn graft_canonicalizes_equal_weight_slots_of_a_marginal_leaf_root() {
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::leaf(VarId(1)));
     for arithmetic in [
         Arithmetic::ExactRational,
         Arithmetic::SignedLog,
         Arithmetic::ScaledFloat,
     ] {
+        let tree = Vtree::leaf(VarId(1)).with_weights(Weights::new(RationalWeights::unit(1), arithmetic)).unwrap();
+        let tree = Arc::new(tree);
         let mut f = Tdd::clause(&tree, [-1]).unwrap();
-        f.set_weights(WeightStore::new(RationalWeights::unit(1), arithmetic))
-            .unwrap();
         eng.marginalize_levels(&mut f, &[tree.root()]).unwrap();
         assert_canonical(&f);
         let (mut result, _) = Tdd::graft_over(
@@ -340,7 +333,7 @@ fn graft_canonicalizes_equal_weight_slots_of_a_marginal_leaf_root() {
             vec![(f, vec![VarId(1)])],
             &[VarId(2)],
             2,
-            Some(WeightStore::new(RationalWeights::unit(2), arithmetic)),
+            Some(Weights::new(RationalWeights::unit(2), arithmetic)),
         )
         .unwrap();
         assert_canonical(&result);

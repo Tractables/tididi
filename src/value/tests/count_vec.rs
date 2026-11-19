@@ -245,7 +245,7 @@ fn weighted_column_alloc_charges_soft_budget() {
     let eng = Engine::new();
     let lim = eng.limits();
     lim.set_budget(Some(64));
-    let store = crate::diagram::WeightStore::new(
+    let store = crate::diagram::Weights::new(
         crate::diagram::RationalWeights::unit(1),
         crate::diagram::Arithmetic::ExactRational,
     );

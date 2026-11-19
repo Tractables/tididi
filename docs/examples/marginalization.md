@@ -97,18 +97,19 @@ storage. That query needs the original circuit, which still distinguishes them.
 
 For independent options that are each enabled with probability 1/2, either
 server has a backup with probability 3/4. The combined probability is 9/16.
-Attach those weights to a fresh structural copy **before** marginalizing:
+Copy the structural diagram onto a vtree that carries those weights
+([`Vtree::with_weights`](crate::Vtree::with_weights)) **before** marginalizing:
 
 ```rust,ignore,{class=tested-example}
 use num_rational::BigRational;
-use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
 
 let half = BigRational::new(1.into(), 2.into());
 let weights = RationalWeights::from_literals(&vec![
     LiteralWeights { negative: half.clone(), positive: half }; 4
 ]);
-let mut weighted = rules.clone();
-weighted.set_weights(WeightStore::new(weights, Arithmetic::ExactRational))?;
+let weighted_vtree = Arc::new(Vtree::balanced(4).with_weights(Weights::new(weights, Arithmetic::ExactRational))?);
+let (mut weighted, _) = rules.embed(&weighted_vtree, |v| v)?;
 println!("Probability before: {}", weighted.weighted_value()?.unwrap().into_rational());
 weighted.marginalize_levels(&[server_a])?;
 println!("Probability after: {}", weighted.weighted_value()?.unwrap().into_rational());
@@ -121,8 +122,8 @@ Probability before: 9/16
 Probability after: 9/16
 ```
 
-[`WeightStore`](crate::diagram::WeightStore) retains the weighted values and
-their interpretation. Read them with [`weighted_value`](crate::Tdd::weighted_value);
+The summed level keeps the weighted values, and the vtree's
+[`Weights`](crate::diagram::Weights) their interpretation. Read them with [`weighted_value`](crate::Tdd::weighted_value);
 ordinary model counting cannot recover counts from weighted summaries.
 
 ## Change the probabilities

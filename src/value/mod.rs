@@ -3,7 +3,7 @@
 //! [`IntFold`], [`WeightFold`], and [`FloatFold`] share the bottom-up traversal through
 //! [`ValueDomain::ensure`] and [`walk_bottom_up`]. Marginalization and
 //! streaming apply use the same folds; finished columns belong to `TddLevel`,
-//! `WeightStore`, or [`FloatCol`].
+//! `Weights`, or [`FloatCol`].
 //!
 //! Integer columns keep `u128` values in a dense array and exact larger values
 //! in a sparse [`CountOverflow`] table. [`Count`], [`CountRead`] and [`CountVec`]

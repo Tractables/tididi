@@ -165,8 +165,8 @@ fn subsumed_store_detected_and_freed() {
 
 // ── The same checks in the weighted domain ───────────────────────────────
 //
-// A weighted diagram stores its marginal values in the external `WeightStore`
-// instead of the level, and never dedups them, so invariants 10 and 12 claim something
+// A weighted level stores its marginal values in a weight column, one per
+// node, instead of counts, and never dedups them, so invariants 10 and 12 claim something
 // different there — see `check_weight_column_is_full_width` and the weighted
 // arm of `check_no_orphan_slots`. Invariant 9 is about pair multisets and claims the
 // same thing in both domains.
@@ -175,10 +175,10 @@ use crate::diagram::ValueRef;
 use crate::diagram::{LiteralWeights, RationalWeights, WeightValue};
 use crate::test_helpers::{rat, toy_weighted};
 use crate::vtree::{Vtree, VtreeNode};
-use crate::diagram::{Arithmetic, WeightStore};
+use crate::diagram::{Arithmetic, Weights};
 
-fn weighted_store() -> WeightStore {
-    WeightStore::new(
+fn weighted_store() -> Weights {
+    Weights::new(
         RationalWeights::from_literals(&[LiteralWeights { negative: rat(2, 5), positive: rat(3, 11) }, LiteralWeights { negative: rat(1, 3), positive: rat(-4, 9) }]),
         Arithmetic::ExactRational,
     )

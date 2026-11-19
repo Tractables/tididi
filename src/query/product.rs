@@ -119,8 +119,8 @@ impl Engine {
     ///
     /// [`OperationError::VtreeMismatch`] for operands neither on one vtree nor
     /// on projections of one home ([`Vtree::projection`](crate::Vtree::projection)),
-    /// [`OperationError::IncompatibleWeights`] when either operand has weights
-    /// attached, [`OperationError::MarginalLevel`] at a level one operand
+    /// [`OperationError::IncompatibleWeights`] when either operand has a
+    /// weight-marginal level, [`OperationError::MarginalLevel`] at a level one operand
     /// summed out where the other still depends on the variables below it,
     /// [`OperationError::OverBudget`] when a buffer is refused, and
     /// [`OperationError::Stopped`] on cancellation. The operands are borrowed
@@ -130,9 +130,7 @@ impl Engine {
         let _op = lim.enter()?;
         let [l, r] = crate::apply::extend::on_one(self, [Cow::Borrowed(l), Cow::Borrowed(r)])?;
         let (l, r) = (&*l, &*r);
-        if l.weights.is_some()
-            || r.weights.is_some()
-            || l.levels
+        if l.levels
                 .iter()
                 .chain(r.levels.iter())
                 .any(TddLevel::is_weight_marginal)

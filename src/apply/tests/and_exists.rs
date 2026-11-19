@@ -251,22 +251,25 @@ fn is_below(vtree: &Vtree, root: VtreeIdx, leaf: VtreeIdx) -> bool {
 }
 
 #[test]
-fn weighted_operands_admit_only_the_product_setting() {
+fn weighted_operands_take_either_setting() {
     use crate::diagram::Arithmetic;
-    use super::weights::weighted;
-    let vtree = Arc::new(Vtree::balanced(4));
+    use super::weights::weighted_tree;
+    let vtree = weighted_tree(4, 2, Arithmetic::ExactRational);
     let eng = Engine::new();
-    let f = weighted(compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3]]), 2, Arithmetic::ExactRational);
-    let g = weighted(compile_clauses(&vtree, &[vec![3, 4]]), 2, Arithmetic::ExactRational);
+    let f = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3]]);
+    let g = compile_clauses(&vtree, &[vec![3, 4]]);
     let vars = [VarId(2)];
-    assert_eq!(
-        eng.and_exists_with(f.clone(), g.clone(), &vars, Quantification::Fused).unwrap_err(),
-        OperationError::InertOption { option: "Quantification::Fused", needs: "unweighted operands" },
-    );
+    let fused = eng.and_exists_with(f.clone(), g.clone(), &vars, Quantification::Fused).unwrap();
+    assert_canonical(&fused);
     let product = eng.and_exists_with(f.clone(), g.clone(), &vars, Quantification::Product).unwrap();
     assert_canonical(&product);
+    assert!(fused.equivalent(&product).unwrap());
+    assert_eq!(
+        exact_weight(&eng.weighted_value(&fused).unwrap().unwrap()),
+        exact_weight(&eng.weighted_value(&product).unwrap().unwrap()),
+    );
     let chosen = eng.and_exists(f, g, &vars).unwrap();
-    assert_same_shape(&chosen, &product, "the default choice on weighted operands");
+    assert_same_shape(&chosen, &fused, "the default choice on weighted operands");
 }
 
 /// Push `targets` through [`push_local_targets`](crate::apply::compose::push_local_targets)

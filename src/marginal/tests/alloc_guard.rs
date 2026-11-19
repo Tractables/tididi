@@ -57,17 +57,19 @@ fn clone_guarded_copies_big_overflow_exactly() {
 /// Refuse every reservation in turn, then resume using the same engine and diagram.
 fn marginal_refusals(weighted: bool, overflow: bool) {
     use std::sync::Arc;
-    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Tdd, WeightStore};
-
-
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Tdd, Weights};
     use crate::test_helpers::{assert_canonical, compile_clauses, rat};
     use crate::vtree::Vtree;
     use crate::OperationError;
 
     let eng = Engine::new();
     let n = if overflow { 132 } else { 8 };
-    let vtree = Arc::new(Vtree::balanced(n));
-    let mut original = if overflow {
+    let weights = RationalWeights::from_literals(&vec![
+        LiteralWeights { negative: rat(1, 3), positive: rat(2, 5) }; n as usize
+    ]);
+    let vtree = Vtree::balanced(n);
+    let vtree = Arc::new(if weighted { vtree.with_weights(Weights::new(weights.clone(), Arithmetic::ExactRational)).unwrap() } else { vtree });
+    let original = if overflow {
         Tdd::one(&vtree)
     } else {
         compile_clauses(&vtree, &[
@@ -75,14 +77,7 @@ fn marginal_refusals(weighted: bool, overflow: bool) {
         ])
     };
     assert_canonical(&original);
-    let expected_weight = weighted.then(|| {
-        let weights = RationalWeights::from_literals(&vec![
-            LiteralWeights { negative: rat(1, 3), positive: rat(2, 5) }; n as usize
-        ]);
-        let expected = original.evaluate(&weights).unwrap();
-        original.set_weights(WeightStore::new(weights, Arithmetic::ExactRational)).unwrap();
-        expected
-    });
+    let expected_weight = weighted.then(|| original.evaluate(&weights).unwrap());
     let targets = if overflow {
         vec![vtree.root()]
     } else {

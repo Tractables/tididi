@@ -118,15 +118,10 @@ impl Engine {
     }
 }
 
-/// The complement of a constant on a vtree with no node, with its store.
+/// The complement of a constant on a vtree with no node.
 #[cold]
 fn negate_without_leaf(f: Cow<'_, Tdd>) -> Result<Tdd, OperationError> {
-    let mut result = crate::build::constant_without_leaf(&f.vtree, !f.is_one());
-    result.weights = match f {
-        Cow::Owned(mut f) => f.weights.take(),
-        Cow::Borrowed(f) => f.weights.clone(),
-    };
-    Ok(result)
+    Ok(crate::build::constant_without_leaf(&f.vtree, !f.is_one()))
 }
 
 /// Make `tdd` full and complement it at the root, consuming the operand;
@@ -148,30 +143,16 @@ pub(crate) fn complement_on(
     let (canonical, closed) = (tdd.levels.is_canonical(tdd.output), tdd.levels.is_closed());
     let (output, at_root) = (tdd.output.local, tdd.output.vtree == vtree.root());
     if tdd.is_zero() {
-        // The constant reads nothing of the operand but its weights.
-        let weights = match tdd {
-            Cow::Owned(mut tdd) => tdd.weights.take(),
-            Cow::Borrowed(tdd) => tdd.weights.clone(),
-        };
-        let mut result = crate::build::constant_on(eng, &vtree, true)?;
-        result.weights = weights;
-        return Ok((result, None));
+        return Ok((crate::build::constant_on(eng, &vtree, true)?, None));
     }
-    let (mut levels, source, weights, owed) = match tdd {
+    let (mut levels, source, owed) = match tdd {
         Cow::Owned(mut tdd) => {
-            let weights = tdd.weights.take();
             let owed = tdd.take_worklists();
-            (tdd.levels.into_vec(), None, weights, owed)
+            (tdd.levels.into_vec(), None, owed)
         }
         Cow::Borrowed(tdd) => {
-            let weights = tdd.weights.clone();
             let owed = tdd.dirty.clone_on(eng)?;
-            (
-                Target::empty_levels(eng, &tdd.levels)?,
-                Some(&tdd.levels[..]),
-                weights,
-                owed,
-            )
+            (Target::empty_levels(eng, &tdd.levels)?, Some(&tdd.levels[..]), owed)
         }
     };
     let mut filled = eng.scratch.negate.filled.checkout(eng);
@@ -188,7 +169,7 @@ pub(crate) fn complement_on(
         &mut filled,
     )?;
     let owed = at_root.then(|| Owed::of(&vtree, owed, canonical, &filled, &levels));
-    let (mut result, old) = complement_full_at_root(
+    let (result, old) = complement_full_at_root(
         eng,
         &vtree,
         (levels, source),
@@ -201,7 +182,6 @@ pub(crate) fn complement_on(
         let parents: Vec<_> = vtree.internal_bottomup().map(|(t, _, _)| t).collect();
         crate::reduce::contract::debug_assert_no_twins_under(eng, &result, &parents);
     }
-    result.weights = weights;
     Ok((result, old))
 }
 
@@ -341,8 +321,8 @@ fn complement_full_at_root(
     let root = vtree.root();
     let root_idx = root.idx();
 
-    let mut assembly = Assembly::from_levels(eng, Arc::clone(vtree), levels, None);
-    let (levels, _) = assembly.parts_mut();
+    let mut assembly = Assembly::from_levels(eng, Arc::clone(vtree), levels);
+    let levels = assembly.levels_mut();
 
     if vtree.node(root).is_leaf() {
         // Implicit leaf: the output index and the label are the same number. It stays in

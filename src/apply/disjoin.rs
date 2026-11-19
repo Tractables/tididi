@@ -41,7 +41,6 @@ pub(crate) fn disjoin_many_on(eng: &Engine, operands: Vec<Tdd>) -> Result<Tdd, O
 /// the constant true, nothing to a conjunction. One of them is kept, since it
 /// carries the vtree and the agreed weights when no other operand does.
 fn live_operands(mut operands: Vec<Tdd>) -> Result<(Vec<Tdd>, Option<Tdd>), OperationError> {
-    crate::apply::prepare_weights(&mut operands)?;
     for f in &operands { f.require_structure()?; }
     let mut kept = 0;
     for i in 0..operands.len() {
@@ -144,9 +143,6 @@ fn collect_operands(operands: impl IntoIterator<Item = Tdd>) -> Result<Vec<Tdd>,
 ///
 /// [`OperationError::VtreeMismatch`] for operands neither on one vtree nor on
 /// projections of one home ([`Vtree::projection`](crate::Vtree::projection)),
-/// [`OperationError::WeightsAcrossProjections`] when operands on different
-/// projections carry incompatible weights,
-/// [`OperationError::IncompatibleWeights`] for different weight interpretations,
 /// or [`OperationError::MarginalLevel`] if either operand has discarded structure,
 /// even when the other operand is false; [`OperationError::IndexOverflow`] when
 /// a level's pieces outgrow a 32-bit index. Allocation refusals propagate from

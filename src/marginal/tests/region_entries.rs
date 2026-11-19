@@ -12,9 +12,9 @@ use std::sync::Arc;
 
 use num_bigint::BigUint;
 
-use super::region::{on_root_copy, operand, under, weights};
+use super::region::{on_root_copy, operand, reweighted, under, weights};
 use crate::cnf::{ClauseSink, CnfScheme};
-use crate::diagram::{Arithmetic, ColumnAlgebra, LeafLabel, SlotPairs, WeightStore};
+use crate::diagram::{Arithmetic, ColumnAlgebra, LeafLabel, SlotPairs, Weights};
 use crate::query::PinSemantics;
 use crate::restructure::search::{MinimizePairs, MultistartConfig, PoolSearchConfig, RotationMove, RotationSearchConfig};
 use crate::test_helpers::exact_weight;
@@ -200,18 +200,18 @@ pub(crate) fn region_case(eng: &Engine, seed: u64, max_leaves: u32) -> Option<(H
 pub(crate) fn region_case_and_source(eng: &Engine, seed: u64, max_leaves: u32) -> Option<(Home, u32, Tdd, Tdd, Tdd, Vec<VtreeIdx>)> {
     let mut rng = Lcg::new(seed ^ 0x7e61_0a4d);
     let n = 2 + rng.below(u64::from(max_leaves) - 1) as u32;
-    let home = Home::new(Vtree::random(n, seed));
+    let mut home = Home::new(Vtree::random(n, seed));
     let used: Vec<VarId> = (1..=n).filter(|_| rng.below(4) != 0).map(VarId).collect();
     let mut g = operand(eng, &home, &used, &mut rng);
     if g.vtree().num_nodes() == 0 {
         return None;
     }
-    let mut f = on_root_copy(eng, &g, home.vtree());
     if rng.below(3) == 0 {
-        let w = weights(n, &mut rng);
-        g.set_weights(WeightStore::new(w.clone(), Arithmetic::ExactRational)).unwrap();
-        f.set_weights(WeightStore::new(w, Arithmetic::ExactRational)).unwrap();
+        let weighted = Home::weighted(Vtree::random(n, seed), Weights::new(weights(n, &mut rng), Arithmetic::ExactRational)).unwrap();
+        g = reweighted(&g, &home, &weighted);
+        home = weighted;
     }
+    let mut f = on_root_copy(eng, &g, home.vtree());
     let hs = targets(&home, &g, &mut rng);
     if hs.is_empty() {
         return None;
@@ -336,10 +336,10 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Home, f: &Tdd, g: &Tdd, n: u32
     let hv = home.vtree();
     a.runs("embed", || g.embed(hv, |v| v).map(|r| r.0));
     a.runs("embed_moving", || eng.embed_moving(g.clone(), hv, |v| v).map(|r| r.0).map_err(|r| r.error));
-    a.runs("embed_over", || eng.embed_over(g, hv, |v| v, None).map(|r| r.0));
+    a.runs("embed_over", || eng.embed_over(g, hv, |v| v).map(|r| r.0));
     a.runs("embedding_plan", || eng.embedding_plan(g.vtree(), hv, |v| v).and_then(|plan| eng.embed_with(g, &plan)));
     a.check("transport", || eng.transport(g, home, |v| v, 0).map(|(t, _)| t).map_err(|r| r.error), || Ok(f.clone()), same_value);
-    a.runs("project_over", || eng.project_over(g, hv, Some, None));
+    a.runs("project_over", || eng.project_over(g, hv, Some));
     a.runs("project_to_vars", || g.project_to_vars(Some, n));
     a.runs("restructure_to", || g.clone().restructure_to(&Arc::new(Vtree::random(n, rng.below(1000))), usize::MAX));
     a.runs("Vtree::to_text", || Vtree::from_text(&g.vtree().to_text()));

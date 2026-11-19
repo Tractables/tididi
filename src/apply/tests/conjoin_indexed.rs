@@ -321,7 +321,7 @@ fn errors_name_the_operand_the_index_does_not_fit() {
     assert!(matches!(eng.and_indexed(&f, &g2, &index), Err(crate::OperationError::VtreeMismatch)));
     let index2 = PairIndex::new(&g2).unwrap();
     assert!(matches!(eng.and_indexed(&f, &g, &index2), Err(crate::OperationError::VtreeMismatch)));
-    // A marginal level, a weighted operand, a leaf or a missing `at`.
+    // A marginal level, a leaf or a missing `at`.
     let (left, _) = vtree.children(vtree.root());
     let mut summed = g.clone();
     eng.marginalize_levels(&mut summed, &[left]).unwrap();

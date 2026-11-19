@@ -16,8 +16,8 @@
 //! [`EvalAlgebra`](crate::diagram::EvalAlgebra), such as
 //! [`RationalWeights`](crate::diagram::RationalWeights), for a fresh evaluation.
 //! [`Tdd::weighted_value`](crate::Tdd::weighted_value) instead reads the
-//! weights attached to a diagram, including stored marginal values, using the
-//! [`Arithmetic`](crate::diagram::Arithmetic) chosen for its store.
+//! weights of the diagram's vtree, including stored marginal values, using the
+//! [`Arithmetic`](crate::diagram::Arithmetic) chosen for those weights.
 //!
 //! Diagram queries return errors and use their vtree context automatically.
 

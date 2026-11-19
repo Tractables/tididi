@@ -227,7 +227,7 @@ fn a_cube_on_a_diagram_an_earlier_call_placed_is_valid_and_canonical() {
         for cube in [vec![2], vec![3], vec![2, 3], vec![-2, 3]] {
             let what = format!("f = {x1}, cube {cube:?}");
             let mut got = eng.or_cube(g.clone(), &cube).expect("the disjunction fits");
-            crate::diagram::TddBuilder::from_levels(Arc::clone(&got.vtree), got.levels.to_vec(), got.weights.clone())
+            crate::diagram::TddBuilder::from_levels(Arc::clone(&got.vtree), got.levels.to_vec())
                 .check(got.output)
                 .unwrap_or_else(|e| panic!("{what}: the builder refuses the result: {e:?}"));
             assert_partition(&got, &what);

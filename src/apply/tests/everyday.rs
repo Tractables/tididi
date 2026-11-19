@@ -1,5 +1,5 @@
 use super::*;
-use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
+use crate::diagram::{Arithmetic, RationalWeights, Weights};
 use crate::limits::{LimitConfig, StopAt, StopRules};
 use crate::{Literal, OperationError};
 
@@ -245,25 +245,18 @@ fn sparse_ids_and_single_leaf_diagrams_work() {
 #[test]
 fn boolean_queries_ignore_weights_and_substitution_keeps_destination_weights() {
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(2));
-    let mut x = eng.literal(&tree, 1).unwrap();
-    let mut same = x.clone();
-    x.set_weights(WeightStore::new(
-        RationalWeights::unit(2),
-        Arithmetic::ExactRational,
-    ))
-    .unwrap();
-    same.set_weights(WeightStore::new(
-        RationalWeights::unit(2),
-        Arithmetic::SignedLog,
-    ))
-    .unwrap();
+    let weights = Weights::new(RationalWeights::unit(2), Arithmetic::ExactRational);
+    let tree = Arc::new(Vtree::balanced(2).with_weights(weights).unwrap());
+    let plain_tree = Arc::new(Vtree::balanced(2));
+    let x = eng.literal(&tree, 1).unwrap();
+    let plain = eng.literal(&plain_tree, 1).unwrap();
+    let same = x.clone();
     assert!(eng.equivalent(&x, &same).unwrap());
     assert!(eng.implies(&x, &same).unwrap());
     assert_eq!(eng.support(&x).unwrap(), vec![VarId(1)]);
     assert_eq!(
         eng.satisfying_assignment(&x).unwrap(),
-        eng.satisfying_assignment(&same).unwrap()
+        eng.satisfying_assignment(&plain).unwrap()
     );
     let result = eng.substitute(x.clone(), &[(VarId(1), &same)]).unwrap();
     assert_eq!(
@@ -272,8 +265,8 @@ fn boolean_queries_ignore_weights_and_substitution_keeps_destination_weights() {
     );
     assert!(eng.equivalent(&x, &result).unwrap());
     assert_eq!(
-        eng.xor(x.clone(), same.clone()).unwrap_err(),
-        OperationError::IncompatibleWeights
+        eng.xor(x.clone(), plain.clone()).unwrap_err(),
+        OperationError::VtreeMismatch
     );
     let y = eng.literal(&tree, 2).unwrap();
     let xor = eng.xor(x.clone(), y.clone()).unwrap();
@@ -496,8 +489,6 @@ fn witness_walk_handles_deep_vtrees_without_recursion() {
 fn renaming_changes_the_function_without_renaming_its_weight_table() {
     use crate::diagram::LiteralWeights;
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(2));
-    let mut f = eng.literal(&tree, 1).unwrap();
     let weights = RationalWeights::from_literals(&[
         LiteralWeights {
             negative: rat(3, 4),
@@ -508,8 +499,9 @@ fn renaming_changes_the_function_without_renaming_its_weight_table() {
             positive: rat(3, 4),
         },
     ]);
-    f.set_weights(WeightStore::new(weights, Arithmetic::ExactRational))
-        .unwrap();
+    let weights = Weights::new(weights, Arithmetic::ExactRational);
+    let tree = Arc::new(Vtree::balanced(2).with_weights(weights).unwrap());
+    let f = eng.literal(&tree, 1).unwrap();
     assert_eq!(
         eng.weighted_value(&f).unwrap().unwrap().into_rational(),
         rat(1, 4)
@@ -567,11 +559,11 @@ fn rename_validates_each_entry_before_shortcuts_or_literal_construction() {
 /// A failed consuming transform must not alter any of its borrowed replacements.
 #[test]
 fn substitution_refusals_leave_replacements_usable() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let weights = Weights::new(RationalWeights::unit(3), Arithmetic::SignedLog);
+    let vtree = Arc::new(Vtree::balanced(3).with_weights(weights).unwrap());
     let f = Tdd::cube(&vtree, [1, -2, 3]).unwrap();
-    let mut g = Tdd::clause(&vtree, [2, 3]).unwrap();
+    let g = Tdd::clause(&vtree, [2, 3]).unwrap();
     let h = Tdd::clause(&vtree, [-1, -3]).unwrap();
-    g.set_weights(WeightStore::new(RationalWeights::unit(3), Arithmetic::SignedLog)).unwrap();
     let expected = Tdd::cube(&vtree, [1, 3]).unwrap();
     for diagram in [&f, &g, &h, &expected] { assert_canonical(diagram); }
     let before = format!("{g:?} {h:?}");
@@ -590,7 +582,7 @@ fn substitution_refusals_leave_replacements_usable() {
             Err(OperationError::OverBudget) => refusals += 1,
             Ok(result) => {
                 assert_canonical(&result);
-                assert!(result.weights().is_none());
+                assert_eq!(result.weights().unwrap().arithmetic(), Arithmetic::SignedLog);
                 assert!(result.equivalent(&expected).unwrap());
                 completed = pending;
             }

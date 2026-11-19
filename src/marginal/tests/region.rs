@@ -6,7 +6,7 @@ use std::sync::Arc;
 use num_bigint::BigUint;
 use num_rational::BigRational;
 
-use crate::diagram::{Arithmetic, EvalAlgebra, LeafLabel, LiteralWeights, RationalWeights, WeightStore};
+use crate::diagram::{Arithmetic, EvalAlgebra, LeafLabel, LiteralWeights, RationalWeights, Weights};
 use crate::test_helpers::check::marginal::{check_inline_discipline, check_no_orphan_slots, check_slot_count_uniqueness};
 use crate::vtree::rng::Lcg;
 use crate::vtree::{Home, VarId, Vtree, VtreeIdx};
@@ -37,6 +37,22 @@ pub(crate) fn operand(eng: &Engine, home: &Home, vars: &[VarId], rng: &mut Lcg) 
 
 pub(crate) fn on_home(eng: &Engine, f: &Tdd, home: &Arc<Vtree>) -> Tdd {
     eng.embed(f, home, |v| v).unwrap().0
+}
+
+/// `f`, on `home` or a projection of it, with the same levels on
+/// `weighted`, a weighted home of the same tree: on its root, or on its
+/// projection on the same variables, whose node ids are those of `f`'s.
+pub(crate) fn reweighted(f: &Tdd, home: &Home, weighted: &Home) -> Tdd {
+    let vars: Vec<VarId> = f.vtree().leaf_bottomup().map(|(_, var)| var).collect();
+    let vtree = if Arc::ptr_eq(f.vtree(), home.vtree()) {
+        Arc::clone(weighted.vtree())
+    } else if vars.is_empty() {
+        Vtree::empty_projection(weighted)
+    } else {
+        Vtree::projection(weighted, vars).unwrap()
+    };
+    assert_eq!(vtree.to_text(), f.vtree().to_text());
+    Tdd::from_levels_unchecked(vtree, f.levels.to_vec(), f.output)
 }
 
 /// `f` on a copy of `home`'s tree that is not a home, where the smooth API
@@ -160,9 +176,8 @@ fn marginalize_matches_the_smooth_form_on_the_home() {
     let mut seen = [0usize; 5];
     for case in 0..600u64 {
         let n = 1 + rng.below(64) as u32;
-        let home = Home::new(Vtree::random(n, case));
-        let home_vtree = Arc::clone(home.vtree());
-        let all: Vec<VarId> = home_vtree.leaf_bottomup().map(|(_, var)| var).collect();
+        let mut home = Home::new(Vtree::random(n, case));
+        let all: Vec<VarId> = home.vtree().leaf_bottomup().map(|(_, var)| var).collect();
         let used: Vec<VarId> = match rng.below(8) {
             0 => Vec::new(),
             1 => all.clone(),
@@ -170,12 +185,13 @@ fn marginalize_matches_the_smooth_form_on_the_home() {
         };
         let arithmetic = modes[case as usize % modes.len()];
         let mut f = operand(&eng, &home, &used, &mut rng);
-        let mut g = on_root_copy(&eng, &f, &home_vtree);
         if let Some(arithmetic) = arithmetic {
-            let w = weights(n, &mut rng);
-            f.set_weights(WeightStore::new(w.clone(), arithmetic)).unwrap();
-            g.set_weights(WeightStore::new(w, arithmetic)).unwrap();
+            let weighted = Home::weighted(Vtree::random(n, case), Weights::new(weights(n, &mut rng), arithmetic)).unwrap();
+            f = reweighted(&f, &home, &weighted);
+            home = weighted;
         }
+        let home_vtree = Arc::clone(home.vtree());
+        let mut g = on_root_copy(&eng, &f, &home_vtree);
         let mut before = Vec::new();
         for step in 0..1 + rng.below(2) {
             let hs = targets(&home_vtree, &before, &mut rng);

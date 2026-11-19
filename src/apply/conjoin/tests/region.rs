@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use num_bigint::BigUint;
 
-use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
+use crate::diagram::{Arithmetic, RationalWeights, Weights};
 use crate::marginal::tests::region::{check_form, check_values, max_intervals, on_home, operand, targets, under, weights};
 use crate::vtree::rng::Lcg;
 use crate::vtree::{Home, LeafSets, VarId, Vtree, VtreeIdx};
@@ -81,7 +81,7 @@ fn new_parent(f: &Tdd, result: &Tdd) -> bool {
 
 /// A random diagram over a random part of the home, summed out at random
 /// home nodes zero to two times.
-fn make(eng: &Engine, home: &Home, weighted: Option<(&RationalWeights, Arithmetic)>, rng: &mut Lcg) -> Operand {
+fn make(eng: &Engine, home: &Home, rng: &mut Lcg) -> Operand {
     let vtree = home.vtree();
     let all: Vec<VarId> = vtree.leaf_bottomup().map(|(_, v)| v).collect();
     let used: Vec<VarId> = match rng.below(6) {
@@ -93,11 +93,7 @@ fn make(eng: &Engine, home: &Home, weighted: Option<(&RationalWeights, Arithmeti
         _ => all.iter().copied().filter(|_| rng.below(3) == 0).collect(),
     };
     let mut f = operand(eng, home, &used, rng);
-    let mut smooth = on_home(eng, &f, vtree);
-    if let Some((w, arithmetic)) = weighted {
-        f.set_weights(WeightStore::new(w.clone(), arithmetic)).unwrap();
-        smooth.set_weights(WeightStore::new(w.clone(), arithmetic)).unwrap();
-    }
+    let smooth = on_home(eng, &f, vtree);
     let mut before = Vec::new();
     for _ in 0..rng.below(3) {
         let hs = targets(vtree, &before, rng);
@@ -105,6 +101,14 @@ fn make(eng: &Engine, home: &Home, weighted: Option<(&RationalWeights, Arithmeti
         before = hs;
     }
     Operand { f, smooth }
+}
+
+/// A home on `vtree`, weighted by `w` under `arithmetic` when one is given.
+fn home_on(vtree: Vtree, w: &RationalWeights, arithmetic: Option<Arithmetic>) -> Home {
+    match arithmetic {
+        None => Home::new(vtree),
+        Some(arithmetic) => Home::weighted(vtree, Weights::new(w.clone(), arithmetic)).unwrap(),
+    }
 }
 
 /// The projection a conjunction of `a` and `b` lives on.
@@ -187,13 +191,12 @@ fn and_on_projections_with_regions_matches_the_smooth_form() {
     let mut case = Case { n: 0, arithmetic: None, seen: Seen::default() };
     for index in 0..400u64 {
         let n = 1 + rng.below(64) as u32;
-        let home = Home::new(Arc::new(Vtree::random(n, index)));
         let arithmetic = modes[index as usize % modes.len()];
         let w = weights(n, &mut rng);
-        let weighted = arithmetic.map(|a| (&w, a));
+        let home = home_on(Vtree::random(n, index), &w, arithmetic);
         (case.n, case.arithmetic) = (n, arithmetic);
-        let a = make(&eng, &home, weighted, &mut rng);
-        let b = make(&eng, &home, weighted, &mut rng);
+        let a = make(&eng, &home, &mut rng);
+        let b = make(&eng, &home, &mut rng);
         let smooth = eng.and(&a.smooth, &b.smooth).unwrap();
         let ops = [&a.f, &b.f];
         let what = |entry: &str| format!("case {index} {entry} arithmetic {arithmetic:?}");
@@ -222,7 +225,7 @@ fn and_on_projections_with_regions_matches_the_smooth_form() {
         let smooth_clause = eng.and_clause(a.smooth.clone(), &clause).unwrap();
         case.check(&what("and_clause"), &[&a.f, &lits], eng.and_clause(a.f.clone(), &clause), &smooth_clause, false);
         // Three operands, left and right.
-        let c = make(&eng, &home, weighted, &mut rng);
+        let c = make(&eng, &home, &mut rng);
         let smooth3 = eng.and(&smooth, &c.smooth).unwrap();
         let ops3 = [&a.f, &b.f, &c.f];
         let left = eng.and(&a.f, &b.f).and_then(|ab| eng.and(ab, &c.f));
@@ -237,14 +240,10 @@ fn and_on_projections_with_regions_matches_the_smooth_form() {
 
 /// The clause `lits` on the projection of `home` on its variables, with its
 /// smooth form on the home, summed out at the home nodes `at`.
-fn summed_clause(eng: &Engine, home: &Home, lits: &[i32], at: &[VtreeIdx], weighted: Option<(&RationalWeights, Arithmetic)>) -> Operand {
+fn summed_clause(eng: &Engine, home: &Home, lits: &[i32], at: &[VtreeIdx]) -> Operand {
     let own = Vtree::projection(home, lits.iter().map(|l| VarId(l.unsigned_abs()))).unwrap();
     let mut f = Tdd::clause(&own, lits.iter().copied()).unwrap();
-    let mut smooth = on_home(eng, &f, home.vtree());
-    if let Some((w, arithmetic)) = weighted {
-        f.set_weights(WeightStore::new(w.clone(), arithmetic)).unwrap();
-        smooth.set_weights(WeightStore::new(w.clone(), arithmetic)).unwrap();
-    }
+    let smooth = on_home(eng, &f, home.vtree());
     if !at.is_empty() {
         eng.marginalize(&mut f, under(home, at)).unwrap();
     }
@@ -261,8 +260,8 @@ fn over(home: &Home, vars: &[u32]) -> VtreeIdx {
 fn and_refuses_a_leaf_inside_a_region() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(4));
-    let a = summed_clause(&eng, &home, &[1, 2, 3], &[over(&home, &[1, 2])], None);
-    let b = summed_clause(&eng, &home, &[-1, 4], &[], None);
+    let a = summed_clause(&eng, &home, &[1, 2, 3], &[over(&home, &[1, 2])]);
+    let b = summed_clause(&eng, &home, &[-1, 4], &[]);
     assert!(a.f.vtree().regions().next().is_some());
     assert!(matches!(eng.and(&a.f, &b.f), Err(OperationError::MarginalLevel(_))));
     assert!(matches!(eng.and(&b.f, &a.f), Err(OperationError::MarginalLevel(_))));
@@ -272,11 +271,11 @@ fn and_refuses_a_leaf_inside_a_region() {
 fn and_refuses_intersecting_regions() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(4));
-    let a = summed_clause(&eng, &home, &[1, 2, 3], &[over(&home, &[1, 2])], None);
-    let b = summed_clause(&eng, &home, &[1, 3, 4], &[home.vtree().root()], None);
+    let a = summed_clause(&eng, &home, &[1, 2, 3], &[over(&home, &[1, 2])]);
+    let b = summed_clause(&eng, &home, &[1, 3, 4], &[home.vtree().root()]);
     assert!(b.f.vtree().regions().next().is_some());
     assert!(matches!(eng.and(&a.f, &b.f), Err(OperationError::MarginalLevel(_))));
-    let c = summed_clause(&eng, &home, &[-2, 3], &[over(&home, &[1, 2])], None);
+    let c = summed_clause(&eng, &home, &[-2, 3], &[over(&home, &[1, 2])]);
     assert!(c.f.vtree().regions().next().is_none(), "a lone leaf is not summed");
     assert!(matches!(eng.and(&a.f, &c.f), Err(OperationError::MarginalLevel(_))), "a leaf in the other's region");
 }
@@ -286,15 +285,14 @@ fn and_refuses_intersecting_regions() {
 #[test]
 fn and_gives_a_region_a_new_parent() {
     let eng = Engine::new();
-    let home = Home::new(Vtree::balanced(8));
     let modes = [None, Some(Arithmetic::ExactRational), Some(Arithmetic::ScaledFloat)];
     let w = weights(8, &mut Lcg::new(11));
     let mut case = Case { n: 8, arithmetic: None, seen: Seen::default() };
     for arithmetic in modes {
         case.arithmetic = arithmetic;
-        let weighted = arithmetic.map(|a| (&w, a));
-        let a = summed_clause(&eng, &home, &[1, -2, 5], &[over(&home, &[1, 2])], weighted);
-        let b = summed_clause(&eng, &home, &[3, -5], &[], weighted);
+        let home = home_on(Vtree::balanced(8), &w, arithmetic);
+        let a = summed_clause(&eng, &home, &[1, -2, 5], &[over(&home, &[1, 2])]);
+        let b = summed_clause(&eng, &home, &[3, -5], &[]);
         let smooth = eng.and(&a.smooth, &b.smooth).unwrap();
         let what = format!("new parent {arithmetic:?}");
         case.check(&what, &[&a.f, &b.f], eng.and(&a.f, &b.f), &smooth, false);
@@ -308,16 +306,16 @@ fn and_gives_a_region_a_new_parent() {
 /// rank of one between two of the other's.
 fn interleaved(eng: &Engine, home: &Home) -> (Operand, Operand) {
     let root = [home.vtree().root()];
-    (summed_clause(eng, home, &[1, 3], &root, None), summed_clause(eng, home, &[2, 4], &root, None))
+    (summed_clause(eng, home, &[1, 3], &root), summed_clause(eng, home, &[2, 4], &root))
 }
 
 #[test]
 fn a_leaf_between_two_ranks_of_an_extent_is_accepted() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(4));
-    let a = summed_clause(&eng, &home, &[1, 3], &[home.vtree().root()], None);
+    let a = summed_clause(&eng, &home, &[1, 3], &[home.vtree().root()]);
     assert_eq!(max_intervals(&a.f), 2);
-    let b = summed_clause(&eng, &home, &[-2], &[], None);
+    let b = summed_clause(&eng, &home, &[-2], &[]);
     let mut case = Case { n: 4, arithmetic: None, seen: Seen::default() };
     let smooth = eng.and(&a.smooth, &b.smooth).unwrap();
     case.check("leaf between", &[&a.f, &b.f], eng.and(&a.f, &b.f), &smooth, false);
@@ -356,8 +354,8 @@ fn two_sibling_regions_are_closed_into_one() {
 fn a_summed_node_with_unused_home_variables_beside_it_is_summed_in_the_sweep() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(8));
-    let f = summed_clause(&eng, &home, &[1, 2], &[], None);
-    let g = summed_clause(&eng, &home, &[-1, 3], &[], None);
+    let f = summed_clause(&eng, &home, &[1, 2], &[]);
+    let g = summed_clause(&eng, &home, &[-1, 3], &[]);
     SWEPT.with(|c| c.set(0));
     let fg = eng.and_marginalizing_where(&f.f, &g.f, |v| v.0 <= 2).unwrap();
     assert_eq!(SWEPT.with(Cell::get), 1);
@@ -389,9 +387,9 @@ struct Pool {
 fn pool_case(eng: &Engine, index: u64, wrong: bool, seen: &mut Pool, rng: &mut Lcg) {
     let modes = [None, Some(Arithmetic::ExactRational), Some(Arithmetic::ScaledFloat)];
     let n = 1 + rng.below(64) as u32;
-    let home = Home::new(Arc::new(Vtree::random(n, index)));
     let arithmetic = modes[index as usize % modes.len()];
     let w = weights(n, rng);
+    let home = home_on(Vtree::random(n, index), &w, arithmetic);
     let all: Vec<VarId> = home.vtree().leaf_bottomup().map(|(_, v)| v).collect();
     let held: BTreeSet<VarId> = all.iter().copied().filter(|_| rng.below(8) == 0).collect();
     let mut pool = Vec::new();
@@ -400,12 +398,8 @@ fn pool_case(eng: &Engine, index: u64, wrong: bool, seen: &mut Pool, rng: &mut L
         let s = VtreeIdx(rng.below(home.vtree().num_nodes() as u64) as u32);
         let used: Vec<VarId> =
             home.vtree().subtree(s).filter(|&t| home.vtree().node(t).is_leaf()).map(|t| home.vtree().leaf_var(t)).filter(|_| rng.below(3) != 0).collect();
-        let mut f = operand(eng, &home, &used, rng);
-        let mut on = on_home(eng, &f, home.vtree());
-        if let Some(arithmetic) = arithmetic {
-            f.set_weights(WeightStore::new(w.clone(), arithmetic)).unwrap();
-            on.set_weights(WeightStore::new(w.clone(), arithmetic)).unwrap();
-        }
+        let f = operand(eng, &home, &used, rng);
+        let on = on_home(eng, &f, home.vtree());
         smooth = Some(match smooth {
             None => on,
             Some(s) => eng.and(s, on).unwrap(),
@@ -534,16 +528,15 @@ fn e9c_summing_before_and_after_a_conjunction_with_a_literal() {
 
 /// `((1, 2), (3, 4))` on a root vtree, `g = (1 ∨ 2) ∧ (3 ∨ 4)`.
 fn t1_operands(weighted: bool) -> (Arc<Vtree>, Tdd, [Tdd; 2]) {
-    let vtree = Arc::new(Vtree::balanced(4));
-    let mut g = Tdd::clause(&vtree, [1, 2]).unwrap().and_clause([3, 4]).unwrap();
-    let mut reads = Tdd::clause(&vtree, [-1, 3]).unwrap();
-    let mut ignores = Tdd::clause(&vtree, [3]).unwrap();
+    let mut vtree = Vtree::balanced(4);
     if weighted {
         let w = weights(4, &mut Lcg::new(3));
-        for f in [&mut g, &mut reads, &mut ignores] {
-            f.set_weights(WeightStore::new(w.clone(), Arithmetic::ExactRational)).unwrap();
-        }
+        vtree = vtree.with_weights(Weights::new(w, Arithmetic::ExactRational)).unwrap();
     }
+    let vtree = Arc::new(vtree);
+    let g = Tdd::clause(&vtree, [1, 2]).unwrap().and_clause([3, 4]).unwrap();
+    let reads = Tdd::clause(&vtree, [-1, 3]).unwrap();
+    let ignores = Tdd::clause(&vtree, [3]).unwrap();
     (vtree, g, [reads, ignores])
 }
 
@@ -602,7 +595,6 @@ fn t1c_a_summed_level_read_while_its_parent_is_summed_is_refused() {
 /// The weighted value of `f` and `g` agree: equal when exact, within
 /// rounding in a bounded arithmetic.
 fn same_value(f: &Tdd, g: &Tdd, arithmetic: Arithmetic, what: &str) {
-    assert!(g.weights.is_none(), "{what}: a diagram on a weighted home carries weights");
     let (a, b) = (f.weighted_value().unwrap(), g.weighted_value().unwrap());
     let (Some(a), Some(b)) = (a, b) else { panic!("{what}: no weights on {} {}", f.weights().is_some(), g.weights().is_some()) };
     match arithmetic {
@@ -615,57 +607,72 @@ fn same_value(f: &Tdd, g: &Tdd, arithmetic: Arithmetic, what: &str) {
     }
 }
 
-/// One random computation on a home that holds the weights, and on a home
-/// of the same shape whose diagrams each carry them, gives the same answers.
+/// One random computation on a home that holds the weights gives the
+/// weighted values of the same functions on a root of the same shape given
+/// the weights by [`Vtree::with_weights`], where nothing is summed out, and
+/// refuses exactly what the same computation on an unweighted home refuses.
 #[test]
-fn a_weighted_home_computes_what_weights_on_each_diagram_compute() {
+fn a_weighted_home_computes_what_a_weighted_root_computes() {
     let eng = Engine::new();
     let mut rng = Lcg::new(0x4e1d_40e5);
-    let (mut summed, mut placed) = (0, 0);
+    let (mut summed, mut placed, mut refused) = (0, 0, 0);
     for index in 0..300u64 {
         let n = 1 + rng.below(48) as u32;
         let w = weights(n, &mut rng);
         let arithmetic = [Arithmetic::ExactRational, Arithmetic::ScaledFloat][index as usize % 2];
-        let carried = Home::new(Vtree::random(n, index));
-        let held = Home::weighted(Vtree::random(n, index), WeightStore::new(w.clone(), arithmetic)).unwrap();
+        let held = Home::weighted(Vtree::random(n, index), Weights::new(w.clone(), arithmetic)).unwrap();
+        let plain = Home::new(Vtree::random(n, index));
+        let root = Arc::new(Vtree::random(n, index).with_weights(Weights::new(w.clone(), arithmetic)).unwrap());
         let seed = rng.below(u64::MAX);
-        let (mut on_carried, mut on_held) = (Lcg::new(seed), Lcg::new(seed));
-        let [a, b] = [(); 2].map(|()| make(&eng, &carried, Some((&w, arithmetic)), &mut on_carried).f);
-        let [ha, hb] = [(); 2].map(|()| make(&eng, &held, None, &mut on_held).f);
+        let (mut on_held, mut on_plain) = (Lcg::new(seed), Lcg::new(seed));
+        let [a, b] = [(); 2].map(|()| make(&eng, &held, &mut on_held));
+        let [pa, pb] = [(); 2].map(|()| make(&eng, &plain, &mut on_plain).f);
+        let [ra, rb] = [&a, &b].map(|op| eng.embed(&op.smooth, &root, |v| v).unwrap().0);
+        let (a, b) = (a.f, b.f);
+        let product = eng.and(&ra, &rb).unwrap();
         let what = |entry: &str| format!("case {index} {entry} {arithmetic:?}");
-        same_value(&a, &ha, arithmetic, &what("operand"));
-        same_value(&b, &hb, arithmetic, &what("operand"));
-        let mut both = |entry: &str, r: Result<Tdd, String>, s: Result<Tdd, String>| match (r, s) {
-            (Ok(r), Ok(s)) => {
-                summed += usize::from(s.has_marginal_level());
-                same_value(&r, &s, arithmetic, &what(entry));
+        same_value(&ra, &a, arithmetic, &what("operand"));
+        same_value(&rb, &b, arithmetic, &what("operand"));
+        let mut check = |entry: &str, got: Result<Tdd, String>, unweighted: Option<Result<Tdd, String>>, want: &Tdd| match (got, unweighted) {
+            (Ok(got), Some(Ok(_)) | None) => {
+                summed += usize::from(got.has_marginal_level());
+                same_value(want, &got, arithmetic, &what(entry));
             }
-            (Err(e), Err(f)) => assert_eq!(e, f, "{}", what(entry)),
-            (r, s) => panic!("{}: {:?} against {:?}", what(entry), r.err(), s.err()),
+            (Err(e), Some(Err(f))) => {
+                refused += 1;
+                assert_eq!(e, f, "{}", what(entry));
+            }
+            (Err(e), None) => assert!(e.contains("MarginalLevel") || e.contains("UnsummedRegion"), "{}: {e}", what(entry)),
+            (got, Some(unweighted)) => panic!("{}: {:?} against {:?} unweighted", what(entry), got.err(), unweighted.err()),
         };
         let text = |e: OperationError| format!("{e:?}");
-        both("and borrowed", eng.and(&a, &b).map_err(text), eng.and(&ha, &hb).map_err(text));
-        both("and owned", eng.and(a.clone(), b.clone()).map_err(text), eng.and(ha.clone(), hb.clone()).map_err(text));
-        let hs = targets(carried.vtree(), &[], &mut rng);
-        both(
+        check("and borrowed", eng.and(&a, &b).map_err(text), Some(eng.and(&pa, &pb).map_err(text)), &product);
+        check("and owned", eng.and(a.clone(), b.clone()).map_err(text), Some(eng.and(pa.clone(), pb.clone()).map_err(text)), &product);
+        let hs = targets(held.vtree(), &[], &mut rng);
+        check(
             "and_marginalizing_where",
-            eng.and_marginalizing_where(&a, &b, under(&carried, &hs)).map_err(text),
-            eng.and_marginalizing_where(&ha, &hb, under(&held, &hs)).map_err(text),
+            eng.and_marginalizing_where(&a, &b, under(&held, &hs)).map_err(text),
+            Some(eng.and_marginalizing_where(&pa, &pb, under(&plain, &hs)).map_err(text)),
+            &product,
         );
-        if let (Some(into), Some(held_into)) = (union(&a, &b), union(&ha, &hb)) {
+        if let (Some(into), Some(plain_into)) = (union(&a, &b), union(&pa, &pb)) {
             let onto = |f: &Tdd, g: &Tdd, into: &Arc<Vtree>| eng.and_onto(f, |v| v, g, |v| v, into).map_err(|r| format!("{:?}", r.error));
-            both("and_onto", onto(&a, &b, &into), onto(&ha, &hb, &held_into));
-            let place = |f: &Tdd, into: &Arc<Vtree>| {
-                eng.embed_over(f, into, |v| v, f.weights.clone()).map(|(f, _)| f).map_err(|e| format!("{e:?}"))
-            };
+            check("and_onto", onto(&a, &b, &into), Some(onto(&pa, &pb, &plain_into)), &product);
+            let place = |f: &Tdd, into: &Arc<Vtree>| eng.embed_over(f, into, |v| v).map(|(f, _)| f).map_err(|e| format!("{e:?}"));
             placed += 1;
-            both("placement", place(&a, &into), place(&ha, &held_into));
+            // `embed_over` refuses integer counts, so an unweighted diagram
+            // with a summed level is no reference for the placement.
+            let unweighted = match place(&pa, &plain_into) {
+                Err(e) if pa.has_marginal_level() && e.contains("MarginalLevel") => None,
+                other => Some(other),
+            };
+            check("placement", place(&a, &into), unweighted, &ra);
         }
         let trim = |f: &Tdd, home: &Home| {
             let mut f = f.clone();
             eng.trim(&mut f, home).map(|_| f).map_err(text)
         };
-        both("trim", trim(&a, &carried), trim(&ha, &held));
+        check("trim", trim(&a, &held), Some(trim(&pa, &plain)), &ra);
     }
-    assert!(summed > 150 && placed > 100, "{summed} results with a summed-out level, {placed} placements");
+    assert!(summed > 150 && placed > 100 && refused > 0, "{summed} results with a summed-out level, {placed} placements, {refused} refusals");
 }

@@ -257,9 +257,7 @@ pub(super) fn exists_leaves_structural(
         if close {
             return crate::build::constant_like(eng, &tdd, true);
         }
-        let mut one = crate::build::constant_padded_on(eng, &vtree, true)?;
-        one.weights = tdd.weights.as_ref().map(crate::diagram::WeightStore::empty_like);
-        return Ok(one);
+        return crate::build::constant_padded_on(eng, &vtree, true);
     }
 
     let mut remap: Vec<Option<Remap>> = Vec::new();

@@ -16,9 +16,6 @@ impl Engine {
         if f.is_one() { return Ok(true); }
         let out_vtree = f.output.vtree;
         let out_level = &f.levels[out_vtree.idx()];
-        if out_level.is_weight_marginal() {
-            return Err(crate::OperationError::IncompatibleWeights);
-        }
         if f.vtree.node(out_vtree).is_leaf() || out_level.is_marginal() { return Ok(true); }
         // With every marginal value read as satisfiable, no stored node is
         // unsatisfiable, so the output node decides. Conditioning asks before

@@ -1,7 +1,6 @@
-use std::sync::Arc;
-use crate::{Engine, OperationError, Tdd, Vtree};
+use crate::{Engine, Tdd};
 use crate::diagram::{Arithmetic, WeightValue};
-use crate::apply::tests::weights::weighted;
+use crate::apply::tests::weights::weighted_tree;
 use crate::test_helpers::{assert_canonical, bounded_log10};
 
 fn same_weight(a: Option<WeightValue>, b: Option<WeightValue>) {
@@ -18,11 +17,11 @@ fn same_weight(a: Option<WeightValue>, b: Option<WeightValue>) {
 
 #[test]
 fn constant_operands_keep_the_weight_contract() {
-    let vtree = Arc::new(Vtree::balanced(3));
     let eng = Engine::new();
     for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
+        let vtree = weighted_tree(3, 2, arithmetic);
         for reverse in [false, true] {
-            let zero = weighted(Tdd::zero(&vtree), 2, arithmetic);
+            let zero = Tdd::zero(&vtree);
             let f = Tdd::cube(&vtree, [1]).unwrap();
             let want = eng.or(zero.clone(), f.clone()).unwrap();
             let mut operands = vec![zero, f];
@@ -35,7 +34,7 @@ fn constant_operands_keep_the_weight_contract() {
             assert_canonical(&got);
             same_weight(got.weighted_value().unwrap(), want.weighted_value().unwrap());
         }
-        let zeros = vec![weighted(Tdd::zero(&vtree), 2, arithmetic), Tdd::zero(&vtree)];
+        let zeros = vec![Tdd::zero(&vtree), Tdd::zero(&vtree)];
         let want = eng.or(zeros[0].clone(), zeros[1].clone()).unwrap();
         let got = eng.or_many(zeros.clone()).unwrap();
         assert_canonical(&got);
@@ -47,46 +46,32 @@ fn constant_operands_keep_the_weight_contract() {
 }
 
 #[test]
-fn discarded_constants_still_reject_incompatible_weights() {
-    let vtree = Arc::new(Vtree::balanced(3));
-    let eng = Engine::new();
-    for (n, arithmetic) in [(3, Arithmetic::ExactRational), (2, Arithmetic::SignedLog), (2, Arithmetic::ScaledFloat)] {
-        for all_false in [false, true] {
-            let first = weighted(Tdd::zero(&vtree), 2, Arithmetic::ExactRational);
-            let second = if all_false { Tdd::zero(&vtree) } else { Tdd::cube(&vtree, [1]).unwrap() };
-            let second = weighted(second, n, arithmetic);
-            for inputs in [vec![first.clone(), second.clone()], vec![second, first]] {
-                assert_eq!(eng.or_many(inputs.clone()).unwrap_err(), OperationError::IncompatibleWeights);
-                assert_eq!(eng.nor_many(inputs).unwrap_err(), OperationError::IncompatibleWeights);
-            }
-        }
-    }
-}
-
-#[test]
 fn overlay_compositions_keep_both_weight_arithmetics() {
-    let tree = Arc::new(Vtree::balanced(6));
     let eng = Engine::new();
-    let a = Tdd::clause(&tree, [1, -3, 5]).unwrap();
-    let b = Tdd::cube(&tree, [-2, 4]).unwrap();
-    let c = Tdd::clause(&tree, [3, 6]).unwrap();
     for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
-        let wa = weighted(a.clone(), 2, arithmetic);
-        let wb = weighted(b.clone(), 2, arithmetic);
-        let wc = weighted(c.clone(), 2, arithmetic);
+        let tree = weighted_tree(6, 2, arithmetic);
+        let a = Tdd::clause(&tree, [1, -3, 5]).unwrap();
+        let b = Tdd::cube(&tree, [-2, 4]).unwrap();
+        let c = Tdd::clause(&tree, [3, 6]).unwrap();
         let reference_or = eng.negate(eng.and(eng.negate(a.clone()).unwrap(), eng.negate(b.clone()).unwrap()).unwrap()).unwrap();
         let reference_diff = eng.and(a.clone(), eng.negate(b.clone()).unwrap()).unwrap();
+        let reference_or_many = eng.negate(eng.and(eng.negate(reference_or.clone()).unwrap(),eng.negate(c.clone()).unwrap()).unwrap()).unwrap();
+        let reference_xor = eng.and(reference_or.clone(), eng.negate(eng.and(a.clone(), b.clone()).unwrap()).unwrap()).unwrap();
+        let reference_ite = eng.negate(eng.and(
+            eng.negate(eng.and(a.clone(), b.clone()).unwrap()).unwrap(),
+            eng.negate(eng.and(eng.negate(a.clone()).unwrap(), c.clone()).unwrap()).unwrap(),
+        ).unwrap()).unwrap();
         let pairs = [
-            (eng.or(wa.clone(), wb.clone()).unwrap(), reference_or),
-            (eng.and_not(wa.clone(), wb.clone()).unwrap(), reference_diff),
-            (eng.or_many(vec![wa.clone(), wb.clone(), wc.clone()]).unwrap(), eng.or_many(vec![a.clone(), b.clone(), c.clone()]).unwrap()),
-            (eng.xor(wa.clone(), wb.clone()).unwrap(), eng.xor(a.clone(), b.clone()).unwrap()),
-            (eng.ite(wa, wb, wc).unwrap(), eng.ite(a.clone(), b.clone(), c.clone()).unwrap()),
+            (eng.or(a.clone(), b.clone()).unwrap(), reference_or),
+            (eng.and_not(a.clone(), b.clone()).unwrap(), reference_diff),
+            (eng.or_many(vec![a.clone(), b.clone(), c.clone()]).unwrap(), reference_or_many),
+            (eng.xor(a.clone(), b.clone()).unwrap(), reference_xor),
+            (eng.ite(a, b, c).unwrap(), reference_ite),
         ];
-        for (got, mut reference) in pairs {
-            reference.minimize().unwrap();
-            let want = weighted(reference, 2, arithmetic);
+        for (got, mut want) in pairs {
+            want.minimize().unwrap();
             assert_canonical(&got);
+            assert!(got.equivalent(&want).unwrap());
             same_weight(got.weighted_value().unwrap(), want.weighted_value().unwrap());
         }
     }

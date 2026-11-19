@@ -105,17 +105,13 @@ use super::overlay::{ABSENT, LevelOverlay, Overlay, Pieces, Scratch, leaf_index,
 /// # Errors
 ///
 /// [`OperationError::VtreeMismatch`] for operands neither on one vtree nor on
-/// projections of one home; [`OperationError::WeightsAcrossProjections`]
-/// when operands on different projections carry incompatible weights or one
-/// without weights has a summed-out level beside one with weights;
-/// [`OperationError::MarginalLevel`] naming the lowest level that one
+/// projections of one home; [`OperationError::MarginalLevel`] naming the lowest level that one
 /// operand has summed out and the other has not, or an internal summed-out
 /// level of an operand that would move to a larger projection;
 /// [`OperationError::SharedModel`] when neither operand has a summed-out
 /// level and they share a model, whose count of two only a summed-out level
-/// could hold; [`OperationError::IncompatibleWeights`] for different weight
-/// interpretations, or for a summed-out level holding weights, which this
-/// does not add; and [`OperationError::IndexOverflow`] when a summed-out
+/// could hold; [`OperationError::IncompatibleWeights`] for a summed-out
+/// level holding weights, which this does not add; and [`OperationError::IndexOverflow`] when a summed-out
 /// level's values, `f`'s and `g`'s together, outgrow the slots a pair side
 /// addresses, or a level's nodes outgrow a 32-bit index. Counts do not overflow: past `u128` they are held exactly.
 /// Allocation refusals and installed limits propagate as
@@ -144,8 +140,7 @@ fn add_on(eng: &Engine, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
     if !f.is_zero() && !g.is_zero() && (f.has_marginal_level() || g.has_marginal_level()) && crate::apply::extend::needed([&f, &g]) {
         refuse_unshared_sums(&f, &g)?;
     }
-    let [mut f, mut g] = crate::apply::extend::on_one(eng, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
-    crate::apply::prepare_weights(&mut [&mut f, &mut g])?;
+    let [f, g] = crate::apply::extend::on_one(eng, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
     eng.limits().check_stop()?;
     let mut result = match (f.is_zero(), g.is_zero()) {
         (true, _) => g,
@@ -376,7 +371,7 @@ fn sum_levels(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
             lim.reserve_exact(&mut store, LEAF_COUNTS.len())?;
             store.extend_from_slice(&LEAF_COUNTS);
         }
-        let (levels, _) = assembly.parts_mut();
+        let levels = assembly.levels_mut();
         levels[leaf.idx()].become_marginal(store, None);
     }
 
@@ -392,7 +387,7 @@ fn sum_levels(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
     for (t, left, right) in vtree.internal_bottomup() {
         let (fl, gl) = (&f.levels[t.idx()], &g.levels[t.idx()]);
         if summed(f, t) {
-            let (levels, _) = assembly.parts_mut();
+            let levels = assembly.levels_mut();
             if t == root {
                 let value = count_sum(
                     root_value(fl, f.output.local),
@@ -440,7 +435,7 @@ fn sum_levels(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
             &ro,
             &leaves[leaf_index(fl, gl, false)],
         );
-        let (levels, _) = assembly.parts_mut();
+        let levels = assembly.levels_mut();
         let out = &mut levels[t.idx()];
         let mut pieces = spare.pop().unwrap_or_default();
         pieces.clear();

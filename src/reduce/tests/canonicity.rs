@@ -21,7 +21,7 @@ use num_rational::BigRational;
 use crate::Engine;
 use crate::apply::apply_and;
 use crate::build::constant_one;
-use crate::diagram::{Arithmetic, RationalWeights, Tdd, WeightStore};
+use crate::diagram::{Arithmetic, RationalWeights, Tdd, Weights};
 use crate::marginal::marginalize_closure;
 use crate::restructure::relevel::{RotationStep, rebuild_levels};
 use crate::restructure::scratch::RestructureScratch;
@@ -85,12 +85,11 @@ fn build_by_rotation_round_trip(
 /// Reads the integer and semiring value paths against each other on the same
 /// structure.
 fn weighted_unit_value(eng: &Engine, vtree: &Arc<Vtree>, f: &Tdd) -> BigRational {
-    let mut w = f.clone();
-    w.set_weights(WeightStore::new(
+    let weighted = Arc::new(Vtree::clone(vtree).with_weights(Weights::new(
         RationalWeights::unit(vtree.num_leaves() as usize),
         Arithmetic::ExactRational,
-    ))
-    .unwrap();
+    )).unwrap());
+    let mut w = f.embed(&weighted, |v| v).unwrap().0;
     marginalize_closure(eng, &mut w).expect("no wall is installed in a test");
     exact_weight(
         &w.weighted_value()

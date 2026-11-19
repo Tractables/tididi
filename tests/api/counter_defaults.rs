@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use tididi::{Engine, OperationError, Tdd, Vtree};
-use tididi::diagram::{Arithmetic, RationalWeights, WeightStore};
+use tididi::diagram::{Arithmetic, RationalWeights, Weights};
 use tididi::limits::{LimitConfig, StopCallback, StopDecision};
 use tididi::query::{ModelCounter, PinSemantics, Retention};
 use tididi::test_helpers::assert_canonical;
@@ -102,10 +102,9 @@ fn persistent_counter_remains_send() {
 
 #[test]
 fn default_counter_rejects_weighted_marginal_values() {
-    let tree = Arc::new(Vtree::balanced(3));
+    let tree = Arc::new(Vtree::balanced(3).with_weights(Weights::new(RationalWeights::unit(3), Arithmetic::ExactRational)).unwrap());
     let mut f = Tdd::clause(&tree, [1, -2]).unwrap();
     assert_canonical(&f);
-    f.set_weights(WeightStore::new(RationalWeights::unit(3), Arithmetic::ExactRational)).unwrap();
     f.marginalize_levels(&[tree.root()]).unwrap();
     assert_canonical(&f);
     assert_eq!(f.counter().unwrap_err(), OperationError::IncompatibleWeights);

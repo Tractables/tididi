@@ -45,7 +45,7 @@ pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoErr
 /// leaf labels, and child relationships against it. File-local vtree IDs need not
 /// equal the supplied vtree's in-memory indices. The false diagram
 /// has no node records from which to check its shape.
-/// The result shares the supplied `Arc<Vtree>`, has no attached weights, and
+/// The result shares the supplied `Arc<Vtree>` and its weights, and
 /// preserves the file's node order; reading does not minimize.
 ///
 /// On a vtree on a home ([`Vtree::projection`](crate::Vtree::projection)),
@@ -442,7 +442,7 @@ fn build_diagram(
         vtree: vtree.root(),
         local: h.out_local.map_or(crate::diagram::ZERO, NodeIdx),
     };
-    crate::diagram::TddBuilder::from_levels(Arc::clone(vtree), levels, None)
+    crate::diagram::TddBuilder::from_levels(Arc::clone(vtree), levels)
         .finish(output)
         .map_err(|e| super::build_error(e, |e| malformed(h.line, format!("the records do not form a diagram: {e}"))))
 }

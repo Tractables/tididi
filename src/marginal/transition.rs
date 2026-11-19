@@ -1,6 +1,6 @@
 //! Installing marginal columns and settling the levels that refer to them.
 
-use crate::diagram::{Tdd, TddLevel, WeightStore, WeightValue, assert_can_make_marginal};
+use crate::diagram::{Tdd, TddLevel, Weights, WeightValue, assert_can_make_marginal};
 use crate::limits::{Limits, OperationError};
 use crate::value::{CountVec, FloatCol, FloatFold, IntFold, WeightFold, ValueDomain};
 use crate::vtree::{Vtree, VtreeIdx};
@@ -157,7 +157,7 @@ impl MarginalDomain for WeightFold {
         levels: &mut [TddLevel],
         t: InternalLevel,
         col: Vec<WeightValue>,
-        _store: &WeightStore,
+        _store: &Weights,
     ) -> Option<Vec<WeightValue>> {
         // No parent contract-dirty marking: the shared level-state machine
         // establishes invariant 10 at slot-prune, which runs in weighted mode too via
@@ -179,7 +179,7 @@ impl MarginalDomain for WeightFold {
         level: &mut TddLevel,
         _t: InternalLevel,
         col: Vec<WeightValue>,
-        _store: &WeightStore,
+        _store: &Weights,
     ) {
         // The column is full width, one slot per node, which is the slot count
         // the level records.
@@ -191,7 +191,7 @@ impl MarginalDomain for WeightFold {
         tdd: &mut Tdd,
         leaf: VtreeIdx,
         vtree: &crate::vtree::Vtree,
-        store: &WeightStore,
+        store: &Weights,
     ) -> Result<(), OperationError> {
         crate::marginal::marginalize_leaf_weighted(lim, tdd, leaf, vtree, store)
     }
@@ -215,7 +215,7 @@ impl MarginalDomain for FloatFold {
         levels: &mut [TddLevel],
         t: InternalLevel,
         col: FloatCol,
-        _store: &WeightStore,
+        _store: &Weights,
     ) -> Option<FloatCol> {
         let i = t.vtree_idx().idx();
         crate::diagram::MarginalStorage::new(&mut levels[i]).hold_weights(col.len() as u32);
@@ -230,7 +230,7 @@ impl MarginalDomain for FloatFold {
         level: &mut TddLevel,
         t: InternalLevel,
         col: FloatCol,
-        store: &WeightStore,
+        store: &Weights,
     ) {
         let values = col.iter().map(WeightValue::scaled).collect();
         WeightFold::install(level, t, values, store);
@@ -241,7 +241,7 @@ impl MarginalDomain for FloatFold {
         tdd: &mut Tdd,
         leaf: VtreeIdx,
         vtree: &crate::vtree::Vtree,
-        store: &WeightStore,
+        store: &Weights,
     ) -> Result<(), OperationError> {
         WeightFold::sum_out_leaf(lim, tdd, leaf, vtree, store)
     }

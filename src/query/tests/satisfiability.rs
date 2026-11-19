@@ -1,5 +1,5 @@
 use super::*;
-use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
 use crate::limits::{LimitConfig, StopCallback, StopDecision};
 use crate::test_helpers::{assert_canonical, rat};
 use crate::OperationError;
@@ -34,19 +34,19 @@ fn checked_satisfiability_agrees_with_every_three_variable_truth_table() {
 #[test]
 fn checked_satisfiability_ignores_weights_and_reads_marginal_counts() {
     let engine = Engine::new();
-    let tree = Arc::new(Vtree::balanced(3));
-    let mut f = engine.cube(&tree, [1, -2]).unwrap();
-    assert_canonical(&f);
     let weights = RationalWeights::from_literals(&vec![
         LiteralWeights { negative: rat(0, 1), positive: rat(0, 1) }; 3
     ]);
-    f.set_weights(WeightStore::new(weights, Arithmetic::ExactRational)).unwrap();
+    let weighted = Arc::new(Vtree::balanced(3).with_weights(Weights::new(weights, Arithmetic::ExactRational)).unwrap());
+    let mut f = engine.cube(&weighted, [1, -2]).unwrap();
+    assert_canonical(&f);
     assert_eq!(engine.is_sat(&f), Ok(true));
     assert_eq!(engine.implied_literals(&f), Ok(vec![1.try_into().unwrap(), (-2).try_into().unwrap()]));
     assert_eq!(engine.weighted_value(&f).unwrap().unwrap().into_rational(), rat(0, 1));
-    engine.marginalize_levels(&mut f, &[tree.root()]).unwrap();
-    assert_eq!(engine.is_sat(&f), Err(OperationError::IncompatibleWeights));
+    engine.marginalize_levels(&mut f, &[weighted.root()]).unwrap();
+    assert_eq!(engine.is_sat(&f), Ok(true));
     assert!(matches!(engine.implied_literals(&f), Err(OperationError::MarginalLevel(_))));
+    let tree = Arc::new(Vtree::balanced(3));
     let mut counts = engine.one(&tree);
     assert_canonical(&counts);
     engine.marginalize_levels(&mut counts, &[tree.root()]).unwrap();
@@ -98,13 +98,12 @@ fn edited_marginal_fixture(engine: &Engine) -> Tdd {
 
 /// A weight-marginal diagram with its reduction still pending.
 fn edited_weighted_fixture(engine: &Engine) -> Tdd {
-    let tree = Arc::new(Vtree::balanced(4));
-    let mut g = engine.clause(&tree, [1, 3]).unwrap();
-    assert_canonical(&g);
     let weights = RationalWeights::from_literals(&vec![
         LiteralWeights { negative: rat(0, 1), positive: rat(1, 2) }; 4
     ]);
-    g.set_weights(WeightStore::new(weights, Arithmetic::ExactRational)).unwrap();
+    let tree = Arc::new(Vtree::balanced(4).with_weights(Weights::new(weights, Arithmetic::ExactRational)).unwrap());
+    let mut g = engine.clause(&tree, [1, 3]).unwrap();
+    assert_canonical(&g);
     let (left, _) = tree.children(tree.root());
     engine.marginalize_levels(&mut g, &[left]).unwrap();
     let f = engine.and(g, engine.literal(&tree, 4).unwrap()).unwrap();

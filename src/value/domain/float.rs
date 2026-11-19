@@ -16,7 +16,7 @@
 //! that centres them ([`Plain::new`], [`plain_fold_centred`]).
 
 use super::*;
-use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, LeafLabel, PairsIter, ScaledFloat, TddLevel, WeightStore, WeightValue};
+use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, LeafLabel, PairsIter, ScaledFloat, TddLevel, Weights, WeightValue};
 use crate::value::{FloatCol, FloatFold, FloatSlice};
 use crate::isa::avx2_fn;
 #[cfg(all(target_arch = "x86_64", not(miri)))]
@@ -581,7 +581,7 @@ fn read_float(
     level_idx: usize,
     side: EncodedChildRef,
     vtree: &Vtree,
-    ws: &WeightStore,
+    ws: &Weights,
     levels: &[TddLevel],
     computed: &[Option<FloatCol>],
 ) -> ScaledFloat {
@@ -606,7 +606,7 @@ fn read_float(
 impl ValueDomain for FloatFold {
     /// The weight store: the leaf weights, and the columns of levels made
     /// marginal before this apply.
-    type Store = WeightStore;
+    type Store = Weights;
 
     /// A folded column, a stored one, or a leaf's three values.
     type ChildCol<'a> = FloatColumn<'a>;
@@ -617,7 +617,7 @@ impl ValueDomain for FloatFold {
     fn alloc_col(
         eng: &Engine,
         width: usize,
-        _store: &WeightStore,
+        _store: &Weights,
     ) -> Result<FloatCol, OperationError> {
         FloatCol::zeros(eng, width)
     }
@@ -667,7 +667,7 @@ impl ValueDomain for FloatFold {
     }
 
     #[inline]
-    fn store_of(ws: Option<&WeightStore>) -> &WeightStore {
+    fn store_of(ws: Option<&Weights>) -> &Weights {
         ws.expect("a scaled-float column is only ever built with a store attached")
     }
 
@@ -688,7 +688,7 @@ impl ValueDomain for FloatFold {
         vtree: &Vtree,
         level: &'a TddLevel,
         computed: &'a [Option<FloatCol>],
-        store: &'a WeightStore,
+        store: &'a Weights,
     ) -> StreamChild<'a, FloatFold> {
         if let Some(col) = &computed[level_idx] {
             return StreamChild { col: FloatColumn::folded(col.slice()), view: level.child_decoder() };
@@ -709,7 +709,7 @@ impl ValueDomain for FloatFold {
         pairs: &[ChildPair],
         left: &StreamChild<'_, FloatFold>,
         right: &StreamChild<'_, FloatFold>,
-        _store: &WeightStore,
+        _store: &Weights,
     ) -> ScaledFloat {
         if let (Some(l), Some(r)) = (left.col.plain(), right.col.plain())
             && l.at.lo + r.at.lo >= PLAIN_LO

@@ -232,7 +232,7 @@ fn overlay_levels(eng: &Engine, op: Overlay, f: &Tdd, g: &Tdd) -> Result<Tdd, Op
         let lp = lo.as_ref().unwrap_or(&leaves[leaf_index(fl, gl, true)]);
         let rp = ro.as_ref().unwrap_or(&leaves[leaf_index(fl, gl, false)]);
         let step = LevelOverlay { fl, gl, lp, rp };
-        let (levels, _) = assembly.parts_mut();
+        let levels = assembly.levels_mut();
         let out = &mut levels[t.idx()];
         if t == root {
             let pairs = step.root_cells(eng, op, f.output.local, g.output.local, &mut scratch)?;
@@ -548,7 +548,7 @@ fn overlay_leaf_root(eng: &Engine, op: Overlay, f: &Tdd, g: &Tdd) -> Result<Tdd,
         (false, false) => return crate::build::constant_on(eng, &f.vtree, false),
     };
     let levels = crate::diagram::try_take_levels(eng, f.vtree.num_nodes())?;
-    Assembly::from_levels(eng, Arc::clone(&f.vtree), levels, None).finish(TddNodeId {
+    Assembly::from_levels(eng, Arc::clone(&f.vtree), levels).finish(TddNodeId {
         vtree: f.vtree.root(),
         local,
     })
@@ -567,10 +567,8 @@ pub(crate) fn overlay_on(
 ) -> Result<Tdd, OperationError> {
     f.require_structure()?;
     g.require_structure()?;
-    let [mut f, mut g] = crate::apply::extend::on_one(eng, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
-    crate::apply::prepare_weights(&mut [&mut f, &mut g])?;
+    let [f, g] = crate::apply::extend::on_one(eng, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
     eng.limits().check_stop()?;
-    let weights = f.weights.take();
     let mut result = match (f.is_zero(), g.is_zero(), op) {
         (true, _, Overlay::AndNot) => crate::build::constant_on(eng, &f.vtree, false)?,
         (true, _, Overlay::Or | Overlay::Add) => g,
@@ -580,7 +578,6 @@ pub(crate) fn overlay_on(
         }
         (false, false, _) => overlay_levels(eng, op, &f, &g)?,
     };
-    result.weights = weights;
     eng.reduce(&mut result, ReductionPlan::default())?;
     crate::apply::extend::trimmed(eng, result)
 }
@@ -611,9 +608,6 @@ pub(crate) fn overlay_on(
 ///
 /// [`OperationError::VtreeMismatch`] for operands neither on one vtree nor on
 /// projections of one home ([`Vtree::projection`](crate::Vtree::projection)),
-/// [`OperationError::WeightsAcrossProjections`] when operands on different
-/// projections carry incompatible weights,
-/// [`OperationError::IncompatibleWeights`] for different weight interpretations,
 /// or [`OperationError::MarginalLevel`] if either operand has discarded structure,
 /// even when the other operand is false; [`OperationError::IndexOverflow`] when
 /// a level's pieces outgrow a 32-bit index. Allocation refusals and installed

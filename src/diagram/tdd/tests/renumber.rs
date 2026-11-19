@@ -187,12 +187,12 @@ fn marginal_and_leaf_levels_keep_their_slots() {
 
 #[test]
 fn weighted_marginal_levels_keep_their_values() {
-    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(8));
-    let mut f = compile_clauses(&vtree, &[vec![1, 3, -6], vec![-2, 5, 7], vec![4, -8]]);
     let weights = vec![LiteralWeights { negative: rat(2, 1), positive: rat(3, 1) }; 8];
-    f.set_weights(WeightStore::new(RationalWeights::from_literals(&weights), Arithmetic::ExactRational)).unwrap();
+    let weights = Weights::new(RationalWeights::from_literals(&weights), Arithmetic::ExactRational);
+    let vtree = Arc::new(Vtree::balanced(8).with_weights(weights).unwrap());
+    let mut f = compile_clauses(&vtree, &[vec![1, 3, -6], vec![-2, 5, 7], vec![4, -8]]);
     let forgotten = vtree.children(vtree.root()).0;
     eng.marginalize_levels(&mut f, &[forgotten]).unwrap();
     assert_canonical(&f);

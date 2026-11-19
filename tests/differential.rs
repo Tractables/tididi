@@ -78,7 +78,7 @@ use num_rational::BigRational;
 
 use tididi::diagram::{
     Arithmetic, ChildRef, ColumnAlgebra, EncodedChildRef, EvalAlgebra, LeafLabel, LiteralWeights, PairIndex, RationalWeights,
-    SignedLog, SlotPairs, ValueRef, WeightStore,
+    SignedLog, SlotPairs, ValueRef, Weights,
 };
 use tididi::limits::{LimitConfig, SparseRoute};
 use tididi::io::{load_tdd, read_tdd, read_tdd_binary, save_tdd, write_tdd, write_tdd_binary};
@@ -726,6 +726,12 @@ fn xxh64(data: &[u8]) -> u64 {
     h ^ (h >> 32)
 }
 
+/// `f` copied onto a twin of its vtree that carries `weights`.
+fn weighted_twin(f: &Tdd, weights: Weights) -> Tdd {
+    let vtree = Arc::new(Vtree::clone(f.vtree()).with_weights(weights).unwrap());
+    f.embed(&vtree, |v| v).unwrap().0
+}
+
 /// Weighted counting against the weighted sum over the truth table, exactly in
 /// the rational domain and, where the loop still asks it, in the log domain.
 fn weighted_counts_match_enumeration(case: &Case) {
@@ -739,11 +745,10 @@ fn weighted_counts_match_enumeration(case: &Case) {
     );
 
     let eng = Engine::new();
-    let mut exact = w.f.clone();
-    exact.set_weights(WeightStore::new(
+    let mut exact = weighted_twin(&w.f, Weights::new(
         RationalWeights::from_literals(&w.weights),
         Arithmetic::ExactRational,
-    )).unwrap();
+    ));
     eng.marginalize_levels(&mut exact, &w.targets).expect("an unarmed engine refuses nothing");
     let got = exact.weighted_value().unwrap().expect("a store is attached");
     assert_eq!(
@@ -761,11 +766,10 @@ fn weighted_counts_match_enumeration(case: &Case) {
 fn log_weighted_count_matches_enumeration(case: &Case) {
     let w = weighted_case(case);
     let eng = Engine::new();
-    let mut logged = w.f.clone();
-    logged.set_weights(WeightStore::new(
+    let mut logged = weighted_twin(&w.f, Weights::new(
         RationalWeights::from_literals(&w.weights),
         Arithmetic::SignedLog,
-    )).unwrap();
+    ));
     eng.marginalize_levels(&mut logged, &w.targets).expect("an unarmed engine refuses nothing");
     let got = logged.weighted_value().unwrap().expect("a store is attached");
     let got = got.as_log().expect("a log store answers in the log domain");
@@ -840,9 +844,9 @@ fn weighted_composition_matches_enumeration(case: &Case) {
     let care_truth = diagram_truth(&care, case.num_vars);
     for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
         step("weighted restriction against enumeration");
-        let mut source = w.f.clone();
-        source.set_weights(WeightStore::new(RationalWeights::from_literals(&w.weights), arithmetic)).unwrap();
+        let mut source = weighted_twin(&w.f, Weights::new(RationalWeights::from_literals(&w.weights), arithmetic));
         assert_canonical(&source);
+        let care = care.embed(source.vtree(), |v| v).unwrap().0;
         let mut restricted = eng.restrict_to_care(source.clone(), &care).unwrap().into_tdd();
         restricted.minimize().unwrap();
         assert_canonical(&restricted);
@@ -862,7 +866,7 @@ fn weighted_composition_matches_enumeration(case: &Case) {
         let mut global: Vec<_> = w.weights.iter().rev().cloned().collect();
         global.push(LiteralWeights { negative: BigRational::from_integer(2.into()), positive: BigRational::from_integer(3.into()) });
         let (grafted, _) = Tdd::graft_over(&eng, vec![(source, map)], &[VarId(case.num_vars + 1)], case.num_vars + 1,
-            Some(WeightStore::new(RationalWeights::from_literals(&global), arithmetic))).unwrap();
+            Some(Weights::new(RationalWeights::from_literals(&global), arithmetic))).unwrap();
         assert_canonical(&grafted);
         assert_weighted_sum(&grafted, &(&w.want * BigRational::from_integer(5.into())), &(&w.magnitude * BigRational::from_integer(5.into())));
     }
@@ -1513,10 +1517,8 @@ fn streaming_marginalization_matches_enumeration(case: &Case) {
     assert_eq!(eng.and_model_count(left.clone(), right.clone(), &targets).unwrap(), count);
     let w = weighted_case(case);
     for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
-        let store = WeightStore::new(RationalWeights::from_literals(&w.weights), arithmetic);
-        let (mut f, mut g) = (left.clone(), right.clone());
-        f.set_weights(store.clone()).unwrap();
-        g.set_weights(store).unwrap();
+        let f = weighted_twin(&left, Weights::new(RationalWeights::from_literals(&w.weights), arithmetic));
+        let g = right.embed(f.vtree(), |v| v).unwrap().0;
         let mut result = eng.and_marginalizing(f, g, &targets).unwrap();
         result.minimize().unwrap();
         assert_canonical(&result);
@@ -1542,10 +1544,8 @@ fn streaming_and_standalone_marginalization_preserve_overflow_values() {
         assert_eq!(result.model_count().unwrap(), want);
     }
     for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
-        let (mut f, mut g) = (f.clone(), g.clone());
-        let store = WeightStore::new(RationalWeights::unit(260), arithmetic);
-        f.set_weights(store.clone()).unwrap();
-        g.set_weights(store).unwrap();
+        let tree = Arc::new(Vtree::balanced(260).with_weights(Weights::new(RationalWeights::unit(260), arithmetic)).unwrap());
+        let (f, g) = (Tdd::clause(&tree, [1]).unwrap(), Tdd::clause(&tree, [260]).unwrap());
         let mut result = eng.and_marginalizing(f, g, &targets).unwrap();
         result.minimize().unwrap();
         assert_canonical(&result);

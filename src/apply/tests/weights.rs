@@ -1,25 +1,21 @@
 use super::*;
 use crate::apply::RestrictionOutcome;
-use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
 use crate::limits::{LimitConfig, OperationError};
 use crate::test_helpers::bounded_log10;
 
-/// Attach one equal weight to both polarities of every variable.
-pub(in crate::apply) fn weighted(mut f: Tdd, n: i64, arithmetic: Arithmetic) -> Tdd {
+/// A balanced vtree on `vars` variables with one equal weight `n` on both
+/// polarities of every variable.
+pub(in crate::apply) fn weighted_tree(vars: u32, n: i64, arithmetic: Arithmetic) -> Arc<Vtree> {
     let values = vec![
         LiteralWeights {
             negative: rat(n, 1),
             positive: rat(n, 1)
         };
-        f.vtree.num_vars() as usize
+        vars as usize
     ];
-    f.set_weights(WeightStore::new(
-        RationalWeights::from_literals(&values),
-        arithmetic,
-    ))
-    .unwrap();
-    assert_canonical(&f);
-    f
+    let weights = Weights::new(RationalWeights::from_literals(&values), arithmetic);
+    Arc::new(Vtree::balanced(vars).with_weights(weights).unwrap())
 }
 
 fn assert_weighted_int(eng: &Engine, f: &Tdd, expected: i64) {
@@ -35,107 +31,66 @@ fn assert_weighted_int(eng: &Engine, f: &Tdd, expected: i64) {
     }
 }
 
+/// Two vtrees of one shape whose weights differ, or of which one is
+/// unweighted, are different vtrees: every operation refuses the pair, also
+/// where one operand is constant or summed out, and before it allocates.
 #[test]
-fn incompatible_weights_are_rejected_before_shortcuts_and_allocations() {
-    let tree = Arc::new(Vtree::balanced(4));
+fn operands_on_differently_weighted_vtrees_are_refused_before_shortcuts_and_allocations() {
     let eng = Engine::new();
-    for (n, arithmetic) in [
-        (2, Arithmetic::ExactRational),
-        (1, Arithmetic::SignedLog),
-        (1, Arithmetic::ScaledFloat),
+    let first = weighted_tree(4, 1, Arithmetic::ExactRational);
+    for other in [
+        weighted_tree(4, 2, Arithmetic::ExactRational),
+        weighted_tree(4, 1, Arithmetic::SignedLog),
+        weighted_tree(4, 1, Arithmetic::ScaledFloat),
+        weighted_tree(4, 1, Arithmetic::ExactRational),
+        Arc::new(Vtree::balanced(4)),
     ] {
+        let left = first.children(first.root()).0;
+        let summed = |tree: &Arc<Vtree>, lits: &[i32]| {
+            let mut f = Tdd::clause(tree, lits.iter().copied()).unwrap();
+            eng.marginalize_levels(&mut f, &[left]).unwrap();
+            assert_canonical(&f);
+            f
+        };
         for (a, b) in [
-            (Tdd::one(&tree), Tdd::one(&tree)),
-            (Tdd::zero(&tree), Tdd::one(&tree)),
-            (
-                Tdd::clause(&tree, [1]).unwrap(),
-                Tdd::clause(&tree, [2, 3]).unwrap(),
-            ),
+            (Tdd::one(&first), Tdd::one(&other)),
+            (Tdd::zero(&first), Tdd::one(&other)),
+            (Tdd::clause(&first, [1]).unwrap(), Tdd::clause(&other, [2, 3]).unwrap()),
+            (summed(&first, &[1]), summed(&other, &[3])),
+            (summed(&first, &[1, 3]), Tdd::one(&other)),
         ] {
-            let a = weighted(a, 1, Arithmetic::ExactRational);
-            let b = weighted(b, n, arithmetic);
-            let _limit = eng
-                .limits()
-                .scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
+            let _limit = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
             for (f, g) in [(&a, &b), (&b, &a)] {
-                assert_eq!(
-                    eng.and(f.clone(), g.clone()).unwrap_err(),
-                    OperationError::IncompatibleWeights
-                );
-                assert_eq!(
-                    eng.or(f.clone(), g.clone()).unwrap_err(),
-                    OperationError::IncompatibleWeights
-                );
-                assert_eq!(
-                    eng.and_marginalizing(f.clone(), g.clone(), &[tree.root()])
-                        .unwrap_err(),
-                    OperationError::IncompatibleWeights
-                );
+                let refused = |r: Result<Tdd, OperationError>| assert_eq!(r.unwrap_err(), OperationError::VtreeMismatch);
+                refused(eng.and(f.clone(), g.clone()));
+                refused(eng.or(f.clone(), g.clone()));
+                refused(eng.xor(f.clone(), g.clone()));
+                refused(eng.and_marginalizing(f.clone(), g.clone(), &[first.root()]));
+                refused(eng.or_many(vec![f.clone(), g.clone()]));
+                refused(eng.nor_many(vec![f.clone(), g.clone()]));
+                refused(eng.ite(f.clone(), g.clone(), f.clone()));
+                refused(eng.ite(f.clone(), f.clone(), g.clone()));
             }
         }
     }
 }
 
 #[test]
-fn incompatible_marginal_columns_are_rejected_before_merging() {
-    let tree = Arc::new(Vtree::balanced(4));
-    let eng = Engine::new();
-    let (left, right) = tree.children(tree.root());
-    let mut a = weighted(
-        Tdd::clause(&tree, [1]).unwrap(),
-        1,
-        Arithmetic::ExactRational,
-    );
-    let mut b = weighted(
-        Tdd::clause(&tree, [3]).unwrap(),
-        2,
-        Arithmetic::ExactRational,
-    );
-    eng.marginalize_levels(&mut a, &[left]).unwrap();
-    eng.marginalize_levels(&mut b, &[right]).unwrap();
-    assert_canonical(&a);
-    assert_canonical(&b);
-    for (f, g) in [(&a, &b), (&b, &a)] {
-        assert_eq!(
-            eng.and(f.clone(), g.clone()).unwrap_err(),
-            OperationError::IncompatibleWeights
-        );
-    }
-}
-
-#[test]
-fn integer_marginal_values_cannot_inherit_weights() {
-    let tree = Arc::new(Vtree::balanced(4));
-    let eng = Engine::new();
-    let mut counts = Tdd::clause(&tree, [1, 3]).unwrap();
-    eng.marginalize_levels(&mut counts, &[tree.children(tree.root()).0])
-        .unwrap();
-    assert_canonical(&counts);
-    let weights = weighted(Tdd::one(&tree), 1, Arithmetic::ExactRational);
-    for (f, g) in [(&counts, &weights), (&weights, &counts)] {
-        assert_eq!(
-            eng.and(f.clone(), g.clone()).unwrap_err(),
-            OperationError::IncompatibleWeights
-        );
-    }
-}
-
-#[test]
-fn structural_operands_inherit_weights_in_either_order() {
-    let tree = Arc::new(Vtree::balanced(2));
+fn structural_operands_on_a_weighted_vtree_combine_in_either_order() {
     let eng = Engine::new();
     for arithmetic in [
         Arithmetic::ExactRational,
         Arithmetic::SignedLog,
         Arithmetic::ScaledFloat,
     ] {
+        let tree = weighted_tree(2, 2, arithmetic);
         for (a, b, and_value, or_value) in [
             (Tdd::one(&tree), Tdd::one(&tree), 16, 16),
             (Tdd::one(&tree), Tdd::clause(&tree, [1]).unwrap(), 8, 16),
             (Tdd::zero(&tree), Tdd::clause(&tree, [1]).unwrap(), 0, 8),
             (Tdd::clause(&tree, [1]).unwrap(), Tdd::zero(&tree), 0, 8),
         ] {
-            let a = weighted(a, 2, arithmetic);
+            assert_canonical(&a);
             assert_canonical(&b);
             for (f, g) in [(&a, &b), (&b, &a)] {
                 for (mut result, expected) in [
@@ -152,37 +107,10 @@ fn structural_operands_inherit_weights_in_either_order() {
 }
 
 #[test]
-fn separately_allocated_equal_weight_tables_are_compatible() {
-    let tree = Arc::new(Vtree::balanced(2));
+fn a_structural_operand_conjoins_with_a_weighted_marginal_operand() {
+    let tree = weighted_tree(4, 2, Arithmetic::ExactRational);
     let eng = Engine::new();
-    let a = weighted(
-        Tdd::clause(&tree, [1]).unwrap(),
-        2,
-        Arithmetic::ExactRational,
-    );
-    let b = weighted(
-        Tdd::clause(&tree, [2]).unwrap(),
-        2,
-        Arithmetic::ExactRational,
-    );
-    let mut result = eng.and(a, b).unwrap();
-    result.minimize().unwrap();
-    assert_canonical(&result);
-    assert_eq!(
-        exact_weight(&eng.weighted_value(&result).unwrap().unwrap()),
-        rat(4, 1)
-    );
-}
-
-#[test]
-fn a_structural_operand_inherits_a_marginal_operands_weight_table() {
-    let tree = Arc::new(Vtree::balanced(4));
-    let eng = Engine::new();
-    let mut a = weighted(
-        Tdd::clause(&tree, [1]).unwrap(),
-        2,
-        Arithmetic::ExactRational,
-    );
+    let mut a = Tdd::clause(&tree, [1]).unwrap();
     eng.marginalize_levels(&mut a, &[tree.children(tree.root()).0])
         .unwrap();
     assert_canonical(&a);
@@ -201,13 +129,10 @@ fn a_structural_operand_inherits_a_marginal_operands_weight_table() {
 
 #[test]
 fn projecting_a_leaf_output_preserves_weights() {
-    let tree = Arc::new(Vtree::balanced(1));
+    let tree = weighted_tree(1, 2, Arithmetic::ExactRational);
     let eng = Engine::new();
-    let f = weighted(
-        Tdd::clause(&tree, [1]).unwrap(),
-        2,
-        Arithmetic::ExactRational,
-    );
+    let f = Tdd::clause(&tree, [1]).unwrap();
+    assert_canonical(&f);
     let result = eng.exists_var(f.clone(), VarId(1)).unwrap();
     assert_canonical(&result);
     assert_eq!(
@@ -226,14 +151,14 @@ fn projecting_a_leaf_output_preserves_weights() {
 
 #[test]
 fn an_empty_clause_preserves_the_accumulators_weights() {
-    let tree = Arc::new(Vtree::balanced(2));
     let eng = Engine::new();
     for arithmetic in [
         Arithmetic::ExactRational,
         Arithmetic::SignedLog,
         Arithmetic::ScaledFloat,
     ] {
-        let f = weighted(Tdd::one(&tree), 2, arithmetic);
+        let tree = weighted_tree(2, 2, arithmetic);
+        let f = Tdd::one(&tree);
         let result = eng.and_clause(f, &[] as &[crate::Literal]).unwrap();
         assert_canonical(&result);
         assert!(result.is_zero());
@@ -243,13 +168,13 @@ fn an_empty_clause_preserves_the_accumulators_weights() {
 
 #[test]
 fn every_care_restriction_outcome_preserves_the_input_weights() {
-    let tree = Arc::new(Vtree::balanced(2));
     let eng = Engine::new();
     for arithmetic in [
         Arithmetic::ExactRational,
         Arithmetic::SignedLog,
         Arithmetic::ScaledFloat,
     ] {
+        let tree = weighted_tree(2, 2, arithmetic);
         for (f, care, expected) in [
             (Tdd::clause(&tree, [1]).unwrap(), Tdd::one(&tree), 8),
             (
@@ -264,8 +189,8 @@ fn every_care_restriction_outcome_preserves_the_input_weights() {
                 0,
             ),
         ] {
-            let f = weighted(f, 2, arithmetic);
-            let care = weighted(care, 7, Arithmetic::ExactRational);
+            assert_canonical(&f);
+            assert_canonical(&care);
             let mut result = eng.restrict_to_care(f, &care).unwrap().into_tdd();
             result.minimize().unwrap();
             assert_canonical(&result);
@@ -275,14 +200,10 @@ fn every_care_restriction_outcome_preserves_the_input_weights() {
 }
 
 #[test]
-fn a_care_rebuild_keeps_the_stores_of_marginal_levels() {
-    let tree = Arc::new(Vtree::balanced(4));
+fn a_care_rebuild_keeps_the_weight_values_of_marginal_levels() {
+    let tree = weighted_tree(4, 2, Arithmetic::ExactRational);
     let eng = Engine::new();
-    let mut f = weighted(
-        Tdd::clause(&tree, [1]).unwrap() & Tdd::clause(&tree, [3, 4]).unwrap(),
-        2,
-        Arithmetic::ExactRational,
-    );
+    let mut f = Tdd::clause(&tree, [1]).unwrap() & Tdd::clause(&tree, [3, 4]).unwrap();
     eng.marginalize_levels(&mut f, &[tree.children(tree.root()).0])
         .unwrap();
     f.minimize().unwrap();
@@ -301,29 +222,16 @@ fn a_care_rebuild_keeps_the_stores_of_marginal_levels() {
 }
 
 #[test]
-fn ite_inherits_weights_from_every_nonempty_operand_subset() {
-    let tree = Arc::new(Vtree::balanced(3));
+fn ite_on_a_weighted_vtree_is_weighted() {
     let eng = Engine::new();
     for arithmetic in [
         Arithmetic::ExactRational,
         Arithmetic::SignedLog,
         Arithmetic::ScaledFloat,
     ] {
-        for subset in 0..8 {
-            let operands = [1, 2, 3].map(|literal| eng.literal(&tree, literal).unwrap());
-            let [condition, yes, no] = operands
-                .into_iter()
-                .enumerate()
-                .map(|(i, f)| {
-                    if subset & (1 << i) != 0 {
-                        weighted(f, 2, arithmetic)
-                    } else {
-                        f
-                    }
-                })
-                .collect::<Vec<_>>()
-                .try_into()
-                .unwrap();
+        for weighted in [false, true] {
+            let tree = if weighted { weighted_tree(3, 2, arithmetic) } else { Arc::new(Vtree::balanced(3)) };
+            let [condition, yes, no] = [1, 2, 3].map(|literal| eng.literal(&tree, literal).unwrap());
             for f in [&condition, &yes, &no] {
                 assert_canonical(f);
             }
@@ -334,31 +242,12 @@ fn ite_inherits_weights_from_every_nonempty_operand_subset() {
                 let a = [row & 1 != 0, row & 2 != 0, row & 4 != 0];
                 assert_eq!(eval(&result, &a), if a[0] { a[1] } else { a[2] });
             }
-            if subset == 0 {
-                assert!(result.weights().is_none());
-            } else {
+            if weighted {
                 assert_eq!(result.weights().unwrap().arithmetic(), arithmetic);
                 assert_weighted_int(&eng, &result, 32);
+            } else {
+                assert!(result.weights().is_none());
             }
-        }
-    }
-}
-
-#[test]
-fn ternary_weight_conflicts_leave_unweighted_operands_unmodified() {
-    let tree = Arc::new(Vtree::balanced(2));
-    for missing in 0..3 {
-        let mut operands = [Tdd::one(&tree), Tdd::one(&tree), Tdd::one(&tree)];
-        operands[(missing + 1) % 3] = weighted(Tdd::one(&tree), 1, Arithmetic::ExactRational);
-        operands[(missing + 2) % 3] = weighted(Tdd::one(&tree), 2, Arithmetic::ExactRational);
-        let [a, b, c] = &mut operands;
-        assert_eq!(
-            crate::apply::prepare_weights(&mut [a, b, c]),
-            Err(OperationError::IncompatibleWeights)
-        );
-        assert!(operands[missing].weights().is_none());
-        for f in &operands {
-            assert_canonical(f);
         }
     }
 }

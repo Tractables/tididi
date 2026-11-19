@@ -10,18 +10,19 @@ use crate::Engine;
 #[test]
 fn restrict_single_variable_reports_contradictions() {
     use crate::apply::RestrictionOutcome;
-    use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
+    use crate::diagram::{Arithmetic, RationalWeights, Weights};
 
-    let vtree = Arc::new(Vtree::leaf(VarId(1)));
-    let operands = [Tdd::zero(&vtree), Tdd::one(&vtree),
-        Tdd::clause(&vtree, [1]).unwrap(), Tdd::clause(&vtree, [-1]).unwrap()];
     for weighted in [false, true] {
+        let mut vtree = Vtree::leaf(VarId(1));
+        if weighted {
+            vtree = vtree.with_weights(Weights::new(RationalWeights::unit(1), Arithmetic::ExactRational)).unwrap();
+        }
+        let vtree = Arc::new(vtree);
+        let operands = [Tdd::zero(&vtree), Tdd::one(&vtree),
+            Tdd::clause(&vtree, [1]).unwrap(), Tdd::clause(&vtree, [-1]).unwrap()];
         for f in &operands {
             for care in &operands {
-                let mut f = f.clone();
-                if weighted {
-                    f.set_weights(WeightStore::new(RationalWeights::unit(1), Arithmetic::ExactRational)).unwrap();
-                }
+                let f = f.clone();
                 assert_canonical(&f);
                 assert_canonical(care);
                 let live = [false, true].into_iter().any(|x| eval(&f, &[x]) && eval(care, &[x]));

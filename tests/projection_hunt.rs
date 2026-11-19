@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use num_bigint::BigUint;
 use num_rational::BigRational;
-use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
 use tididi::query::PinSemantics;
 use tididi::restructure::search::{MinimizePairs, RotationSearchConfig};
 use tididi::test_helpers::{eval, Lcg};
@@ -241,23 +241,18 @@ fn binary(log: &mut Log, eng: &Engine, n: u32, f: &Tdd, g: &Tdd, h: &Tdd, rng: &
     log.value("and_model_count some levels", || eng.and_model_count(f.clone(), g.clone(), &targets), popcount(&and));
     let (ws, literal_weights) = weights(n, rng);
     let (weighted, _) = tididi::test_helpers::weighted_sum(&and, &literal_weights);
-    let with_weights = |t: &Tdd| { let mut t = t.clone(); t.set_weights(ws.clone()).map(|()| t) };
+    let weighted_home = Home::weighted(Vtree::clone(home.vtree()), ws).unwrap();
     let exact = |t: &Tdd| t.weighted_value().map(|v| v.map(|v| tididi::test_helpers::exact_weight(&v)));
     for (name, targets) in [("weighted and", &[][..]), ("weighted and_marginalizing some levels", &targets[..])] {
         log.same(
             name,
-            || match eng.and_marginalizing(with_weights(f).unwrap(), with_weights(g).unwrap(), targets) {
-                Err(OperationError::WeightsAcrossProjections) => Ok(Some(weighted.clone())),
-                other => other.and_then(|t| exact(&t)),
-            },
+            || eng.and_marginalizing(on_weighted(f, &home, &weighted_home), on_weighted(g, &home, &weighted_home), targets).and_then(|t| exact(&t)),
             || Ok::<_, OperationError>(Some(weighted.clone())),
         );
         log.same(
             &format!("{name}, trim"),
-            || match eng.and_marginalizing(with_weights(f).unwrap(), with_weights(g).unwrap(), targets) {
-                Err(OperationError::WeightsAcrossProjections) => Ok(Some(weighted.clone())),
-                other => other.and_then(|mut t| { let _ = t.trim(&home); exact(&t) }),
-            },
+            || eng.and_marginalizing(on_weighted(f, &home, &weighted_home), on_weighted(g, &home, &weighted_home), targets)
+                .and_then(|mut t| { let _ = t.trim(&weighted_home); exact(&t) }),
             || Ok::<_, OperationError>(Some(weighted.clone())),
         );
     }
@@ -397,10 +392,26 @@ fn checks(t: &Tdd) -> Result<(), String> {
     check_determinism(t).map_err(|e| format!("determinism: {e}"))
 }
 
-fn weights(n: u32, rng: &mut Lcg) -> (WeightStore, Vec<LiteralWeights<BigRational>>) {
+fn weights(n: u32, rng: &mut Lcg) -> (Weights, Vec<LiteralWeights<BigRational>>) {
     let mut w = || BigRational::new((rng.below(7) as i64 - 2).into(), (1 + rng.below(4) as i64).into());
     let literals: Vec<_> = (0..n).map(|_| LiteralWeights { negative: w(), positive: w() }).collect();
-    (WeightStore::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational), literals)
+    (Weights::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational), literals)
+}
+
+/// `t`, on `home`, copied onto `weighted`, a weighted home of the same
+/// shape: onto its root, or onto its projection on the same variables, whose
+/// node ids are those of `t`'s.
+fn on_weighted(t: &Tdd, home: &Home, weighted: &Home) -> Tdd {
+    let vars: Vec<VarId> = t.vtree().leaf_bottomup().map(|(_, var)| var).collect();
+    let into = if Arc::ptr_eq(t.vtree(), home.vtree()) {
+        Arc::clone(weighted.vtree())
+    } else if vars.is_empty() {
+        Vtree::empty_projection(weighted)
+    } else {
+        Vtree::projection(weighted, vars).unwrap()
+    };
+    assert_eq!(into.num_nodes(), t.vtree().num_nodes());
+    t.embed(&into, |v| v).unwrap().0
 }
 
 #[allow(clippy::too_many_lines)]
@@ -496,18 +507,14 @@ fn unary(log: &mut Log, eng: &Engine, home: &Home, n: u32, f: &Tdd, hf: &Tdd, rn
     let algebra = ws.algebra().clone();
     let (weighted, _) = tididi::test_helpers::weighted_sum(&tf, &literal_weights);
     log.value("evaluate", || f.evaluate(&algebra), weighted.clone());
+    let weighted_home = Home::weighted(Vtree::clone(home.vtree()), ws).unwrap();
     let weighted_value = |t: &Tdd| {
-        let mut w = t.clone();
-        w.set_weights(ws.clone()).map_err(|e| format!("{e:?}"))?;
-        w.weighted_value().map(|v| v.map(|v| tididi::test_helpers::exact_weight(&v))).map_err(|e| format!("{e:?}"))
+        on_weighted(t, home, &weighted_home).weighted_value().map(|v| v.map(|v| tididi::test_helpers::exact_weight(&v))).map_err(|e| format!("{e:?}"))
     };
     log.same("weighted_value", || weighted_value(f), || weighted_value(hf));
     let levels: Vec<VtreeIdx> = f.vtree().bottomup().filter(|_| rng.coin()).collect();
     let summed = |weights: bool| -> Result<Tdd, OperationError> {
-        let mut t = f.clone();
-        if weights {
-            t.set_weights(ws.clone()).expect("weights for the id space");
-        }
+        let mut t = if weights { on_weighted(f, home, &weighted_home) } else { f.clone() };
         t.marginalize_levels(&levels)?;
         Ok(t)
     };
@@ -518,7 +525,7 @@ fn unary(log: &mut Log, eng: &Engine, home: &Home, n: u32, f: &Tdd, hf: &Tdd, rn
     log.value("marginalize_levels, trim: count", || summed(false).and_then(|mut t| { let _ = t.trim(home); t.model_count() }), popcount(&tf));
     log.value("marginalize_levels, minimize, trim: count", || summed(false).and_then(|mut t| { t.minimize()?; let _ = t.trim(home); t.model_count() }), popcount(&tf));
     log.value("marginalize_levels weighted", || exact(&summed(true)?), Some(weighted.clone()));
-    log.value("marginalize_levels weighted, trim", || summed(true).and_then(|mut t| { let _ = t.trim(home); exact(&t) }), Some(weighted.clone()));
+    log.value("marginalize_levels weighted, trim", || summed(true).and_then(|mut t| { let _ = t.trim(&weighted_home); exact(&t) }), Some(weighted.clone()));
     log.value(
         "marginalize_levels, stored and read: count",
         || {
@@ -535,12 +542,11 @@ fn unary(log: &mut Log, eng: &Engine, home: &Home, n: u32, f: &Tdd, hf: &Tdd, rn
         log.same(
             name,
             || {
-                let mut w = f.clone();
-                w.set_weights(ws.clone()).map_err(|e| format!("{e:?}"))?;
+                let mut w = on_weighted(f, home, &weighted_home);
                 if minimized {
                     w.minimize().map_err(|e| format!("{e:?}"))?;
                 }
-                eng.trim(&mut w, home).map_err(|e| format!("{e:?}"))?;
+                eng.trim(&mut w, &weighted_home).map_err(|e| format!("{e:?}"))?;
                 w.weighted_value().map(|v| v.map(|v| tididi::test_helpers::exact_weight(&v))).map_err(|e| format!("{e:?}"))
             },
             || Ok(Some(weighted.clone())),
@@ -703,23 +709,16 @@ fn transports_in_every_form() {
             drop(counter);
             Ok(g)
         }, &moved);
-        // A renaming carries the table only where it weighs each image as
-        // the variable it renames.
         let (ws, literal_weights) = weights(n, &mut rng);
         let (weighted, _) = tididi::test_helpers::weighted_sum(&moved, &literal_weights);
-        let kept = f.vtree().leaf_bottomup().all(|(_, v)| literal_weights[v.idx()] == literal_weights[map(v).idx()]);
+        let weighted_home = Home::weighted(Vtree::balanced(n), ws).unwrap();
         log.same(
-            "weighted, transport",
+            "transport onto a weighted home",
             || {
-                let mut w = f.clone();
-                w.set_weights(ws.clone()).map_err(|e| format!("{e:?}"))?;
-                let w = moving(Cow::Owned(w), &home)?;
+                let w = moving(Cow::Borrowed(&f), &weighted_home)?;
                 w.weighted_value().map(|v| v.map(|v| tididi::test_helpers::exact_weight(&v))).map_err(|e| format!("{e:?}"))
             },
-            || match kept {
-                true => Ok(Some(weighted.clone())),
-                false => Err("Weights(IncompatibleWeights)".to_string()),
-            },
+            || Ok(Some(weighted.clone())),
         );
         // Onto a wider home, shifted.
         let wide = Home::new(Vtree::balanced(2 * n));

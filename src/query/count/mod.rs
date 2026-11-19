@@ -150,8 +150,7 @@ impl Engine {
         }
         gate.flush()?;
         if eliminated.is_empty() { return self.own_model_count(tdd); }
-        let mut copy = tdd.try_clone_on(self)?;
-        copy.weights = None;
+        let copy = tdd.try_clone_on(self)?;
         let projected = self.exists_vars(copy, &eliminated)?;
         // On a home `projected` can lack a selected variable as well as the
         // eliminated ones.

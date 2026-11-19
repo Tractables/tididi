@@ -1,7 +1,7 @@
 //! The weighted arm of the streaming fold.
 
 use super::*;
-use crate::diagram::{ChildPair, ChildDecoder, EncodedChildRef, LeafLabel, PairsIter, TddLevel, WeightStore, WeightValue};
+use crate::diagram::{ChildPair, ChildDecoder, EncodedChildRef, LeafLabel, PairsIter, TddLevel, Weights, WeightValue};
 use crate::vtree::{Vtree, VtreeNode, REGION_VAR};
 use crate::value::{WeightFold};
 
@@ -23,7 +23,7 @@ fn read_weight<'a>(
     level_idx: usize,
     side: EncodedChildRef,
     vtree: &Vtree,
-    ws: &'a WeightStore,
+    ws: &'a Weights,
     levels: &'a [TddLevel],
     computed_weights: &'a [Option<Vec<WeightValue>>],
 ) -> std::borrow::Cow<'a, WeightValue> {
@@ -76,7 +76,7 @@ fn leaf_column_slot_agrees(
 
 impl ValueDomain for WeightFold {
     /// The weights and arithmetic the values are folded in.
-    type Store = WeightStore;
+    type Store = Weights;
 
     /// Borrow stored columns; own the three computed leaf values.
     type ChildCol<'a> = std::borrow::Cow<'a, [WeightValue]>;
@@ -87,7 +87,7 @@ impl ValueDomain for WeightFold {
     fn alloc_col(
         eng: &Engine,
         width: usize,
-        store: &WeightStore,
+        store: &Weights,
     ) -> Result<Vec<WeightValue>, OperationError> {
         let mut v: Vec<WeightValue> = Vec::new();
         eng.limits().try_resize(&mut v, width, store.wzero())?;
@@ -131,7 +131,7 @@ impl ValueDomain for WeightFold {
     }
 
     #[inline]
-    fn store_of(ws: Option<&WeightStore>) -> &WeightStore {
+    fn store_of(ws: Option<&Weights>) -> &Weights {
         ws.expect("a weighted column is only ever built with a store attached")
     }
 
@@ -151,7 +151,7 @@ impl ValueDomain for WeightFold {
         vtree: &crate::vtree::Vtree,
         level: &'a TddLevel,
         computed: &'a [Option<Vec<WeightValue>>],
-        store: &'a WeightStore,
+        store: &'a Weights,
     ) -> StreamChild<'a, WeightFold> {
         if let Some(col) = level.weight_values() {
             return StreamChild { col: std::borrow::Cow::Borrowed(col), view: ChildDecoder::marginal() };
@@ -178,7 +178,7 @@ impl ValueDomain for WeightFold {
         pairs: &[ChildPair],
         left: &StreamChild<'_, WeightFold>,
         right: &StreamChild<'_, WeightFold>,
-        store: &WeightStore,
+        store: &Weights,
     ) -> WeightValue {
         WeightFold::fold(
             pairs.iter().copied(),

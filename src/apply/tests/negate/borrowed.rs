@@ -7,7 +7,7 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use super::plan::shape;
-use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
 use crate::reduce::{ContentTwinPolicy, ReductionPlan};
 use crate::test_helpers::{compile_clauses_on, known, rand_cnf, rat, same_storage, vtree_shapes, with_floor, CnfShape, Lcg, LOW_FLOOR};
 use crate::vtree::Vtree;
@@ -41,7 +41,6 @@ fn check(what: &str, f: &Tdd) {
         assert_eq!(shape(&borrowed), shape(&owned), "{name}: the diagrams differ");
         assert!(same_storage(&borrowed, &owned), "{name}: the storage differs");
         assert_eq!(known(&borrowed), known(&owned), "{name}: the results are known differently");
-        assert_eq!(borrowed.weights.is_some(), owned.weights.is_some(), "{name}: the weights differ");
         assert_eq!(borrowed_work, owned_work, "{name}: the work differs");
         assert!(same_storage(f, &before.0) && known(f) == before.1, "{name}: the borrowed operand changed");
     }
@@ -94,10 +93,9 @@ fn a_borrowed_negation_copies_described_levels_and_weights() {
     });
     assert!(described > 0, "no diagram held a described level");
 
-    let vtree = Arc::new(Vtree::balanced(4));
-    let mut f = Tdd::clause(&vtree, [1, -2]).unwrap() & Tdd::clause(&vtree, [3, 4]).unwrap();
     let table = RationalWeights::from_literals(&vec![LiteralWeights { negative: rat(1, 3), positive: rat(2, 3) }; 4]);
-    f.set_weights(WeightStore::new(table, Arithmetic::ExactRational)).unwrap();
+    let vtree = Arc::new(Vtree::balanced(4).with_weights(Weights::new(table, Arithmetic::ExactRational)).unwrap());
+    let f = Tdd::clause(&vtree, [1, -2]).unwrap() & Tdd::clause(&vtree, [3, 4]).unwrap();
     check("weighted", &f);
     let negated = Engine::new().negate(&f).unwrap();
     assert_eq!(

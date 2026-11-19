@@ -1,13 +1,13 @@
 //! Arithmetic and column access shared by standalone and streaming folds.
 //!
 //! Three domains exist — integer model counts, semiring weights interpreted
-//! by a [`WeightStore`], and the bare scaled floats a conjunction sums
+//! by a [`Weights`], and the bare scaled floats a conjunction sums
 //! out under the scaled-float arithmetic — and two folds consume them: the
 //! marginalization cascade over a finished diagram, and the streaming column
 //! built inside an apply. Both folds are written once against [`ValueDomain`] and reserve columns
 //! through the engine, returning allocation refusals as operation errors.
 
-use crate::diagram::{ChildDecoder, ChildPair, PairsIter, TddLevel, WeightStore};
+use crate::diagram::{ChildDecoder, ChildPair, PairsIter, TddLevel, Weights};
 use crate::Engine;
 
 use crate::limits::OperationError;
@@ -143,7 +143,7 @@ pub(crate) trait ValueDomain: Sized {
     /// The integer domain carries no state and ignores the argument; the
     /// weighted and scaled-float domains require one, and their columns are
     /// only ever opened where a store is attached.
-    fn store_of(ws: Option<&WeightStore>) -> &Self::Store;
+    fn store_of(ws: Option<&Weights>) -> &Self::Store;
 
     /// Fold a node of the scope's level, whose pairs are `pairs`:
     /// `Σ over its pairs (left × right)`, with this domain's child readers

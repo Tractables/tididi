@@ -107,14 +107,14 @@ fn plain_level_content_twins_fork_multiplicity_down() {
 /// WEIGHTED analogue of `plain_level_content_twins_fork_multiplicity_down`.
 ///
 /// Same fixture, but the marginal child `m` is a WEIGHT-marginal level: its per-slot
-/// value lives in the external `WeightStore` (a `BigRational`), and
-/// `marginal_counts` is `None`. With a weight context installed
-/// (a weight store attached) the contraction concat-merges the two
+/// value lives in the level's weight column (a `BigRational`), and
+/// `marginal_counts` is `None`. On a weighted vtree the contraction
+/// concat-merges the two
 /// content-equal twins A,B, leaving the survivor with the duplicate pair
 /// `(P, s),(P, s)`.
 ///
 /// What this pins is that the weighted twin-fold completes without erroring
-/// or touching the `WeightStore`, and that the multiplicity survives as two
+/// or adding a weight value, and that the multiplicity survives as two
 /// multiset terms: their values SUM to 2·(3/7) = 6/7, where a set-dedup would
 /// leave 3/7.
 #[test]
@@ -131,17 +131,17 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     let v = BigRational::new(BigInt::from(3), BigInt::from(7)); // 3/7
     let two = BigRational::from_integer(BigInt::from(2));
 
-    let (mut tdd, root, gp, bp, m_v, s) =
+    let (tdd, root, gp, bp, m_v, s) =
         boundary_content_twins_fixture(|m| m.become_marginal_weighted(vec![crate::diagram::WeightValue::exact(BigRational::new(BigInt::from(3), BigInt::from(7)))]));
 
-    // Attach the store after building the diagram (mirrors `toy_weighted`'s
-    // contract) and write the slot's value into it, so the content-twin fold takes
-    // the weighted scaling path.
-    let ws = crate::diagram::WeightStore::new(
+    // The fixture's levels on a weighted twin of its vtree, so the content-twin
+    // fold takes the weighted scaling path.
+    let ws = crate::diagram::Weights::new(
         RationalWeights::from_literals(&vec![LiteralWeights { negative: v.clone(), positive: v.clone() }; tdd.vtree.num_vars() as usize]),
         Arithmetic::ExactRational,
     );
-    tdd.set_weights(ws).unwrap();
+    let weighted = Arc::new(crate::vtree::Vtree::clone(&tdd.vtree).with_weights(ws).unwrap());
+    let mut tdd = Tdd::from_levels_unchecked(weighted, tdd.levels.to_vec(), tdd.output);
 
     tdd.seed_contract_worklist([root.0]);
 
@@ -192,7 +192,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
 
     assert_eq!(surv_pairs, 2, "gp survivor must keep both duplicate terms");
     assert!(sibling_ok, "plain sibling side must be untouched");
-    assert_eq!(n_slots, 1, "nothing absorbed the factor — no fresh WeightStore slot");
+    assert_eq!(n_slots, 1, "nothing absorbed the factor — no fresh weight slot");
     // The kept run's values must SUM to 2·(3/7) = 6/7 — multiplicity carried by
     // the pair list, not set-dedup'd (which would leave the total at 3/7).
     assert_eq!(

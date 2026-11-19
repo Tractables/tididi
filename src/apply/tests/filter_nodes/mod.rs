@@ -227,12 +227,12 @@ fn a_refused_allocation_leaves_the_operand_intact() {
 
 #[test]
 fn weighted_operands_keep_their_weights_on_every_outcome() {
-    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(8));
-    let mut f = Tdd::clause(&tree, [1, 3, 5, 7]).unwrap();
     let weights = vec![LiteralWeights { negative: rat(2, 1), positive: rat(3, 1) }; 8];
-    f.set_weights(WeightStore::new(RationalWeights::from_literals(&weights), Arithmetic::ExactRational)).unwrap();
+    let weights = Weights::new(RationalWeights::from_literals(&weights), Arithmetic::ExactRational);
+    let tree = Arc::new(Vtree::balanced(8).with_weights(weights).unwrap());
+    let mut f = Tdd::clause(&tree, [1, 3, 5, 7]).unwrap();
     let forgotten = tree.children(tree.root()).0;
     eng.marginalize_levels(&mut f, &[forgotten]).unwrap();
     assert_canonical(&f);

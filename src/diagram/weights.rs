@@ -35,9 +35,9 @@ pub enum Arithmetic {
 ///
 /// Give them to a home with [`Home::weighted`](crate::vtree::Home::weighted):
 /// every diagram on that home is then weighted, and a sum-out on it stores
-/// weight values. On a vtree that is not a weighted home, attach them to one
-/// diagram with [`Tdd::set_weights`](crate::Tdd::set_weights). Query either
-/// with [`Tdd::weighted_value`](crate::Tdd::weighted_value).
+/// weight values. A root vtree that is not a home takes them with
+/// [`Vtree::with_weights`](crate::Vtree::with_weights). Query a diagram's
+/// value with [`Tdd::weighted_value`](crate::Tdd::weighted_value).
 /// Choose [`Arithmetic::ExactRational`] for exact results, or
 /// [`Arithmetic::ScaledFloat`] or [`Arithmetic::SignedLog`] for bounded
 /// precision over a wider numeric range than ordinary floating-point weights.
@@ -51,9 +51,6 @@ pub struct Weights {
     pub(super) table: Arc<RationalWeights>,
     arithmetic: Arithmetic,
 }
-
-/// The weights one diagram carries on a vtree that is not a weighted home.
-pub type WeightStore = Weights;
 
 impl std::fmt::Debug for Weights {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -86,25 +83,6 @@ impl Weights {
             self.algebra().pos_weight(local) == other.algebra().pos_weight(global)
                 && self.algebra().neg_weight(local) == other.algebra().neg_weight(global)
         })
-    }
-
-    /// Validate `self` against `levels` and install it in `slot`. Once a level
-    /// holds weight-marginal values, a store that interprets the weights
-    /// differently from the one they were computed under is refused.
-    pub(crate) fn install(
-        self,
-        vtree: &crate::vtree::Vtree,
-        levels: &[crate::diagram::TddLevel],
-        slot: &mut Option<WeightStore>,
-    ) -> Result<(), crate::diagram::TddBuildError> {
-        self.check_levels(vtree, levels)?;
-        if levels.iter().any(crate::diagram::TddLevel::is_weight_marginal)
-            && slot.as_ref().is_some_and(|old| !old.compatible(&self))
-        {
-            return Err(crate::diagram::TddBuildError::IncompatibleWeights);
-        }
-        *slot = Some(self);
-        Ok(())
     }
 
     /// Check that the table covers the vtree and every marginal level has its values.

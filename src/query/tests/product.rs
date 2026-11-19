@@ -230,13 +230,15 @@ fn refusals_and_the_false_diagram() {
     assert_eq!(eng.marginal_product_count(&s, &elsewhere).unwrap_err(), OperationError::VtreeMismatch);
     let stopped = stopping_engine();
     assert_eq!(stopped.marginal_product_count(&m, &m).unwrap_err(), OperationError::Stopped);
-    // Weights attached to either operand.
-    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+    // Weight values summed into either operand.
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
     let half = num_rational::BigRational::new(1.into(), 2.into());
     let weights = RationalWeights::from_literals(&vec![LiteralWeights { negative: half.clone(), positive: half }; 4]);
-    let mut weighted = s.clone();
-    weighted.set_weights(WeightStore::new(weights, Arithmetic::ExactRational)).unwrap();
-    for (f, g) in [(&weighted, &s), (&s, &weighted)] {
+    let weighted_tree = Arc::new(Vtree::balanced(4).with_weights(Weights::new(weights, Arithmetic::ExactRational)).unwrap());
+    let mut weighted = eng.clause(&weighted_tree, [1, 3]).unwrap();
+    eng.marginalize_levels(&mut weighted, &[left]).unwrap();
+    let structural = eng.clause(&weighted_tree, [1, 2]).unwrap();
+    for (f, g) in [(&weighted, &structural), (&structural, &weighted)] {
         assert_eq!(eng.marginal_product_count(f, g).unwrap_err(), OperationError::IncompatibleWeights);
     }
 }

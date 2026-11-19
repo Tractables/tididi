@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use num_rational::BigRational;
 
-use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
 use crate::diagram::TddBuildError;
 use crate::restructure::{EmbedError, TransportError};
 use crate::test_helpers::assert_canonical;
@@ -77,18 +77,17 @@ fn leaf_vars(vtree: &Vtree) -> Vec<VarId> {
 
 /// A table of `n` variables, `weights[i % weights.len()]` for variable
 /// `i + 1`.
-fn table(n: u32, weights: &[(i64, i64)]) -> WeightStore {
+fn table(n: u32, weights: &[(i64, i64)]) -> Weights {
     let sixths = |k: i64| BigRational::new(k.into(), 6.into());
     let table: Vec<_> = (0..n as usize)
         .map(|i| weights[i % weights.len()])
         .map(|(negative, positive)| LiteralWeights { negative: sixths(negative), positive: sixths(positive) })
         .collect();
-    WeightStore::new(RationalWeights::from_literals(&table), Arithmetic::ExactRational)
+    Weights::new(RationalWeights::from_literals(&table), Arithmetic::ExactRational)
 }
 
-/// One random pair of weights for every variable, so that any renaming
-/// keeps them.
-fn store(n: u32, rng: &mut Lcg) -> WeightStore {
+/// One random pair of weights for every variable.
+fn store(n: u32, rng: &mut Lcg) -> Weights {
     table(n, &[(1 + rng.below(5) as i64, 1 + rng.below(5) as i64)])
 }
 
@@ -131,9 +130,10 @@ fn case(eng: &Engine, seed: u64, rng: &mut Lcg) -> Case {
 
 /// The transport of `f`, owned or borrowed, checked against the embed and
 /// trim; a borrowed `f` must come through intact.
-fn check_against_embed(eng: &Engine, c: &Case, owned: bool, weighted: Option<&WeightStore>) {
+fn check_against_embed(eng: &Engine, c: &Case, owned: bool) {
     let map = |v: VarId| c.back[v.idx()];
     let (f, dest) = (&c.f, &c.dest);
+    let weighted = dest.weights().is_some();
     let pairs = f.pair_count();
     let (got, stats) = match owned {
         true => eng.transport(f.clone(), dest, map, 0),
@@ -147,21 +147,13 @@ fn check_against_embed(eng: &Engine, c: &Case, owned: bool, weighted: Option<&We
         assert_eq!(got.vtree().num_nodes(), 0);
         assert!(Arc::ptr_eq(got.home().unwrap().vtree(), dest.vtree()));
         assert_eq!((got.is_one(), got.is_zero()), (f.is_one(), f.is_zero()));
-        assert_eq!(got.weights().is_some(), weighted.is_some());
+        assert_eq!(got.weights().is_some(), weighted);
         return;
     }
 
     let (mut expected, _) = eng.embed(f, dest.vtree(), map).unwrap();
-    if let Some(ws) = weighted {
-        expected.set_weights(ws.clone()).unwrap();
-    }
     eng.trim(&mut expected, dest).unwrap();
-    let unweighted = |t: &Tdd| {
-        let mut t = t.clone();
-        t.take_weights().unwrap();
-        t
-    };
-    assert!(eng.equivalent(&unweighted(&got), &unweighted(&expected)).unwrap());
+    assert!(eng.equivalent(&got, &expected).unwrap());
     assert_eq!(got.vtree().num_leaves(), f.vtree().num_leaves());
     let images: Vec<VarId> = {
         let mut v: Vec<VarId> = f.vtree().leaf_bottomup().map(|(_, var)| map(var)).collect();
@@ -176,7 +168,7 @@ fn check_against_embed(eng: &Engine, c: &Case, owned: bool, weighted: Option<&We
         assert_eq!(leaf_vars(got.vtree()), leaf_vars(expected.vtree()));
     }
     assert_eq!(eng.model_count(&got).unwrap(), eng.model_count(&expected).unwrap());
-    if weighted.is_some() {
+    if weighted {
         assert!(got.weights().is_some());
         assert_eq!(
             eng.weighted_value(&got).unwrap().map(|w| w.into_rational()),
@@ -197,11 +189,11 @@ fn transport_is_embed_then_trim() {
     let mut rng = Lcg::new(0x7a5_0b0e);
     for seed in 0..300 {
         let c = case(&eng, seed, &mut rng);
-        check_against_embed(&eng, &c, rng.coin(), None);
-        let mut weighted = Case { dest: c.dest.clone(), f: c.f.clone(), back: c.back.clone() };
-        let ws = store(c.dest.vtree().num_vars(), &mut rng);
-        weighted.f.set_weights(ws.clone()).unwrap();
-        check_against_embed(&eng, &weighted, rng.coin(), Some(&ws));
+        check_against_embed(&eng, &c, rng.coin());
+        let n = c.dest.vtree().num_vars();
+        let dest = Home::weighted(Vtree::random(n, seed), store(n, &mut rng)).unwrap();
+        let weighted = Case { dest, f: c.f.clone(), back: c.back.clone() };
+        check_against_embed(&eng, &weighted, rng.coin());
     }
 }
 
@@ -306,38 +298,6 @@ fn a_refused_rotation_hands_back_f_as_it_was() {
     assert!(refused > 3, "{refused} refusals");
 }
 
-/// Under a renaming, a weighted `f` moves only where the table weighs each
-/// image as the variable it renames, and then weighs the same.
-#[test]
-fn a_renaming_keeps_the_weights_or_is_refused() {
-    let eng = Engine::new();
-    let home = Home::new(Vtree::balanced(8));
-    let own = Vtree::projection(&home, [VarId(1), VarId(2), VarId(3), VarId(4)]).unwrap();
-    let f = eng.and_clause(eng.clause(&own, [1, -2, 3]).unwrap(), &[2, 4]).unwrap();
-    let shift = |v: VarId| VarId(v.0 + 4);
-    for (weights, kept) in [(&[(1, 5), (2, 4), (3, 3), (5, 1)][..], true), (&[(1, 5), (2, 4), (3, 3)][..], false)] {
-        let mut weighted = f.clone();
-        weighted.set_weights(table(8, weights)).unwrap();
-        for bound in [0, usize::MAX] {
-            match eng.transport(&weighted, &home, shift, bound) {
-                Ok((g, _)) => {
-                    assert!(kept);
-                    assert_eq!(leaf_vars(g.vtree()), [5, 6, 7, 8].map(VarId));
-                    let value = |t: &Tdd| eng.weighted_value(t).unwrap().map(|w| w.into_rational());
-                    assert_eq!(value(&g), value(&weighted));
-                }
-                Err(r) => {
-                    assert!(!kept);
-                    assert_eq!(r.error, TransportError::Weights(TddBuildError::IncompatibleWeights));
-                }
-            }
-        }
-    }
-    let mut weighted = f.clone();
-    weighted.set_weights(table(8, &[(1, 5), (2, 4), (3, 3)])).unwrap();
-    assert!(eng.transport(&weighted, &home, |v| v, 0).is_ok());
-}
-
 #[test]
 fn bad_images_marginal_levels_and_constants() {
     let eng = Engine::new();
@@ -350,11 +310,6 @@ fn bad_images_marginal_levels_and_constants() {
     let r = eng.transport(f.clone(), &home, |v| VarId(v.0.min(2)), 0).unwrap_err();
     assert_eq!(r.error, TransportError::Overlap { variable: VarId(2) });
     assert!(matches!(r.tdd, Cow::Owned(_)));
-
-    let mut weighted = f.clone();
-    weighted.set_weights(WeightStore::new(RationalWeights::unit(3), Arithmetic::ExactRational)).unwrap();
-    let r = eng.transport(&weighted, &home, |v| VarId(v.0 + 3), 0).unwrap_err();
-    assert!(matches!(r.error, TransportError::Weights(TddBuildError::MissingVariableWeight(_))), "{:?}", r.error);
 
     let mut summed = f.clone();
     crate::marginal::marginalize_levels(&eng, &mut summed, &[own.root()]).unwrap();
@@ -401,7 +356,7 @@ fn a_summed_region_moves_only_onto_the_weights_it_was_summed_under() {
 
     let source = weighted(&[(1, 5), (2, 4), (3, 3)]);
     let (f, region) = with_region(&eng, &source);
-    assert!(f.weights.is_none() && f.weights().is_some());
+    assert!(f.weights().is_some());
     let r = eng.transport(f.clone(), &Home::new(Vtree::balanced(8)), |v| v, 0).unwrap_err();
     assert_eq!(r.error, TransportError::Weights(TddBuildError::WeightedLevelWithoutStore { level: region }));
     assert!(matches!(r.tdd, Cow::Owned(_)));
@@ -413,10 +368,11 @@ fn a_summed_region_moves_only_onto_the_weights_it_was_summed_under() {
         (&[(1, 5), (2, 4), (1, 1), (6, 6)][..], true),
         (&[(1, 5), (2, 4), (3, 3)][..], true),
     ] {
-        match eng.transport(&f, &weighted(weights), |v| v, 0) {
+        let onto = weighted(weights);
+        match eng.transport(&f, &onto, |v| v, 0) {
             Ok((g, _)) => {
                 assert!(kept, "{weights:?}");
-                assert!(g.weights.is_none());
+                assert!(g.weights() == onto.weights());
                 assert_eq!(g.vtree().regions().count(), 1);
                 assert_canonical(&g);
                 let mut again = eng.transport(&g, &source, |v| v, 0).unwrap().0;
@@ -431,7 +387,7 @@ fn a_summed_region_moves_only_onto_the_weights_it_was_summed_under() {
         }
     }
 
-    let scaled = WeightStore::new(table(8, &[(1, 5), (2, 4), (3, 3)]).algebra().clone(), Arithmetic::ScaledFloat);
+    let scaled = Weights::new(table(8, &[(1, 5), (2, 4), (3, 3)]).algebra().clone(), Arithmetic::ScaledFloat);
     let r = eng.transport(&f, &Home::weighted(Vtree::balanced(8), scaled).unwrap(), |v| v, 0).unwrap_err();
     assert_eq!(r.error, TransportError::Weights(TddBuildError::IncompatibleWeights));
 
@@ -443,19 +399,6 @@ fn a_summed_region_moves_only_onto_the_weights_it_was_summed_under() {
     let wrong = weighted(&[(1, 5), (2, 4), (3, 3), (3, 3), (1, 5), (2, 5)]);
     let r = eng.transport(&f, &wrong, shift, 0).unwrap_err();
     assert_eq!(r.error, TransportError::Weights(TddBuildError::IncompatibleWeights));
-
-    // Weights a diagram carries are compared as a home's, and left behind.
-    let home = Home::new(Vtree::balanced(8));
-    let own = Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)]).unwrap();
-    let mut carried = eng.and_clause(eng.clause(&own, [1, -2, 3]).unwrap(), &[2, -3]).unwrap();
-    carried.set_weights(table(8, &[(1, 5), (2, 4), (3, 3)])).unwrap();
-    eng.marginalize(&mut carried, |v| v.0 <= 2).unwrap();
-    let g = eng.transport(&carried, &source, |v| v, 0).unwrap().0;
-    assert!(g.weights.is_none());
-    assert_eq!(value(&g), value(&carried));
-    assert_eq!(value(&g), value(&f));
-    let r = eng.transport(&carried, &weighted(&[(1, 4)]), |v| v, 0).unwrap_err();
-    assert_eq!(r.error, TransportError::Weights(TddBuildError::IncompatibleWeights));
 }
 
 /// A diagram with no summed-out region stores no value of any weights:
@@ -463,13 +406,12 @@ fn a_summed_region_moves_only_onto_the_weights_it_was_summed_under() {
 #[test]
 fn a_structural_diagram_moves_onto_any_weights() {
     let eng = Engine::new();
-    let home = Home::new(Vtree::balanced(8));
+    let home = Home::weighted(Vtree::balanced(8), table(8, &[(1, 5)])).unwrap();
     let own = Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)]).unwrap();
-    let mut f = eng.clause(&own, [1, -2, 3]).unwrap();
-    f.set_weights(table(8, &[(1, 5)])).unwrap();
+    let f = eng.clause(&own, [1, -2, 3]).unwrap();
     let onto = Home::weighted(Vtree::balanced(8), table(8, &[(2, 3), (1, 1)])).unwrap();
     let g = eng.transport(&f, &onto, |v| VarId(v.0 + 1), usize::MAX).unwrap().0;
-    assert!(g.weights.is_none());
+    assert!(g.weights() == onto.weights());
     assert!(Arc::ptr_eq(&g.vtree().home().unwrap().vtree().clone(), onto.vtree()));
     let structural = eng.clause(&Vtree::projection(&onto, [VarId(2), VarId(3), VarId(4)]).unwrap(), [2, -3, 4]).unwrap();
     let value = |t: &Tdd| eng.weighted_value(t).unwrap().map(|w| w.into_rational());

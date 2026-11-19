@@ -3,7 +3,7 @@ use std::sync::Arc;
 use num_bigint::BigUint;
 
 use super::*;
-use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
+use crate::diagram::{Arithmetic, RationalWeights, Weights};
 use crate::test_helpers::{assert_canonical, compile_clauses_on, node_value, rand_cnf, under, vtree_shapes, CnfShape, Lcg};
 use crate::{and, or};
 
@@ -237,10 +237,10 @@ fn counts_past_u128_add_exactly() {
 /// Summed-out levels that hold weights are not added.
 #[test]
 fn weights_on_summed_out_levels_are_refused() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let weights = Weights::new(RationalWeights::unit(4), Arithmetic::ExactRational);
+    let vtree = Arc::new(Vtree::balanced(4).with_weights(weights).unwrap());
     let (left, _) = vtree.children(vtree.root());
     let weighted = |mut f: Tdd| {
-        f.set_weights(WeightStore::new(RationalWeights::unit(4), Arithmetic::ExactRational)).unwrap();
         f.marginalize_levels(&[left]).unwrap();
         f
     };

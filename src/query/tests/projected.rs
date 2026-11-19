@@ -57,21 +57,22 @@ fn projected_counts_cover_leaf_outputs_and_large_free_domains() {
 
 #[test]
 fn projected_counts_ignore_weights_and_reject_marginal_structure() {
-    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
     use crate::test_helpers::rat;
-    let vtree = Arc::new(Vtree::balanced(3));
-    let mut f = Tdd::clause(&vtree, [1, 2]).unwrap();
     let weights = vec![LiteralWeights { negative: rat(0, 1), positive: rat(0, 1) }; 3];
-    f.set_weights(WeightStore::new(RationalWeights::from_literals(&weights), Arithmetic::ExactRational)).unwrap();
+    let weighted = Arc::new(Vtree::balanced(3)
+        .with_weights(Weights::new(RationalWeights::from_literals(&weights), Arithmetic::ExactRational)).unwrap());
+    let mut f = Tdd::clause(&weighted, [1, 2]).unwrap();
     assert_canonical(&f);
     assert_eq!(f.projected_model_count(&[VarId(1)]).unwrap(), 2u32.into());
     assert_eq!(f.model_count().unwrap(), 6u32.into());
     assert_eq!(f.weighted_value().unwrap().unwrap().into_rational(), rat(0, 1));
-    f.marginalize_levels(&[vtree.root()]).unwrap();
+    f.marginalize_levels(&[weighted.root()]).unwrap();
     assert_canonical(&f);
     for selected in [vec![], vec![VarId(1)], vec![VarId(1), VarId(2), VarId(3)]] {
         assert!(matches!(f.projected_model_count(&selected), Err(OperationError::MarginalLevel(_))));
     }
+    let vtree = Arc::new(Vtree::balanced(3));
     let mut f = Tdd::clause(&vtree, [1, 2]).unwrap();
     f.marginalize_levels(&[vtree.root()]).unwrap();
     assert_canonical(&f);

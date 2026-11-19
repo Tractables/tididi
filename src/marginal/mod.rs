@@ -2,7 +2,7 @@
 //!
 //! A marginalized level stops carrying pair structure and carries one value per
 //! node instead: the number of assignments to its vtree subtree that reach that
-//! node, or — with a [`WeightStore`](crate::diagram::WeightStore) attached — that node's weighted value. The
+//! node, or — with a [`Weights`](crate::diagram::Weights) attached — that node's weighted value. The
 //! encoding a parent reads those values through is [`crate::diagram`]; the
 //! reduction passes the epilogue calls are [`crate::reduce`]; counting over a
 //! partly marginalized diagram is [`crate::query`].
@@ -113,13 +113,10 @@ fn on_projection() -> OperationError {
 /// targets are weight-marginal and carry no integer counts, so the integer
 /// batch may not run on them.
 fn evaluate_levels(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx], vtree: &Vtree) -> Result<(), OperationError> {
-    let own = f.weights.take();
-    let r = match own.as_ref().or_else(|| vtree.weights()) {
+    match vtree.weights() {
         Some(ws) => fold::marginalize_targets::<WeightFold>(eng, f, levels, vtree, ws),
         None => marginalize_batch(eng, f, levels, vtree),
-    };
-    f.weights = own;
-    r
+    }
 }
 
 /// The internal nodes of `vtree` whose childless nodes are all finished: a

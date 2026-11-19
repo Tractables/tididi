@@ -126,11 +126,10 @@ impl PooledScratch for UnionTables {
     }
 }
 
-/// Whether the conjunction reads `tdd` through its readings: no weight
-/// store, summed level or region, not false, and structural.
+/// Whether the conjunction reads `tdd` through its readings: no summed
+/// level or region, not false, and structural.
 pub(super) fn readable(tdd: &Tdd) -> bool {
-    tdd.weights.is_none()
-        && !tdd.is_zero()
+    !tdd.is_zero()
         && !tdd.vtree().has_regions()
         && !tdd.has_marginal_level()
         && tdd.require_structure().is_ok()

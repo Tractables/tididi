@@ -12,7 +12,7 @@
 use std::sync::Arc;
 
 use crate::Engine;
-use crate::diagram::{Assembly, ChildDecoder, ChildPair, ChildSide, EncodedChildRef, LevelCounts, NodeIdx, Tdd, TddNodeId, WeightStore, ZERO};
+use crate::diagram::{Assembly, ChildDecoder, ChildPair, ChildSide, EncodedChildRef, LevelCounts, NodeIdx, Tdd, TddNodeId, ZERO};
 use crate::limits::OperationError;
 use crate::value::CountVec;
 use crate::vtree::VtreeIdx;
@@ -190,7 +190,6 @@ fn number(eng: &Engine, f: &Tdd) -> Result<Numbering, OperationError> {
 fn copy(eng: &Engine, f: &Tdd, numbering: &Numbering) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     let mut out = Assembly::new(eng, &f.vtree)?;
-    *out.parts_mut().1 = f.weights.as_ref().map(WeightStore::empty_like);
     for (i, source) in f.levels.iter().enumerate() {
         let t = VtreeIdx(i as u32);
         if source.is_marginal() {
@@ -223,7 +222,7 @@ fn copy(eng: &Engine, f: &Tdd, numbering: &Numbering) -> Result<Tdd, OperationEr
             emitted += 1;
         }
         lim.level_done(emitted)?;
-        let level = &mut out.parts_mut().0[t.idx()];
+        let level = &mut out.levels_mut()[t.idx()];
         for side in [ChildSide::Left, ChildSide::Right] {
             level.set_has_value_refs(side, source.has_value_refs(side));
         }

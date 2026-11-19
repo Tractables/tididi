@@ -250,35 +250,16 @@ fn return_levels_of(eng: &Engine, tdd: &mut Tdd) {
 
 /// [`Engine::and`] after its entry, for operands each owned or borrowed
 /// ([`conjoin_cow`]).
-fn conjoin_either(eng: &Engine, mut f: Cow<'_, Tdd>, mut g: Cow<'_, Tdd>) -> Result<Tdd, OperationError> {
+fn conjoin_either(eng: &Engine, f: Cow<'_, Tdd>, g: Cow<'_, Tdd>) -> Result<Tdd, OperationError> {
     if !Arc::ptr_eq(f.vtree(), g.vtree()) || f.vtree().num_nodes() == 0 {
         return projected::conjoin_projections(eng, f, g);
     }
     if f.vtree().has_regions() {
         projected::check_shared_regions(&f, &g)?;
     }
-    prepare_owned_weights(&mut f, &mut g)?;
     let mut out = conjoin_cow(eng, f, g, VtreeMask::default())?;
     crate::reduce::close_constant(eng, &mut out);
     Ok(out)
-}
-
-/// Check that the operands share one weight interpretation, and give an
-/// owned operand without weights beside a weighted one an empty store, as
-/// [`prepare_weights`](crate::apply::prepare_weights) does; a borrowed one
-/// is read as it is.
-fn prepare_owned_weights(f: &mut Cow<'_, Tdd>, g: &mut Cow<'_, Tdd>) -> Result<(), OperationError> {
-    let Some(empty) = crate::apply::shared_weights([&**f, &**g].into_iter())? else { return Ok(()) };
-    fn owned<'a>(op: &'a mut Cow<'_, Tdd>) -> Option<&'a mut Tdd> {
-        match op {
-            Cow::Owned(op) => Some(op),
-            Cow::Borrowed(_) => None,
-        }
-    }
-    for op in [owned(f), owned(g)].into_iter().flatten() {
-        op.weights.get_or_insert_with(|| empty.empty_like());
-    }
-    Ok(())
 }
 
 /// Make `g` the narrower operand, and say whether the two were swapped; the
@@ -426,7 +407,6 @@ fn conjoin_recycling(
 ///
 /// [`OperationError::VtreeMismatch`] for different vtree allocations that
 /// are not projections of one home,
-/// [`OperationError::IncompatibleWeights`] for different weight interpretations,
 /// [`OperationError::MarginalLevel`] when a structural operand constrains
 /// variables the other has summed out, both have summed out one variable, or
 /// an operand on a projection has an internal summed-out level that is not a
@@ -488,7 +468,7 @@ fn conjoin_kept<'a>(
         (marginal | l.is_marginal(), width.max(l.slot_count()))
     });
     let ((f_marginal, f_width), (g_marginal, g_width)) = (scan(&f), scan(&g));
-    if f.weights.is_some() || f_marginal || g.weights.is_some() || g_marginal {
+    if f_marginal || g_marginal {
         if views.f.is_some() || views.g.is_some() {
             let viewed = Operands { f: views.f.as_deref(), g: views.g.as_deref() };
             (f, g) = place_viewed(eng, f, g, free, viewed, plans)?;
@@ -648,14 +628,11 @@ fn place_onto<'a>(
     *begun = true;
     if tdd.vtree().num_nodes() == 0 {
         return match crate::build::constant_padded_on(eng, into, tdd.is_one()) {
-            Ok(mut constant) => {
-                constant.weights = tdd.weights.as_ref().map(crate::diagram::WeightStore::empty_like);
-                Ok((Cow::Owned(constant), None, false))
-            }
+            Ok(constant) => Ok((Cow::Owned(constant), None, false)),
             Err(error) => Err((error.into(), tdd)),
         };
     }
-    if viewing && tdd.weights.is_none() && !tdd.is_zero() && tdd.require_structure().is_ok() {
+    if viewing && !tdd.is_zero() && tdd.require_structure().is_ok() {
         let plan = match Plan::build(eng, tdd.vtree(), into, map, true, Free::Leave) {
             Ok(plan) => plan,
             Err(error) => return Err((error, tdd)),
@@ -1015,8 +992,7 @@ impl crate::Engine {
             return Err(targets_on_projection());
         }
         f.check_level_indices(targets)?;
-        let [mut f, mut g] = extend::on_one(self, [f, g])?;
-        prepare_owned_weights(&mut f, &mut g)?;
+        let [f, g] = extend::on_one(self, [f, g])?;
         // The apply core asks "is level `t` a target?" once per level it emits,
         // so the membership array is derived here, once, at the cost the caller
         // would pay to build it.
@@ -1135,7 +1111,6 @@ impl crate::Engine {
             };
             return self.model_count(&out);
         }
-        crate::apply::prepare_weights(&mut [&mut f, &mut g])?;
         let vtree = Arc::clone(f.vtree());
         // A target at the root sums the whole conjunction into its count,
         // which is what is returned anyway: it is dropped, so the root can be
@@ -1191,11 +1166,10 @@ fn marginalizing_where(eng: &Engine, f: Cow<'_, Tdd>, g: Cow<'_, Tdd>, summable:
             return extend::trimmed(eng, out);
         }
     }
-    let [mut f, mut g] = extend::on_one(eng, [f, g])?;
+    let [f, g] = extend::on_one(eng, [f, g])?;
     if projected {
         projected::check_shared_regions(&f, &g)?;
     }
-    prepare_owned_weights(&mut f, &mut g)?;
     let vtree = Arc::clone(f.vtree());
     let summed = |t: VtreeIdx| f.level(t).is_marginal() || g.level(t).is_marginal();
     let (mut mask, maximal) = crate::marginal::finished(eng, &vtree, summed, summable)?;

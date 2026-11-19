@@ -46,10 +46,8 @@ impl Engine {
         if f.is_zero() || std::ptr::eq(&*f, &*g) {
             return Ok(true);
         }
-        let mut f = crate::apply::extend::into_owned(self, f)?;
-        let mut g = crate::apply::extend::into_owned(self, g)?;
-        f.weights = None;
-        g.weights = None;
+        let f = crate::apply::extend::into_owned(self, f)?;
+        let g = crate::apply::extend::into_owned(self, g)?;
         Ok(self.and(f, self.negate(g)?)?.is_zero())
     }
 

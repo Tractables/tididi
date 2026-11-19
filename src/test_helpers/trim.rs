@@ -185,16 +185,12 @@ fn trim_once(eng: &Engine, f: &mut Tdd, home: &Home) -> Result<bool, OperationEr
     let local = NodeIdx(merged[end_of[root.idx()].idx()][f.output.local.idx()]);
     // Safety: every level is built bottom-up from nodes of `f`, whose merged
     // nodes are disjoint because the nodes of the top of their chain are.
-    let mut trimmed = unsafe { builder.finish_unchecked(TddNodeId { vtree: own.root(), local }) };
-    trimmed.weights = f.weights.take();
+    let trimmed = unsafe { builder.finish_unchecked(TddNodeId { vtree: own.root(), local }) };
     replace(eng, f, trimmed);
     Ok(true)
 }
 
-fn replace(eng: &Engine, f: &mut Tdd, mut by: Tdd) {
-    if by.weights.is_none() {
-        by.weights = f.weights.take();
-    }
+fn replace(eng: &Engine, f: &mut Tdd, by: Tdd) {
     let old = std::mem::replace(f, by);
     crate::diagram::return_levels(eng, old.levels.into_vec());
 }
