@@ -20,6 +20,9 @@
 
 mod add;
 pub(crate) mod extend;
+pub(crate) mod exit;
+#[cfg(test)]
+pub(crate) mod with_plan;
 pub(crate) mod conjoin;
 pub(crate) mod conjoin_clause;
 mod conjoin_in_place;

@@ -9,7 +9,7 @@
 
 use crate::Engine;
 
-use crate::apply::negate::negate_on;
+use crate::apply::negate::{negate_closed, negate_on};
 use crate::limits::OperationError;
 use crate::diagram::Tdd;
 use crate::reduce::ReductionPlan;
@@ -24,7 +24,7 @@ pub(crate) fn exists_vars_on(
     eng: &Engine,
     f: Tdd,
     vars: &[VarId],
-    reduction: ReductionPlan<'_>,
+    reduction: Option<ReductionPlan<'_>>,
     close: bool,
 ) -> Result<Tdd, OperationError> {
     let _op = eng.limits().enter()?;
@@ -62,7 +62,7 @@ pub(super) fn exists_targets_on(
     eng: &Engine,
     f: Tdd,
     targets: &[VtreeIdx],
-    reduction: ReductionPlan<'_>,
+    reduction: Option<ReductionPlan<'_>>,
 ) -> Result<Tdd, OperationError> {
     if targets.is_empty() {
         return Ok(f);
@@ -82,7 +82,7 @@ impl crate::Engine {
     /// The rewrite checks allocation and cancellation while regrouping nodes. Its
     /// output cap counts emitted intermediate nodes, including the final root union.
     pub fn exists_var(&self, f: Tdd, x: VarId) -> Result<Tdd, OperationError> {
-        exists_vars_on(self, f, &[x], ReductionPlan::default(), true)
+        crate::apply::exit::result(self, exists_vars_on(self, f, &[x], None, true)?)
     }
 
     /// Run [`Tdd::exists_vars`](crate::Tdd::exists_vars) using this batch's scratch and resource limits.
@@ -93,26 +93,7 @@ impl crate::Engine {
     /// the output-node cap return [`OperationError::Stopped`],
     /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn exists_vars(&self, f: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
-        exists_vars_on(self, f, vars, ReductionPlan::default(), true)
-    }
-
-    /// [`exists_vars`](Self::exists_vars) with the reduction it ends with
-    /// chosen explicitly.
-    ///
-    /// Every plan returns the same function. [`ReductionPlan::Prune`] leaves
-    /// every node reachable without establishing canonical form: it skips the
-    /// twin contraction, so the result can be larger than the minimized one,
-    /// and a later [`minimize`](Self::minimize) finishes the job.
-    /// [`ReductionPlan::Contract`] runs no prune and leaves the result owing
-    /// the other passes, which a later `minimize` runs. An empty
-    /// `vars`, a false `f`, and a request that quantifies every variable return
-    /// without running the plan.
-    ///
-    /// # Errors
-    ///
-    /// As [`exists_vars`](Self::exists_vars).
-    pub fn exists_vars_with(&self, f: Tdd, vars: &[VarId], plan: ReductionPlan<'_>) -> Result<Tdd, OperationError> {
-        exists_vars_on(self, f, vars, plan, true)
+        crate::apply::exit::result(self, exists_vars_on(self, f, vars, None, true)?)
     }
 
     /// Run [`Tdd::forall_vars`](crate::Tdd::forall_vars) using this batch's scratch and resource limits.
@@ -125,7 +106,7 @@ impl crate::Engine {
     pub fn forall_vars(&self, f: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
         if quantification_targets(self, f.vtree(), vars)?.is_empty() {
-            return Ok(f);
+            return crate::apply::exit::result(self, f);
         }
         // The complement of false is the constant, on no leaf on a home.
         if f.is_zero() {
@@ -136,7 +117,7 @@ impl crate::Engine {
         let complement = negate_on(self, f)?;
         // The complement's reduction can leave a target's leaf.
         let targets = quantification_targets(self, complement.vtree(), vars)?;
-        let projected = exists_targets_on(self, complement, &targets, ReductionPlan::default())?;
-        self.negate(projected)
+        let projected = exists_targets_on(self, complement, &targets, Some(ReductionPlan::default()))?;
+        crate::apply::exit::result(self, negate_closed(self, std::borrow::Cow::Owned(projected))?)
     }
 }

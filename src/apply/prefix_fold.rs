@@ -238,7 +238,9 @@ impl Engine {
     /// over `values` in `t`'s subtree folds each node's models, reading every
     /// model of each node at the value subtree's root (for a count, one
     /// model count of the subtree reads how many it holds). After it, a cube
-    /// is built per code and the result is minimized.
+    /// is built per code. The result is not minimized; [`minimize`](Self::minimize),
+    /// or an engine with [`canonical_results`](crate::limits::LimitConfig::with_canonical_results),
+    /// certifies it.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -398,7 +400,7 @@ impl Engine {
             folds.len(),
         )?;
         drop(folds);
-        Ok(fold.emit(self, &into, &mapped, &codes)?)
+        Ok(crate::apply::exit::result(self, fold.emit(self, &into, &mapped, &codes)?)?)
     }
 }
 
@@ -1470,7 +1472,7 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
     /// The result on `into`: a cube per code, the products on the keys'
     /// sides, then from the chain's bottom up one node per distinct pair a
     /// state's moves lead to, the root holding the top state's pairs;
-    /// minimized.
+    /// closed.
     fn emit(
         mut self,
         eng: &Engine,
@@ -1590,7 +1592,7 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
             vtree: into.root(),
             local: top,
         })?;
-        eng.minimize(&mut result)?;
+        eng.close(&mut result, &[])?;
         Ok(result)
     }
 }

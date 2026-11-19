@@ -2,6 +2,7 @@
 
 use crate::limits::{Charged, Transient};
 use crate::reduce::ReductionPlan;
+use super::overlay::{overlay_on, Overlay};
 use crate::vtree::{VarId, VtreeIdx};
 use crate::{Engine, OperationError, Tdd};
 
@@ -42,8 +43,9 @@ impl SharedCircuit {
 /// Uses the shared vtree's execution context automatically.
 ///
 /// Both operands are consumed, must be structural, and must share a vtree
-/// allocation. The result is minimized; weight handling and intermediate
-/// storage follow [`ite`](crate::ite).
+/// allocation. The result is not minimized; [`Engine::minimize`], or an
+/// engine with [`canonical_results`](crate::limits::LimitConfig::with_canonical_results), certifies it. Weight
+/// handling and intermediate storage follow [`ite`](crate::ite).
 ///
 /// # Errors
 ///
@@ -70,7 +72,9 @@ pub fn xor(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
 /// `(condition ∧ then_branch) ∨ (¬condition ∧ else_branch)`. All three operands
 /// must be structural, on one vtree or on projections of one home, with
 /// compatible weights;
-/// an unweighted operand inherits the agreed weights. The result is minimized.
+/// an unweighted operand inherits the agreed weights. The result is not
+/// minimized; [`Engine::minimize`], or an engine with
+/// [`canonical_results`](crate::limits::LimitConfig::with_canonical_results), certifies it.
 ///
 /// Operands are consumed on success or error. Composition copies the condition
 /// and builds intermediate diagrams using the shared vtree context; temporary
@@ -142,8 +146,9 @@ impl Quantification {
 ///
 /// Uses the shared vtree's execution context automatically.
 ///
-/// Both operands are structural and consumed; the result is minimized and
-/// keeps their shared vtree and agreed weights. Quantified variables remain
+/// Both operands are structural and consumed; the result keeps their shared
+/// vtree and agreed weights. It is not minimized; [`Engine::minimize`], or
+/// an engine with [`canonical_results`](crate::limits::LimitConfig::with_canonical_results), certifies it. Quantified variables remain
 /// free in that universe, as in [`Tdd::exists_vars`]. Summing counts with
 /// [`Engine::and_marginalizing`] is a different operation.
 ///
@@ -173,6 +178,14 @@ pub fn and_exists(f: Tdd, g: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError>
     context.run(|eng| eng.and_exists(f, g, vars))
 }
 
+/// The overlay of `f` and `g`, minimized: an intermediate of a composite,
+/// whose size the next overlay pays for.
+fn overlay_reduced(eng: &Engine, op: Overlay, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
+    let mut result = overlay_on(eng, op, f, g)?;
+    eng.reduce(&mut result, ReductionPlan::default())?;
+    Ok(result)
+}
+
 impl Engine {
     /// Run [`ite`] using this batch's scratch and resource limits.
     ///
@@ -194,9 +207,9 @@ impl Engine {
         }
         super::prepare_weights(&mut [&mut condition, &mut then_branch, &mut else_branch])?;
         let mut condition = SharedCircuit::new(condition, 2);
-        let yes = self.and(condition.take(self)?, then_branch)?;
-        let no = self.and_not(else_branch, condition.take(self)?)?;
-        self.or(yes, no)
+        let yes = super::conjoin::conjoin_either(self, condition.take(self)?.into(), then_branch.into())?;
+        let no = overlay_reduced(self, Overlay::AndNot, else_branch, condition.take(self)?)?;
+        super::exit::result(self, overlay_on(self, Overlay::Or, yes, no)?)
     }
 
     /// Run [`xor`] using this batch's scratch and resource limits.
@@ -213,9 +226,9 @@ impl Engine {
         super::prepare_weights(&mut [&mut f, &mut g])?;
         let mut f = SharedCircuit::new(f, 2);
         let mut g = SharedCircuit::new(g, 2);
-        let only_f = self.and_not(f.take(self)?, g.take(self)?)?;
-        let only_g = self.and_not(g.take(self)?, f.take(self)?)?;
-        self.or(only_f, only_g)
+        let only_f = overlay_reduced(self, Overlay::AndNot, f.take(self)?, g.take(self)?)?;
+        let only_g = overlay_reduced(self, Overlay::AndNot, g.take(self)?, f.take(self)?)?;
+        super::exit::result(self, overlay_on(self, Overlay::Or, only_f, only_g)?)
     }
 
     /// Run [`and_exists`] using this batch's scratch and resource limits.
@@ -239,7 +252,7 @@ impl Engine {
     /// Run [`and_exists`] with a chosen [`Quantification`], using this batch's
     /// scratch and resource limits.
     ///
-    /// All settings return the same canonical function.
+    /// All settings return the same function.
     ///
     /// # Errors
     ///
@@ -255,29 +268,6 @@ impl Engine {
         g: Tdd,
         vars: &[VarId],
         how: Quantification,
-    ) -> Result<Tdd, OperationError> {
-        self.and_exists_with_reduction(f, g, vars, how, ReductionPlan::default())
-    }
-
-    /// [`and_exists_with`](Self::and_exists_with) with the reduction it ends
-    /// with chosen explicitly.
-    ///
-    /// Every plan returns the same function. [`ReductionPlan::Prune`] leaves
-    /// every node reachable without establishing canonical form: it skips the
-    /// twin contraction, so the result can be larger than the minimized one,
-    /// and a later [`minimize`](Self::minimize) finishes the job. An operand
-    /// quantified before the product is minimized whatever the plan.
-    ///
-    /// # Errors
-    ///
-    /// As [`and_exists_with`](Self::and_exists_with).
-    pub fn and_exists_with_reduction(
-        &self,
-        f: Tdd,
-        g: Tdd,
-        vars: &[VarId],
-        how: Quantification,
-        plan: ReductionPlan<'_>,
     ) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
         let [mut f, mut g] = super::extend::owned(self, [f, g])?;
@@ -297,16 +287,13 @@ impl Engine {
         if how.pushes_through() {
             (f, g) = push_local_targets(self, f, g, &targets)?;
         }
-        let product = self.and(f, g)?;
-        // The product's reduction can leave a target's leaf.
+        let product = super::conjoin::conjoin_either(self, f.into(), g.into())?;
+        // The product's close can leave a target's leaf.
         let targets = super::project::quantification_targets(self, product.vtree(), vars)?;
         if targets.is_empty() || product.is_zero() {
-            // No sweep runs to reduce the product, so it is reduced here.
-            let mut product = product;
-            self.reduce(&mut product, plan)?;
-            return super::extend::trimmed(self, product);
+            return super::exit::result(self, super::extend::trimmed(self, product)?);
         }
-        super::extend::trimmed(self, super::project::exists_targets_on(self, product, &targets, plan)?)
+        super::exit::result(self, super::extend::trimmed(self, super::project::exists_targets_on(self, product, &targets, None)?)?)
     }
 }
 
@@ -439,10 +426,10 @@ pub(super) fn push_local_targets(
         }
     }
     if !into_f.is_empty() {
-        f = super::project::exists_targets_on(eng, f, &into_f, ReductionPlan::default())?;
+        f = super::project::exists_targets_on(eng, f, &into_f, Some(ReductionPlan::default()))?;
     }
     if !into_g.is_empty() {
-        g = super::project::exists_targets_on(eng, g, &into_g, ReductionPlan::default())?;
+        g = super::project::exists_targets_on(eng, g, &into_g, Some(ReductionPlan::default()))?;
     }
     Ok((f, g))
 }

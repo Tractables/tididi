@@ -46,8 +46,9 @@ fn a_prune_only_negation_minimizes_to_the_negation() {
                         continue;
                     }
                     cases += 1;
-                    let full = eng.negate(operand.clone()).unwrap();
-                    let mut pruned = eng.negate_with(operand, ReductionPlan::Prune).unwrap();
+                    let mut full = eng.negate(operand.clone()).unwrap();
+                    eng.minimize(&mut full).unwrap();
+                    let mut pruned = crate::apply::with_plan::negate_with(eng, operand, ReductionPlan::Prune).unwrap();
                     assert!(
                         pruned.equivalent(&full).unwrap(),
                         "prune-only changed the function"
@@ -75,7 +76,7 @@ fn a_prune_only_negation_leaves_no_unreachable_node() {
                 if f.is_zero() {
                     continue;
                 }
-                let mut pruned = eng.negate_with(f, ReductionPlan::Prune).unwrap();
+                let mut pruned = crate::apply::with_plan::negate_with(eng, f, ReductionPlan::Prune).unwrap();
                 let before = pruned.node_count();
                 eng.reduce(&mut pruned, ReductionPlan::Prune).unwrap();
                 assert_eq!(before, pruned.node_count(), "a second prune still found something");
@@ -107,12 +108,13 @@ fn a_negation_owes_the_contraction_only_what_it_changed() {
                     continue;
                 }
                 cases += 1;
-                let full = eng.negate(&conj).unwrap();
+                let mut full = eng.negate(&conj).unwrap();
+                eng.minimize(&mut full).unwrap();
                 for borrowed in [true, false] {
                     let mut neg = if borrowed {
-                        eng.negate_with(&conj, ReductionPlan::Prune).unwrap()
+                        crate::apply::with_plan::negate_with(eng, &conj, ReductionPlan::Prune).unwrap()
                     } else {
-                        eng.negate_with(conj.clone(), ReductionPlan::Prune).unwrap()
+                        crate::apply::with_plan::negate_with(eng, conj.clone(), ReductionPlan::Prune).unwrap()
                     };
                     let mut owed = neg.dirty.levels(Pass::Contract).to_vec();
                     owed.sort_unstable();

@@ -275,7 +275,7 @@ fn check<M: FoldMonoid<Value = u64>>(
     let got = eng
         .prefix_fold(&a, &b, &order, &value_vars, range, monoid, coding)
         .unwrap();
-    assert_canonical(&got);
+    crate::apply::tests::exit::check_unminimized(&got, what);
     let want = expected(points, values, range, monoid);
     let rank = given.into_inner();
     assert_eq!(
@@ -308,6 +308,8 @@ fn check<M: FoldMonoid<Value = u64>>(
     let out = Blocks::vars(&[&blocks.keys[..], &blocks.order[..], &blocks.codes[..]].concat());
     let built = eng.from_models(&into, &out, &rows).unwrap();
     assert!(eng.equivalent(&got, &built).unwrap(), "{what}");
+    let mut got = got.clone();
+    eng.minimize(&mut got).unwrap();
     assert_eq!(
         got.pair_count(),
         built.pair_count(),

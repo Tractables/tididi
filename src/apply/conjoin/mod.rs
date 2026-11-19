@@ -249,7 +249,7 @@ fn return_levels_of(eng: &Engine, tdd: &mut Tdd) {
 
 /// [`Engine::and`] after its entry, for operands each owned or borrowed
 /// ([`conjoin_cow`]).
-fn conjoin_either(eng: &Engine, mut f: Cow<'_, Tdd>, mut g: Cow<'_, Tdd>) -> Result<Tdd, OperationError> {
+pub(crate) fn conjoin_either(eng: &Engine, mut f: Cow<'_, Tdd>, mut g: Cow<'_, Tdd>) -> Result<Tdd, OperationError> {
     if !Arc::ptr_eq(f.vtree(), g.vtree()) || f.vtree().num_nodes() == 0 {
         return projected::conjoin_projections(eng, f, g);
     }
@@ -393,8 +393,8 @@ fn conjoin_recycling(
 /// copied: borrowing costs those levels and a borrowed operand's weight
 /// store, where cloning first copies every level. Owned or borrowed, the
 /// result is the same diagram for the same work. It is correct for counting
-/// but may retain unreachable nodes and twins; [`Tdd::minimize`] establishes
-/// canonical form when required.
+/// but may retain unreachable nodes and twins; [`Tdd::minimize`], or an
+/// engine with [`canonical_results`](crate::limits::LimitConfig::with_canonical_results), certifies it.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -810,7 +810,7 @@ impl crate::Engine {
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn and<'f, 'g>(&self, f: impl Into<Cow<'f, Tdd>>, g: impl Into<Cow<'g, Tdd>>) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        conjoin_either(self, f.into(), g.into())
+        crate::apply::exit::result(self, conjoin_either(self, f.into(), g.into())?)
     }
 
     /// Run [`Engine::and`], giving both operands back unchanged when it is
@@ -1022,9 +1022,9 @@ impl crate::Engine {
         // On a home's root, an internal summed-out level is a form a
         // projection cannot hold, so the trim would refuse it.
         if out.has_marginal_level() {
-            return Ok(out);
+            return crate::apply::exit::result(self, out);
         }
-        extend::trimmed(self, out)
+        crate::apply::exit::result(self, extend::trimmed(self, out)?)
     }
 
     /// Conjoin two diagrams and sum out the variables `summable` names.
@@ -1071,7 +1071,7 @@ impl crate::Engine {
         summable: impl Fn(VarId) -> bool,
     ) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        marginalizing_where(self, f.into(), g.into(), &summable)
+crate::apply::exit::result(self, marginalizing_where(self, f.into(), g.into(), &summable)?)
     }
 
     /// Count the models of `f ∧ g` without keeping the conjunction.

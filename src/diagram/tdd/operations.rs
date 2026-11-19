@@ -24,7 +24,12 @@ impl Tdd {
         Arc::clone(self.context())
     }
 
-    /// Return the Boolean complement of this structural diagram in minimized form.
+    /// Return the Boolean complement of this structural diagram.
+    ///
+    /// The complement of a certified operand ([`is_canonical`](Self::is_canonical))
+    /// is certified; of any other operand it is not minimized, and
+    /// [`minimize`](Self::minimize), or an engine with
+    /// [`canonical_results`](crate::limits::LimitConfig::with_canonical_results), certifies it.
     ///
     /// Consumes the operand on success and error, retaining its vtree and attached
     /// weights. Complementation can grow the diagram. If only an unweighted count
@@ -47,24 +52,6 @@ impl Tdd {
     /// ```
     pub fn negate(self) -> Result<Tdd, OperationError> {
         self.context_arc().run(|eng| eng.negate(self))
-    }
-
-    /// Complement the diagram using an explicit reduction plan.
-    ///
-    /// Use [`negate`](Self::negate) for the default minimized result.
-    /// [`ReductionPlan::Prune`](crate::reduce::ReductionPlan::Prune) removes
-    /// unreachable storage without establishing canonical form. It can avoid
-    /// redundant work when a later step minimizes the result, but the larger
-    /// intermediate diagram may make that step more expensive. The complement
-    /// of a diagram certified canonical ([`is_canonical`](Self::is_canonical))
-    /// is minimized and certified once pruned, so for such an operand every
-    /// plan returns the minimized result.
-    ///
-    /// # Errors
-    ///
-    /// As [`negate`](Self::negate).
-    pub fn negate_with(self, plan: crate::reduce::ReductionPlan<'_>) -> Result<Tdd, OperationError> {
-        self.context_arc().run(|eng| eng.negate_with(self, plan))
     }
 
     /// Conjoin a disjunction of literals without building a separate diagram.
@@ -141,7 +128,11 @@ impl Tdd {
         self.context_arc().run(|eng| eng.or_cube(self, cube.as_ref()))
     }
 
-    /// Substitute an assignment into this function and return its minimized cofactor.
+    /// Substitute an assignment into this function and return its cofactor.
+    ///
+    /// The cofactor is not minimized: it may hold twins and nodes its output
+    /// does not reach; [`minimize`](Self::minimize), or an engine with
+    /// [`canonical_results`](crate::limits::LimitConfig::with_canonical_results), certifies it.
     ///
     /// Positive literals set variables to true, negative literals to false. Integers
     /// are signed and one-based; typed [`Literal`] values also work. The substituted
@@ -181,7 +172,8 @@ impl Tdd {
         self.context_arc().run(|eng| eng.condition(self, assignment))
     }
 
-    /// Substitute `value` for one variable and return its minimized cofactor.
+    /// Substitute `value` for one variable and return its cofactor, not
+    /// minimized, as [`condition`](Self::condition) says.
     ///
     /// Consumes the diagram, retaining its weights and vtree. The variable becomes
     /// free, so the result's model count includes both of its values. Only its leaf
@@ -212,8 +204,8 @@ impl Tdd {
 
     /// Substitute the same Boolean value for every variable in `vars`.
     ///
-    /// Consumes the diagram and returns its minimized cofactor using one propagation
-    /// and reduction pass. Repeated variables are ignored; an empty slice returns
+    /// Consumes the diagram and returns its cofactor, not minimized, as
+    /// [`condition`](Self::condition) says, using one propagation pass. Repeated variables are ignored; an empty slice returns
     /// the operand unchanged. The vtree and weights are retained, and each distinct
     /// target becomes free in model counts. For a nonfalse input, each target leaf
     /// and its parent must be structural; other levels may be marginal.
@@ -244,8 +236,8 @@ impl Tdd {
     /// Existentially quantify one variable.
     ///
     /// The result holds whenever either value of `var` satisfies this function.
-    /// Consumes the diagram, retaining its weights and vtree, and minimizes a
-    /// nonfalse result. A false operand remains false. The quantified variable
+    /// Consumes the diagram, retaining its weights and vtree; the result is
+    /// as [`exists_vars`](Self::exists_vars) says. A false operand remains false. The quantified variable
     /// becomes free, so divide the full-vtree model count by two to count assignments
     /// to the remaining variables. [`exists_vars`](Self::exists_vars) accepts a batch.
     ///
@@ -277,8 +269,9 @@ impl Tdd {
     ///
     /// Consumes the diagram on success and error, retaining its vtree and weights.
     /// A repeated variable is quantified once. An empty slice returns the operand
-    /// unchanged; a nonempty request minimizes a nonfalse operand. A false operand
-    /// remains false.
+    /// unchanged. A false operand remains false. The result is not minimized: it
+    /// may hold twins; [`minimize`](Self::minimize), or an engine with
+    /// [`canonical_results`](crate::limits::LimitConfig::with_canonical_results), certifies it.
     ///
     /// The quantified variables remain free in the unchanged vtree. Divide the
     /// result's full model count by `2^k` to count over the remaining variables,
@@ -320,7 +313,9 @@ impl Tdd {
     ///
     /// Consumes the diagram on success and error, retaining its vtree and weights.
     /// A repeated variable is quantified once. An empty slice returns the operand
-    /// unchanged; a nonempty request returns a minimized result. The quantified
+    /// unchanged. The result is not minimized: [`minimize`](Self::minimize), or
+    /// an engine with [`canonical_results`](crate::limits::LimitConfig::with_canonical_results),
+    /// certifies it. The quantified
     /// variables remain free in the unchanged vtree, so divide the result's full
     /// model count by `2^k` to count over the remaining variables, where `k` is
     /// the number of distinct quantified variables.
@@ -354,8 +349,10 @@ impl Tdd {
     /// a target, but each source may appear only once. Every source and target must
     /// occur in the vtree.
     ///
-    /// Consumes the diagram on success and error. A nonempty map returns a minimized
-    /// function; an empty map returns the operand unchanged after validation. The
+    /// Consumes the diagram on success and error. An empty map returns the
+    /// operand unchanged after validation. The result is not minimized:
+    /// [`minimize`](Self::minimize), or an engine with
+    /// [`canonical_results`](crate::limits::LimitConfig::with_canonical_results), certifies it. The
     /// vtree allocation, shape, variable ids and literal weights stay fixed, so
     /// renaming can change a weighted value even for a permutation. Rebuilding can
     /// require intermediates larger than the input or result.
@@ -392,8 +389,10 @@ impl Tdd {
     /// replacement weights are ignored.
     ///
     /// Consumes this diagram on success and error and borrows replacements without
-    /// changing them. A nonempty map produces a minimized result; an empty map
-    /// returns the operand unchanged after checking structure. Rebuilding can
+    /// changing them. An empty map returns the operand unchanged after checking
+    /// structure. The result is not minimized: [`minimize`](Self::minimize), or an
+    /// engine with [`canonical_results`](crate::limits::LimitConfig::with_canonical_results),
+    /// certifies it. Rebuilding can
     /// require intermediate diagrams larger than the inputs or result.
     ///
     /// # Errors
@@ -425,7 +424,9 @@ impl Tdd {
     ///
     /// [`RestrictionOutcome`] distinguishes an unchanged operand, a shrunk diagram,
     /// and a false result; [`RestrictionOutcome::into_tdd`] extracts the diagram.
-    /// A shrunk result may need minimization. A false operand is returned unchanged;
+    /// A shrunk result is not minimized: [`minimize`](Self::minimize), or an engine
+    /// with [`canonical_results`](crate::limits::LimitConfig::with_canonical_results),
+    /// certifies it. A false operand is returned unchanged;
     /// otherwise false `care` produces an unsatisfiable outcome.
     ///
     /// Marginal levels in this function are retained; marginal levels in `care`
@@ -467,8 +468,9 @@ impl Tdd {
     /// included. [`FilterOutcome::Unchanged`](crate::apply::FilterOutcome::Unchanged)
     /// means every node was kept and nothing was rebuilt. A
     /// [`Filtered`](crate::apply::FilterOutcome::Filtered) result has no more
-    /// pairs than this diagram and no unreachable nodes, but need not be
-    /// canonical; call [`Self::minimize`] when that is required. For a
+    /// pairs than this diagram but may store nodes its output does not reach;
+    /// [`minimize`](Self::minimize), or an engine with
+    /// [`canonical_results`](crate::limits::LimitConfig::with_canonical_results), certifies it. For a
     /// structural diagram its models are a subset of the original models.
     /// [`Unsatisfiable`](crate::apply::FilterOutcome::Unsatisfiable) means the
     /// output node was rejected or emptied. The

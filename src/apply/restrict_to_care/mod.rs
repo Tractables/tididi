@@ -111,6 +111,15 @@ impl RestrictionOutcome {
             RestrictionOutcome::Unsatisfiable(f) => RestrictionOutcome::Unsatisfiable(trimmed(eng, f)?),
         })
     }
+
+    fn exit(self, eng: &Engine) -> Result<Self, OperationError> {
+        use crate::apply::exit::result;
+        Ok(match self {
+            RestrictionOutcome::Unchanged(f) => RestrictionOutcome::Unchanged(result(eng, f)?),
+            RestrictionOutcome::Shrunk(f) => RestrictionOutcome::Shrunk(result(eng, f)?),
+            RestrictionOutcome::Unsatisfiable(f) => RestrictionOutcome::Unsatisfiable(result(eng, f)?),
+        })
+    }
 }
 
 fn restrict_prepared(eng: &Engine, f: Tdd, care: &Tdd, max_pair_visits: u64) -> Result<RestrictionOutcome, OperationError> {
@@ -176,11 +185,14 @@ impl crate::Engine {
     /// allowance does not suppress engine cancellation.
     pub fn restrict_to_care_bounded(&self, f: Tdd, care: &Tdd, max_pair_visits: u64) -> Result<RestrictionOutcome, OperationError> {
         let _op = self.limits().enter()?;
-        if crate::apply::extend::needed([&f, care]) {
-            return restrict_across(self, f, care, max_pair_visits);
-        }
-        if f.is_zero() || max_pair_visits == 0 { return Ok(RestrictionOutcome::Unchanged(f)); }
-        restrict_prepared(self, f, care, max_pair_visits)?.trimmed(self)
+        let outcome = if crate::apply::extend::needed([&f, care]) {
+            restrict_across(self, f, care, max_pair_visits)?
+        } else if f.is_zero() || max_pair_visits == 0 {
+            RestrictionOutcome::Unchanged(f)
+        } else {
+            restrict_prepared(self, f, care, max_pair_visits)?.trimmed(self)?
+        };
+        outcome.exit(self)
     }
 
     /// Run [`Tdd::restrict_to_care`](crate::Tdd::restrict_to_care) using this batch's scratch and resource limits.
@@ -195,17 +207,18 @@ impl crate::Engine {
     /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn restrict_to_care(&self, f: Tdd, mut care: Tdd) -> Result<RestrictionOutcome, OperationError> {
         let _op = self.limits().enter()?;
-        if crate::apply::extend::needed([&f, &care]) {
+        let outcome = if crate::apply::extend::needed([&f, &care]) {
             self.reduce_plain(&mut care, crate::reduce::ReductionPlan::default())?;
-            return restrict_across(self, f, &care, u64::MAX);
-        }
-        if f.is_zero() {
-            return Ok(RestrictionOutcome::Unchanged(f));
-        }
-        // Sound for any representation of `care` whose nodes each have a
-        // model (invariant 2), which the walk assumes of both operands; the
-        // reduced one gives the walk fewer pairs.
-        self.reduce_plain(&mut care, crate::reduce::ReductionPlan::default())?;
-        restrict_prepared(self, f, &care, u64::MAX)?.trimmed(self)
+            restrict_across(self, f, &care, u64::MAX)?
+        } else if f.is_zero() {
+            RestrictionOutcome::Unchanged(f)
+        } else {
+            // Sound for any representation of `care` whose nodes each have a
+            // model (invariant 2), which the walk assumes of both operands; the
+            // reduced one gives the walk fewer pairs.
+            self.reduce_plain(&mut care, crate::reduce::ReductionPlan::default())?;
+            restrict_prepared(self, f, &care, u64::MAX)?.trimmed(self)?
+        };
+        outcome.exit(self)
     }
 }

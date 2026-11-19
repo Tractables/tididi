@@ -65,7 +65,7 @@ fn both_routes_agree(eng: &Engine, vtree: &Arc<Vtree>, num_vars: u32, clauses: &
 #[test]
 fn the_two_routes_agree_on_the_fixed_corpus() {
     same_as_stored(|| {
-        let eng = Engine::new();
+        let eng = crate::test_helpers::canonical_engine();
         let mut out = Vec::new();
         for (num_vars, clauses) in test_cases() {
             for (shape, vtree) in vtree_shapes(num_vars) {
@@ -78,7 +78,7 @@ fn the_two_routes_agree_on_the_fixed_corpus() {
 
 #[test]
 fn the_two_routes_agree_on_seeded_random_formulas() {
-    let eng = Engine::new();
+    let eng = crate::test_helpers::canonical_engine();
     let mut rng = Lcg::new(0x5eed_f05ed);
     for num_vars in [3u32, 5, 8] {
         for round in 0..24 {
@@ -98,7 +98,7 @@ fn the_two_routes_agree_on_seeded_random_formulas() {
 /// operands before the product and the product never carries a target.
 #[test]
 fn the_two_routes_agree_when_each_target_is_local_to_one_operand() {
-    let eng = Engine::new();
+    let eng = crate::test_helpers::canonical_engine();
     let num_vars = 8;
     let odd: Vec<Vec<i32>> = vec![vec![1, 3], vec![-3, 5], vec![-5, 7], vec![-1, -7]];
     let even: Vec<Vec<i32>> = vec![vec![2, 4], vec![-4, 6], vec![-6, 8], vec![-2, -8]];
@@ -176,7 +176,7 @@ fn a_target_local_to_one_operand_never_reaches_the_product() {
 /// quantification runs on the product.
 #[test]
 fn the_two_routes_agree_when_a_quantified_block_straddles_both_operands() {
-    let eng = Engine::new();
+    let eng = crate::test_helpers::canonical_engine();
     let num_vars = 9;
     for (shape, vtree) in vtree_shapes(num_vars) {
         // Both formulas constrain the middle block (4, 5, 6) and one outer one.
@@ -216,7 +216,7 @@ fn the_two_routes_agree_over_a_vtree_wider_than_the_formulas() {
 /// every position they can occupy.
 #[test]
 fn the_two_routes_agree_with_every_subtree_of_the_vtree_quantified() {
-    let eng = Engine::new();
+    let eng = crate::test_helpers::canonical_engine();
     let num_vars = 7;
     let clauses = [vec![1, 2], vec![-2, 3], vec![3, 4], vec![-4, 5], vec![5, 6], vec![-6, 7]];
     for (shape, vtree) in vtree_shapes(num_vars) {
@@ -291,7 +291,7 @@ fn a_quantified_subtree_one_operand_ignores_is_pushed_whole() {
     let (f_changed, g_changed, _, g2) = pushed(&f, &g, &vars);
     assert!(!f_changed && g_changed, "the block went into the operand that constrains it");
     assert!(g2.equivalent(&g.clone().exists_vars(&vars).unwrap()).unwrap());
-    assert_routes_agree_on(&Engine::new(), &f, &g, &vars, "a block one operand ignores");
+    assert_routes_agree_on(&crate::test_helpers::canonical_engine(), &f, &g, &vars, "a block one operand ignores");
 }
 
 /// An operand with more than sixteen times the other's pairs is not
@@ -332,7 +332,7 @@ fn a_far_larger_operand_is_left_to_the_product() {
     assert!(!f_changed && !g_changed, "the far larger operand was quantified first, on the right");
     let (f_changed, g_changed, _, _) = pushed(&f, &near, &vars);
     assert!(f_changed && !g_changed, "an operand of comparable size was not quantified first");
-    let eng = Engine::new();
+    let eng = crate::test_helpers::canonical_engine();
     for (g, what) in [(&free, "beside a small operand"), (&tail, "beside a small operand it shares nothing with"), (&near, "beside a comparable operand")] {
         assert_routes_agree_on(&eng, &f, g, &vars, what);
     }

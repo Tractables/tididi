@@ -22,6 +22,7 @@ use crate::Engine;
 use crate::vtree::{VarId, Vtree};
 
 mod and_exists;
+pub(crate) mod exit;
 mod extend;
 mod conjoin_in_place;
 mod conjoin_indexed;

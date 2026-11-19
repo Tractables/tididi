@@ -37,7 +37,7 @@ fn reduced_and_negated(t: &Tdd) -> (Tdd, u64, Tdd, u64) {
     eng.minimize(&mut m).unwrap();
     let minimized = eng.limits().work_since(mark);
     let mark = eng.limits().mark();
-    let n = eng.negate_with(t.clone(), crate::reduce::ReductionPlan::Prune).unwrap();
+    let n = crate::apply::with_plan::negate_with(&eng, t.clone(), crate::reduce::ReductionPlan::Prune).unwrap();
     (m, minimized, n, eng.limits().work_since(mark))
 }
 

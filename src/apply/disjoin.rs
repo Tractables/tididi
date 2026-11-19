@@ -9,7 +9,9 @@
 use crate::Engine;
 use crate::diagram::Tdd;
 use crate::limits::{Charged, OperationError};
-use crate::apply::negate::negate_on;
+use crate::apply::conjoin::conjoin_either;
+use crate::apply::negate::{negate_closed, negate_on};
+use crate::apply::overlay::{overlay_on, Overlay};
 use crate::reduce::ReductionPlan;
 
 /// Panicking disjunction used by `BitOr` and test fixtures.
@@ -28,10 +30,16 @@ pub(crate) fn disjoin_many_on(eng: &Engine, operands: Vec<Tdd>) -> Result<Tdd, O
         // The operand itself carries the vtree and the weights; when every
         // operand is false, so is the disjunction.
         let mut result = live.pop().or(a_false_one).ok_or(OperationError::EmptyOperands)?;
-        eng.reduce(&mut result, ReductionPlan::default())?;
+        eng.close(&mut result, &[])?;
         return Ok(result);
     }
-    fold_balanced(eng, live, 0, Engine::or)
+    fold_balanced(eng, live, 0, |eng, a, b, last| {
+        let mut result = overlay_on(eng, Overlay::Or, a, b)?;
+        if !last {
+            eng.reduce(&mut result, ReductionPlan::default())?;
+        }
+        Ok(result)
+    })
 }
 
 /// Validate the operands and set the false ones aside, keeping their order.
@@ -70,18 +78,18 @@ fn fold_balanced(
     eng: &Engine,
     mut operands: Vec<Tdd>,
     mut charged_bytes: u64,
-    combine: impl Fn(&Engine, Tdd, Tdd) -> Result<Tdd, OperationError>,
+    combine: impl Fn(&Engine, Tdd, Tdd, bool) -> Result<Tdd, OperationError>,
 ) -> Result<Tdd, OperationError> {
     debug_assert!(!operands.is_empty());
-    let lone = operands.len() == 1;
     while operands.len() > 1 {
+        let last = operands.len() == 2;
         let mut next = Vec::new();
         eng.limits().reserve_exact(&mut next, operands.len().div_ceil(2))?;
         let mut it = operands.into_iter();
         while let Some(a) = it.next() {
             match it.next() {
                 Some(b) => {
-                    next.push(combine(eng, a, b)?);
+                    next.push(combine(eng, a, b, last)?);
                 }
                 None => next.push(a),
             }
@@ -91,14 +99,9 @@ fn fold_balanced(
         charged_bytes = next.charged_bytes();
         operands = next;
     }
-    let mut result = operands.pop().expect("a non-empty operand list");
+    let result = operands.pop().expect("a non-empty operand list");
     drop(operands);
     eng.limits().release_bytes(charged_bytes);
-    // A round minimizes each product as it builds it, so only a lone
-    // complement still owes its reduction.
-    if lone {
-        eng.reduce(&mut result, ReductionPlan::default())?;
-    }
     Ok(result)
 }
 
@@ -117,7 +120,10 @@ fn collect_operands(operands: impl IntoIterator<Item = Tdd>) -> Result<Vec<Tdd>,
 ///
 /// Uses the shared vtree's execution context automatically.
 ///
-/// Both operands are consumed on success and on error. The result is minimized.
+/// Both operands are consumed on success and on error. The result is not minimized:
+/// it may hold twins and nodes its output does not reach; [`Engine::minimize`],
+/// or an engine with [`canonical_results`](crate::limits::LimitConfig::with_canonical_results),
+/// certifies it.
 /// Weight compatibility and inheritance follow [`and`](crate::and).
 ///
 /// ```
@@ -160,7 +166,10 @@ pub fn or(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
 /// Combines nonfalse operands through [`or`] in a balanced tree. No operand
 /// is complemented; intermediate sizes depend on the operands and their grouping.
 ///
-/// All operands are consumed. The result is minimized. A false operand is
+/// All operands are consumed. The result is not minimized:
+/// it may hold twins and nodes its output does not reach; [`Engine::minimize`],
+/// or an engine with [`canonical_results`](crate::limits::LimitConfig::with_canonical_results),
+/// certifies it. A false operand is
 /// dropped after checking weight compatibility; if every operand is false,
 /// so is the result. The result retains the agreed weights, as in [`or`].
 ///
@@ -197,7 +206,10 @@ pub fn or_many(operands: impl IntoIterator<Item = Tdd>) -> Result<Tdd, Operation
 /// True exactly when none of the operands is true. Complements each live
 /// operand and conjoins them in a balanced tree.
 ///
-/// All operands are consumed and must share a vtree. The result is minimized.
+/// All operands are consumed and must share a vtree. The result is not minimized:
+/// it may hold twins and nodes its output does not reach; [`Engine::minimize`],
+/// or an engine with [`canonical_results`](crate::limits::LimitConfig::with_canonical_results),
+/// certifies it.
 /// A false operand is dropped, its complement being the constant true; if
 /// every operand is false, the result is the constant true. Weight compatibility
 /// and inheritance follow [`or`], including for false operands.
@@ -237,20 +249,29 @@ impl crate::Engine {
     pub fn nor_many(&self, operands: Vec<Tdd>) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
         let operands = crate::apply::extend::owned_vec(self, operands)?;
-        let (live, a_false_one) = live_operands(operands)?;
+        let (mut live, a_false_one) = live_operands(operands)?;
         if live.is_empty() {
             // Every operand is false, so every complement is true.
             let f = a_false_one.ok_or(OperationError::EmptyOperands)?;
-            return crate::apply::extend::trimmed(self, crate::build::constant_like(self, &f, true)?);
+            return crate::apply::exit::result(self, crate::apply::extend::trimmed(self, crate::build::constant_like(self, &f, true)?)?);
+        }
+        if let [_] = live.as_slice() {
+            let lone = live.pop().expect("one operand");
+            return crate::apply::exit::result(self, negate_closed(self, std::borrow::Cow::Owned(lone))?);
         }
         let complements = complements_of(self, live)?;
         let bytes = complements.charged_bytes();
-        let result = fold_balanced(self, complements, bytes, |eng, a, b| {
-            let mut result = eng.and(a, b)?;
-            eng.reduce(&mut result, ReductionPlan::default())?;
+        let mut result = fold_balanced(self, complements, bytes, |eng, a, b, last| {
+            let mut result = conjoin_either(eng, a.into(), b.into())?;
+            if !last {
+                eng.reduce(&mut result, ReductionPlan::default())?;
+            }
             Ok(result)
         })?;
-        crate::apply::extend::trimmed(self, result)
+        if result.is_zero() {
+            crate::reduce::prune::clear_false(&mut result);
+        }
+        crate::apply::exit::result(self, crate::apply::extend::trimmed(self, result)?)
     }
 
     /// Run [`or`] using this batch's scratch and resource limits.
@@ -261,7 +282,7 @@ impl crate::Engine {
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn or(&self, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        crate::apply::overlay::overlay_on(self, crate::apply::overlay::Overlay::Or, f, g)
+        crate::apply::exit::result(self, overlay_on(self, Overlay::Or, f, g)?)
     }
 
     /// Run [`or_many`] using this batch's scratch and resource limits.
@@ -273,7 +294,7 @@ impl crate::Engine {
     pub fn or_many(&self, operands: Vec<Tdd>) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
         let operands = crate::apply::extend::owned_vec(self, operands)?;
-        crate::apply::extend::trimmed(self, disjoin_many_on(self, operands)?)
+        crate::apply::exit::result(self, crate::apply::extend::trimmed(self, disjoin_many_on(self, operands)?)?)
     }
 }
 

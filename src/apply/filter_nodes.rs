@@ -12,7 +12,6 @@
 use crate::Engine;
 use crate::diagram::{Assembly, ChildDecoder, ChildPair, ChildSide, EncodedChildRef, NodeIdx, Tdd, TddNodeId, ValueRef, WeightStore, ZERO};
 use crate::limits::OperationError;
-use crate::reduce::ReductionPlan;
 use crate::vtree::VtreeIdx;
 
 /// What [`Tdd::filter_nodes`] removed besides the rejected nodes.
@@ -71,6 +70,15 @@ impl Engine {
     /// Run [`Tdd::filter_nodes`] with this engine's allocation, cancellation
     /// and output limits. The callback's own work is not bounded by them.
     ///
+    /// The kept nodes of each level are numbered in their original order and
+    /// every node's surviving pairs keep their order. A filtered result is
+    /// not reduced: it stores the nodes its output no longer reaches, among
+    /// them the orphans of the removals; [`reduce`](Self::reduce) with
+    /// [`ReductionPlan::Prune`](crate::reduce::ReductionPlan::Prune) drops them, and
+    /// [`minimize`](Self::minimize), or an engine with
+    /// [`canonical_results`](crate::limits::LimitConfig::with_canonical_results),
+    /// certifies it.
+    ///
     /// # Errors
     ///
     /// Cancellation, allocation refusal and the output-node cap return
@@ -78,29 +86,6 @@ impl Engine {
     /// [`OperationError::OutputCap`], respectively. A level that would exceed
     /// the addressable width returns [`OperationError::IndexOverflow`].
     pub fn filter_nodes(&self, f: &Tdd, keep: impl FnMut(TddNodeId) -> bool) -> Result<FilterOutcome, OperationError> {
-        self.filter_nodes_with(f, keep, ReductionPlan::Prune)
-    }
-
-    /// [`filter_nodes`](Self::filter_nodes) with the reduction that finishes a
-    /// filtered result chosen explicitly.
-    ///
-    /// Before `plan` runs, the kept nodes of each level are numbered in their
-    /// original order and every node's surviving pairs keep their order.
-    /// Unreachable nodes and the orphans the removals create are still stored
-    /// at that point. [`ReductionPlan::Prune`] removes them;
-    /// a full plan also makes a structural result canonical. `plan` does not
-    /// run on an unchanged or unsatisfiable outcome.
-    ///
-    /// # Errors
-    ///
-    /// As [`filter_nodes`](Self::filter_nodes), including refusals from
-    /// `plan`.
-    pub fn filter_nodes_with(
-        &self,
-        f: &Tdd,
-        keep: impl FnMut(TddNodeId) -> bool,
-        plan: ReductionPlan<'_>,
-    ) -> Result<FilterOutcome, OperationError> {
         let lim = self.limits();
         let _op = lim.enter()?;
         if f.is_zero() { return Ok(FilterOutcome::Unchanged); }
@@ -118,8 +103,8 @@ impl Engine {
             return Ok(FilterOutcome::Unsatisfiable { tdd: crate::build::constant_like(self, f, false)?, stats });
         }
         let mut tdd = assembly.finish(TddNodeId { vtree: root.vtree, local })?;
-        self.reduce(&mut tdd, plan)?;
-        Ok(FilterOutcome::Filtered { tdd, stats })
+        self.close(&mut tdd, &[])?;
+        Ok(FilterOutcome::Filtered { tdd: crate::apply::exit::result(self, tdd)?, stats })
     }
 }
 

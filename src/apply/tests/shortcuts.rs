@@ -112,7 +112,7 @@ fn empty_replacement_maps_still_reject_discarded_structure() {
 
 #[test]
 fn composition_minimizes_nonminimal_operands_on_identity_paths() {
-    let eng = Engine::new();
+    let eng = crate::test_helpers::canonical_engine();
     let tree = Arc::new(Vtree::balanced(4));
     let f = with_unreachable_twin(eng.clause(&tree, [1, 3]).unwrap());
     let mut zero = f.clone();

@@ -850,7 +850,7 @@ impl Engine {
     /// 32-bit index, and the engine's refusals ([`OperationError::Stopped`],
     /// [`OperationError::OverBudget`]).
     pub fn and_indexed(&self, f: &Tdd, g: &Tdd, index: &PairIndex) -> Result<Tdd, OperationError> {
-        and_indexed_counted(self, f, g, index).map(|(tdd, _)| tdd)
+        crate::apply::exit::result(self, and_indexed_counted(self, f, g, index)?.0)
     }
 
     /// For each node of `f` at vtree node `at`, the value under `algebra` of

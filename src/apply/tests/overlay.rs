@@ -121,13 +121,13 @@ fn and_of_complement(eng: &Engine, f: Tdd, g: Tdd) -> Tdd {
 /// the same function, canonical, and the same diagram.
 fn check_pair(eng: &Engine, f: &Tdd, g: &Tdd, n: u32, what: &str) {
     let (tf, tg) = (truth(f, n), truth(g, n));
-    let or = overlay_on(eng, Overlay::Or, f.clone(), g.clone()).unwrap();
+    let or = eng.or(f.clone(), g.clone()).unwrap();
     assert_canonical(&or);
     let want: Vec<bool> = tf.iter().zip(&tg).map(|(a, b)| *a || *b).collect();
     assert_eq!(truth(&or, n), want, "{what}: or");
     assert_same_shape(&or, &de_morgan_or(eng, f.clone(), g.clone()), &format!("{what}: or"));
 
-    let diff = overlay_on(eng, Overlay::AndNot, f.clone(), g.clone()).unwrap();
+    let diff = eng.and_not(f.clone(), g.clone()).unwrap();
     assert_canonical(&diff);
     let want: Vec<bool> = tf.iter().zip(&tg).map(|(a, b)| *a && !*b).collect();
     assert_eq!(truth(&diff, n), want, "{what}: and_not");
@@ -136,7 +136,7 @@ fn check_pair(eng: &Engine, f: &Tdd, g: &Tdd, n: u32, what: &str) {
 
 #[test]
 fn the_overlay_matches_the_complement_forms_on_random_functions() {
-    let eng = &Engine::new();
+    let eng = &crate::test_helpers::canonical_engine();
     let mut rng = Lcg::new(0x0_7e41);
     for n in 1..=9u32 {
         for (name, vtree) in shapes(n) {
@@ -155,7 +155,7 @@ fn the_overlay_matches_the_complement_forms_on_random_functions() {
 /// more lefts and rights than a random clause set gives.
 #[test]
 fn the_overlay_matches_the_complement_forms_on_wide_levels() {
-    let eng = &Engine::new();
+    let eng = &crate::test_helpers::canonical_engine();
     let mut rng = Lcg::new(0x0_3a1d);
     for n in [10u32, 12] {
         for (name, vtree) in shapes(n) {
@@ -179,7 +179,7 @@ fn the_overlay_matches_the_complement_forms_on_wide_levels() {
 /// the overlay reads every node of a level, so it must not be misled by them.
 #[test]
 fn unreduced_operands_give_the_same_result() {
-    let eng = &Engine::new();
+    let eng = &crate::test_helpers::canonical_engine();
     let mut rng = Lcg::new(0x0_51c3);
     for n in [4u32, 7, 9] {
         for (name, vtree) in shapes(n) {
@@ -201,7 +201,7 @@ fn unreduced_operands_give_the_same_result() {
 
 #[test]
 fn constants_and_equal_operands() {
-    let eng = &Engine::new();
+    let eng = &crate::test_helpers::canonical_engine();
     let mut rng = Lcg::new(0x0_c0a5);
     for n in [1u32, 2, 5] {
         for (name, vtree) in shapes(n) {

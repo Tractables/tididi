@@ -4,6 +4,18 @@
 
 Breaking changes:
 
+- No operation minimizes its result by default. Each one ends with its own
+  kernel and the close it needs (levels in closed form, a constant on the
+  empty projection, the leaves it named true dropped); its documentation
+  says what it returns. `LimitConfig::with_canonical_results(true)` makes
+  every operation minimize its result, so that it is certified canonical
+  unless it holds a summed-out level. `Tdd::equivalent`, `Tdd::implies` and
+  `Tdd::is_zero` are exact either way; `Tdd::is_one` is exact on a
+  minimized diagram.
+- `Engine::negate_with`, `Tdd::negate_with`, `Engine::exists_vars_with`,
+  `Engine::and_exists_with_reduction` and `Engine::filter_nodes_with` are
+  removed. Call the operation, then `Engine::reduce` with the plan.
+
 - `Engine::and_filter_products` is removed. Conjoin, then restrict to the
   care constraint with `Engine::restrict_to_care`: the result agrees with
   the filtered product under that constraint and is canonical.

@@ -67,6 +67,15 @@ pub(crate) fn stopping_engine() -> Engine {
     engine
 }
 
+/// A fresh engine whose operations certify their results
+/// (`canonical_results`), for tests that compare a result with a minimized one.
+#[must_use]
+pub(crate) fn canonical_engine() -> Engine {
+    let engine = Engine::new();
+    let _prior = engine.limits().install(LimitConfig::none().with_canonical_results(true));
+    engine
+}
+
 /// Left-rotate the vtree at node `v`, promoting `v`'s right child, and repair
 /// the bottom-up order. `None` if `v` or its right child is a leaf.
 ///

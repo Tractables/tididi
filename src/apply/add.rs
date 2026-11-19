@@ -65,8 +65,11 @@ use super::overlay::{ABSENT, LevelOverlay, Overlay, Pieces, Scratch, leaf_index,
 ///
 /// Uses the shared vtree's execution context automatically.
 ///
-/// Both operands are consumed on success and on error. The result is
-/// minimized; it has the operands' summed-out levels and keeps their weights.
+/// Both operands are consumed on success and on error. The result has the
+/// operands' summed-out levels and keeps their weights. Without a summed-out
+/// level it is not minimized; [`Engine::minimize`], or an engine with
+/// [`canonical_results`](crate::limits::LimitConfig::with_canonical_results), certifies it. With one it is
+/// minimized, never certified.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -134,11 +137,12 @@ impl Engine {
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn add(&self, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        add_on(self, f, g)
+        crate::apply::exit::result(self, add_on(self, f, g)?)
     }
 }
 
-/// `f + g` of two owned operands on one vtree, minimized.
+/// `f + g` of two owned operands on one vtree: the overlay, or the sum of
+/// summed-out diagrams, minimized.
 fn add_on(eng: &Engine, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
     let [mut f, mut g] = crate::apply::extend::owned(eng, [f, g])?;
     crate::apply::prepare_weights(&mut [&mut f, &mut g])?;

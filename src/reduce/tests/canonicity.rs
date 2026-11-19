@@ -184,7 +184,7 @@ fn every_route_to_one_function() -> Vec<Tdd> {
 /// pairwise one must end on the same canonical diagram.
 #[test]
 fn listed_twin_searches_reach_the_canonical_diagram() {
-    let eng = Engine::new();
+    let eng = crate::test_helpers::canonical_engine();
     let mut rng = Lcg::new(0x5eed_1157_ed00_0001);
     let before = crate::reduce::contract::tests::listed_searches();
     for &nvars in &[6u32, 8, 10] {

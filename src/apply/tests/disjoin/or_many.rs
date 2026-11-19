@@ -39,7 +39,7 @@ fn or_many_equals_a_fold_of_or() {
     }
 }
 
-/// Both groupings minimize their result, so their canonical sizes agree.
+/// Both groupings minimized give one canonical size.
 #[test]
 fn or_many_is_no_larger_than_a_fold() {
     let v = vtree(4);
@@ -49,9 +49,11 @@ fn or_many_is_no_larger_than_a_fold() {
             .cloned()
             .reduce(|a, b| or(a, b).expect("a disjunction"))
             .expect("a nonempty set");
-        let many = or_many(operands).expect("a disjunction");
-        assert_canonical(&many);
-        assert_eq!(many.pair_count(), folded.pair_count(), "both results are minimized, so both are canonical");
+        let mut many = or_many(operands).expect("a disjunction");
+        let mut folded = folded;
+        many.minimize().expect("no limits");
+        folded.minimize().expect("no limits");
+        assert_eq!(many.pair_count(), folded.pair_count(), "both minimized, so both are canonical");
     }
 }
 
@@ -95,12 +97,12 @@ fn operands_must_share_a_vtree() {
     assert!(matches!(or_many([one, other]), Err(OperationError::VtreeMismatch)));
 }
 
-/// A false operand does not short-circuit the two-operand form either: the
-/// other operand comes back minimized whichever side it is on, and two false
-/// operands give a minimized false.
+/// A false operand does not short-circuit the two-operand form either: under
+/// `canonical_results` the other operand comes back minimized whichever side
+/// it is on, and two false operands give a minimized false.
 #[test]
 fn a_false_operand_leaves_the_other_minimized() {
-    let eng = &crate::Engine::new();
+    let eng = &crate::test_helpers::canonical_engine();
     let v = vtree(4);
     let zero = constant_zero(eng, &v);
     let raw = crate::apply::apply_and(

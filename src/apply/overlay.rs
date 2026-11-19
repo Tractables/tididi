@@ -24,7 +24,7 @@
 //! `g` for a disjunction. A child that the other operand does not split keeps
 //! one piece, so where the operands overlap little this is the size of the
 //! operands; the cost that remains is the local complement inside one
-//! operand's pair of the other operand's cells, which the result holds before
+//! operand's pair of the other operand's cells, which the result holds until
 //! it is minimized.
 //!
 //! A leaf child is read the same way: its pieces are `{⊤}` when both operands
@@ -41,7 +41,6 @@ use crate::diagram::{
     POS_LEAF_IDX, Tdd, TddLevel, TddNodeId,
 };
 use crate::limits::OperationError;
-use crate::reduce::ReductionPlan;
 use crate::vtree::{Vtree, VtreeIdx};
 
 use super::runs::Runs;
@@ -554,7 +553,9 @@ fn overlay_leaf_root(eng: &Engine, op: Overlay, f: &Tdd, g: &Tdd) -> Result<Tdd,
 }
 
 /// `f ∨ g`, `f ∧ ¬g` or the sum `f + g` (a disjunction refusing a shared
-/// model) of two owned operands on one vtree, minimized.
+/// model) of two owned operands on one vtree, closed and not reduced: the
+/// overlay's pieces are disjoint and each node is created with its cells, so
+/// no node is empty, and only a constant needs the close.
 ///
 /// Validates both operands, aligns their weights, and returns the result with
 /// them. A false operand short-cuts: the other one, or false.
@@ -580,7 +581,7 @@ pub(crate) fn overlay_on(
         (false, false, _) => overlay_levels(eng, op, &f, &g)?,
     };
     result.weights = weights;
-    eng.reduce(&mut result, ReductionPlan::default())?;
+    eng.close(&mut result, &[])?;
     crate::apply::extend::trimmed(eng, result)
 }
 
@@ -591,7 +592,8 @@ pub(crate) fn overlay_on(
 /// `f & !g`, it never builds the complement of `g`: each node of `f` is split
 /// by the nodes of `g` at its level and the pieces outside `g` are kept.
 ///
-/// Both operands are consumed on success and on error. The result is minimized.
+/// Both operands are consumed on success and on error. The result is not
+/// minimized: it may hold twins and nodes its output does not reach.
 /// Weight compatibility and inheritance follow [`and`](crate::and).
 ///
 /// ```
@@ -632,7 +634,7 @@ impl Engine {
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn and_not(&self, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        overlay_on(self, Overlay::AndNot, f, g)
+        crate::apply::exit::result(self, overlay_on(self, Overlay::AndNot, f, g)?)
     }
 }
 

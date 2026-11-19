@@ -6,7 +6,7 @@
 //! every clause and decides at each [`EncodePoint`] whether the encoding goes
 //! on. [`Engine::probe_nodes`] then asks the same solver, as a [`SatOracle`],
 //! which encoded nodes can be true, and marks the others dead for
-//! [`Engine::filter_nodes_with`](crate::Engine::filter_nodes_with) to remove.
+//! [`Engine::filter_nodes`](crate::Engine::filter_nodes) to remove.
 //! The library holds no solver and reads no clock.
 
 use std::ops::ControlFlow;

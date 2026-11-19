@@ -27,7 +27,7 @@ fn plan(i: usize) -> ReductionPlan<'static> {
 fn negated(f: Cow<'_, Tdd>, plan: ReductionPlan<'_>) -> (Tdd, u64) {
     let eng = Engine::new();
     let mark = eng.limits().mark();
-    let out = eng.negate_with(f, plan).unwrap();
+    let out = crate::apply::with_plan::negate_with(&eng, f, plan).unwrap();
     (out, eng.limits().work_since(mark))
 }
 

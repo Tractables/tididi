@@ -186,7 +186,9 @@ enum Role {
 /// in-place bottom-up sweep, then reduce on `eng` by `reduction`, checking its
 /// limits throughout. With `close`, the reduction ends by leaving the
 /// targets ([`Engine::reduce_seeded`]); without it the result stays on
-/// `tdd`'s vtree. The full default plan leaves the result canonical; a
+/// `tdd`'s vtree. With no `reduction` and `close`, the sweep's result is
+/// only closed ([`Engine::close`]): the sweep leaves no node empty and no
+/// level loose that was not. The full default plan leaves the result canonical; a
 /// prune leaves it the same function, with every node reachable but twins the
 /// sweep made still apart. `targets` are distinct leaves of the diagram's
 /// vtree, looked up by the caller. An operand that still owes the reduction
@@ -210,7 +212,7 @@ pub(super) fn exists_leaves_structural(
     eng: &Engine,
     mut tdd: Tdd,
     targets: &[VtreeIdx],
-    reduction: ReductionPlan<'_>,
+    reduction: Option<ReductionPlan<'_>>,
     close: bool,
 ) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
@@ -312,9 +314,10 @@ pub(super) fn exists_leaves_structural(
     // one node the level held, or, under another quantified level, is the
     // node that level's `⊤` pair names (index 0 of an internal child).
     tdd.dirty.set_loose(loose);
-    match close {
-        true => eng.reduce_seeded(&mut tdd, reduction, targets)?,
-        false => eng.reduce_plain(&mut tdd, reduction)?,
+    match (reduction, close) {
+        (None, true) => eng.close(&mut tdd, targets)?,
+        (Some(reduction), true) => eng.reduce_seeded(&mut tdd, reduction, targets)?,
+        (reduction, false) => eng.reduce_plain(&mut tdd, reduction.unwrap_or_default())?,
     }
     Ok(tdd)
 }

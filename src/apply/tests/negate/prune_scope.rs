@@ -9,9 +9,9 @@ use crate::{Engine, Tdd};
 
 use super::plan::shape;
 
-/// Negate `f`, ending with `plan` under `scope`. The seeded scope is what
-/// `Engine::negate_with` uses; `Whole` is the same negation with the walk that
-/// assumes nothing.
+/// Negate `f`, ending with `plan` under `scope`. The seeded scope is the one
+/// a certified complement's prune falls back to; `Whole` is the same negation
+/// with the walk that assumes nothing.
 fn negate_scoped(eng: &Engine, f: Tdd, plan: ReductionPlan<'_>, scope: PruneScope) -> Tdd {
     let mut result = crate::apply::negate::negate_on(eng, f).unwrap();
     assert!(

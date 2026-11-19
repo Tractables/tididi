@@ -206,7 +206,7 @@ mod producers {
 
     /// Prune and contraction keep a certificate with nothing owed; a
     /// negation certifies its result under every plan from a certified
-    /// operand, and under a full plan from any operand.
+    /// operand, and from any operand under `canonical_results`.
     #[test]
     fn idle_reductions_and_negations_certify() {
         let eng = Engine::new();
@@ -226,11 +226,11 @@ mod producers {
             certified(&expected, &format!("seed {seed}: negate"));
             for plan in [ReductionPlan::Prune, ReductionPlan::Contract] {
                 let label = format!("seed {seed}: negate_with({plan:?})");
-                let g = eng.negate_with(&c, plan).unwrap();
+                let g = crate::apply::with_plan::negate_with(&eng, &c, plan).unwrap();
                 certified(&g, &label);
                 assert!(eng.equivalent(&g, &expected).unwrap(), "seed {seed}");
             }
-            let g = eng.negate(&f).unwrap();
+            let g = crate::test_helpers::canonical_engine().negate(&f).unwrap();
             certified(&g, &format!("seed {seed}: negate of an uncertified operand"));
             assert_eq!(g.node_count(), expected.node_count(), "seed {seed}");
         }

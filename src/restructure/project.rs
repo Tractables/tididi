@@ -244,7 +244,7 @@ impl Engine {
             Cow::Borrowed(f) => f.try_clone_on(self)?,
             Cow::Owned(f) => f,
         };
-        let mut g = crate::apply::project::exists_vars_on(self, f, dropped, crate::reduce::ReductionPlan::default(), false)?;
+        let mut g = crate::apply::project::exists_vars_on(self, f, dropped, Some(crate::reduce::ReductionPlan::default()), false)?;
         self.minimize_plain(&mut g)?;
         match splice(self, &g, into, plan)? {
             Some(mut result) => {

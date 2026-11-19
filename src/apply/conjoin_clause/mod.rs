@@ -466,7 +466,7 @@ impl crate::Engine {
         }
         gate.flush()?;
         let one = self.cube(vtree, std::iter::empty::<Literal>())?;
-        conjoin_clause_on(self, one, &clause)
+        crate::apply::exit::result(self, conjoin_clause_on(self, one, &clause)?)
     }
 
     /// Run [`Tdd::and_clause`](crate::Tdd::and_clause) using this batch's scratch and resource limits.
@@ -486,7 +486,7 @@ impl crate::Engine {
         f: Tdd,
         clause: &[L],
     ) -> Result<Tdd, OperationError> {
-        conjoin_clause_on(self, f, clause)
+        crate::apply::exit::result(self, conjoin_clause_on(self, f, clause)?)
     }
 }
 
