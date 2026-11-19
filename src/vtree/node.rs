@@ -147,7 +147,7 @@ pub struct Vtree {
     /// readonly` and hot loops reload vtree fields (0.4% of a consumer's
     /// instructions). A home's index is therefore in an allocation of its
     /// own, set once by [`Home::new`](super::Home::new).
-    pub(super) home: Option<std::sync::Arc<super::home::HomeLink>>,
+    pub(super) home: Option<super::home::HomeLink>,
     /// The index of a root that is a home.
     pub(super) index: super::home::RootIndex,
 }

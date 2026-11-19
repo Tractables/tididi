@@ -18,7 +18,7 @@ impl Vtree {
     /// swaps since its link was made, is the projection on its leaves;
     /// `None` on a root vtree. Linear in the home's size.
     pub(crate) fn lifted_home(&self) -> Option<Home> {
-        let link = self.home.as_deref()?;
+        let link = self.home.as_ref()?;
         let old = link.home.vtree();
         let internals = self.internal_bottomup_slice();
         let mut stands = vec![false; old.num_nodes()];

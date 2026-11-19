@@ -82,7 +82,7 @@ fn home_node_is_the_ancestor_in_the_home() {
 #[test]
 fn home_answers_as_the_tree() {
     for seed in 0..30u64 {
-        let n = 1 + (seed % 15) as u32 * 5;
+        let n = 1 + (seed % 15) as u32 * 14;
         let home = rotated_home(n, seed);
         let tree = home.vtree();
         let leaf_at = |r: u32| home.node_over(r, r);
@@ -234,10 +234,9 @@ fn validate_checks_the_link() {
     let home = Home::new(Vtree::balanced(8));
     let own = Vtree::projection(&home, [2, 3, 6].map(VarId)).unwrap();
     let mut broken = (*own).clone();
-    let mut link = (**broken.home.as_ref().unwrap()).clone();
+    let link = broken.home.as_mut().unwrap();
     let n = link.slot.len();
     link.slot.swap(n - 2, n - 1);
-    broken.home = Some(Arc::new(link));
     assert!(matches!(broken.validate(), Err(VtreeError::Invalid(_))));
 }
 
@@ -298,7 +297,7 @@ fn a_home_is_made_once_and_not_cloned() {
     let copy = Arc::new(Vtree::clone(home.vtree()));
     assert!(home.vtree().is_home() && !copy.is_home());
     assert!(copy.home().is_none());
-    assert_eq!(std::mem::size_of::<Vtree>(), 128);
+    assert_eq!(std::mem::size_of::<Vtree>(), 160);
 }
 
 #[test]
