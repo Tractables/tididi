@@ -169,7 +169,8 @@ impl View {
             view.at[d.idx()] = Slot::Own(s as u32);
         }
         if !view.by_node {
-            lim.reserve_exact(&mut view.built, plan.pass_throughs)?;
+            // A pass-through, and at most one renumbered copy for each.
+            lim.reserve_exact(&mut view.built, 2 * plan.pass_throughs)?;
         }
         let mut literal_tops = Vec::new();
         let mut gate = lim.gate();
@@ -238,7 +239,7 @@ impl View {
 
     /// The view's level at `t`, where it builds it: the one it built there
     /// before, if any, else an empty level, the result's in a placement.
-    #[inline]
+    #[inline(always)]
     fn slot_mut(&mut self, lim: &Limits, t: VtreeIdx) -> Result<&mut TddLevel, OperationError> {
         let b = match self.at[t.idx()] {
             Slot::Built(b) => b as usize,
