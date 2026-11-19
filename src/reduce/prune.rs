@@ -403,8 +403,8 @@ pub(crate) fn prune_unreachable(
 /// ([`settle_loose`]) while the settle's reads pay. A parent level the settle
 /// reads is one the walk enters anyway unless the read drops each of its
 /// listed children, so the settle reads parents, bottom-up, only while the
-/// slots and arena pairs of those read come to at most those of the ones
-/// read that the walk no longer enters, plus an eighth of the diagram's
+/// pairs its reads took come to at most the slots and arena pairs of the
+/// parents read that the walk no longer enters, plus an eighth of the diagram's
 /// slots and arena pairs; the eighth is an arbitrary allowance. Levels not
 /// read stay listed.
 pub(super) fn seed_list<'a>(
@@ -653,10 +653,10 @@ pub(crate) fn settle_loose_in<'a>(
     settle_listed(eng, vtree, level, listed, || usize::MAX)
 }
 
-/// [`settle_loose_in`] that stops reading parent levels once the
-/// [`level_size`] of those read passes that of the ones whose listed
-/// children the reads all dropped by more than `slack`, which is asked
-/// for only then.
+/// [`settle_loose_in`] that stops reading parent levels once the pairs the
+/// reads took ([`unnamed_children`]) pass the [`level_size`] of the parents
+/// whose listed children the reads all dropped by more than `slack`, which
+/// is asked for only then.
 fn settle_listed<'a>(
     eng: &Engine,
     vtree: &Vtree,
@@ -699,19 +699,17 @@ fn settle_listed<'a>(
     parents.sort_unstable_by_key(|&p| vtree.topo_pos(p));
     parents.dedup();
     let mut gate = lim.gate();
-    let (mut spent, mut saved, mut allowance) = (0usize, 0usize, None);
+    let (mut spent, mut saved, mut allowance) = (0u64, 0u64, None);
     for &p in parents.iter() {
         let (left, right) = vtree.children(p);
         if p != vtree.root() && !flags[left.idx()][UNDER] && !flags[right.idx()][UNDER] {
-            if spent > saved && spent - saved > *allowance.get_or_insert_with(&mut slack) {
+            if spent > saved && spent - saved > *allowance.get_or_insert_with(|| slack() as u64) {
                 break;
             }
-            let size = level_size(level(p));
-            spent += size;
             let sides = [flags[left.idx()][AT], flags[right.idx()][AT]];
-            let stays = unnamed_children(lim, (vtree, level), p, sides, counts, &mut gate)?;
+            let stays = unnamed_children(lim, (vtree, level), p, sides, counts, &mut gate, &mut spent)?;
             if stays == [false; 2] {
-                saved += size;
+                saved += level_size(level(p)) as u64;
             }
             flags[left.idx()][AT] = stays[0];
             flags[right.idx()][AT] = stays[1];
@@ -735,9 +733,9 @@ fn settle_listed<'a>(
 /// Which of the children of level `p` that `sides` asks for, left and right,
 /// hold a node no pair of `p` names, reading `p`'s pairs in one pass until
 /// they have named every node of each, one unit of work through `gate` a
-/// pair ([`count_named`]). A level with no node holds none, and a level that
-/// cannot be read counts as holding one: one that is not structural
-/// internal, and each child of a `p` that is not.
+/// pair ([`count_named`]), each also added to `read`. A level with no node
+/// holds none, and a level that cannot be read counts as holding one: one
+/// that is not structural internal, and each child of a `p` that is not.
 pub(crate) fn unnamed_children<'a>(
     lim: &Limits,
     (vtree, level_at): (&Vtree, &dyn Fn(VtreeIdx) -> &'a TddLevel),
@@ -745,6 +743,7 @@ pub(crate) fn unnamed_children<'a>(
     sides: [bool; 2],
     counts: &mut Vec<u32>,
     gate: &mut PollGate<'_>,
+    read: &mut u64,
 ) -> Result<[bool; 2], OperationError> {
     let structural_internal = |t: VtreeIdx| !vtree.node(t).is_leaf() && !level_at(t).is_marginal();
     if sides == [false; 2] || !structural_internal(p) {
@@ -774,9 +773,9 @@ pub(crate) fn unnamed_children<'a>(
     let level = level_at(p);
     let (l, r) = counts[..used].split_at_mut(width[0]);
     let named = match width.map(|n| n > 0) {
-        [true, true] => count_named::<true, true>(level, [l, r], gate)?,
-        [true, false] => count_named::<true, false>(level, [l, r], gate)?,
-        [false, true] => count_named::<false, true>(level, [l, r], gate)?,
+        [true, true] => count_named::<true, true>(level, [l, r], gate, read)?,
+        [true, false] => count_named::<true, false>(level, [l, r], gate, read)?,
+        [false, true] => count_named::<false, true>(level, [l, r], gate, read)?,
         [false, false] => [true; 2],
     };
     Ok([unread[0] || !named[0], unread[1] || !named[1]])
@@ -818,6 +817,7 @@ fn count_named<const LEFT: bool, const RIGHT: bool>(
     level: &TddLevel,
     blocks: [&mut [u32]; 2],
     gate: &mut PollGate<'_>,
+    read: &mut u64,
 ) -> Result<[bool; 2], OperationError> {
     let [left, right] = blocks;
     let past = [left.len().saturating_sub(1), right.len().saturating_sub(1)];
@@ -854,6 +854,7 @@ fn count_named<const LEFT: bool, const RIGHT: bool>(
                 [true, true] => pairs_after_last_first::<LEFT, RIGHT>(stored, left, right),
                 _ => 0,
             };
+            *read += (pairs - after) as u64;
             gate.poll((pairs - after) as u64)?;
             return Ok(named);
         }
@@ -885,6 +886,7 @@ fn count_named<const LEFT: bool, const RIGHT: bool>(
             [true, true] => left.iter().chain(right).copied().max().unwrap_or(0) as usize,
             _ => d.nodes(),
         };
+        *read += (nodes * d.pairs_per_node()) as u64;
         gate.poll((nodes * d.pairs_per_node()) as u64)?;
         return Ok(named);
     }
@@ -892,10 +894,11 @@ fn count_named<const LEFT: bool, const RIGHT: bool>(
     let (left, right) = (&mut left[..past[0]], &mut right[..past[1]]);
     let mut next = [0usize; 2];
     // `Err(None)` stops the read once every node read for is named.
-    let read = level.try_for_each_node(0..level.nodes().len(), |_, pairs| {
+    let walk = level.try_for_each_node(0..level.nodes().len(), |_, pairs| {
         if (!LEFT || all_named(left, &mut next[0])) && (!RIGHT || all_named(right, &mut next[1])) {
             return Err(None);
         }
+        *read += pairs.len() as u64;
         gate.poll(pairs.len() as u64).map_err(Some)?;
         for pair in pairs {
             if LEFT {
@@ -907,7 +910,7 @@ fn count_named<const LEFT: bool, const RIGHT: bool>(
         }
         Ok(())
     });
-    if let Err(Some(e)) = read {
+    if let Err(Some(e)) = walk {
         return Err(e);
     }
     Ok([
