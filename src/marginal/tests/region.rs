@@ -100,14 +100,8 @@ pub(crate) fn check_form(f: &Tdd, what: &str) {
         check_slot_count_uniqueness(f).unwrap_or_else(|e| panic!("{what}: {e}"));
     }
     check_no_orphan_slots(f).unwrap_or_else(|e| panic!("{what}: {e}"));
-    if let Some(home) = vtree.home()
-        && let Err(e) = crate::test_helpers::check::check_trimmed(f, false)
-    {
-        // A level holding a pair twice stands for a doubled value, which
-        // dropping a leaf under it would merge as a set: the trim refuses
-        // and the leaf stays named `One`.
-        let repeated = vtree.bottomup().any(|t| f.level(t).repeats_a_pair().unwrap());
-        assert!(repeated && f.clone().trim(&home) == Ok(false), "{what}: {e}");
+    if vtree.home().is_some() {
+        crate::test_helpers::check::check_trimmed(f, false).unwrap_or_else(|e| panic!("{what}: {e}"));
     }
 }
 

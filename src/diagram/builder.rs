@@ -539,9 +539,8 @@ pub(crate) fn check_seated_pairs(tdd: &Tdd) -> Result<(), TddBuildError> {
 }
 
 /// [`Tdd::trim`] of a diagram just seated on a home; an internal summed-out
-/// level not under another becomes a region. A drop that would merge a
-/// repeated pair above a summed-out level as a set leaves the diagram as it
-/// was seated.
+/// level not under another becomes a region. A drop that would rebuild a
+/// summed variable leaf leaves the diagram as it was seated.
 #[cold]
 #[inline(never)]
 pub(crate) fn trim_on_home(tdd: &mut Tdd) -> Result<(), TddBuildError> {

@@ -119,10 +119,10 @@ fn same_pointwise(f: &Tdd, g: &Tdd, n: u32, floats: bool, what: &str) {
 /// a builder, each leaf left named true: at its parent a pair naming the
 /// literal names the leaf true and a pair naming the other literal goes. A
 /// node that held the literal in two pairs stands for the sum of what they
-/// named, the pairs' products being disjoint. `None` when a node is left
-/// with no pair or two nodes of a level become equal, which no operation
-/// leaves and the trim's chain merge does not read.
-fn named_true(f: &Tdd, leaves: &[(VtreeIdx, u32)]) -> Option<(TddBuilder, crate::diagram::TddNodeId)> {
+/// named, the pairs' products being disjoint; two nodes of a level may
+/// become equal. Then [`multiples`] with `seed`. `None` when a node is left
+/// with no pair.
+fn named_true(f: &Tdd, leaves: &[(VtreeIdx, u32)], seed: u64) -> Option<(TddBuilder, crate::diagram::TddNodeId)> {
     let eng = Engine::new();
     let v = Arc::clone(f.vtree());
     let mut levels = f.clone().levels.into_vec();
@@ -146,17 +146,113 @@ fn named_true(f: &Tdd, leaves: &[(VtreeIdx, u32)]) -> Option<(TddBuilder, crate:
             }
             level.push_node(eng.limits(), &pairs).unwrap();
         }
-        let mut nodes: Vec<Vec<(u32, u32)>> = (0..level.slot_count())
-            .map(|j| level.pairs_iter_of_idx(j).map(|q| (q.left.raw(), q.right.raw())).collect())
-            .collect();
-        nodes.iter_mut().for_each(|n| n.sort_unstable());
-        nodes.sort_unstable();
-        if nodes.windows(2).any(|w| w[0] == w[1]) {
+        if !summed_under(&v, &levels)[p.idx()] && has_equal_nodes(&level) {
             return None;
         }
         levels[p.idx()] = level;
     }
+    multiples(&v, &mut levels, seed);
     Some((TddBuilder::from_levels(v, levels, f.weights().cloned()), f.output()))
+}
+
+/// Whether a summed-out level is at or under each vtree node: where none is,
+/// a level holds no pair twice, in one node or across two.
+fn summed_under(v: &Vtree, levels: &[TddLevel]) -> Vec<bool> {
+    let mut under = vec![false; v.num_nodes()];
+    for t in v.bottomup() {
+        under[t.idx()] = levels[t.idx()].is_marginal()
+            || (!v.node(t).is_leaf() && {
+                let (l, r) = v.children(t);
+                under[l.idx()] || under[r.idx()]
+            });
+    }
+    under
+}
+
+fn has_equal_nodes(level: &TddLevel) -> bool {
+    let mut nodes: Vec<Vec<(u32, u32)>> = (0..level.slot_count())
+        .map(|j| {
+            let mut n: Vec<(u32, u32)> = level.pairs_iter_of_idx(j).map(|q| (q.left.raw(), q.right.raw())).collect();
+            n.sort_unstable();
+            n
+        })
+        .collect();
+    nodes.sort_unstable();
+    nodes.windows(2).any(|w| w[0] == w[1])
+}
+
+/// The pairs of node `j` of `level`.
+fn pairs_of(level: &TddLevel, j: usize) -> Vec<ChildPair> {
+    level.pairs_iter_of_idx(j).collect()
+}
+
+/// `level` rebuilt node by node, `edit` changing each node's pairs.
+fn rebuilt(level: &TddLevel, mut edit: impl FnMut(usize, &mut Vec<ChildPair>)) -> TddLevel {
+    let eng = Engine::new();
+    let mut out = TddLevel::new();
+    for j in 0..level.slot_count() {
+        let mut pairs = pairs_of(level, j);
+        edit(j, &mut pairs);
+        out.push_node(eng.limits(), &pairs).unwrap();
+    }
+    out
+}
+
+/// By `seed`, nothing, or at random one of: a node at a structural level with
+/// a summed-out level under it holds one of its pairs once more, which adds
+/// that pair's product again; a node of a structural level under another is
+/// copied and one reference to it moves to the copy, which leaves two equal
+/// nodes.
+fn multiples(v: &Vtree, levels: &mut [TddLevel], seed: u64) {
+    let mut rng = Lcg::new(seed);
+    let summed_under = summed_under(v, levels);
+    let structural: Vec<VtreeIdx> = v.bottomup().filter(|&t| !v.node(t).is_leaf() && !levels[t.idx()].is_marginal()).collect();
+    if structural.is_empty() {
+        return;
+    }
+    match rng.below(3) {
+        0 => {
+            let held: Vec<VtreeIdx> = structural.iter().copied().filter(|&t| summed_under[t.idx()]).collect();
+            if held.is_empty() {
+                return;
+            }
+            let t = held[rng.below(held.len() as u64) as usize];
+            let j = rng.below(levels[t.idx()].slot_count() as u64) as usize;
+            levels[t.idx()] = rebuilt(&levels[t.idx()], |i, pairs| {
+                if i == j {
+                    pairs.push(pairs[0]);
+                }
+            });
+        }
+        1 => {
+            let copied: Vec<VtreeIdx> = structural
+                .iter()
+                .copied()
+                .filter(|&t| summed_under[t.idx()] && v.node(t).parent().is_some_and(|p| !levels[p.idx()].is_marginal()))
+                .collect();
+            if copied.is_empty() {
+                return;
+            }
+            let t = copied[rng.below(copied.len() as u64) as usize];
+            let p = v.node(t).parent().unwrap();
+            let left = v.children(p).0 == t;
+            let j = rng.below(levels[t.idx()].slot_count() as u64) as u32;
+            let copy = levels[t.idx()].slot_count() as u32;
+            let pairs = pairs_of(&levels[t.idx()], j as usize);
+            levels[t.idx()].push_node(Engine::new().limits(), &pairs).unwrap();
+            let mut moved = false;
+            levels[p.idx()] = rebuilt(&levels[p.idx()], |_, pairs| {
+                for q in pairs.iter_mut() {
+                    let side = if left { &mut q.left } else { &mut q.right };
+                    if !moved && side.raw() == j {
+                        *side = crate::diagram::NodeIdx(copy).into();
+                        moved = true;
+                    }
+                }
+            });
+        }
+        _ => {}
+    }
 }
 
 /// One or two variable leaves of `f` at random, no two siblings: a node over
@@ -221,7 +317,7 @@ fn with_region(case: u64, rng: &mut Lcg) -> Option<(Home, Tdd, Option<Arithmetic
 #[test]
 fn a_dropped_leaf_over_a_region_adds_the_values_its_nodes_name() {
     let mut rng = Lcg::new(0x7a1d_5eed);
-    let (mut cases, mut sums, mut kept, mut built) = (0, 0, 0, 0);
+    let (mut cases, mut sums, mut multiples, mut built) = (0, 0, 0, 0);
     for case in 0..6000u64 {
         let Some((home, f, arithmetic)) = with_region(case, &mut rng) else { continue };
         let leaves = pick_leaves(&f, &mut rng);
@@ -229,7 +325,7 @@ fn a_dropped_leaf_over_a_region_adds_the_values_its_nodes_name() {
             continue;
         }
         let what = format!("case {case} leaves {leaves:?} arithmetic {arithmetic:?}");
-        let Some((b, out)) = named_true(&f, &leaves) else { continue };
+        let Some((b, out)) = named_true(&f, &leaves, case) else { continue };
         if b.check(out).is_err() {
             continue;
         }
@@ -237,25 +333,32 @@ fn a_dropped_leaf_over_a_region_adds_the_values_its_nodes_name() {
         let n = home.vtree().num_leaves();
         let floats = arithmetic == Some(Arithmetic::ScaledFloat);
         let mut t = untrimmed.clone();
-        let moved = Engine::new().trim(&mut t, &home).unwrap_or_else(|e| panic!("{what}: {e:?}"));
-        same_pointwise(&untrimmed, &t, n, floats, &what);
+        Engine::new().trim(&mut t, &home).unwrap_or_else(|e| panic!("{what}: {e:?}"));        same_pointwise(&untrimmed, &t, n, floats, &what);
+        check_trimmed(&t, false).unwrap_or_else(|e| panic!("{what}: {e}"));
         cases += 1;
         sums += usize::from(sums_over_a_region(&untrimmed, &leaves));
-        if moved {
-            check_trimmed(&t, false).unwrap_or_else(|e| panic!("{what}: {e}"));
-        } else {
-            // A repeated pair above a summed-out level, which a set would
-            // count once.
-            kept += 1;
-        }
-        let Some((b, out)) = named_true(&f, &leaves) else { continue };
-        if let Ok(g) = b.finish(out) {
-            same_pointwise(&untrimmed, &g, n, floats, &format!("{what}, built"));
-            built += usize::from(check_trimmed(&g, false).is_ok());
-        }
+        multiples += usize::from(holds_a_multiple(&untrimmed));
+        let Some((b, out)) = named_true(&f, &leaves, case) else { continue };
+        let g = b.finish(out).unwrap_or_else(|e| panic!("{what}: {e:?}"));
+        same_pointwise(&untrimmed, &g, n, floats, &format!("{what}, built"));
+        check_trimmed(&g, false).unwrap_or_else(|e| panic!("{what}, built: {e}"));
+        built += 1;
     }
-    println!("{cases} cases, {sums} adding values over a region, {kept} kept, {built} built trimmed");
-    assert!(cases > 400 && sums > 40 && built > 400, "{cases} cases, {sums} adding values, {built} built trimmed");
+    println!("{cases} cases, {sums} adding values over a region, {multiples} with a repeated pair or equal nodes, {built} built");
+    assert!(cases > 400 && sums > 40 && multiples > 100 && built > 400, "{cases} cases, {sums} adding values, {multiples} multiples, {built} built");
+}
+
+/// Whether a level of `f` holds a pair twice in a node, or two equal nodes.
+fn holds_a_multiple(f: &Tdd) -> bool {
+    f.vtree().bottomup().filter(|&t| !f.vtree().node(t).is_leaf() && !f.level(t).is_marginal()).any(|t| {
+        let level = f.level(t);
+        has_equal_nodes(level)
+            || (0..level.slot_count()).any(|j| {
+                let mut pairs = pairs_of(level, j);
+                pairs.sort_unstable();
+                pairs.windows(2).any(|w| w[0] == w[1])
+            })
+    })
 }
 
 /// A refused allocation or a stop at any point of a trim that adds values
@@ -270,7 +373,7 @@ fn a_refused_trim_over_a_region_leaves_the_diagram() {
         }
         let Some((home, f, arithmetic)) = with_region(case, &mut rng) else { continue };
         let leaves = pick_leaves(&f, &mut rng);
-        let Some((b, out)) = named_true(&f, &leaves) else { continue };
+        let Some((b, out)) = named_true(&f, &leaves, case) else { continue };
         if leaves.is_empty() || b.check(out).is_err() {
             continue;
         }
@@ -311,4 +414,111 @@ fn a_refused_trim_over_a_region_leaves_the_diagram() {
         }
     }
     assert_eq!(checked, 6);
+}
+
+/// On `home`, whose root is `(q, n)` with `q = (r, s)` and `r` the region
+/// over `{1, 2}`: the region naming 4 = 2^2 in every reference, the one node
+/// of `q` holding `(4, side)` twice, `side` what `fill` puts under `s`, and
+/// leaf `n` named true at the root. Dropping the region as true would leave
+/// twice what `side` names, with no summed-out level under `s` to carry it:
+/// the region stays and leaf `n` goes.
+fn a_pair_held_twice_beside_a_full_region(home: &Home, n: u32, fill: impl FnOnce(VtreeIdx, &mut [TddLevel]) -> EncodedChildRef) {
+    use crate::diagram::{NodeIdx, TddNodeId};
+    let vars: Vec<VarId> = (1..=n).map(VarId).collect();
+    let clause: Vec<i32> = (1..=n as i32).collect();
+    let mut g = Tdd::clause(&Vtree::projection(home, vars).unwrap(), clause).unwrap();
+    g.marginalize(|v| v.0 <= 2).unwrap();
+    let v = Arc::clone(g.vtree());
+    let root = v.root();
+    let (q, last) = v.children(root);
+    let (r, s) = v.children(q);
+    assert!(v.node(r).is_region() && v.leaf_var(last) == VarId(n));
+    let eng = Engine::new();
+    let mut levels = g.clone().levels.into_vec();
+    let mut region = TddLevel::new();
+    region.become_marginal(Vec::new(), None);
+    levels[r.idx()] = region;
+    let side = fill(s, &mut levels);
+    let full = EncodedChildRef::from_raw(ValueRef::inline_raw(4).unwrap());
+    levels[q.idx()] = TddLevel::new();
+    levels[q.idx()].push_node(eng.limits(), &[ChildPair::new(full, side); 2]).unwrap();
+    levels[root.idx()] = TddLevel::new();
+    levels[root.idx()].push_node(eng.limits(), &[ChildPair::new(NodeIdx(0), ONE_LEAF_IDX)]).unwrap();
+    let out = TddNodeId { vtree: root, local: NodeIdx(0) };
+    let b = TddBuilder::from_levels(Arc::clone(&v), levels.clone(), None);
+    b.check(out).unwrap();
+    let untrimmed = unsafe { b.finish_unchecked(out) };
+    let mut t = untrimmed.clone();
+    assert_eq!(eng.trim(&mut t, home), Ok(true));
+    check_trimmed(&t, false).unwrap();
+    assert_eq!(t.vtree().regions().count(), 1);
+    assert!(t.vtree().leaf_of(VarId(n)).is_none());
+    same_pointwise(&untrimmed, &t, n, false, "trimmed");
+    let built = TddBuilder::from_levels(v, levels, None).finish(out).unwrap();
+    check_trimmed(&built, false).unwrap();
+    same_pointwise(&untrimmed, &built, n, false, "built");
+}
+
+fn leaf(v: u32) -> Vtree {
+    Vtree::leaf(VarId(v))
+}
+
+fn join(a: &Vtree, b: &Vtree) -> Vtree {
+    Vtree::join(a, b).unwrap()
+}
+
+/// `s` is leaf 3, named `x3`: twice a label.
+#[test]
+fn a_pair_held_twice_over_a_leaf_beside_a_full_region_keeps_the_region() {
+    let home = Home::new(join(&join(&join(&leaf(1), &leaf(2)), &leaf(3)), &leaf(4)));
+    a_pair_held_twice_beside_a_full_region(&home, 4, |_, _| POS_LEAF_IDX.into());
+}
+
+/// `s` is `(3, 4)` holding `x3 ∧ x4`: twice a node with no summed-out level
+/// under it.
+#[test]
+fn a_pair_held_twice_over_a_level_beside_a_full_region_keeps_the_region() {
+    let home = Home::new(join(&join(&join(&leaf(1), &leaf(2)), &join(&leaf(3), &leaf(4))), &leaf(5)));
+    a_pair_held_twice_beside_a_full_region(&home, 5, |s, levels| {
+        levels[s.idx()] = TddLevel::new();
+        levels[s.idx()].push_node(Engine::new().limits(), &[ChildPair::new(POS_LEAF_IDX, POS_LEAF_IDX)]).unwrap();
+        crate::diagram::NodeIdx(0).into()
+    });
+}
+
+/// Home `(((1, 2), 3), 4)` with no summed-out level; `(1, 2)` holds `x1 ∧
+/// x2`, its parent two equal nodes naming it with leaf 3 true, and the root
+/// `x4` to the one and `¬x4` to the other. Both nodes of the dropped level
+/// keep `x1 ∧ x2`.
+#[test]
+fn two_equal_nodes_of_a_dropped_level_both_keep_what_they_name() {
+    use crate::diagram::{NodeIdx, TddNodeId, NEG_LEAF_IDX};
+    let home = Home::new(join(&join(&join(&leaf(1), &leaf(2)), &leaf(3)), &leaf(4)));
+    let g = Tdd::clause(&Vtree::projection(&home, [1, 2, 3, 4].map(VarId)).unwrap(), [1, 2, 3, 4]).unwrap();
+    let v = Arc::clone(g.vtree());
+    let root = v.root();
+    let (t, _) = v.children(root);
+    let (e, _) = v.children(t);
+    let eng = Engine::new();
+    let mut levels = g.clone().levels.into_vec();
+    let mut node = |at: VtreeIdx, nodes: &[&[ChildPair]]| {
+        levels[at.idx()] = TddLevel::new();
+        for pairs in nodes {
+            levels[at.idx()].push_node(eng.limits(), pairs).unwrap();
+        }
+    };
+    node(e, &[&[ChildPair::new(POS_LEAF_IDX, POS_LEAF_IDX)]]);
+    let named = [ChildPair::new(NodeIdx(0), ONE_LEAF_IDX)];
+    node(t, &[&named, &named]);
+    node(root, &[&[ChildPair::new(NodeIdx(0), POS_LEAF_IDX), ChildPair::new(NodeIdx(1), NEG_LEAF_IDX)]]);
+    let out = TddNodeId { vtree: root, local: NodeIdx(0) };
+    let b = TddBuilder::from_levels(v, levels, None);
+    b.check(out).unwrap();
+    let untrimmed = unsafe { b.finish_unchecked(out) };
+    let mut trimmed = untrimmed.clone();
+    assert_eq!(eng.trim(&mut trimmed, &home), Ok(true));
+    check_trimmed(&trimmed, false).unwrap();
+    assert!(trimmed.vtree().leaf_of(VarId(3)).is_none());
+    same_pointwise(&untrimmed, &trimmed, 4, false, "trimmed");
+    assert_eq!(trimmed.model_count().unwrap(), num_bigint::BigUint::from(4u32));
 }

@@ -3,13 +3,15 @@
 //! A leaf is dropped when its parent's pairs name it as `One`, which they do
 //! all or none (`test_helpers::check::check_determinism`). A vtree node with
 //! no kept leaf under one child is dropped too: every pair of its level names
-//! the true node on that side, so each of its nodes is the union of the nodes
-//! of the kept side it names, and the unions are disjoint. Down a chain of
-//! dropped nodes from its top `c` to the first node `e` with a kept leaf
-//! under each child, each node of `e` belongs to at most one node of `c`.
-//! `e`'s level takes `c`'s numbering, so that the references above `c` stand
-//! as they are: its node words permuted when each node of `c` holds one node
-//! of `e`, its pair lists concatenated by owner otherwise. A chain ending at
+//! the true node on that side, so each of its nodes is the sum of the nodes
+//! of the kept side it names, a node named twice counted twice where a
+//! summed-out level is under it and once elsewhere. Down a chain of dropped
+//! nodes from its top `c` to the first node `e` with a kept leaf under each
+//! child, `e`'s level takes `c`'s numbering, so that the references above
+//! `c` stand as they are: its node words permuted when each node of `c`
+//! holds one node of `e` and no two hold the same one, otherwise its pair
+//! lists concatenated by owner, once per time the owner holds them. A
+//! chain ending at
 //! a kept leaf maps each node of its top to the labels it holds, and the
 //! level above rewrites its references on that side, the only pass over
 //! pairs a kept level takes; a chain ending at a marginal level maps each
@@ -168,9 +170,15 @@ struct Shape {
     /// The leaves under each node, and the kept ones.
     leaves: Vec<u32>,
     kept: Vec<u32>,
+    /// With a summed-out level, whether a kept one is under each node: a
+    /// node there may hold a pair twice.
+    adds: Vec<bool>,
     dropped: bool,
     /// A node of a chain ending at a leaf held more than one pair.
     merged: bool,
+    /// A dropped node stands for a multiple of a label or of true, which
+    /// only a region dropped as full carried.
+    multiplied: bool,
 }
 
 fn side_ref(p: ChildPair, side: ChildSide) -> u32 {
@@ -210,8 +218,8 @@ impl Shape {
     /// `dropped`, sorted, names the leaves to drop; without it a leaf is
     /// dropped when the first pair of its parent names it `One`.
     /// `summed`: `f` has marginal levels, and its internal ones become
-    /// regions.
-    fn read(eng: &Engine, f: &Tdd, dropped: Option<&[VtreeIdx]>, summed: bool) -> Result<Self, OperationError> {
+    /// regions. `keep_full`: no region is dropped as full.
+    fn read(eng: &Engine, f: &Tdd, dropped: Option<&[VtreeIdx]>, summed: bool, keep_full: bool) -> Result<Self, OperationError> {
         let lim = eng.limits();
         let vtree = &*f.vtree;
         let n = vtree.num_nodes();
@@ -222,8 +230,10 @@ impl Shape {
             regrouped: Vec::new(),
             leaves: Vec::new(),
             kept: Vec::new(),
+            adds: Vec::new(),
             dropped: false,
             merged: false,
+            multiplied: false,
         };
         lim.try_resize(&mut shape.kind, n, Kind::True)?;
         lim.reserve_exact(&mut shape.labels, n)?;
@@ -231,20 +241,31 @@ impl Shape {
         if summed {
             lim.reserve_exact(&mut shape.values, n)?;
             shape.values.resize_with(n, Vec::new);
+            lim.try_resize(&mut shape.adds, n, false)?;
         }
         lim.try_resize(&mut shape.leaves, n, 0)?;
         lim.try_resize(&mut shape.kept, n, 0)?;
+        // With a summed-out level, whether a region dropped as full is under
+        // each node.
+        let mut full_under = Vec::new();
+        if summed {
+            lim.try_resize(&mut full_under, n, false)?;
+        }
         let mut gate = lim.gate();
         for t in vtree.bottomup() {
             let VtreeNode::Internal { left, right, .. } = *vtree.node(t) else {
                 let kind = if summed && vtree.node(t).is_region() { Kind::Region } else { Kind::Leaf };
                 (shape.kind[t.idx()], shape.leaves[t.idx()], shape.kept[t.idx()]) = (kind, 1, 1);
+                if summed {
+                    shape.adds[t.idx()] = f.levels[t.idx()].is_marginal();
+                }
                 continue;
             };
             gate.poll(1)?;
             let level = &f.levels[t.idx()];
             if summed && level.is_marginal() {
                 (shape.kind[t.idx()], shape.kept[t.idx()], shape.dropped) = (Kind::Region, 1, true);
+                shape.adds[t.idx()] = true;
                 continue;
             }
             let first = level.pairs_iter_of_idx(0).next().expect("a node holds a pair");
@@ -253,7 +274,7 @@ impl Shape {
             // A region whose sibling stands for values is kept: dropping it
             // would leave nodes that stand for sums of values.
             let mut full = [false; 2];
-            if summed {
+            if summed && !keep_full {
                 for (slot, (c, other)) in full.iter_mut().zip([(left, right), (right, left)]) {
                     *slot = vtree.node(c).is_region() && !over_values(other) && names_only_full_counts(f, c, &mut gate)?;
                 }
@@ -274,19 +295,24 @@ impl Shape {
             let kept = kept_under(left, kl) + kept_under(right, kr);
             let leaves = shape.leaves[left.idx()] + shape.leaves[right.idx()];
             (shape.kept[t.idx()], shape.leaves[t.idx()]) = (kept, leaves);
+            if summed {
+                shape.adds[t.idx()] = (kl && shape.adds[left.idx()]) || (kr && shape.adds[right.idx()]);
+                full_under[t.idx()] = full[0] || full[1] || full_under[left.idx()] || full_under[right.idx()];
+            }
             shape.dropped |= !(kl && kr);
             shape.kind[t.idx()] = match (kl, kr) {
-                (false, false) => Kind::True,
+                (false, false) => {
+                    // A node of a level whose subtree goes is true only with
+                    // one pair; more stand for a multiple a full region held.
+                    if summed && full_under[t.idx()] && (0..level.slot_count()).any(|i| level.pairs_iter_of_idx(i).len() > 1) {
+                        shape.multiplied = true;
+                    }
+                    Kind::True
+                }
                 (true, true) => Kind::Both,
                 _ => {
                     let (c, side) = if kl { (left, ChildSide::Left) } else { (right, ChildSide::Right) };
                     let values = over_values(c);
-                    // A node of `t` becomes one node or label of the kept
-                    // side, so a pair it holds twice would count once; a
-                    // value adds it twice.
-                    if summed && !values && level.repeats_a_pair()? {
-                        return Err(OperationError::MarginalLevel(t));
-                    }
                     if matches!(shape.kind[c.idx()], Kind::LevelChain(_) | Kind::Both) {
                         Kind::LevelChain(side)
                     } else if values {
@@ -303,7 +329,12 @@ impl Shape {
                             let mut read = 0;
                             for p in pairs.filter(|&p| Some(side_ref(p, other(side))) != twin) {
                                 read += 1;
-                                *h |= shape.bits(vtree, c, side_ref(p, side));
+                                let bits = shape.bits(vtree, c, side_ref(p, side));
+                                // With every region kept, a level over a chain
+                                // to a leaf has no summed-out level under it
+                                // and holds no label twice.
+                                shape.multiplied |= summed && !keep_full && *h & bits != 0;
+                                *h |= bits;
                             }
                             shape.merged |= read > 1;
                         }
@@ -546,124 +577,142 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, dropped: Option<&[Vtr
         return Ok(true);
     }
     let summed = f.has_marginal_level();
-    // With nothing to collapse, a diagram whose drop would merge a repeated
-    // pair as a set, or rebuild a summed variable leaf, stays as it is.
-    let mut shape = match Shape::read(eng, f, dropped, summed) {
-        Err(OperationError::MarginalLevel(_)) if collapse.is_empty() => return Ok(false),
-        shape => shape?,
-    };
-    if !shape.dropped {
-        return Ok(false);
-    }
-    let local = match shape.kind[root.idx()] {
-        Kind::True => None,
-        Kind::LeafChain(_) if summed && !shape.values[root.idx()].is_empty() => {
-            // The output names a slot of a marginal root; an inline count
-            // gets a level of one slot.
-            let side = EncodedChildRef::from_raw(shape.values[root.idx()][f.output.local.idx()]);
-            match ChildDecoder::marginal().value(side) {
-                ValueRef::Slot(slot) => Some(NodeIdx(slot)),
-                ValueRef::Inline(count) => {
-                    let end = shape.end(&vtree, root);
-                    if vtree.node(end).is_var_leaf() {
-                        return match collapse.is_empty() {
-                            true => Ok(false),
-                            false => Err(OperationError::MarginalLevel(end)),
-                        };
+    // A dropped node that holds what it keeps more than once stands for a
+    // multiple of it. Above a summed-out level the chain's end holds the
+    // multiple as a repeated pair; elsewhere only a full region the drop
+    // would take carried it, and the trim is planned again with every
+    // region kept.
+    let mut keep_full = false;
+    let (mut shape, local, own, map, mut plans, placed) = 'read: loop {
+        // With nothing to collapse, a diagram whose drop would rebuild a summed
+        // variable leaf stays as it is.
+        let mut shape = match Shape::read(eng, f, dropped, summed, keep_full) {
+            Err(OperationError::MarginalLevel(_)) if collapse.is_empty() => return Ok(false),
+            shape => shape?,
+        };
+        if shape.multiplied {
+            keep_full = true;
+            continue;
+        }
+        if !shape.dropped {
+            return Ok(false);
+        }
+        let local = match shape.kind[root.idx()] {
+            Kind::True => None,
+            Kind::LeafChain(_) if summed && !shape.values[root.idx()].is_empty() => {
+                // The output names a slot of a marginal root; an inline count
+                // gets a level of one slot.
+                let side = EncodedChildRef::from_raw(shape.values[root.idx()][f.output.local.idx()]);
+                match ChildDecoder::marginal().value(side) {
+                    ValueRef::Slot(slot) => Some(NodeIdx(slot)),
+                    ValueRef::Inline(count) => {
+                        let end = shape.end(&vtree, root);
+                        if vtree.node(end).is_var_leaf() {
+                            return match collapse.is_empty() {
+                                true => Ok(false),
+                                false => Err(OperationError::MarginalLevel(end)),
+                            };
+                        }
+                        let mut level = TddLevel::new();
+                        level.become_marginal(Vec::new(), None);
+                        let slot = push_count_slot(eng, &mut level, Count::from_u128(u128::from(count)))?;
+                        shape.regrouped.retain(|&(e, _)| e != end);
+                        lim.try_push(&mut shape.regrouped, (end, level))?;
+                        Some(NodeIdx(slot))
                     }
-                    let mut level = TddLevel::new();
-                    level.become_marginal(Vec::new(), None);
-                    let slot = push_count_slot(eng, &mut level, Count::from_u128(u128::from(count)))?;
-                    shape.regrouped.retain(|&(e, _)| e != end);
-                    lim.try_push(&mut shape.regrouped, (end, level))?;
-                    Some(NodeIdx(slot))
                 }
             }
-        }
-        Kind::LeafChain(_) => match shape.labels[root.idx()][f.output.local.idx()] {
-            BOTH => None,
-            bits => Some(label(bits)),
-        },
-        _ => Some(f.output.local),
-    };
-    let Some(local) = local else {
-        replace(eng, f, constant_without_leaf(&Vtree::empty_projection(home), true));
-        return Ok(true);
-    };
-
-    let mut ranks = Vec::new();
-    lim.reserve_exact(&mut ranks, shape.kept[root.idx()] as usize)?;
-    let mut regions = Vec::new();
-    let mut stack = Vec::new();
-    lim.try_push(&mut stack, root)?;
-    while let Some(t) = stack.pop() {
-        match shape.kind[t.idx()] {
-            Kind::Leaf => ranks.push(home.rank(vtree.leaf_var(t)).expect("a variable of the home")),
-            Kind::Region if vtree.node(t).is_region() => lim.try_push(&mut regions, vtree.region_at(t))?,
-            Kind::Region => {
-                collapse.binary_search(&t).map_err(|_| OperationError::MarginalLevel(t))?;
-                lim.try_push(&mut regions, vtree.folded_region(t))?;
-            }
-            Kind::LeafChain(side) | Kind::LevelChain(side) => lim.try_push(&mut stack, child(&vtree, t, side))?,
-            Kind::Both => {
-                let (left, right) = vtree.children(t);
-                lim.try_push(&mut stack, left)?;
-                lim.try_push(&mut stack, right)?;
-            }
-            Kind::True => unreachable!("a dropped subtree is not walked"),
-        }
-    }
-    let own = Vtree::project_regions(home, ranks, regions);
-    let m = own.num_nodes();
-
-    // Each own node's chain, top and end. `map` takes each node of `f`'s
-    // vtree to the own node its worklist entries go to: a node on a chain to
-    // the node the chain ends at, a node under a dropped side to the root.
-    let mut map = Vec::new();
-    lim.try_resize(&mut map, vtree.num_nodes(), own.root())?;
-    let mut plans: Vec<Option<Plan>> = Vec::new();
-    lim.reserve_exact(&mut plans, m)?;
-    plans.resize_with(m, || None);
-    let mut placed = Vec::new();
-    let mut walk = Vec::new();
-    lim.try_push(&mut walk, (root, own.root()))?;
-    while let Some((top, u)) = walk.pop() {
-        let end = shape.end(&vtree, top);
-        // A dropped level above a leaf owes its work to the level whose
-        // references it became.
-        let above = match shape.kind[end.idx()] {
-            Kind::Leaf => own.node(u).parent().unwrap_or(u),
-            _ => u,
+            Kind::LeafChain(_) => match shape.labels[root.idx()][f.output.local.idx()] {
+                BOTH => None,
+                bits => Some(label(bits)),
+            },
+            _ => Some(f.output.local),
         };
-        let mut t = top;
-        loop {
-            map[t.idx()] = if t == end { u } else { above };
-            if t == end {
-                break;
+        let Some(local) = local else {
+            replace(eng, f, constant_without_leaf(&Vtree::empty_projection(home), true));
+            return Ok(true);
+        };
+
+        let mut ranks = Vec::new();
+        lim.reserve_exact(&mut ranks, shape.kept[root.idx()] as usize)?;
+        let mut regions = Vec::new();
+        let mut stack = Vec::new();
+        lim.try_push(&mut stack, root)?;
+        while let Some(t) = stack.pop() {
+            match shape.kind[t.idx()] {
+                Kind::Leaf => ranks.push(home.rank(vtree.leaf_var(t)).expect("a variable of the home")),
+                Kind::Region if vtree.node(t).is_region() => lim.try_push(&mut regions, vtree.region_at(t))?,
+                Kind::Region => {
+                    collapse.binary_search(&t).map_err(|_| OperationError::MarginalLevel(t))?;
+                    lim.try_push(&mut regions, vtree.folded_region(t))?;
+                }
+                Kind::LeafChain(side) | Kind::LevelChain(side) => lim.try_push(&mut stack, child(&vtree, t, side))?,
+                Kind::Both => {
+                    let (left, right) = vtree.children(t);
+                    lim.try_push(&mut stack, left)?;
+                    lim.try_push(&mut stack, right)?;
+                }
+                Kind::True => unreachable!("a dropped subtree is not walked"),
             }
-            t = match shape.kind[t.idx()] {
-                Kind::LeafChain(side) | Kind::LevelChain(side) => child(&vtree, t, side),
-                _ => unreachable!("a chain ends at its end"),
+        }
+        let own = Vtree::project_regions(home, ranks, regions);
+        let m = own.num_nodes();
+
+        // Each own node's chain, top and end. `map` takes each node of `f`'s
+        // vtree to the own node its worklist entries go to: a node on a chain to
+        // the node the chain ends at, a node under a dropped side to the root.
+        let mut map = Vec::new();
+        lim.try_resize(&mut map, vtree.num_nodes(), own.root())?;
+        let mut plans: Vec<Option<Plan>> = Vec::new();
+        lim.reserve_exact(&mut plans, m)?;
+        plans.resize_with(m, || None);
+        let mut placed = Vec::new();
+        let mut walk = Vec::new();
+        lim.try_push(&mut walk, (root, own.root()))?;
+        while let Some((top, u)) = walk.pop() {
+            let end = shape.end(&vtree, top);
+            // A dropped level above a leaf owes its work to the level whose
+            // references it became.
+            let above = match shape.kind[end.idx()] {
+                Kind::Leaf => own.node(u).parent().unwrap_or(u),
+                _ => u,
             };
-        }
-        match shape.kind[end.idx()] {
-            Kind::Leaf => {
-                debug_assert_eq!(own.home_node(u), vtree.home_node(end), "own node {} stands for node {}", u.0, end.0);
-                continue;
+            let mut t = top;
+            loop {
+                map[t.idx()] = if t == end { u } else { above };
+                if t == end {
+                    break;
+                }
+                t = match shape.kind[t.idx()] {
+                    Kind::LeafChain(side) | Kind::LevelChain(side) => child(&vtree, t, side),
+                    _ => unreachable!("a chain ends at its end"),
+                };
             }
-            Kind::Region => {
-                lim.try_push(&mut placed, (u, end))?;
-                continue;
+            match shape.kind[end.idx()] {
+                Kind::Leaf => {
+                    debug_assert_eq!(own.home_node(u), vtree.home_node(end), "own node {} stands for node {}", u.0, end.0);
+                    continue;
+                }
+                Kind::Region => {
+                    lim.try_push(&mut placed, (u, end))?;
+                    continue;
+                }
+                _ => debug_assert_eq!(own.home_node(u), vtree.home_node(end), "own node {} stands for node {}", u.0, end.0),
             }
-            _ => debug_assert_eq!(own.home_node(u), vtree.home_node(end), "own node {} stands for node {}", u.0, end.0),
+            let (el, er) = vtree.children(end);
+            let (ul, ur) = own.children(u);
+            lim.try_push(&mut walk, (el, ul))?;
+            lim.try_push(&mut walk, (er, ur))?;
+            let Some(plan) = plan(eng, f, &shape, top, end, keep_full)? else {
+                keep_full = true;
+                continue 'read;
+            };
+            plans[u.idx()] = Some(plan);
         }
-        let (el, er) = vtree.children(end);
-        let (ul, ur) = own.children(u);
-        lim.try_push(&mut walk, (el, ul))?;
-        lim.try_push(&mut walk, (er, ur))?;
-        plans[u.idx()] = Some(plan(eng, f, &shape, top, end)?);
-    }
-    lim.discard(walk);
+        lim.discard(walk);
+        break (shape, local, own, map, plans, placed);
+    };
+    let m = own.num_nodes();
 
     let counts = match f.levels.counts() {
         Some(kept) if !summed => Some(own_counts(eng, kept, &shape, &plans, m)?),
@@ -773,8 +822,10 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, dropped: Option<&[Vtr
     Ok(true)
 }
 
-/// The plan of the own internal node whose chain runs from `top` to `end`.
-fn plan(eng: &Engine, f: &Tdd, shape: &Shape, top: VtreeIdx, end: VtreeIdx) -> Result<Plan, OperationError> {
+/// The plan of the own internal node whose chain runs from `top` to `end`;
+/// `None` when a node of `top` stands for a multiple of a node of `end` that
+/// `end`'s level cannot hold and `keep_full` is not set.
+fn plan(eng: &Engine, f: &Tdd, shape: &Shape, top: VtreeIdx, end: VtreeIdx, keep_full: bool) -> Result<Option<Plan>, OperationError> {
     let lim = eng.limits();
     let vtree = &*f.vtree;
     let mut sides = [None, None];
@@ -796,16 +847,22 @@ fn plan(eng: &Engine, f: &Tdd, shape: &Shape, top: VtreeIdx, end: VtreeIdx) -> R
         }
     }
     let level = &f.levels[end.idx()];
-    let form = if top == end { Form::Moved } else { merge(eng, f, shape, top, end, &sides)? };
+    let form = match top == end {
+        true => Form::Moved,
+        false => match merge(eng, f, shape, top, end, &sides, keep_full)? {
+            Some(form) => form,
+            None => return Ok(None),
+        },
+    };
     let room = match (&form, level.implicit()) {
         (Form::Built(_), _) | (_, None) => None,
         (Form::Moved, Some(_)) if sides.iter().all(Option::is_none) => None,
         _ => Some(level.store_room(lim)?),
     };
-    Ok(Plan { top, end, form, sides, room })
+    Ok(Some(Plan { top, end, form, sides, room }))
 }
 
-/// How `end`'s level takes `top`'s numbering.
+/// How `end`'s level takes `top`'s numbering, as [`plan`].
 fn merge(
     eng: &Engine,
     f: &Tdd,
@@ -813,7 +870,8 @@ fn merge(
     top: VtreeIdx,
     end: VtreeIdx,
     sides: &[Option<Vec<u32>>; 2],
-) -> Result<Form, OperationError> {
+    keep_full: bool,
+) -> Result<Option<Form>, OperationError> {
     let lim = eng.limits();
     let vtree = &*f.vtree;
     let width = f.levels[top.idx()].slot_count();
@@ -834,7 +892,12 @@ fn merge(
                 let pairs = level.pairs_iter_of_idx(i);
                 gate.poll(pairs.len() as u64)?;
                 for p in pairs.filter(|&p| Some(side_ref(p, other(side))) != twin) {
-                    below[side_ref(p, side) as usize] = o;
+                    let named = &mut below[side_ref(p, side) as usize];
+                    if *named != UNNAMED {
+                        gate.flush()?;
+                        return merge_counted(eng, f, shape, top, end, sides, keep_full);
+                    }
+                    *named = o;
                 }
             }
         }
@@ -851,37 +914,131 @@ fn merge(
     }
     if held[1..].iter().all(|&h| h == 1) {
         if width == owner.len() && owner.iter().enumerate().all(|(j, &o)| o == j as u32) {
-            return Ok(Form::Moved);
+            return Ok(Some(Form::Moved));
         }
         let mut words = Vec::new();
         lim.try_resize(&mut words, width, EncodedNode::multi_pair(0, 0))?;
-        return Ok(Form::Permuted { owner, words });
+        return Ok(Some(Form::Permuted { owner, words }));
     }
     // `held` becomes the start of each owner's members.
     for i in 0..width {
         held[i + 1] += held[i];
     }
     let mut members = Vec::new();
-    lim.try_resize(&mut members, held[width] as usize, 0u32)?;
+    lim.try_resize(&mut members, held[width] as usize, (0u32, 1u64))?;
     let mut next = held.clone();
     for (j, &o) in owner.iter().enumerate() {
         if o != UNNAMED {
-            members[next[o as usize] as usize] = j as u32;
+            members[next[o as usize] as usize].0 = j as u32;
             next[o as usize] += 1;
         }
     }
+    built(eng, f, end, sides, &held, &members).map(Some)
+}
+
+/// [`merge`] where a node of the chain is named twice, by one node of `top`
+/// or by two: each node of `top` reads as a multiset of nodes of `end`. A
+/// multiple is held as that many copies of the node's pairs where a
+/// summed-out level is under `end`; elsewhere it is `None` before every
+/// region is kept, and taken once after.
+#[cold]
+#[inline(never)]
+fn merge_counted(
+    eng: &Engine,
+    f: &Tdd,
+    shape: &Shape,
+    top: VtreeIdx,
+    end: VtreeIdx,
+    sides: &[Option<Vec<u32>>; 2],
+    keep_full: bool,
+) -> Result<Option<Form>, OperationError> {
+    let lim = eng.limits();
+    let vtree = &*f.vtree;
+    let summed = !shape.adds.is_empty();
+    let width = f.levels[top.idx()].slot_count();
+    let mut gate = lim.gate();
+    // Node `o` of `top` adds up `members[starts[o]..starts[o + 1]]`, nodes of
+    // the current level with their multiplicities, ascending.
+    let mut starts = Vec::new();
+    lim.reserve_exact(&mut starts, width + 1)?;
+    starts.extend(0..=width as u32);
+    let mut members = Vec::new();
+    lim.reserve_exact(&mut members, width)?;
+    members.extend((0..width as u32).map(|o| (o, 1u64)));
+    let mut t = top;
+    while t != end {
+        let Kind::LevelChain(side) = shape.kind[t.idx()] else { unreachable!("a level chain") };
+        let twin = negative_half(vtree, t, side);
+        let level = &f.levels[t.idx()];
+        let mut next_starts = Vec::new();
+        lim.reserve_exact(&mut next_starts, width + 1)?;
+        next_starts.push(0u32);
+        let mut next: Vec<(u32, u64)> = Vec::new();
+        for o in 0..width {
+            let from = next.len();
+            for &(i, k) in &members[starts[o] as usize..starts[o + 1] as usize] {
+                let pairs = level.pairs_iter_of_idx(i as usize);
+                gate.poll(pairs.len() as u64)?;
+                for p in pairs.filter(|&p| Some(side_ref(p, other(side))) != twin) {
+                    lim.try_push(&mut next, (side_ref(p, side), k))?;
+                }
+            }
+            next[from..].sort_unstable_by_key(|&(j, _)| j);
+            let mut to = from;
+            for at in from..next.len() {
+                let (j, k) = next[at];
+                if to > from && next[to - 1].0 == j {
+                    let held = &mut next[to - 1].1;
+                    *held = if summed { held.checked_add(k).ok_or(OperationError::OverBudget)? } else { 1 };
+                } else {
+                    next[to] = (j, k);
+                    to += 1;
+                }
+            }
+            next.truncate(to);
+            next_starts.push(u32::try_from(to).map_err(|_| OperationError::OverBudget)?);
+        }
+        lim.discard(std::mem::replace(&mut members, next));
+        lim.discard(std::mem::replace(&mut starts, next_starts));
+        t = child(vtree, t, side);
+    }
+    gate.flush()?;
+    if summed && !shape.adds[end.idx()] && members.iter().any(|&(_, k)| k > 1) {
+        if !keep_full {
+            return Ok(None);
+        }
+        members.iter_mut().for_each(|m| m.1 = 1);
+    }
+    built(eng, f, end, sides, &starts, &members).map(Some)
+}
+
+/// `end`'s level in `top`'s numbering: node `o` holds the pairs of each node
+/// of `members[starts[o]..starts[o + 1]]` as many times as it is listed with,
+/// their sides read through `sides`.
+fn built(
+    eng: &Engine,
+    f: &Tdd,
+    end: VtreeIdx,
+    sides: &[Option<Vec<u32>>; 2],
+    starts: &[u32],
+    members: &[(u32, u64)],
+) -> Result<Form, OperationError> {
+    let lim = eng.limits();
+    let mut gate = lim.gate();
     let source = &f.levels[end.idx()];
-    let side = |map: &Option<Vec<u32>>, r: crate::diagram::EncodedChildRef| match map {
+    let side = |map: &Option<Vec<u32>>, r: EncodedChildRef| match map {
         Some(map) => NodeIdx(map[r.raw() as usize]).into(),
         None => r,
     };
     let mut level = TddLevel::new();
     let mut pairs = Vec::new();
-    for i in 0..width {
+    for range in starts.windows(2) {
         pairs.clear();
-        for &j in &members[held[i] as usize..held[i + 1] as usize] {
-            for p in source.pairs_iter_of_idx(j as usize) {
-                lim.try_push(&mut pairs, ChildPair::new(side(&sides[0], p.left), side(&sides[1], p.right)))?;
+        for &(j, k) in &members[range[0] as usize..range[1] as usize] {
+            for _ in 0..k {
+                for p in source.pairs_iter_of_idx(j as usize) {
+                    lim.try_push(&mut pairs, ChildPair::new(side(&sides[0], p.left), side(&sides[1], p.right)))?;
+                }
             }
         }
         gate.poll(pairs.len() as u64)?;
