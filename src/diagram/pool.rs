@@ -59,7 +59,8 @@ const MAX_PARKED_ARRAY_BYTES: usize = 32 * 1024 * 1024;
 /// pairs would be allocated only to be dropped.
 ///
 /// Runs on the return path, so everything parked is already in this state.
-#[inline]
+/// Always inlined: an outlined copy costs [`return_levels`] a call per level.
+#[inline(always)]
 pub(crate) fn reset_level(level: &mut TddLevel, room: &mut u64) -> u64 {
     #[inline(always)]
     fn retain<T>(arena: &mut Vec<T>, room: &mut u64) -> u64 {

@@ -125,6 +125,7 @@ impl View {
     }
 
     /// The next empty level of `built`, and its index.
+    #[inline]
     fn next_level(&mut self, lim: &Limits) -> Result<u32, OperationError> {
         if self.used == self.built.len() {
             lim.try_push(&mut self.built, TddLevel::new())?;

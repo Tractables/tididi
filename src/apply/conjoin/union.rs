@@ -36,8 +36,10 @@ impl Side {
         if self.targets.len() < nodes {
             lim.try_resize(&mut self.targets, nodes, Target::Free)?;
         }
-        if self.slots.len() < nodes {
-            lim.try_resize(&mut self.slots, nodes, Slot::Free)?;
+        if let Some(more) = nodes.checked_sub(self.slots.len()) {
+            // Not `try_resize`: a second caller of its `Slot` copy outlines it from `View::build_in`.
+            lim.reserve_exact(&mut self.slots, more)?;
+            self.slots.extend(std::iter::repeat_n(Slot::Free, more));
         }
         self.embedding.clear();
         lim.try_resize(&mut self.embedding, own, VtreeIdx(0))?;
