@@ -33,6 +33,8 @@ pub(crate) struct ApplyScratch {
     pub(crate) cone_slots: Pool<Vec<super::view::Slot>>,
     /// The smaller operand's leaves and their images.
     pub(crate) cone_leaves: Pool<Vec<(crate::vtree::VtreeIdx, crate::vtree::VtreeIdx)>>,
+    /// The tables of a conjunction across leaf sets neither equal nor nested.
+    pub(crate) union: Pool<super::union::UnionTables>,
 }
 
 impl Pools for ApplyScratch {
@@ -55,6 +57,7 @@ impl Pools for ApplyScratch {
         visit(&self.cone_targets);
         visit(&self.cone_slots);
         visit(&self.cone_leaves);
+        visit(&self.union);
     }
 }
 

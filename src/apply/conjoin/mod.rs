@@ -93,6 +93,7 @@ mod products;
 pub(in crate::apply::conjoin) use grid_arena::GridBase;
 mod output;
 mod projected;
+mod union;
 use crate::apply::extend;
 use output::*;
 mod drive;

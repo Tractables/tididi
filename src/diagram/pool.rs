@@ -157,8 +157,8 @@ fn take_level_array(eng: &Engine, num_nodes: usize) -> Vec<TddLevel> {
 
 /// Recycled structural arrays. Clearing a level drops its marginal values.
 #[derive(Default)]
-struct LevelBuffer {
-    levels: Vec<TddLevel>,
+pub(crate) struct LevelBuffer {
+    pub(crate) levels: Vec<TddLevel>,
 }
 
 impl Buffers for LevelBuffer {

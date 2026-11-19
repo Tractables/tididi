@@ -600,6 +600,19 @@ impl Plan {
         gate.flush()
     }
 
+    /// The plan of a source whose levels are read through `targets`, by node
+    /// of the destination, with `embedding` the image of each source node and
+    /// `cone`, children before parents, every internal destination node with
+    /// a source variable under it, `pass_throughs` of them pass-throughs.
+    pub(crate) fn from_parts(targets: Vec<Target>, embedding: Vec<VtreeIdx>, cone: Vec<VtreeIdx>, pass_throughs: usize) -> Plan {
+        Plan { targets, embedding: Embedding { levels: embedding }, mirrors: false, pass_throughs, cone, chain_from: usize::MAX }
+    }
+
+    /// The tables of [`Plan::from_parts`], as they are.
+    pub(crate) fn into_parts(self) -> (Vec<Target>, Vec<VtreeIdx>, Vec<VtreeIdx>) {
+        (self.targets, self.embedding.levels, self.cone)
+    }
+
     /// The targets table of a plan [`Plan::cone`] built, every entry free.
     pub(crate) fn release(mut self) -> Vec<Target> {
         for &d in &self.embedding.levels {

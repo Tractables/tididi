@@ -8,6 +8,7 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use super::drive;
+use super::union;
 use super::held::Held;
 use super::view::View;
 use super::{conjoin_cow, conjoin_kept, conjoin_onto, prepare_owned_weights, recycle, AndRefused, Operands, VtreeMask};
@@ -34,7 +35,14 @@ pub(super) fn conjoin_projections<'a>(eng: &Engine, mut f: Cow<'a, Tdd>, mut g: 
             Err(operands) => operands,
         };
     }
-    let sets = Vtree::leaf_sets(f.vtree(), g.vtree())?;
+    let mut tables = (union::readable(&f) && union::readable(&g)).then(|| eng.scratch.apply.union.checkout_preserving(eng));
+    let sets = match tables.as_deref_mut() {
+        Some(tables) => {
+            let mut reader = union::Reader::new(eng.limits(), tables, (f.vtree(), g.vtree()));
+            Vtree::leaf_sets_reading(f.vtree(), g.vtree(), Some(&mut reader))?
+        }
+        None => Vtree::leaf_sets(f.vtree(), g.vtree())?,
+    };
     if f.has_marginal_level() || g.has_marginal_level() {
         check_summed_leaves(&f, &g)?;
     }
@@ -55,6 +63,9 @@ pub(super) fn conjoin_projections<'a>(eng: &Engine, mut f: Cow<'a, Tdd>, mut g: 
             {
                 crate::apply::shared_weights([&*f, &*g].into_iter())?;
                 return join_at_root(eng, f, &f_map, g, &g_map, f_left, &into);
+            }
+            if let Some(tables) = tables.as_deref_mut() {
+                return union::conjoin_union(eng, f, g, &into, tables);
             }
             into
         }
@@ -90,9 +101,9 @@ fn conjoin_nested<'a>(eng: &Engine, f: Tdd, g: Cow<'a, Tdd>) -> Result<Result<Td
         }
     };
     let mut slots = eng.scratch.apply.cone_slots.checkout_preserving(eng);
-    let mut view = match View::build_in(eng, &g, &into, &plan, std::mem::take(&mut *slots)) {
+    let mut view = match View::build_in(eng, &g, &into, &plan, (std::mem::take(&mut *slots), Vec::new())) {
         Ok(view) => view,
-        Err((error, back)) => {
+        Err((error, (back, _))) => {
             *slots = back;
             *targets = plan.release();
             return Err(error);
@@ -108,7 +119,7 @@ fn conjoin_nested<'a>(eng: &Engine, f: Tdd, g: Cow<'a, Tdd>) -> Result<Result<Td
     );
     recycle(eng, f);
     recycle(eng, g);
-    *slots = view.release(&plan);
+    *slots = view.release(&plan).0;
     *targets = plan.release();
     let mut out = out?;
     crate::reduce::close_constant(eng, &mut out);

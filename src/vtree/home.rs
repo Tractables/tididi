@@ -544,6 +544,45 @@ pub(crate) enum LeafSets {
     Union(Arc<Vtree>),
 }
 
+/// What [`Vtree::leaf_sets_reading`] gives the nodes of a union to.
+pub(crate) trait UnionReader {
+    /// The union has `k` childless nodes; called before any node is read.
+    ///
+    /// # Errors
+    ///
+    /// The reader's, which [`Vtree::leaf_sets_reading`] returns.
+    fn begin(&mut self, k: usize) -> Result<(), OperationError>;
+
+    /// How `a` and `b` read node `u` of the union: every leaf, then the
+    /// internal nodes, children before parents.
+    fn read(&mut self, u: VtreeIdx, readings: [Reading; 2]);
+}
+
+/// The reader [`Vtree::leaf_sets`] gives none to.
+enum NoReader {}
+
+impl UnionReader for NoReader {
+    fn begin(&mut self, _: usize) -> Result<(), OperationError> {
+        match *self {}
+    }
+
+    fn read(&mut self, _: VtreeIdx, _: [Reading; 2]) {
+        match *self {}
+    }
+}
+
+/// How an operand of a union reads a node of the union projection
+/// ([`Vtree::leaf_sets_reading`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Reading {
+    /// The operand's own node.
+    Own(VtreeIdx),
+    /// The operand's leaves under the node are all under this child of it.
+    Pass(VtreeIdx),
+    /// No leaf of the operand is under the node.
+    Free,
+}
+
 impl Vtree {
     /// The projection of `home` on the leaves of `vars`: the same variable
     /// ids, the same left and right order, and an internal node for each node
@@ -791,6 +830,21 @@ impl Vtree {
     /// one whose extent holds a leaf of the other or meets one of its
     /// extents.
     pub(crate) fn leaf_sets(a: &Arc<Vtree>, b: &Arc<Vtree>) -> Result<LeafSets, OperationError> {
+        Self::leaf_sets_reading(a, b, None::<&mut NoReader>)
+    }
+
+    /// [`Vtree::leaf_sets`], giving `read`, in the union case of operands
+    /// with no region, each node of the union with how `a` and `b` read it.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Vtree::leaf_sets`], and those of
+    /// [`UnionReader::begin`].
+    pub(crate) fn leaf_sets_reading(
+        a: &Arc<Vtree>,
+        b: &Arc<Vtree>,
+        mut read: Option<&mut impl UnionReader>,
+    ) -> Result<LeafSets, OperationError> {
         let root_of = |v: &Arc<Vtree>| Arc::as_ptr(v.link_home().map_or(v, Home::vtree));
         if root_of(a) != root_of(b) {
             return Err(OperationError::VtreeMismatch);
@@ -827,7 +881,35 @@ impl Vtree {
             (true, false) => LeafSets::BInA,
             (false, _) => {
                 let k = long.len() + short.len() - common;
-                LeafSets::Union(Self::seated(&la.home, k, false, || Self::union_of((a, la), (b, lb), k)))
+                if let Some(read) = read.as_deref_mut() {
+                    read.begin(k)?;
+                }
+                match read {
+                    None => LeafSets::Union(Self::seated(&la.home, k, false, || Self::union_of((a, la), (b, lb), k, None::<&mut fn(VtreeIdx, [Reading; 2], u32)>))),
+                    Some(read) if k == la.home.index().leaf_at.len() => {
+                        let index = la.home.index();
+                        // The union's nodes are the home's: each built node is
+                        // read under the id of the home node it stands for.
+                        let mut home_of = vec![VtreeIdx(0); 2 * k - 1];
+                        let mut read_home = |t: VtreeIdx, readings: [Reading; 2], seat: u32| {
+                            let at = match t.idx() < k {
+                                true => index.leaf_at[seat as usize],
+                                false => index.gap_node[seat as usize],
+                            };
+                            home_of[t.idx()] = at;
+                            read.read(at, readings.map(|r| match r {
+                                Reading::Pass(c) => Reading::Pass(home_of[c.idx()]),
+                                r => r,
+                            }));
+                        };
+                        Self::union_of((a, la), (b, lb), k, Some(&mut read_home));
+                        LeafSets::Union(Arc::clone(la.home.vtree()))
+                    }
+                    Some(read) => {
+                        let mut read_own = |t: VtreeIdx, readings: [Reading; 2], _: u32| read.read(t, readings);
+                        LeafSets::Union(Arc::new(Self::union_of((a, la), (b, lb), k, Some(&mut read_own))))
+                    }
+                }
             }
         })
     }
@@ -835,11 +917,23 @@ impl Vtree {
     /// The projection on the `k` merged ranks of `a` and `b`, which have no
     /// region. Two neighbours in the union that are neighbours in an operand
     /// meet where they do there; only neighbours from different operands are
-    /// looked up.
-    fn union_of((a, la): (&Vtree, &HomeLink), (b, lb): (&Vtree, &HomeLink), k: usize) -> Vtree {
+    /// looked up. `read`, when given, is given each node as
+    /// [`Vtree::leaf_sets_reading`] gives it, with the home rank of a leaf or
+    /// the home gap of an internal node.
+    fn union_of(
+        (a, la): (&Vtree, &HomeLink),
+        (b, lb): (&Vtree, &HomeLink),
+        k: usize,
+        mut read: Option<&mut impl FnMut(VtreeIdx, [Reading; 2], u32)>,
+    ) -> Vtree {
         let index = la.home.index();
         let ((ra, na, ga), (rb, nb, gb)) = (la.parts(), lb.parts());
         let mut build = InOrderBuilder::<true>::new(k);
+        // By position, how many ranks of each operand come before it.
+        let mut before: Vec<[u32; 2]> = Vec::new();
+        if read.is_some() {
+            before.reserve_exact(k + 1);
+        }
         let (mut i, mut j, mut u) = (0, 0, 0);
         let (mut last_a, mut last_b) = (false, false);
         while i < ra.len() || j < rb.len() {
@@ -853,12 +947,38 @@ impl Vtree {
                 });
             }
             build.leaf(x.min(y), if in_a { a.leaf_var(VtreeIdx(i as u32)) } else { b.leaf_var(VtreeIdx(j as u32)) });
+            if let Some(read) = read.as_deref_mut() {
+                before.push([i as u32, j as u32]);
+                let own = |inside: bool, at: usize| if inside { Reading::Own(VtreeIdx(at as u32)) } else { Reading::Free };
+                read(VtreeIdx(u as u32), [own(in_a, i), own(in_b, j)], x.min(y));
+            }
             i += usize::from(in_a);
             j += usize::from(in_b);
             u += 1;
             (last_a, last_b) = (in_a, in_b);
         }
-        Self::linked(&la.home, build.finish(|slot, i| staged_word(index, slot, k, i)), Vec::new())
+        let gap = |slot: &[u32], i: usize| staged_word(index, slot, k, i);
+        let built = match read {
+            None => build.finish(gap),
+            Some(read) => {
+                before.push([i as u32, j as u32]);
+                let node_at = [na, nb];
+                build.finish_closing(gap, |c| {
+                    let (lo, mid, hi) = (c.lo as usize, c.at as usize + 1, c.hi as usize + 1);
+                    let reading = |x: usize| {
+                        let (left, right) = (before[mid][x] - before[lo][x], before[hi][x] - before[mid][x]);
+                        match (left > 0, right > 0) {
+                            (true, true) => Reading::Own(VtreeIdx(node_at[x][before[mid][x] as usize - 1])),
+                            (true, false) => Reading::Pass(c.left),
+                            (false, true) => Reading::Pass(c.right),
+                            (false, false) => Reading::Free,
+                        }
+                    };
+                    read(c.t, [reading(0), reading(1)], c.home_gap);
+                })
+            }
+        };
+        Self::linked(&la.home, built, Vec::new())
     }
 
     /// The projection of `home` on the variable leaves of this vtree for which

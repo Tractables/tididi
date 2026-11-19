@@ -216,8 +216,8 @@ pub(crate) use level::{assert_can_make_marginal, decoded, floor, inline_pair, re
 pub(crate) use level::LevelState;
 
 // pool
-pub(crate) use pool::{return_levels, take_levels, try_take_levels};
-pub(crate) use pool::LevelPool;
+pub(crate) use pool::{reset_level, return_levels, take_levels, try_take_levels};
+pub(crate) use pool::{LevelBuffer, LevelPool};
 
 // tdd
 pub use build_error::TddBuildError;

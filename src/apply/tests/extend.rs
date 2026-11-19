@@ -511,3 +511,104 @@ fn a_conjunction_reads_two_nodes_at_the_top_level_of_g() {
     }
     assert!(cases >= 20, "{cases} cases");
 }
+
+/// `and(f, g)` of `f` and `g`, whose leaf sets are neither equal nor nested,
+/// against the conjunction on the home, and against the conjunction that
+/// places both operands on the union, node for node where both are trimmed;
+/// the result is on the projection on the merged variables, node for node.
+fn check_union(eng: &Engine, hm: &Home, f: &Tdd, g: &Tdd, trimmed: bool, what: &str) {
+    let home = hm.vtree();
+    let mut merged: Vec<VarId> = leaf_vars(f.vtree()).chain(leaf_vars(g.vtree())).collect();
+    merged.sort_unstable();
+    merged.dedup();
+    let union = Vtree::projection(hm, merged.iter().copied()).unwrap();
+    let expected = eng.and(on_home(eng, f, home), on_home(eng, g, home)).unwrap();
+    let mut placed = crate::apply::conjoin::conjoin_onto_as(eng, (f.into(), |v| v), (g.into(), |v| v), &union, false)
+        .map_err(|r| r.error)
+        .unwrap();
+    crate::reduce::close_constant(eng, &mut placed);
+    let outs = [eng.and(f, g), eng.and(g, f), eng.and(f.clone(), g), eng.and(f.clone(), g.clone())];
+    for (i, out) in outs.into_iter().enumerate() {
+        let out = out.unwrap();
+        let what = format!("{what} call {i}");
+        assert!(eng.equivalent(&on_home(eng, &out, home), &expected).unwrap(), "{what}");
+        assert_eq!(eng.model_count(&out).unwrap(), eng.model_count(&expected).unwrap(), "{what}");
+        if out.vtree().num_nodes() == 0 {
+            assert!(out.is_zero(), "{what}");
+            continue;
+        }
+        let vtree = out.vtree();
+        let node_for_node = vtree.root() == union.root()
+            && vtree.num_nodes() == union.num_nodes()
+            && (0..vtree.num_nodes() as u32).all(|t| vtree.node(VtreeIdx(t)) == union.node(VtreeIdx(t)));
+        assert!(Arc::ptr_eq(vtree, home) || node_for_node, "{what}: not the projection on the merged variables");
+        if trimmed {
+            assert_eq!(out.node_count(), placed.node_count(), "{what}: another form than the placed conjunction's");
+        }
+    }
+}
+
+#[test]
+fn a_conjunction_across_leaf_sets_neither_equal_nor_nested_is_the_conjunction_on_the_home() {
+    let eng = Engine::new();
+    let mut kinds = [0usize; 4];
+    for seed in 0..600u64 {
+        let hm = Home::new(rotated_home(2 + (seed % 11) as u32, seed));
+        let all = leaf_vars(hm.vtree()).collect::<Vec<_>>();
+        let mut rng = Lcg::new(seed ^ 0x6a09_e667);
+        let (f_vars, g_vars, kind) = match seed % 4 {
+            0 => {
+                let (a, b): (Vec<VarId>, Vec<VarId>) = all.iter().partition(|_| rng.coin());
+                (a, b, "disjoint")
+            }
+            1 => (part(&all, &mut rng), part(&all, &mut rng), "interleaved"),
+            2 => {
+                let lit = all[rng.below(all.len() as u64) as usize];
+                (all.iter().copied().filter(|&v| v != lit && rng.below(4) != 0).collect(), vec![lit], "one literal")
+            }
+            _ => (part(&all, &mut rng), part(&all, &mut rng), "untrimmed"),
+        };
+        if f_vars.is_empty() || g_vars.is_empty() || f_vars.iter().all(|v| g_vars.contains(v)) || g_vars.iter().all(|v| f_vars.contains(v)) {
+            continue;
+        }
+        let trimmed = seed % 4 != 3;
+        let (f, g) = match trimmed {
+            true => (operand(&eng, &hm, &f_vars, &mut rng), operand(&eng, &hm, &g_vars, &mut rng)),
+            false => (untrimmed(&eng, &hm, &f_vars, &mut rng), untrimmed(&eng, &hm, &g_vars, &mut rng)),
+        };
+        let (fv, gv) = (leaf_vars(f.vtree()).collect::<Vec<_>>(), leaf_vars(g.vtree()).collect::<Vec<_>>());
+        if fv.is_empty() || gv.is_empty() || fv.iter().all(|v| gv.contains(v)) || gv.iter().all(|v| fv.contains(v)) {
+            continue;
+        }
+        kinds[(seed % 4) as usize] += 1;
+        check_union(&eng, &hm, &f, &g, trimmed, &format!("seed {seed} {kind} f {fv:?} g {gv:?}"));
+    }
+    assert!(kinds.iter().all(|&k| k >= 25), "cases by kind {kinds:?}");
+}
+
+/// Above `f`'s top the parent of the top holds one node for each node of
+/// `g` there, and is not the root: home ((a, b), d), `g` on a, `f` on b and d.
+#[test]
+fn a_conjunction_across_leaf_sets_builds_the_parent_of_a_top_that_is_not_the_root() {
+    let eng = Engine::new();
+    for (home, f_vars, g_vars) in [
+        // ((a, b), d): a = 1, b = 2, d = 3.
+        (Vtree::from_in_order(&[VarId(1), VarId(2), VarId(3)], &[2, 1], 3).unwrap(), vec![2, 3], vec![1]),
+        // ((a, (b, c)), d): g on a, b and d, f = c.
+        (Vtree::from_in_order(&[VarId(1), VarId(2), VarId(3), VarId(4)], &[2, 3, 1], 4).unwrap(), vec![3], vec![1, 2, 4]),
+    ] {
+        let hm = Home::new(home);
+        let (fv, gv): (Vec<VarId>, Vec<VarId>) = (f_vars.into_iter().map(VarId).collect(), g_vars.into_iter().map(VarId).collect());
+        let (fp, gp) = (Vtree::projection(&hm, fv.iter().copied()).unwrap(), Vtree::projection(&hm, gv.iter().copied()).unwrap());
+        let lits = |vars: &[VarId], signs: u32| vars.iter().enumerate().map(|(i, v)| if signs >> i & 1 == 1 { v.0 as i32 } else { -(v.0 as i32) }).collect::<Vec<_>>();
+        for fs in 0..1u32 << fv.len() {
+            for gs in 0..1u32 << gv.len() {
+                let f = eng.clause(&fp, lits(&fv, fs)).unwrap();
+                let g = eng.clause(&gp, lits(&gv, gs)).unwrap();
+                check_union(&eng, &hm, &f, &g, true, &format!("f {:?} g {:?}", lits(&fv, fs), lits(&gv, gs)));
+                let (f, g) = (eng.cube(&fp, lits(&fv, fs)).unwrap(), eng.cube(&gp, lits(&gv, gs)).unwrap());
+                check_union(&eng, &hm, &f, &g, true, &format!("cubes f {:?} g {:?}", lits(&fv, fs), lits(&gv, gs)));
+            }
+        }
+    }
+}

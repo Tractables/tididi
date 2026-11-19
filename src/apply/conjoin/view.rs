@@ -25,6 +25,9 @@ use crate::restructure::embed::{literal_chain, moved_loose, Chain, Plan};
 use crate::restructure::placement::{first_ref, push_free_level, PassThrough};
 use crate::vtree::{Vtree, VtreeIdx};
 
+/// The arena capacity the levels a view built keep for the next view.
+const KEPT_ARENA_BYTES: u64 = 1 << 20;
+
 /// Where the view finds the operand's level at a node of `U`.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Slot {
@@ -41,7 +44,9 @@ pub(crate) enum Slot {
 pub(crate) struct View {
     vtree: Arc<Vtree>,
     at: Vec<Slot>,
+    /// The levels the view built, then empty levels kept for reuse.
     built: Vec<TddLevel>,
+    used: usize,
     empty: TddLevel,
     output: TddNodeId,
     dirty: Dirty,
@@ -56,29 +61,31 @@ impl View {
     /// [`OperationError::OverBudget`] when a buffer, a built level or the
     /// copy of the worklists is refused.
     pub(crate) fn build(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<View, OperationError> {
-        Self::build_in(eng, tdd, into, plan, Vec::new()).map_err(|(error, _)| error)
+        Self::build_in(eng, tdd, into, plan, (Vec::new(), Vec::new())).map_err(|(error, _)| error)
     }
 
     /// [`View::build`] in `at`, a table every entry of which is
     /// [`Slot::Free`], grown to `into` where shorter, and of which only the
-    /// entries of the nodes `plan` gives the operand's variables are written;
-    /// [`View::release`] clears them. Refused, `at` comes back cleared.
+    /// entries of the nodes `plan` gives the operand's variables are written,
+    /// building its levels in those of `built`, every one empty;
+    /// [`View::release`] clears both. Refused, both come back cleared.
     pub(crate) fn build_in(
         eng: &Engine,
         tdd: &Tdd,
         into: &Arc<Vtree>,
         plan: &Plan,
-        mut at: Vec<Slot>,
-    ) -> Result<View, (OperationError, Vec<Slot>)> {
+        (mut at, built): (Vec<Slot>, Vec<TddLevel>),
+    ) -> Result<View, (OperationError, (Vec<Slot>, Vec<TddLevel>))> {
         if at.len() < into.num_nodes()
             && let Err(error) = eng.limits().try_resize(&mut at, into.num_nodes(), Slot::Free)
         {
-            return Err((error, at));
+            return Err((error, (at, built)));
         }
         let mut view = View {
             vtree: Arc::clone(into),
             at,
-            built: Vec::new(),
+            built,
+            used: 0,
             empty: TddLevel::new(),
             output: TddNodeId { vtree: into.root(), local: tdd.output.local },
             dirty: Dirty::default(),
@@ -89,8 +96,13 @@ impl View {
         }
     }
 
-    /// The table of [`View::build_in`], every entry free again.
-    pub(crate) fn release(mut self, plan: &Plan) -> Vec<Slot> {
+    /// The tables of [`View::build_in`], every entry free and every level
+    /// empty again.
+    pub(crate) fn release(mut self, plan: &Plan) -> (Vec<Slot>, Vec<TddLevel>) {
+        let mut room = KEPT_ARENA_BYTES;
+        for level in &mut self.built[..self.used] {
+            crate::diagram::reset_level(level, &mut room);
+        }
         for &d in &plan.embedding.levels {
             self.at[d.idx()] = Slot::Free;
         }
@@ -100,7 +112,16 @@ impl View {
         if plan.cone_nodes().is_empty() {
             self.at.clear();
         }
-        self.at
+        (self.at, self.built)
+    }
+
+    /// The next empty level of `built`, and its index.
+    fn next_level(&mut self, lim: &Limits) -> Result<u32, OperationError> {
+        if self.used == self.built.len() {
+            lim.try_push(&mut self.built, TddLevel::new())?;
+        }
+        self.used += 1;
+        Ok(self.used as u32 - 1)
     }
 
     fn fill(&mut self, eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<(), OperationError> {
@@ -109,7 +130,9 @@ impl View {
         for (s, &d) in plan.embedding.levels.iter().enumerate() {
             view.at[d.idx()] = Slot::Own(s as u32);
         }
-        lim.reserve_exact(&mut view.built, plan.pass_throughs)?;
+        if let Some(more) = plan.pass_throughs.checked_sub(view.built.len()) {
+            lim.reserve_exact(&mut view.built, more)?;
+        }
         let own = |p: VtreeIdx| &tdd.levels[plan.covered_by(p).expect("a chain's reader is an image").idx()];
         let mut literal_tops = Vec::new();
         let mut gate = lim.gate();
@@ -118,14 +141,13 @@ impl View {
             let (left, _) = into.children(t);
             let free_side = if plan.is_free(left) { ChildSide::Left } else { ChildSide::Right };
             let through = PassThrough::new(into, t, free_side, |c| view.level(tdd, c.idx()).slot_count());
-            let mut level = TddLevel::new();
-            if !through.carries_leaf {
-                if through.width > 0 {
-                    through.build(lim, &mut level)?;
-                }
-            } else {
+            let chain = through.carries_leaf.then(|| {
                 let read = |p: VtreeIdx, side: ChildSide| first_ref(own(p), side);
-                let chain = literal_chain(into, plan, read, tdd.output.local, t);
+                literal_chain(into, plan, read, tdd.output.local, t)
+            });
+            let b = view.next_level(lim)?;
+            let level = &mut view.built[b as usize];
+            if let Some(chain) = chain {
                 match chain {
                     Chain::Literals(top) => lim.try_push(&mut literal_tops, top)?,
                     Chain::Output(_) => view.output.local = NodeIdx(0),
@@ -135,11 +157,14 @@ impl View {
                     let (l, r) = free_side.pick((through.one, label), (label, through.one));
                     level.push_node(lim, &[ChildPair::new(l, r)])?;
                 }
+            } else {
+                if through.width > 0 {
+                    through.build(lim, level)?;
+                }
             }
             level.close();
             level.close_held_pairs();
-            view.at[t.idx()] = Slot::Built(view.built.len() as u32);
-            view.built.push(level);
+            view.at[t.idx()] = Slot::Built(b);
         }
         gate.flush()?;
         view.renumber(lim, tdd, &literal_tops)?;
@@ -175,15 +200,16 @@ impl View {
                 left: self.level(tdd, left.idx()).child_decoder(),
                 right: self.level(tdd, right.idx()).child_decoder(),
             };
-            let mut copy = TddLevel::new();
-            self.level(tdd, parent.idx()).try_clone_over(lim, 0, 0, &mut copy)?;
-            let planned = plan_sides_remap(lim, &copy, moving, decoders, &REMAP)?;
-            finish_sides_remap(&mut copy, planned, moving, decoders, &REMAP);
+            let Slot::Own(s) = self.at[parent.idx()] else { unreachable!("a chain's reader is an own level") };
+            let b = self.next_level(lim)?;
+            let copy = &mut self.built[b as usize];
+            tdd.levels[s as usize].try_clone_over(lim, 0, 0, copy)?;
+            let planned = plan_sides_remap(lim, copy, moving, decoders, &REMAP)?;
+            finish_sides_remap(copy, planned, moving, decoders, &REMAP);
             copy.forget_held_pairs();
             copy.close();
             copy.settle_held_pairs();
-            lim.try_push(&mut self.built, copy)?;
-            self.at[parent.idx()] = Slot::Built(self.built.len() as u32 - 1);
+            self.at[parent.idx()] = Slot::Built(b);
         }
         Ok(())
     }
@@ -208,7 +234,7 @@ impl View {
 
     /// The widest level the view built.
     pub(crate) fn built_width(&self) -> usize {
-        self.built.iter().map(TddLevel::slot_count).max().unwrap_or(0)
+        self.built[..self.used].iter().map(TddLevel::slot_count).max().unwrap_or(0)
     }
 
     /// The level of `tdd`, the operand, at node `t` of the view's vtree.

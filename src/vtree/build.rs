@@ -663,7 +663,18 @@ impl<const LINK: bool> InOrderBuilder<LINK> {
     /// `slot` holds the ranks and, at `k + i`, what [`stage`](Self::stage)
     /// put there for gap `i`.
     #[inline]
-    pub(super) fn finish(self, mut gap: impl FnMut(&[u32], usize) -> u64) -> (Vec<VtreeNode>, VtreeIdx, Vec<u32>) {
+    pub(super) fn finish(self, gap: impl FnMut(&[u32], usize) -> u64) -> (Vec<VtreeNode>, VtreeIdx, Vec<u32>) {
+        self.finish_closing(gap, |_| {})
+    }
+
+    /// [`finish`](Self::finish), giving `closed` each internal node as it
+    /// closes, children before parents.
+    #[inline]
+    pub(super) fn finish_closing(
+        self,
+        mut gap: impl FnMut(&[u32], usize) -> u64,
+        mut closed: impl FnMut(Closed),
+    ) -> (Vec<VtreeNode>, VtreeIdx, Vec<u32>) {
         let InOrderBuilder { mut nodes, mut slot, k, regions } = self;
         debug_assert_eq!(nodes.len() + regions.len(), k);
         // Only a projection has regions.
@@ -676,41 +687,58 @@ impl<const LINK: bool> InOrderBuilder<LINK> {
             false => childless_among_regions(&regions, k, i),
         };
         // The nodes whose right side is still open, depths ascending from the
-        // bottom: depth, gap position, left side. Until its node closes, the
-        // home gap of gap position `i` waits in the slot of its node.
-        let mut open: Vec<(u32, u32, VtreeIdx)> = Vec::with_capacity(k - 1);
-        let mut last = childless(0);
-        let close = |nodes: &mut Vec<VtreeNode>, slot: &mut [u32], at: u32, left: VtreeIdx, right: VtreeIdx| {
+        // bottom: depth, gap position, left side, its first position. Until
+        // its node closes, the home gap of gap position `i` waits in the slot
+        // of its node.
+        let mut open: Vec<(u32, u32, VtreeIdx, u32)> = Vec::with_capacity(k - 1);
+        let (mut last, mut last_lo) = (childless(0), 0);
+        let mut close = |nodes: &mut Vec<VtreeNode>, slot: &mut [u32], (at, left, lo): (u32, VtreeIdx, u32), right: VtreeIdx, hi: u32| {
             let t = VtreeIdx(nodes.len() as u32);
             nodes.push(VtreeNode::Internal { left, right, parent: None });
             set_parent(nodes, left, t);
             set_parent(nodes, right, t);
+            let mut home_gap = u32::MAX;
             if LINK {
-                let home_gap = std::mem::replace(&mut slot[k + at as usize], t.0);
+                home_gap = std::mem::replace(&mut slot[k + at as usize], t.0);
                 slot[k - 1 + t.idx()] = home_gap;
             }
+            closed(Closed { t, left, right, lo, at, hi, home_gap });
             t
         };
         for i in 0..k - 1 {
             let word = gap(&slot, i);
             let depth = (word >> 32) as u32;
-            while let Some(&(top, at, left)) = open.last()
+            while let Some(&(top, at, left, lo)) = open.last()
                 && top > depth
             {
                 open.pop();
-                last = close(&mut nodes, &mut slot, at, left, last);
+                (last, last_lo) = (close(&mut nodes, &mut slot, (at, left, lo), last, i as u32), lo);
             }
             if LINK {
                 slot[k + i] = word as u32;
             }
-            open.push((depth, i as u32, last));
-            last = childless(i + 1);
+            open.push((depth, i as u32, last, last_lo));
+            (last, last_lo) = (childless(i + 1), i as u32 + 1);
         }
-        while let Some((_, at, left)) = open.pop() {
-            last = close(&mut nodes, &mut slot, at, left, last);
+        while let Some((_, at, left, lo)) = open.pop() {
+            last = close(&mut nodes, &mut slot, (at, left, lo), last, k as u32 - 1);
         }
         (nodes, last, slot)
     }
+}
+
+/// An internal node [`InOrderBuilder::finish_closing`] closed: its children,
+/// its first and last positions, the gap position between its sides, and
+/// its home gap (`u32::MAX` unlinked).
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Closed {
+    pub(super) t: VtreeIdx,
+    pub(super) left: VtreeIdx,
+    pub(super) right: VtreeIdx,
+    pub(super) lo: u32,
+    pub(super) at: u32,
+    pub(super) hi: u32,
+    pub(super) home_gap: u32,
 }
 
 /// Push the regions, which follow the `k` minus their number variable leaves.

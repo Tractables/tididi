@@ -138,10 +138,21 @@ fn one_projection(eng: &Engine) -> (Tdd, Tdd) {
     operands(eng, &projection(&home, 1..=12))
 }
 
+/// [`operands`] on projections of a balanced home over 13 with neither
+/// leaf set inside the other: `f` on the variables 1 to 9, `g` on 1 and 6
+/// to 12.
+fn union(eng: &Engine) -> (Tdd, Tdd) {
+    let home = Home::new(Arc::new(Vtree::balanced(13)));
+    let f = build(eng, &projection(&home, 1..=9), F_CLAUSES);
+    let g = build(eng, &projection(&home, std::iter::once(1).chain(6..=12)), G_CLAUSES);
+    (f, g)
+}
+
 type Layout = fn(&Engine) -> (Tdd, Tdd);
 
-/// Each layout of operands the restoring conjunction takes owned.
-const LAYOUTS: [Layout; 4] = [on_one_vtree, nested, equal_layouts, one_projection];
+/// Each layout of operands the restoring conjunction takes owned, and the
+/// union layout, which it reads borrowed.
+const LAYOUTS: [Layout; 5] = [on_one_vtree, nested, equal_layouts, one_projection, union];
 
 #[test]
 fn every_refused_reserve_gives_the_operands_back() {
