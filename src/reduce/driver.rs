@@ -211,8 +211,18 @@ impl<'a> Reduction<'a> {
 /// folds. Marginalization creates pair-fusion work at the affected parents
 /// and orphans slots. Bounded-precision arithmetic skips fusion because it
 /// cannot sum exactly.
-pub(crate) fn restore_marginal_invariants(eng: &Engine, tdd: &mut Tdd, levels: &[VtreeIdx], vtree: &Vtree) -> Result<(), OperationError> {
-    let closed = tdd.levels.is_closed();
+///
+/// `closed` says the levels were closed before the folds. The folds mark
+/// the structural levels they change; what they leave unmarked became
+/// marginal or was cleared, which a close leaves as it is, so the close
+/// here keeps the counts of the levels nothing marked.
+pub(crate) fn restore_marginal_invariants(
+    eng: &Engine,
+    tdd: &mut Tdd,
+    levels: &[VtreeIdx],
+    vtree: &Vtree,
+    closed: bool,
+) -> Result<(), OperationError> {
     if !tdd.weights().is_some_and(WeightStore::is_bounded) {
         let mut parents: Vec<_> = levels.iter().filter_map(|&level| vtree.node(level).parent()).collect();
         parents.sort_unstable();

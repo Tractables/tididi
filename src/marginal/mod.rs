@@ -97,8 +97,9 @@ pub(crate) fn marginalize_levels(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx])
     let _op = eng.limits().enter()?;
     f.check_level_indices(levels)?;
     let vtree = std::sync::Arc::clone(&f.vtree);
+    let closed = f.levels.is_closed();
     evaluate_levels(eng, f, levels, &vtree)?;
-    restore_marginal_invariants(eng, f, levels, &vtree)
+    restore_marginal_invariants(eng, f, levels, &vtree, closed)
 }
 
 /// The one integer-vs-weighted dispatch of the pass: a weighted diagram's
@@ -206,8 +207,9 @@ pub(crate) fn marginalize(eng: &Engine, f: &mut Tdd, targets: &[VtreeIdx]) -> Re
 fn sum_out(eng: &Engine, f: &mut Tdd, home: &crate::vtree::Home, levels: Vec<(VtreeIdx, VtreeIdx)>, free: &[Vec<VarId>]) -> Result<(), OperationError> {
     let vtree = std::sync::Arc::clone(&f.vtree);
     let own: Vec<VtreeIdx> = levels.iter().map(|&(t, _)| t).collect();
+    let closed = f.levels.is_closed();
     let folded = evaluate_scaled(eng, f, &own, &vtree, free);
-    let restored = restore_marginal_invariants(eng, f, &own, &vtree);
+    let restored = restore_marginal_invariants(eng, f, &own, &vtree, closed);
     let mut collapse: Vec<_> =
         levels.into_iter().filter(|&(t, _)| !vtree.node(t).is_leaf() && f.levels[t.idx()].is_marginal()).collect();
     collapse.sort_unstable();
