@@ -12,7 +12,7 @@ const FEW_PAIRS: usize = 16;
 /// The most columns a level reads its rows' charges off a table of every
 /// set of its columns, and the fewest table entries a row pays for.
 const CHARGE_TABLE_COLUMNS: usize = 8;
-const CHARGE_TABLE_ENTRIES_A_ROW: usize = 8;
+const CHARGE_TABLE_ENTRIES_A_ROW: usize = 2;
 
 /// The fewest rows a byte of a level's pairs pays for a table of the
 /// columns each set of that byte's pairs reaches.
