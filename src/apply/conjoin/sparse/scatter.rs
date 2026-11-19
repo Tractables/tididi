@@ -2205,10 +2205,23 @@ impl RoutedWalk<'_> {
         ticker: &mut crate::limits::PollGate,
         push: &mut impl FnMut(ParEntry) -> Result<(), OperationError>,
     ) -> Result<(), OperationError> {
-        for e in self.inner.bucket(inner1 as usize) {
-            let under = self.routes.find(segment, e.g_idx.0);
-            if !under.is_empty() {
-                push_run::<SWAPPED>(under, e.prod_idx.0, ticker, push)?;
+        // A loop per kind of table: a pair meets about one product, so the
+        // open-addressed table's setup, hoisted out of a shared loop, would
+        // be paid by every pair of a table indexed by key.
+        let bucket = self.inner.bucket(inner1 as usize);
+        if segment.bits == Segment::DENSE {
+            for e in bucket {
+                let under = self.routes.find_dense(segment, e.g_idx.0);
+                if !under.is_empty() {
+                    push_run::<SWAPPED>(under, e.prod_idx.0, ticker, push)?;
+                }
+            }
+        } else {
+            for e in bucket {
+                let under = self.routes.find_hashed(segment, e.g_idx.0);
+                if !under.is_empty() {
+                    push_run::<SWAPPED>(under, e.prod_idx.0, ticker, push)?;
+                }
             }
         }
         Ok(())
