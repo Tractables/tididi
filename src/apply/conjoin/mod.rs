@@ -925,7 +925,10 @@ impl crate::Engine {
         g_map: impl Fn(VarId) -> VarId,
         into: &Arc<Vtree>,
     ) -> Result<Tdd, AndOntoRefused<'a>> {
-        conjoin_onto(self, f.into(), f_map, g.into(), g_map, into)
+        conjoin_onto(self, f.into(), f_map, g.into(), g_map, into).map(|mut out| {
+            crate::reduce::close_constant(self, &mut out);
+            out
+        })
     }
 
     /// Conjoin two diagrams and replace selected subtrees with marginal values.
@@ -1022,6 +1025,7 @@ impl crate::Engine {
         // On a home's root, an internal summed-out level is a form a
         // projection cannot hold, so the trim would refuse it.
         if out.has_marginal_level() {
+            crate::reduce::close_constant(self, &mut out);
             return crate::apply::exit::outcome(self, Ok(out));
         }
         crate::apply::exit::outcome(self, extend::trimmed(self, out))

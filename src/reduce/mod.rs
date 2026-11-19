@@ -158,11 +158,7 @@ impl Engine {
         let mut dropped = Vec::new();
         self.limits().reserve_exact(&mut dropped, seed.len())?;
         dropped.extend_from_slice(seed);
-        trim::settle(self, f, &mut dropped)?;
-        if f.is_zero() && f.vtree.num_nodes() != 0 {
-            prune::clear_false(f);
-        }
-        Ok(())
+        trim::settle(self, f, &mut dropped)
     }
 
     /// [`reduce`](Self::reduce) with the scope of its prune chosen by the

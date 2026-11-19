@@ -123,11 +123,13 @@ pub(crate) fn onto<'a>(eng: &Engine, f: &'a Tdd, into: &Arc<Vtree>) -> Result<Co
     extend_one(eng, Cow::Borrowed(f), into)
 }
 
-/// `result` of an operation on projections, trimmed to the leaves it names.
+/// `result` of an operation on projections, trimmed to the leaves it names;
+/// elsewhere [`close_constant`](crate::reduce::close_constant).
 #[inline]
 pub(crate) fn trimmed(eng: &Engine, mut result: Tdd) -> Result<Tdd, OperationError> {
-    if result.vtree.home().is_some() || result.vtree.is_home() {
-        trim_result(eng, &mut result)?;
+    match result.vtree.home().is_some() || result.vtree.is_home() {
+        true => trim_result(eng, &mut result)?,
+        false => crate::reduce::close_constant(eng, &mut result),
     }
     Ok(result)
 }

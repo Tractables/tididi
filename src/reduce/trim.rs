@@ -62,7 +62,8 @@ impl Engine {
 /// drops leaves named true. A leaf of `dropped` is named true in every pair
 /// of its parent, or by a literal in every pair, each node holding
 /// `(Pos, S)` exactly when it holds `(Neg, S)`. Another leaf goes only with a
-/// sibling whose chain ends at it holding both labels.
+/// sibling whose chain ends at it holding both labels. Elsewhere a false
+/// `f` has its levels emptied.
 ///
 /// # Errors
 ///
@@ -76,7 +77,8 @@ pub(crate) fn settle(eng: &Engine, f: &mut Tdd, dropped: &mut Vec<VtreeIdx>) -> 
     settle_cold(eng, f, dropped)
 }
 
-/// [`settle`] with no leaf dropped, which is never refused.
+/// [`settle`] with no leaf dropped, which is never refused. A false `f` it
+/// does not replace has its levels emptied.
 #[inline]
 pub(crate) fn close_constant(eng: &Engine, f: &mut Tdd) {
     if f.vtree.num_nodes() != 0 && (f.is_zero() || f.is_one_leaf_one()) {
@@ -87,21 +89,24 @@ pub(crate) fn close_constant(eng: &Engine, f: &mut Tdd) {
 #[cold]
 #[inline(never)]
 fn close_constant_cold(eng: &Engine, f: &mut Tdd) {
-    let Some(home) = Vtree::home_of(&f.vtree) else { return };
     let one = !f.is_zero();
-    if f.has_marginal_level() || (one && f.vtree.node(f.vtree.root()).is_region()) {
-        return;
+    let kept = f.has_marginal_level() || (one && f.vtree.node(f.vtree.root()).is_region());
+    match Vtree::home_of(&f.vtree) {
+        Some(home) if !kept => {
+            replace(eng, f, constant_without_leaf(&Vtree::empty_projection(&home), one));
+        }
+        _ if !one => super::prune::clear_false(f),
+        _ => {}
     }
-    replace(eng, f, constant_without_leaf(&Vtree::empty_projection(&home), one));
 }
 
 #[cold]
 #[inline(never)]
 fn settle_cold(eng: &Engine, f: &mut Tdd, dropped: &mut Vec<VtreeIdx>) -> Result<(), OperationError> {
-    let Some(home) = Vtree::home_of(&f.vtree) else { return Ok(()) };
-    if f.has_marginal_level() {
+    let Some(home) = Vtree::home_of(&f.vtree).filter(|_| !f.has_marginal_level()) else {
+        close_constant(eng, f);
         return Ok(());
-    }
+    };
     dropped.sort_unstable();
     dropped.dedup();
     trim(eng, f, &home, Some(dropped), &[]).map(|_| ())

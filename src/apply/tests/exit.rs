@@ -45,11 +45,6 @@ fn random(eng: &Engine, vtree: &Arc<Vtree>, rng: &mut Lcg) -> Tdd {
             .collect();
         f = eng.and(f, eng.clause(vtree, clause).unwrap()).unwrap();
     }
-    // A false conjunction may keep its nodes, which operations given false
-    // hand back as they are.
-    if f.is_zero() {
-        eng.minimize(&mut f).unwrap();
-    }
     f
 }
 
