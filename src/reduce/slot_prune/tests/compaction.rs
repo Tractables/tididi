@@ -107,9 +107,8 @@ fn toy_scaled_sevenths(
     let exact = crate::diagram::WeightStore::new(weights.clone(), Arithmetic::ExactRational);
     let mut tdd = toy_weighted(exact, vals.iter().map(|&v| rat(v, 7)).collect(), nodes);
     let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
-    let mut ws = crate::diagram::WeightStore::new(weights, Arithmetic::ScaledFloat);
-    ws.set_level(v.idx(), sevenths(vals).into_iter().map(WeightValue::scaled).collect());
-    tdd.weights = Some(ws);
+    tdd.weights = Some(crate::diagram::WeightStore::new(weights, Arithmetic::ScaledFloat));
+    crate::test_helpers::set_weight_column(&mut tdd, v, sevenths(vals).into_iter().map(WeightValue::scaled).collect());
     (tdd, v, parent, side)
 }
 

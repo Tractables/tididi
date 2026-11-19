@@ -344,7 +344,7 @@ fn carry_marginal(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan, weigh
         let level = tdd.level(d);
         level.try_copy_over(lim, &mut levels[s.idx()])?;
         if level.is_weight_marginal() {
-            let column = source.and_then(|w| w.level(d.idx())).unwrap_or(&[]);
+            let column = source.and_then(|w| w.column(level, d.idx())).unwrap_or(&[]);
             let mut copy = Vec::new();
             lim.reserve_exact(&mut copy, column.len())?;
             copy.extend_from_slice(column);

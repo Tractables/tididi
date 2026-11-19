@@ -481,7 +481,7 @@ fn apply_and_held(
     if f.tdd().is_zero() || g.tdd().is_zero() {
         lim.check_stop()?;
         let levels = diagram::try_take_levels(eng, num_nodes)?;
-        return diagram::Assembly::from_levels(eng, vtree, levels, ws)
+        return diagram::Assembly::from_levels(eng, vtree, levels, ws.as_ref().map(crate::diagram::WeightStore::empty_like))
             .finish(TddNodeId {
                 vtree: f.output().vtree,
                 local: ZERO,

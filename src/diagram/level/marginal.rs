@@ -5,7 +5,8 @@ use crate::diagram::marginal_ref::{INLINE_VALUE_BIT, ValueRef};
 use crate::diagram::NodeIdx;
 use crate::limits::{Limits, OperationError};
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
-use super::{CountBox, CountOverflow, CountState, LevelState, TddLevel};
+use super::{CountBox, CountOverflow, CountState, LevelState, TddLevel, WeightBox, WeightState};
+use crate::diagram::WeightValue;
 
 impl TddLevel {
     /// One level's share of `inline_small_marginal_refs`: for each bare slot
@@ -75,19 +76,26 @@ impl TddLevel {
     }
 
 
-    /// Marginalize this level into `slots` weighted slots, whose values live in the
-    /// diagram's external `WeightStore`.
-    ///
-    /// `slots` is explicit because it is not always the node count: a
-    /// streaming marginalization remaps parent refs to compacted cell indices.
-    /// `slot_count()` reads it back, so parent marginal-side refs stay in bounds.
-    pub(crate) fn become_marginal_weighted(&mut self, slots: u32) {
+    /// Replace this level's structure with `values`, one per slot.
+    pub(crate) fn become_marginal_weighted(&mut self, values: Vec<WeightValue>) {
+        let width = values.len() as u32;
+        self.become_weighted(WeightState { values, width, held: false, retired: 0 });
+    }
+
+    /// Replace this level's structure with `slots` weighted slots whose
+    /// values the caller keeps until it installs them
+    /// ([`become_marginal_weighted`](Self::become_marginal_weighted)).
+    pub(crate) fn become_held_weighted(&mut self, slots: u32) {
+        self.become_weighted(WeightState { values: Vec::new(), width: slots, held: true, retired: 0 });
+    }
+
+    fn become_weighted(&mut self, state: WeightState) {
         debug_assert!(
             !matches!(self.state, LevelState::Counts(_)),
             "a level already holding counts cannot become weight-marginal"
         );
         self.drop_structure();
-        self.state = LevelState::Weights { width: slots, retired: 0 };
+        self.state = LevelState::Weights(WeightBox::new(state));
     }
 }
 

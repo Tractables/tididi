@@ -233,8 +233,13 @@ impl<'a> MovePlacement<'a> {
 
     /// Multiply every value of a weight-marginal level by `factor`.
     pub(super) fn scale(&mut self, at: VtreeIdx, factor: &WeightValue) {
-        let (_, weights) = self.assembly.parts_mut();
+        let (levels, weights) = self.assembly.parts_mut();
         if let Some(values) = weights.as_mut().and_then(|w| w.level_vals_mut(at.idx())) {
+            for value in values.iter_mut() {
+                *value = value.mul(factor);
+            }
+        }
+        if let Some(values) = levels[at.idx()].weight_values_mut() {
             for value in values.iter_mut() {
                 *value = value.mul(factor);
             }

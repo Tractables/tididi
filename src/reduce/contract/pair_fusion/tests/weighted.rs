@@ -408,18 +408,18 @@ fn weighted_fusion_does_not_run_in_the_log_domain() {
         &[a.clone(), rat(5, 7)],
         &[vec![(LeafLabel::Pos as u32, 0), (LeafLabel::Pos as u32, 1)]],
     );
-    let mut ws = WeightStore::new(
+    tdd.weights = Some(WeightStore::new(
         tdd.weights().unwrap().algebra().clone(),
         Arithmetic::SignedLog,
-    );
-    ws.set_level(
-        marginal.idx(),
+    ));
+    crate::test_helpers::set_weight_column(
+        &mut tdd,
+        marginal,
         vec![
             WeightValue::Log(SignedLog::from_rational(&a)),
             WeightValue::Log(SignedLog::from_rational(&rat(5, 7))),
         ],
     );
-    tdd.weights = Some(ws);
 
     let before: Vec<ChildPair> = tdd.levels[root.idx()].pairs_vec(0).to_vec();
     let slots_before = store_len(&tdd, marginal);

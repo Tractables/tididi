@@ -305,3 +305,50 @@ fn weight_columns_reject_either_length_mismatch() {
     .unwrap();
     assert_eq!(empty, RationalWeights::from_literals(&[]));
 }
+
+/// The false result of a conjunction of weighted operands, carried on by
+/// `or` and `negate`, then conjoined again in both orders with a diagram
+/// summed out at the same level.
+#[test]
+fn a_false_result_carries_no_column_into_a_later_conjunction() {
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(4));
+    let (t, _) = vtree.children(vtree.root());
+    let literals = [
+        LiteralWeights { positive: rat(1, 3), negative: rat(1, 2) },
+        LiteralWeights { positive: rat(1, 5), negative: rat(1, 7) },
+        LiteralWeights { positive: rat(2, 3), negative: rat(1, 4) },
+        LiteralWeights { positive: rat(3, 11), negative: rat(5, 13) },
+    ];
+    let store = WeightStore::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational);
+    let weighted = |mut f: Tdd| {
+        f.set_weights(store.empty_like()).unwrap();
+        f
+    };
+    let a = weighted(Tdd::clause(&vtree, [3]).unwrap());
+    let x12 = weighted(Tdd::clause(&vtree, [1]).unwrap() & Tdd::clause(&vtree, [2]).unwrap());
+    let g = eng.and_marginalizing(a.clone(), x12, &[t]).unwrap();
+    let z = eng.and(weighted(Tdd::zero(&vtree)), g).unwrap();
+    assert!(z.is_zero());
+    let h = eng.or(z.clone(), a).unwrap();
+    let top = eng.negate(&z).unwrap();
+    let mut k = weighted(Tdd::clause(&vtree, [1, 2]).unwrap());
+    eng.marginalize_levels(&mut k, &[t]).unwrap();
+
+    let total = |l: &LiteralWeights<num_rational::BigRational>| &l.positive + &l.negative;
+    let [w1, w2, w3, w4] = &literals;
+    let either = &w1.positive * &w2.positive + &w1.positive * &w2.negative + &w1.negative * &w2.positive;
+    let with_a = &w3.positive * &either * total(w4);
+    let with_top = &either * total(w3) * total(w4);
+    let orders = [
+        ("and(h,k)", eng.and(&h, &k).unwrap(), &with_a),
+        ("and(k,h)", eng.and(&k, &h).unwrap(), &with_a),
+        ("and(T,k)", eng.and(&top, &k).unwrap(), &with_top),
+        ("and(k,T)", eng.and(&k, &top).unwrap(), &with_top),
+    ];
+    let wrong: Vec<_> = orders
+        .into_iter()
+        .filter_map(|(name, f, expected)| (value_of(&f) != *expected).then(|| format!("{name} = {}, expected {expected}", value_of(&f))))
+        .collect();
+    assert!(wrong.is_empty(), "{wrong:?}");
+}

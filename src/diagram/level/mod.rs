@@ -20,6 +20,7 @@ pub(crate) use marginal::{assert_can_make_marginal, non_marginal_child};
 
 use super::marginal_ref::{ChildDecoder, ChildSide};
 use super::primitives::{ChildPair, EncodedNode};
+use super::WeightValue;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
 /// The diagram storage associated with one vtree node.
@@ -88,9 +89,8 @@ pub struct TddLevel {
 /// marginalized — and [`Structural`](LevelState::Structural) while it still
 /// holds nodes and pairs.
 ///
-/// The integer arm's width is its `counts` vector; the weighted arm's values
-/// live in the external [`WeightStore`](crate::diagram::WeightStore) and only
-/// the slot count stays here.
+/// The integer arm's width is its `counts` vector; the weighted arm records
+/// its width beside its column.
 #[derive(Clone, Debug)]
 pub(crate) enum LevelState {
     /// Nodes and pairs; `nodes`/`pairs`/`ranges` carry the level. With the
@@ -98,10 +98,8 @@ pub(crate) enum LevelState {
     Structural(HeldPairs),
     /// Model counts, one per node slot ([`CountBox`]).
     Counts(CountBox),
-    /// Semiring weights, held in the external `WeightStore` and indexed by this
-    /// level's slot. Only the slot count stays here — `slot_count()` has nowhere
-    /// else to read it from, since `nodes` is cleared like the integer path.
-    Weights { width: u32, retired: u32 },
+    /// Semiring weights, one per slot ([`WeightBox`]).
+    Weights(WeightBox),
 }
 
 impl LevelState {
@@ -205,19 +203,25 @@ impl Clone for HeldPairs {
     }
 }
 
-/// A count-marginal level's values, boxed, and dropped out of line: a level's
+/// A marginal level's values, boxed, and dropped out of line: a level's
 /// drop, of a structural level nearly always, is then a test of its state,
 /// which the drop of every level and every reset of a state inline.
 #[derive(Debug)]
-pub(crate) struct CountBox(std::mem::ManuallyDrop<Box<CountState>>);
+pub(crate) struct ValueBox<T>(std::mem::ManuallyDrop<Box<T>>);
 
-impl CountBox {
-    pub(crate) fn new(state: CountState) -> Self {
-        CountBox(std::mem::ManuallyDrop::new(Box::new(state)))
+/// A count-marginal level's values.
+pub(crate) type CountBox = ValueBox<CountState>;
+
+/// A weight-marginal level's values.
+pub(crate) type WeightBox = ValueBox<WeightState>;
+
+impl<T> ValueBox<T> {
+    pub(crate) fn new(state: T) -> Self {
+        ValueBox(std::mem::ManuallyDrop::new(Box::new(state)))
     }
 }
 
-impl Drop for CountBox {
+impl<T> Drop for ValueBox<T> {
     #[cold]
     #[inline(never)]
     fn drop(&mut self) {
@@ -226,21 +230,21 @@ impl Drop for CountBox {
     }
 }
 
-impl Clone for CountBox {
+impl<T: Clone> Clone for ValueBox<T> {
     fn clone(&self) -> Self {
-        CountBox::new(CountState::clone(self))
+        ValueBox::new(T::clone(self))
     }
 }
 
-impl std::ops::Deref for CountBox {
-    type Target = CountState;
-    fn deref(&self) -> &CountState {
+impl<T> std::ops::Deref for ValueBox<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
         &self.0
     }
 }
 
-impl std::ops::DerefMut for CountBox {
-    fn deref_mut(&mut self) -> &mut CountState {
+impl<T> std::ops::DerefMut for ValueBox<T> {
+    fn deref_mut(&mut self) -> &mut T {
         &mut self.0
     }
 }
@@ -252,6 +256,19 @@ pub(crate) struct CountState {
     /// that large, whose exact value is the entry `big` holds for that slot.
     pub(crate) counts: Vec<u128>,
     pub(crate) big: Option<CountOverflow>,
+    pub(crate) retired: u32,
+}
+
+/// A weight-marginal level's values.
+#[derive(Clone, Debug)]
+pub(crate) struct WeightState {
+    /// One value per slot. Longer than `width` where a compaction to no
+    /// slots left them, and empty while `held`.
+    pub(crate) values: Vec<WeightValue>,
+    pub(crate) width: u32,
+    /// The values are not here: the operation that summed the level out
+    /// keeps them until it installs them.
+    pub(crate) held: bool,
     pub(crate) retired: u32,
 }
 
@@ -419,14 +436,14 @@ impl TddLevel {
     pub fn slot_count(&self) -> usize {
         match &self.state {
             LevelState::Counts(c) => c.counts.len(),
-            LevelState::Weights { width, .. } => *width as usize,
+            LevelState::Weights(w) => w.width as usize,
             LevelState::Structural(_) => self.node_count(),
         }
     }
 
     /// The model count of each node of a marginal level, indexed by
-    /// [`NodeIdx`](super::NodeIdx); `None` on any other level, and on a weight-marginal one
-    /// (whose values live in the [`WeightStore`](crate::diagram::WeightStore)).
+    /// [`NodeIdx`](super::NodeIdx); `None` on any other level, a
+    /// weight-marginal one included ([`weight_values`](Self::weight_values)).
     ///
     /// A value of `u128::MAX` means the count is at least that large. Read
     /// [`marginal_counts_big`](Self::marginal_counts_big)`.get(i)` for its exact
@@ -482,7 +499,7 @@ impl TddLevel {
     pub(crate) fn retired_marginal_slots(&self) -> u32 {
         match &self.state {
             LevelState::Counts(c) => c.retired,
-            LevelState::Weights { retired, .. } => *retired,
+            LevelState::Weights(w) => w.retired,
             LevelState::Structural(_) => 0,
         }
     }
@@ -493,7 +510,7 @@ impl TddLevel {
     pub(crate) fn retire_marginal_slots(&mut self, n: u32) {
         match &mut self.state {
             LevelState::Counts(c) => c.retired = c.retired.saturating_add(n),
-            LevelState::Weights { retired, .. } => *retired = retired.saturating_add(n),
+            LevelState::Weights(w) => w.retired = w.retired.saturating_add(n),
             LevelState::Structural(_) => {}
         }
     }
@@ -501,9 +518,37 @@ impl TddLevel {
     /// Set the live slot count of a weight-marginal level. No-op elsewhere.
     #[inline]
     pub(crate) fn set_weight_width(&mut self, w: u32) {
-        if let LevelState::Weights { width, .. } = &mut self.state {
-            *width = w;
+        if let LevelState::Weights(state) = &mut self.state {
+            state.width = w;
         }
+    }
+
+    /// The values of a weight-marginal level, one per slot, indexed like a
+    /// count-marginal level's [`marginal_counts`](Self::marginal_counts);
+    /// `None` on any other level.
+    #[inline]
+    pub fn weight_values(&self) -> Option<&[WeightValue]> {
+        match &self.state {
+            LevelState::Weights(w) if !w.held => Some(&w.values),
+            _ => None,
+        }
+    }
+
+    /// The column of a weight-marginal level, for an edit that keeps its
+    /// slot count in step ([`MarginalStorage`](crate::diagram::MarginalStorage)).
+    #[inline]
+    pub(crate) fn weight_values_mut(&mut self) -> Option<&mut Vec<WeightValue>> {
+        match &mut self.state {
+            LevelState::Weights(w) if !w.held => Some(&mut w.values),
+            _ => None,
+        }
+    }
+
+    /// Whether this level is weight-marginal with its values kept by the
+    /// operation that summed it out.
+    #[inline]
+    pub(crate) fn weights_held(&self) -> bool {
+        matches!(&self.state, LevelState::Weights(w) if w.held)
     }
 
     /// True if any node has more than one pair. O(width), and O(1) on an
@@ -535,12 +580,10 @@ impl TddLevel {
         !matches!(self.state, LevelState::Structural(_))
     }
 
-    /// True if this level is marginal with its per-node values held in an
-    /// external [`WeightStore`](crate::diagram::WeightStore) rather
-    /// than in `marginal_counts` (which stays `None`). Such a level's values
-    /// cannot be read from the diagram alone.
+    /// True if this level is marginal with weight values
+    /// ([`weight_values`](Self::weight_values)) rather than counts.
     pub fn is_weight_marginal(&self) -> bool {
-        matches!(self.state, LevelState::Weights { .. })
+        matches!(self.state, LevelState::Weights(_))
     }
 
 
@@ -700,6 +743,12 @@ impl TddLevel {
                 big: c.big.clone(),
                 retired: c.retired,
             })),
+            LevelState::Weights(w) => {
+                let mut values = Vec::new();
+                lim.reserve_exact(&mut values, w.values.len())?;
+                values.extend(w.values.iter().cloned());
+                LevelState::Weights(WeightBox::new(WeightState { values, ..**w }))
+            }
             other => other.clone(),
         };
         // Implied nodes are charged as stored ones copied at their count.

@@ -107,7 +107,6 @@ pub fn toy_weighted(
     );
     let n = vtree.num_nodes();
     let mut levels: Vec<TddLevel> = (0..n).map(|_| TddLevel::new()).collect();
-    levels[right.idx()].become_marginal_weighted(values.len() as u32);
     for pl in node_pair_lists {
         let pairs: Vec<ChildPair> = pl
             .iter()
@@ -117,6 +116,7 @@ pub fn toy_weighted(
     }
     let wvals: Vec<crate::diagram::WeightValue> =
         values.into_iter().map(crate::diagram::WeightValue::exact).collect();
+    levels[right.idx()].become_marginal_weighted(wvals.clone());
     ws.set_level(right.idx(), wvals);
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
@@ -144,3 +144,12 @@ pub fn boundary_internal_marginal_vtree() -> Vtree {
     .expect("boundary_internal_marginal_vtree parse")
 }
 
+
+/// Replace the values of `tdd`'s weight-marginal level `t` with `values`,
+/// its width with theirs.
+pub fn set_weight_column(tdd: &mut Tdd, t: VtreeIdx, values: Vec<crate::diagram::WeightValue>) {
+    let width = values.len() as u32;
+    tdd.weights.as_mut().expect("a weighted diagram").set_level(t.idx(), values.clone());
+    *tdd.levels[t.idx()].weight_values_mut().expect("a weight-marginal level") = values;
+    tdd.levels[t.idx()].set_weight_width(width);
+}

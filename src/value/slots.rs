@@ -348,7 +348,7 @@ impl SlotValues for WeightFold {
     /// declines in a bounded-precision domain.
     fn sum_refs(tdd: &Tdd, v: VtreeIdx, refs: &[u32]) -> WeightValue {
         let ws = tdd.weight_store();
-        let values = ws.level(v.idx());
+        let values = ws.column(&tdd.levels[v.idx()], v.idx());
         let mut acc = ws.wzero();
         for &raw in refs {
             // The zero sentinel (bit 31) contributes the additive identity.
@@ -410,7 +410,7 @@ impl SlotValues for WeightFold {
             !ws.is_bounded(),
             "leaf lookup reached in a bounded-precision domain (the fusion gate must exclude it)"
         );
-        crate::diagram::find_leaf_slot_by_value(ws, v.idx(), value).map(ValueRef::slot_raw)
+        crate::diagram::find_leaf_slot_by_value(ws, &tdd.levels[v.idx()], v.idx(), value).map(ValueRef::slot_raw)
     }
 }
 

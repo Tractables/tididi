@@ -129,7 +129,7 @@ fn fusion_value_representable(tdd: &Tdd, v: VtreeIdx, refs: &[u32]) -> bool {
     let Some(ws) = tdd.weights().filter(|_| tdd.vtree.node(v).is_var_leaf()) else {
         return true;
     };
-    let col = ws.level(v.idx()).expect("weighted marginal leaf has a column");
+    let col = ws.column(&tdd.levels[v.idx()], v.idx()).expect("weighted marginal leaf has a column");
     let mut sum = num_rational::BigRational::from_integer(0.into());
     for &raw in refs {
         let ValueRef::Slot(slot) = ChildDecoder::marginal().value(EncodedChildRef::from_raw(raw)) else {
@@ -181,7 +181,7 @@ fn stored_slot_count(tdd: &Tdd, left_idx: usize) -> usize {
     if tdd.levels[left_idx].is_weight_marginal() {
         return tdd
             .weights()
-            .and_then(|ws| ws.level(left_idx))
+            .and_then(|ws| ws.column(&tdd.levels[left_idx], left_idx))
             .map_or(0, |c| c.len());
     }
     tdd.levels[left_idx].marginal_counts().map_or(0, |c| c.len())

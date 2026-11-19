@@ -117,7 +117,7 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Result<Vec<u32>,
         // when every slot is referenced.
         let merge = match bounded {
             Some(weights) if referenced.len() >= SAMPLE_FROM => {
-                sample_repeats(lim, weights.level(v.idx()).expect("a nonempty weighted store has a column"), referenced)?
+                sample_repeats(lim, weights.column(&tdd.levels[v.idx()], v.idx()).expect("a nonempty weighted store has a column"), referenced)?
             }
             _ => true,
         };

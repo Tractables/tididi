@@ -14,7 +14,7 @@ fn column_of<'a>(
     level: &TddLevel,
     t: usize,
 ) -> Option<&'a [WeightValue]> {
-    level.is_weight_marginal().then(|| store.level(t)).flatten()
+    level.is_weight_marginal().then(|| store.column(level, t)).flatten()
 }
 
 /// Resolve a child node's semiring value for the weighted marginalization
@@ -53,7 +53,7 @@ fn read_weight<'a>(
         let v = ws.leaf_val(var, LeafLabel::from_idx(label_idx));
         #[cfg(debug_assertions)]
         debug_assert!(
-            leaf_column_slot_agrees(ws, level_idx, label_idx, &v),
+            leaf_column_slot_agrees(ws, &levels[level_idx], level_idx, label_idx, &v),
             "weight-marginal leaf {level_idx}: pinned column disagrees with leaf_val \
              at label slot {label_idx}"
         );
@@ -81,12 +81,13 @@ fn read_weight<'a>(
 #[cfg(debug_assertions)]
 fn leaf_column_slot_agrees(
     ws: &WeightStore,
+    level: &TddLevel,
     level_idx: usize,
     label_idx: usize,
     expect: &WeightValue,
 ) -> bool {
     use crate::diagram::weight_key;
-    let Some(col) = ws.level(level_idx) else { return true };
+    let Some(col) = ws.column(level, level_idx) else { return true };
     if col.len() != crate::diagram::LEAF_WIDTH {
         return false; // some pass compacted, erased or appended to the column
     }

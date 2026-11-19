@@ -132,7 +132,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     let two = BigRational::from_integer(BigInt::from(2));
 
     let (mut tdd, root, gp, bp, m_v, s) =
-        boundary_content_twins_fixture(|m| m.become_marginal_weighted(1));
+        boundary_content_twins_fixture(|m| m.become_marginal_weighted(vec![crate::diagram::WeightValue::exact(BigRational::new(BigInt::from(3), BigInt::from(7)))]));
 
     // Attach the store after building the diagram (mirrors `toy_weighted`'s
     // contract) and write the slot's value into it, so the content-twin fold takes

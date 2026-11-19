@@ -36,7 +36,7 @@ impl<'a> MarginalValues<'a> {
         if let Some(counts) = level.count_column() {
             Some(Self::Counts(counts))
         } else if level.is_weight_marginal() {
-            Some(Self::Weights(weights.expect("weighted level requires its store").level(index).unwrap_or(&[])))
+            Some(Self::Weights(weights.expect("weighted level requires its store").column(level, index).unwrap_or(&[])))
         } else {
             None
         }
@@ -72,9 +72,8 @@ impl<'a> MarginalStorage<'a> {
     }
 
     pub(crate) fn install_weights(&mut self, column: Vec<WeightValue>) {
-        let width = column.len() as u32;
-        self.weights.as_mut().expect("weighted installation requires its store").set_level(self.index, column);
-        self.level.become_marginal_weighted(width);
+        self.weights.as_mut().expect("weighted installation requires its store").set_level(self.index, column.clone());
+        self.level.become_marginal_weighted(column);
     }
 
     /// Make the level weight-marginal at `width` slots whose values the
@@ -82,7 +81,7 @@ impl<'a> MarginalStorage<'a> {
     /// installs one with [`Self::install_weights`].
     pub(crate) fn hold_weights(&mut self, width: u32) {
         self.weights.as_mut().expect("weighted installation requires its store").take_level(self.index);
-        self.level.become_marginal_weighted(width);
+        self.level.become_held_weighted(width);
     }
 
     /// Decide the compaction to the referenced slots, merging equal values,
@@ -108,7 +107,7 @@ impl<'a> MarginalStorage<'a> {
         if !self.level.is_weight_marginal() { return Ok(Compaction::Unchanged); }
         if remap.is_empty() { return Ok(Compaction::NoSlots); }
         let weights = self.weights.as_deref().expect("weighted compaction requires its store");
-        let values = weights.level(self.index).expect("a nonempty weighted store has a column");
+        let values = weights.column(self.level, self.index).expect("a nonempty weighted store has a column");
         let (len, merged) = match weights.is_bounded() {
             true if !merge => (plan_slots_apart(kept, remap), 0),
             // Two words a key, where a `WeightKey` can hold a big rational.
@@ -154,8 +153,11 @@ impl<'a> MarginalStorage<'a> {
             Compaction::Weights { len, merged } => {
                 let weights = self.weights.as_mut().expect("weighted compaction requires its store");
                 let values = weights.level_vals_mut(self.index).expect("a nonempty weighted store has a column");
-                move_slots(values.as_mut_slice(), kept, |values, dst, src| values.swap(dst, src), remap);
+                move_slots(values.as_mut_slice(), kept.clone(), |values, dst, src| values.swap(dst, src), remap);
                 truncate_with_slack(values, len);
+                let own = self.level.weight_values_mut().expect("a weighted compaction of a weighted level");
+                move_slots(own.as_mut_slice(), kept, |values, dst, src| values.swap(dst, src), remap);
+                truncate_with_slack(own, len);
                 self.level.set_weight_width(len as u32);
                 merged
             }
@@ -171,6 +173,7 @@ impl<'a> MarginalStorage<'a> {
         if self.level.is_weight_marginal() && self.level.slot_count() != 0 && !leaf {
             self.level.set_weight_width(0);
             if let Some(weights) = self.weights.as_mut() { weights.set_level(self.index, Vec::new()); }
+            if let Some(own) = self.level.weight_values_mut() { *own = Vec::new(); }
         }
     }
 
@@ -192,7 +195,12 @@ impl<'a> MarginalStorage<'a> {
         let values = self.weights.as_mut().expect("weighted append requires its store")
             .level_vals_mut(self.index).expect("weighted level has a column");
         let slot = eng.limits().next_slot(values.len())?;
-        eng.limits().try_push(values, value)?;
+        let own = self.level.weight_values_mut().expect("weighted level has a column");
+        eng.limits().try_push(own, value.clone())?;
+        if let Err(e) = eng.limits().try_push(values, value) {
+            own.pop();
+            return Err(e);
+        }
         self.level.set_weight_width(slot + 1);
         Ok(slot)
     }

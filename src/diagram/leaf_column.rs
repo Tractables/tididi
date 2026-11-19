@@ -88,11 +88,12 @@ pub(crate) fn leaf_canon_map(values: &[WeightValue]) -> [u32; 3] {
 /// as for [`leaf_canon_map`].
 pub(crate) fn find_leaf_slot_by_value(
     ws: &WeightStore,
+    level: &crate::diagram::TddLevel,
     level_idx: usize,
     want: &WeightValue,
 ) -> Option<u32> {
     use crate::diagram::semiring::same_value;
-    let col = ws.level(level_idx)?;
+    let col = ws.column(level, level_idx)?;
     col.iter()
         .take(crate::diagram::LEAF_WIDTH)
         .position(|v| same_value(v, want))

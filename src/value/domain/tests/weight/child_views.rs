@@ -9,9 +9,9 @@ fn marginal_child_view_borrows_the_stored_column() {
     for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
         let mut store = WeightStore::new(RationalWeights::unit(2), arithmetic);
         let values = vec![store.leaf_val(VarId(1), LeafLabel::One); 64];
-        store.set_level(root, values);
+        store.set_level(root, values.clone());
         let mut level = TddLevel::new();
-        level.become_marginal_weighted(64);
+        level.become_marginal_weighted(values);
         let computed = vec![None; tree.num_nodes()];
         let view = WeightFold::child_view(root, &tree, &level, &computed, &store);
         assert!(view.view.is_marginal());

@@ -365,7 +365,7 @@ impl TddBuilder {
         }
         let column = if from.level.is_weight_marginal() {
             let ws = from.weights.ok_or(TddBuildError::WeightedLevelWithoutStore { level: t })?;
-            let column = ws.level(from.source.idx()).unwrap_or(&[]);
+            let column = ws.column(from.level, from.source.idx()).unwrap_or(&[]);
             if column.len() != from.level.slot_count() {
                 return Err(TddBuildError::InvalidWeightColumn { level: t, reason: "does not match the level's slot count" }.into());
             }

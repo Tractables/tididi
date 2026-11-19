@@ -213,7 +213,7 @@ fn weighted_slot_uniqueness_detects_a_short_column() {
     let mut tdd = toy_weighted(weighted_store(), vec![rat(3, 7), rat(1, 2)], &[&[(0, 0)]]);
     let marginal = weighted_marginal_level();
     // Claim a third node without giving it a slot.
-    tdd.levels[marginal.idx()].become_marginal_weighted(3);
+    tdd.levels[marginal.idx()].set_weight_width(3);
     let err = check_slot_count_uniqueness(&tdd).unwrap_err();
     assert!(err.contains("invariant 10 (weighted)"), "wrong violation: {err}");
 }

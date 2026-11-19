@@ -255,6 +255,21 @@ impl WeightStore {
         self.per_level.get(&level).map(Vec::as_slice)
     }
 
+    /// The store's column of `level`, the level of vtree node `index`; in a
+    /// debug build checked against the level's own.
+    #[inline]
+    pub(crate) fn column<'a>(&'a self, level: &crate::diagram::TddLevel, index: usize) -> Option<&'a [WeightValue]> {
+        let column = self.level(index);
+        debug_assert!(
+            level.weight_values().is_none_or(|own| {
+                let stored = column.unwrap_or(&[]);
+                stored.len() == own.len() && stored.iter().zip(own).all(|(a, b)| crate::diagram::semiring::same_value(a, b))
+            }),
+            "level {index}: the store's column differs from the level's",
+        );
+        column
+    }
+
     /// `&mut` into one level's value vec, for in-place compaction. A caller
     /// that moves or drops slots must rewrite the parent refs into this level
     /// in the same pass.
