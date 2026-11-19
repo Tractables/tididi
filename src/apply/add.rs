@@ -151,7 +151,7 @@ fn add_on(eng: &Engine, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
             return overlay_on(eng, Overlay::Add, f, g);
         }
         (false, false) => {
-            if f.weights.is_some() {
+            if f.weight_table().is_some() {
                 return Err(OperationError::IncompatibleWeights);
             }
             // A level under a summed-out parent is folded into it, in

@@ -407,7 +407,7 @@ pub fn check_leaf_columns_pinned(tdd: &Tdd) -> Result<(), String> {
     use crate::diagram::{leaf_canon_map, LeafLabel, LEAF_WIDTH};
     use crate::value::slots::referenced_marginal_slots;
     use crate::vtree::VtreeNode;
-    let Some(ws) = tdd.weights.as_ref() else {
+    let Some(ws) = tdd.weight_table() else {
         return Ok(());
     };
     let mut scratch = RefSlotScratch::default();

@@ -372,3 +372,106 @@ fn bad_images_marginal_levels_and_constants() {
         assert_eq!(moved.is_zero(), !value);
     }
 }
+
+/// A clause over variables 1 to 3 of a balanced home of 8 with variables 1
+/// and 2 summed into a region, and the region's level.
+fn with_region(eng: &Engine, home: &Home) -> (Tdd, VtreeIdx) {
+    let own = Vtree::projection(home, [VarId(1), VarId(2), VarId(3)]).unwrap();
+    let mut f = eng.and_clause(eng.clause(&own, [1, -2, 3]).unwrap(), &[2, -3]).unwrap();
+    eng.marginalize(&mut f, |v| v.0 <= 2).unwrap();
+    let region = f.vtree().regions().next().expect("variables 1 and 2 are summed into a region");
+    assert!(f.level(region).is_marginal());
+    (f, region)
+}
+
+/// Onto another home, only the weights of a summed-out region's variables
+/// are compared: counts onto a weighted home, weight values onto an
+/// unweighted one, and weights that differ at a variable of the region are
+/// refused, with `f` given back.
+#[test]
+fn a_summed_region_moves_only_onto_the_weights_it_was_summed_under() {
+    let eng = Engine::new();
+    let weighted = |weights: &[(i64, i64)]| Home::weighted(Vtree::balanced(8), table(8, weights)).unwrap();
+    let value = |t: &Tdd| eng.weighted_value(t).unwrap().map(|w| w.into_rational());
+
+    let (counts, region) = with_region(&eng, &Home::new(Vtree::balanced(8)));
+    let r = eng.transport(&counts, &weighted(&[(1, 5)]), |v| v, 0).unwrap_err();
+    assert_eq!(r.error, TransportError::Weights(TddBuildError::CountLevelWithWeights { level: region }));
+    assert!(matches!(r.tdd, Cow::Borrowed(_)));
+
+    let source = weighted(&[(1, 5), (2, 4), (3, 3)]);
+    let (f, region) = with_region(&eng, &source);
+    assert!(f.weights.is_none() && f.weights().is_some());
+    let r = eng.transport(f.clone(), &Home::new(Vtree::balanced(8)), |v| v, 0).unwrap_err();
+    assert_eq!(r.error, TransportError::Weights(TddBuildError::WeightedLevelWithoutStore { level: region }));
+    assert!(matches!(r.tdd, Cow::Owned(_)));
+
+    // Variable 1 weighed otherwise: refused. Variable 3, a leaf and not in
+    // the region, and variables 4 to 8, unused: not compared.
+    for (weights, kept) in [
+        (&[(2, 5), (2, 4), (3, 3)][..], false),
+        (&[(1, 5), (2, 4), (1, 1), (6, 6)][..], true),
+        (&[(1, 5), (2, 4), (3, 3)][..], true),
+    ] {
+        match eng.transport(&f, &weighted(weights), |v| v, 0) {
+            Ok((g, _)) => {
+                assert!(kept, "{weights:?}");
+                assert!(g.weights.is_none());
+                assert_eq!(g.vtree().regions().count(), 1);
+                assert_canonical(&g);
+                let mut again = eng.transport(&g, &source, |v| v, 0).unwrap().0;
+                assert_eq!(value(&again), value(&f));
+                eng.trim(&mut again, &source).unwrap();
+                assert_eq!(value(&again), value(&f));
+            }
+            Err(r) => {
+                assert!(!kept, "{weights:?}");
+                assert_eq!(r.error, TransportError::Weights(TddBuildError::IncompatibleWeights));
+            }
+        }
+    }
+
+    let scaled = WeightStore::new(table(8, &[(1, 5), (2, 4), (3, 3)]).algebra().clone(), Arithmetic::ScaledFloat);
+    let r = eng.transport(&f, &Home::weighted(Vtree::balanced(8), scaled).unwrap(), |v| v, 0).unwrap_err();
+    assert_eq!(r.error, TransportError::Weights(TddBuildError::IncompatibleWeights));
+
+    // Under a renaming the image is compared with the variable it renames.
+    let shift = |v: VarId| VarId(v.0 + 4);
+    let shifted = weighted(&[(1, 5), (2, 4), (3, 3), (3, 3), (1, 5), (2, 4), (3, 3), (3, 3)]);
+    let g = eng.transport(&f, &shifted, shift, 0).unwrap().0;
+    assert_eq!(value(&g), value(&f));
+    let wrong = weighted(&[(1, 5), (2, 4), (3, 3), (3, 3), (1, 5), (2, 5)]);
+    let r = eng.transport(&f, &wrong, shift, 0).unwrap_err();
+    assert_eq!(r.error, TransportError::Weights(TddBuildError::IncompatibleWeights));
+
+    // Weights a diagram carries are compared as a home's, and left behind.
+    let home = Home::new(Vtree::balanced(8));
+    let own = Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)]).unwrap();
+    let mut carried = eng.and_clause(eng.clause(&own, [1, -2, 3]).unwrap(), &[2, -3]).unwrap();
+    carried.set_weights(table(8, &[(1, 5), (2, 4), (3, 3)])).unwrap();
+    eng.marginalize(&mut carried, |v| v.0 <= 2).unwrap();
+    let g = eng.transport(&carried, &source, |v| v, 0).unwrap().0;
+    assert!(g.weights.is_none());
+    assert_eq!(value(&g), value(&carried));
+    assert_eq!(value(&g), value(&f));
+    let r = eng.transport(&carried, &weighted(&[(1, 4)]), |v| v, 0).unwrap_err();
+    assert_eq!(r.error, TransportError::Weights(TddBuildError::IncompatibleWeights));
+}
+
+/// A diagram with no summed-out region stores no value of any weights:
+/// it moves onto any home, and reads that home's.
+#[test]
+fn a_structural_diagram_moves_onto_any_weights() {
+    let eng = Engine::new();
+    let home = Home::new(Vtree::balanced(8));
+    let own = Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)]).unwrap();
+    let mut f = eng.clause(&own, [1, -2, 3]).unwrap();
+    f.set_weights(table(8, &[(1, 5)])).unwrap();
+    let onto = Home::weighted(Vtree::balanced(8), table(8, &[(2, 3), (1, 1)])).unwrap();
+    let g = eng.transport(&f, &onto, |v| VarId(v.0 + 1), usize::MAX).unwrap().0;
+    assert!(g.weights.is_none());
+    assert!(Arc::ptr_eq(&g.vtree().home().unwrap().vtree().clone(), onto.vtree()));
+    let structural = eng.clause(&Vtree::projection(&onto, [VarId(2), VarId(3), VarId(4)]).unwrap(), [2, -3, 4]).unwrap();
+    let value = |t: &Tdd| eng.weighted_value(t).unwrap().map(|w| w.into_rational());
+    assert_eq!(value(&g), value(&structural));
+}

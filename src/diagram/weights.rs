@@ -3,8 +3,9 @@
 //! A weight-marginal level holds its own values
 //! ([`TddLevel::weight_values`](crate::diagram::TddLevel::weight_values)),
 //! each a [`WeightValue`] (exact `BigRational` or bounded-precision
-//! `SignedLog` or `ScaledFloat`); leaf base values come from the store's
-//! [`RationalWeights`], converted to the active mode by `WeightStore::leaf_val`.
+//! `SignedLog` or `ScaledFloat`); leaf base values come from the
+//! [`RationalWeights`] of [`Weights`], converted to the active mode by
+//! `Weights::leaf_val`.
 
 use std::sync::Arc;
 
@@ -15,8 +16,8 @@ use crate::vtree::VarId;
 /// The numeric representation a weighted marginalization's values use: exact
 /// `BigRational`, or one of two bounded-precision forms whose every operation
 /// is O(1) `f64` work: the `SignedLog` domain, or the cheaper `ScaledFloat`.
-/// They never mix within one store; a caller decides once per weighted run
-/// and passes it once to [`WeightStore::new`].
+/// They never mix among the diagrams of one weighted build; a caller decides once per weighted run
+/// and passes it once to [`Weights::new`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Arithmetic {
@@ -29,42 +30,44 @@ pub enum Arithmetic {
     ScaledFloat,
 }
 
-/// Fixed literal weights and the values computed when structure is marginalized.
+/// The literal weights and arithmetic that every summed-out level of a
+/// weighted diagram is computed under.
 ///
-/// Attach a store with [`Tdd::set_weights`](crate::Tdd::set_weights), then query
-/// it with [`Tdd::weighted_value`](crate::Tdd::weighted_value).
+/// Give them to a home with [`Home::weighted`](crate::vtree::Home::weighted):
+/// every diagram on that home is then weighted, and a sum-out on it stores
+/// weight values. On a vtree that is not a weighted home, attach them to one
+/// diagram with [`Tdd::set_weights`](crate::Tdd::set_weights). Query either
+/// with [`Tdd::weighted_value`](crate::Tdd::weighted_value).
 /// Choose [`Arithmetic::ExactRational`] for exact results, or
 /// [`Arithmetic::ScaledFloat`] or [`Arithmetic::SignedLog`] for bounded
 /// precision over a wider numeric range than ordinary floating-point weights.
 ///
-/// The literal table is shared by derived stores. Once structure has been
-/// replaced by values, those levels cannot be evaluated under new weights.
-/// For repeated evaluations with changing weights, retain a structural diagram
-/// and use [`Tdd::evaluate`](crate::Tdd::evaluate).
-#[derive(Clone)]
-pub struct WeightStore {
-    config: WeightConfig,
-}
-
-/// The immutable interpretation shared by computed columns.
+/// A clone shares the table. Once structure has been replaced by values,
+/// those levels cannot be evaluated under new weights. For repeated
+/// evaluations with changing weights, retain a structural diagram and use
+/// [`Tdd::evaluate`](crate::Tdd::evaluate).
 #[derive(Clone, PartialEq, Eq)]
-struct WeightConfig {
-    algebra: Arc<RationalWeights>,
+pub struct Weights {
+    pub(super) table: Arc<RationalWeights>,
     arithmetic: Arithmetic,
 }
 
-impl std::fmt::Debug for WeightStore {
+/// The weights one diagram carries on a vtree that is not a weighted home.
+pub type WeightStore = Weights;
+
+impl std::fmt::Debug for Weights {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WeightStore")
-            .field("arithmetic", &self.config.arithmetic)
+        f.debug_struct("Weights")
+            .field("arithmetic", &self.arithmetic)
             .finish()
     }
 }
 
-impl WeightStore {
-    /// Whether columns from these stores have the same interpretation.
+impl Weights {
+    /// Whether columns computed under these weights and under `other` have the
+    /// same interpretation.
     pub(crate) fn compatible(&self, other: &Self) -> bool {
-        self.config == other.config
+        self == other
     }
 
     /// Require weights for every named variable before a reader indexes the table.
@@ -141,39 +144,39 @@ impl WeightStore {
 
     /// A store over `algebra` with no level marginal yet.
     pub fn new(algebra: RationalWeights, arithmetic: Arithmetic) -> Self {
-        Self { config: WeightConfig { algebra: Arc::new(algebra), arithmetic } }
+        Self { table: Arc::new(algebra), arithmetic }
     }
 
-    /// A second empty store over the same weight table, for another diagram of
-    /// the same weighted build. The table is shared, not copied.
+    /// A clone, for another diagram of the same weighted build. The table is
+    /// shared, not copied.
     pub fn empty_like(&self) -> Self {
-        Self { config: self.config.clone() }
+        self.clone()
     }
 
     /// The algebra the values are folded in: the weight table and its
     /// operations.
     #[inline]
     pub fn algebra(&self) -> &RationalWeights {
-        &self.config.algebra
+        &self.table
     }
 
-    /// The store's arithmetic, fixed at construction.
+    /// The arithmetic, fixed at construction.
     #[inline]
     pub fn arithmetic(&self) -> Arithmetic {
-        self.config.arithmetic
+        self.arithmetic
     }
 
     /// True in a bounded-precision arithmetic: there value equality is not
     /// key equality, and addition depends on its order.
     #[inline]
     pub(crate) fn is_bounded(&self) -> bool {
-        self.config.arithmetic != Arithmetic::ExactRational
+        self.arithmetic != Arithmetic::ExactRational
     }
 
     /// The additive identity in the active mode.
     #[inline]
     pub(crate) fn wzero(&self) -> WeightValue {
-        match self.config.arithmetic {
+        match self.arithmetic {
             Arithmetic::SignedLog => WeightValue::Log(SignedLog::zero()),
             Arithmetic::ScaledFloat => WeightValue::Scaled(ScaledFloat::ZERO),
             // The canonical exact zero: 0 always fits the small representation.
@@ -186,8 +189,8 @@ impl WeightStore {
     /// is converted exactly once here (per leaf read).
     #[inline]
     pub(crate) fn leaf_val(&self, var: VarId, label: LeafLabel) -> WeightValue {
-        let r = self.config.algebra.leaf(var, label);
-        match self.config.arithmetic {
+        let r = self.table.leaf(var, label);
+        match self.arithmetic {
             Arithmetic::SignedLog => WeightValue::Log(SignedLog::from_rational(&r)),
             Arithmetic::ScaledFloat => WeightValue::Scaled(ScaledFloat::from_rational(&r)),
             Arithmetic::ExactRational => WeightValue::exact(r),

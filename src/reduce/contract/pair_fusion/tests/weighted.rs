@@ -129,13 +129,13 @@ fn weighted_leaf_fixture(
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
 
-    let mut ws = WeightStore::new(
+    let ws = WeightStore::new(
         RationalWeights::from_literals(weights),
         Arithmetic::ExactRational,
     );
     // `marginalize_leaf_weighted` borrows the vtree while mutating the diagram.
     let vt = Arc::clone(&tdd.vtree);
-    marginalize_leaf_weighted(&crate::limits::Limits::new(), &mut tdd, right, &vt, &mut ws).unwrap();
+    marginalize_leaf_weighted(&crate::limits::Limits::new(), &mut tdd, right, &vt, &ws).unwrap();
     tdd.set_weights(ws).unwrap();
     assert!(
         tdd.levels[right.idx()].is_weight_marginal(),

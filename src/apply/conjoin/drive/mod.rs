@@ -54,7 +54,7 @@ pub(super) struct Sweep<'a> {
     pub(super) vtree: &'a crate::vtree::Vtree,
     /// The levels summed out as they are built.
     pub(super) targets: VtreeMask<'a>,
-    pub(super) ws: Option<&'a mut crate::diagram::WeightStore>,
+    pub(super) ws: Option<&'a crate::diagram::WeightStore>,
     /// Whether the output is wanted only for its count: then a root level
     /// the sparse route builds as one product is counted instead, into
     /// `counted`, and left empty.
@@ -435,8 +435,16 @@ fn apply_and_held(
     };
     let (fw, gw) = (take_weights(f), take_weights(g));
     let ws = fw.or(gw);
+    let vtree = Arc::clone(f.vtree());
+    // On a weighted home the operands carry no store: the sweep reads the
+    // home's weights when a level holds or comes to hold values, and
+    // otherwise runs as an unweighted conjunction.
+    let home_table = vtree
+        .weights()
+        .filter(|_| !targets.is_empty() || f.tdd().has_marginal_level() || g.tdd().has_marginal_level());
     debug_assert!(
         ws.is_some()
+            || home_table.is_some()
             || !f
                 .tdd()
                 .levels
@@ -447,7 +455,7 @@ fn apply_and_held(
     );
     // Nothing but pairs changes hands: no weights, no summed-out level,
     // and, as the setup finds, no marginal level.
-    let unmarked = ws.is_none() && targets.is_empty();
+    let unmarked = ws.is_none() && home_table.is_none() && targets.is_empty();
     // A built conjunction, restoring or not, that sums no level and
     // carries no weights takes the subtrees at which
     // both operands are constant true whole from `f`, as the identity fast
@@ -461,7 +469,6 @@ fn apply_and_held(
 
     // Early return for zero inputs: `x ∧ 0 = 0`.
     // Avoids allocating the output's levels and arenas for unsatisfiable operands.
-    let vtree = Arc::clone(f.vtree());
     let num_nodes = vtree.num_nodes();
     if f.tdd().is_zero() || g.tdd().is_zero() {
         lim.check_stop()?;
@@ -506,7 +513,8 @@ fn apply_and_held(
     };
     let mut assembly = diagram::Assembly::from_levels(eng, Arc::clone(&vtree), levels, ws);
     let (levels, ws) = assembly.parts_mut();
-    let kind = crate::apply::conjoin::streaming_marginal::stream_kind(ws.as_ref());
+    let ws = ws.as_ref().or(home_table);
+    let kind = crate::apply::conjoin::streaming_marginal::stream_kind(ws);
     let mut run = apply_and_setup(
         eng,
         &vtree,
@@ -564,7 +572,7 @@ fn apply_and_held(
             f: &run.f_identity[..],
             g: &run.g_identity[..],
         },
-        ws.as_ref(),
+        ws,
     );
     // Taken here, after the setup and before the regions or the sweep move
     // or drop any operand level: an access that changed a level would have
@@ -580,7 +588,7 @@ fn apply_and_held(
     let mut sweep = Sweep {
         vtree: &vtree,
         targets,
-        ws: ws.as_mut(),
+        ws,
         count_root,
         counted: None,
     };
@@ -606,7 +614,7 @@ fn apply_and_held(
         &canon_leaves,
         &vtree,
         run.levels,
-        ws.as_ref(),
+        ws,
     ) {
         if run.restoring {
             give_back(run.levels, f, g, run.lists, cone);

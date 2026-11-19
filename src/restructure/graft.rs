@@ -175,7 +175,7 @@ pub(super) fn check_part_weights(part: &Tdd, destination: Option<&WeightStore>, 
         }
     }
     if part.has_marginal_level()
-        && let (Some(source), Some(destination)) = (part.weights.as_ref(), destination)
+        && let (Some(source), Some(destination)) = (part.weight_table(), destination)
         && !source.compatible_after_rename(destination, part.vtree.leaf_bottomup().map(|(_, var)| (var, rename(var))))
     {
         return Err(TddBuildError::IncompatibleWeights);

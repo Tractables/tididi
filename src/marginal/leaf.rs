@@ -161,7 +161,7 @@ pub(crate) fn marginalize_leaf_weighted(
     tdd: &mut Tdd,
     leaf: VtreeIdx,
     vtree: &Vtree,
-    ws: &mut WeightStore,
+    ws: &WeightStore,
 ) -> Result<(), OperationError> {
     debug_assert!(vtree.node(leaf).is_leaf());
     if tdd.levels[leaf.idx()].is_marginal() {

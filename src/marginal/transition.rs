@@ -48,7 +48,7 @@ pub(crate) trait MarginalDomain: ValueDomain {
         levels: &mut [TddLevel],
         t: InternalLevel,
         col: Self::Col,
-        store: &mut Self::Store,
+        store: &Self::Store,
     ) -> Option<Self::Col>;
 
     /// Ready a finished column for [`Self::install`] on a finished diagram,
@@ -66,7 +66,7 @@ pub(crate) trait MarginalDomain: ValueDomain {
         level: &mut TddLevel,
         t: InternalLevel,
         col: Self::Col,
-        store: &mut Self::Store,
+        store: &Self::Store,
     );
 
     /// Sum out a single-variable vtree leaf target into its parent's
@@ -83,7 +83,7 @@ pub(crate) trait MarginalDomain: ValueDomain {
         tdd: &mut Tdd,
         leaf: VtreeIdx,
         vtree: &Vtree,
-        store: &mut Self::Store,
+        store: &Self::Store,
     ) -> Result<(), OperationError>;
 
     /// Whatever the domain owes the whole diagram once a cascade pass is over.
@@ -103,7 +103,7 @@ impl MarginalDomain for IntFold {
         levels: &mut [TddLevel],
         t: InternalLevel,
         col: CountVec,
-        _store: &mut (),
+        _store: &(),
     ) -> Option<CountVec> {
         let (counts, big) = col.into_parts();
         let i = t.vtree_idx().idx();
@@ -123,7 +123,7 @@ impl MarginalDomain for IntFold {
         level: &mut TddLevel,
         _t: InternalLevel,
         col: CountVec,
-        _store: &mut (),
+        _store: &(),
     ) {
         let (counts, big) = col.into_parts();
         crate::diagram::MarginalStorage::new(level).install_counts(counts, big);
@@ -134,7 +134,7 @@ impl MarginalDomain for IntFold {
         tdd: &mut Tdd,
         leaf: VtreeIdx,
         vtree: &crate::vtree::Vtree,
-        _store: &mut (),
+        _store: &(),
     ) -> Result<(), OperationError> {
         crate::marginal::marginalize_leaf_inline(lim, tdd, leaf, vtree)
     }
@@ -157,7 +157,7 @@ impl MarginalDomain for WeightFold {
         levels: &mut [TddLevel],
         t: InternalLevel,
         col: Vec<WeightValue>,
-        _store: &mut WeightStore,
+        _store: &WeightStore,
     ) -> Option<Vec<WeightValue>> {
         // No parent contract-dirty marking: the shared level-state machine
         // establishes invariant 10 at slot-prune, which runs in weighted mode too via
@@ -179,7 +179,7 @@ impl MarginalDomain for WeightFold {
         level: &mut TddLevel,
         _t: InternalLevel,
         col: Vec<WeightValue>,
-        _store: &mut WeightStore,
+        _store: &WeightStore,
     ) {
         // The column is full width, one slot per node, which is the slot count
         // the level records.
@@ -191,7 +191,7 @@ impl MarginalDomain for WeightFold {
         tdd: &mut Tdd,
         leaf: VtreeIdx,
         vtree: &crate::vtree::Vtree,
-        store: &mut WeightStore,
+        store: &WeightStore,
     ) -> Result<(), OperationError> {
         crate::marginal::marginalize_leaf_weighted(lim, tdd, leaf, vtree, store)
     }
@@ -215,7 +215,7 @@ impl MarginalDomain for FloatFold {
         levels: &mut [TddLevel],
         t: InternalLevel,
         col: FloatCol,
-        _store: &mut WeightStore,
+        _store: &WeightStore,
     ) -> Option<FloatCol> {
         let i = t.vtree_idx().idx();
         crate::diagram::MarginalStorage::new(&mut levels[i]).hold_weights(col.len() as u32);
@@ -230,7 +230,7 @@ impl MarginalDomain for FloatFold {
         level: &mut TddLevel,
         t: InternalLevel,
         col: FloatCol,
-        store: &mut WeightStore,
+        store: &WeightStore,
     ) {
         let values = col.iter().map(WeightValue::scaled).collect();
         WeightFold::install(level, t, values, store);
@@ -241,7 +241,7 @@ impl MarginalDomain for FloatFold {
         tdd: &mut Tdd,
         leaf: VtreeIdx,
         vtree: &crate::vtree::Vtree,
-        store: &mut WeightStore,
+        store: &WeightStore,
     ) -> Result<(), OperationError> {
         WeightFold::sum_out_leaf(lim, tdd, leaf, vtree, store)
     }
@@ -266,7 +266,7 @@ pub(crate) fn install_finished<K: MarginalDomain>(
     vtree: &Vtree,
     level: InternalLevel,
     mut col: K::Col,
-    store: &mut K::Store,
+    store: &K::Store,
 ) -> Result<(), OperationError> {
     let t = level.vtree_idx();
     assert_can_make_marginal(&tdd.levels, vtree, t);
@@ -288,7 +288,7 @@ pub(crate) fn install_streamed<K: MarginalDomain>(
     level: InternalLevel,
     col: K::Col,
     computed: &mut [Option<K::Col>],
-    store: &mut K::Store,
+    store: &K::Store,
 ) {
     let t = level.vtree_idx();
     assert_can_make_marginal(levels, vtree, t);
@@ -319,7 +319,7 @@ pub(crate) trait InstallTarget {
         t: InternalLevel,
         col: K::Col,
         computed: &mut [Option<K::Col>],
-        store: &mut K::Store,
+        store: &K::Store,
     ) -> Result<(), OperationError>;
 }
 
@@ -337,7 +337,7 @@ impl InstallTarget for Tdd {
         t: InternalLevel,
         col: K::Col,
         _computed: &mut [Option<K::Col>],
-        store: &mut K::Store,
+        store: &K::Store,
     ) -> Result<(), OperationError> {
         install_finished::<K>(lim, self, vtree, t, col, store)
     }
@@ -357,7 +357,7 @@ impl InstallTarget for [TddLevel] {
         t: InternalLevel,
         col: K::Col,
         computed: &mut [Option<K::Col>],
-        store: &mut K::Store,
+        store: &K::Store,
     ) -> Result<(), OperationError> {
         install_streamed::<K>(self, vtree, t, col, computed, store);
         Ok(())
@@ -392,7 +392,7 @@ pub(crate) fn cascade<K: MarginalDomain, S: InstallTarget + ?Sized>(
     vtree: &Vtree,
     t: VtreeIdx,
     computed: &mut [Option<K::Col>],
-    store: &mut K::Store,
+    store: &K::Store,
 ) -> Result<(), OperationError> {
     // A level is walked where it is internal and still structural; each is
     // asked when the walk reaches it, after its left sibling's subtree is

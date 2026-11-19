@@ -37,7 +37,7 @@ impl Tdd {
         &mut self, lim: &Limits, v: VtreeIdx, referenced: &[u32], remap: &mut [u32], merge: bool,
     ) -> Result<usize, OperationError> {
         let plan = MarginalStorage::new(&mut self.levels[v.idx()])
-            .plan_compact(lim, self.weights.as_ref(), referenced, remap, merge)?;
+            .plan_compact(lim, self.weights.as_ref().or_else(|| self.vtree.weights()), referenced, remap, merge)?;
         let refs = match referenced.is_empty() {
             true => None,
             false => {

@@ -409,6 +409,7 @@ impl Engine {
         weights: Option<WeightStore>,
     ) -> Result<(Tdd, Embedding), EmbedError> {
         let _op = self.limits().enter()?;
+        let (weights, on_weighted_home) = destination_weights(into, weights)?;
         let plan = Plan::build(self, tdd.vtree(), into, &map, !tdd.has_marginal_level())?;
         // Integer counts reach a parent through inline references, which
         // do not survive a new parent; only weighted values are placed.
@@ -430,12 +431,27 @@ impl Engine {
             assemble_marginal(self, tdd, into, &plan, store)?
         } else {
             let mut result = assemble(self, tdd, into, &plan)?;
-            if let Some(store) = weights {
+            if let Some(store) = weights.filter(|_| !on_weighted_home) {
                 result.set_weights(store).map_err(OperationError::from)?;
             }
             result
         };
+        let mut result = result;
+        if on_weighted_home {
+            result.weights = None;
+        }
         Ok((result, plan.embedding))
+    }
+}
+
+/// The weights a diagram placed on `into` is read under: those given, or
+/// on a weighted home the home's, which the result does not carry; and
+/// whether `into` is on a weighted home.
+pub(super) fn destination_weights(into: &Vtree, weights: Option<WeightStore>) -> Result<(Option<WeightStore>, bool), EmbedError> {
+    match (into.weights(), weights) {
+        (None, weights) => Ok((weights, false)),
+        (Some(home), None) => Ok((Some(home.clone()), true)),
+        (Some(_), Some(_)) => Err(EmbedError::DestinationWeights(crate::diagram::TddBuildError::IncompatibleWeights)),
     }
 }
 
@@ -915,7 +931,7 @@ fn assemble_moving<'a>(
 /// `tdd` is an unweighted region alone.
 #[cold]
 fn inline_root_region(eng: &Engine, tdd: &Tdd, into: &Vtree, result: &mut Tdd) -> Result<(), OperationError> {
-    if tdd.weights.is_some() || !tdd.vtree().node(tdd.vtree().root()).is_region() || into.num_nodes() == 1 {
+    if tdd.weight_table().is_some() || !tdd.vtree().node(tdd.vtree().root()).is_region() || into.num_nodes() == 1 {
         return Ok(());
     }
     crate::diagram::inline_small_marginal_refs(eng.limits(), result, None)

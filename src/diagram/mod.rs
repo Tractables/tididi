@@ -206,7 +206,7 @@ pub(crate) use marginal_ref::{
 // semiring
 pub use semiring::{ColumnAlgebra, EvalAlgebra, LiteralWeights, RationalWeights, ScaledFloat, SignedLog, SlotPairs, WeightValue};
 pub(crate) use semiring::{bounded_key, weight_key, InlineSlots, ScaledSum, WeightKey};
-pub use weights::{Arithmetic, WeightStore};
+pub use weights::{Arithmetic, WeightStore, Weights};
 
 // level
 pub use level::{described, redescribed, stored_moved, CountOverflow, Digit, ImplicitLevel, Nodes, NodesIter, Pairs, StoredPairs, TddLevel, FLOOR};

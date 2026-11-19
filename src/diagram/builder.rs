@@ -197,7 +197,13 @@ impl TddBuilder {
     }
 
     pub(crate) fn check(&self, output: TddNodeId) -> Result<(), TddBuildError> {
-        check_levels(&self.vtree, &self.levels, output, self.weights.as_ref())
+        check_levels(&self.vtree, &self.levels, output, self.table())
+    }
+
+    /// The weights the levels are read under: the vtree's home's on a
+    /// weighted home, else the build's own.
+    fn table(&self) -> Option<&WeightStore> {
+        self.weights.as_ref().or_else(|| self.vtree.weights())
     }
 
     /// The level of vtree node `t` as built so far.
@@ -327,8 +333,13 @@ impl TddBuilder {
     ///
     /// # Errors
     ///
-    /// Refuses a store inconsistent with the levels already copied in.
+    /// Refuses weights inconsistent with the levels already copied in, and
+    /// any on a weighted home ([`TddBuildError::IncompatibleWeights`]), whose
+    /// diagrams read the home's.
     pub fn set_weights(&mut self, ws: WeightStore) -> Result<(), TddBuildError> {
+        if self.vtree.weights().is_some() {
+            return Err(TddBuildError::IncompatibleWeights);
+        }
         ws.install(&self.vtree, &self.levels, &mut self.weights)
     }
 
@@ -351,15 +362,15 @@ impl TddBuilder {
     ) -> Result<(), OperationError> {
         let lim = eng.limits();
         if let Some(source) = from.weights {
-            if self.weights.as_ref().is_some_and(|ws| !ws.compatible(source)) {
+            if self.table().is_some_and(|ws| !ws.compatible(source)) {
                 return Err(TddBuildError::IncompatibleWeights.into());
             }
-            if self.weights.is_none()
+            if self.table().is_none()
                 && let Some(i) = self.levels.iter().position(|level| level.is_marginal() && !level.is_weight_marginal()) {
                     return Err(TddBuildError::CountLevelWithWeights { level: VtreeIdx(i as u32) }.into());
                 }
         }
-        if from.level.is_marginal() && !from.level.is_weight_marginal() && self.weights.is_some() {
+        if from.level.is_marginal() && !from.level.is_weight_marginal() && self.table().is_some() {
             return Err(TddBuildError::CountLevelWithWeights { level: t }.into());
         }
         if from.level.is_weight_marginal() {
@@ -369,7 +380,7 @@ impl TddBuilder {
             }
         }
         from.level.try_clone_over(lim, 0, 0, &mut self.levels[t.idx()])?;
-        if self.weights.is_none() { self.weights = from.weights.map(WeightStore::empty_like); }
+        if self.table().is_none() { self.weights = from.weights.map(WeightStore::empty_like); }
         if let Some(table) = self.interned.get_mut(t.idx()) { *table = None; }
         Ok(())
     }
@@ -425,7 +436,7 @@ impl TddBuilder {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn finish(self, output: TddNodeId) -> Result<Tdd, TddBuildError> {
-        check_storage::<true>(&self.vtree, &self.levels, output, self.weights.as_ref())?;
+        check_storage::<true>(&self.vtree, &self.levels, output, self.table())?;
         let dirty = self.seed_worklists(Default::default(), None, None).expect("untracked worklists cannot be refused");
         let mut tdd = self.seat(output, dirty, None);
         if tdd.vtree.on_home() {
@@ -437,7 +448,7 @@ impl TddBuilder {
     /// The checks [`finish`](Self::finish) runs, the repeated-pair check
     /// included.
     pub(crate) fn check_pairs(&self, output: TddNodeId) -> Result<(), TddBuildError> {
-        check_storage::<true>(&self.vtree, &self.levels, output, self.weights.as_ref())
+        check_storage::<true>(&self.vtree, &self.levels, output, self.table())
     }
 
     /// [`finish`](Self::finish) without the repeated-pair check, for a
@@ -473,7 +484,7 @@ impl TddBuilder {
     /// Debug builds check storage validity and panic if it fails.
     pub unsafe fn finish_unchecked(self, output: TddNodeId) -> Tdd {
         debug_assert!(
-            check_levels(&self.vtree, &self.levels, output, self.weights.as_ref()).is_ok(),
+            check_levels(&self.vtree, &self.levels, output, self.table()).is_ok(),
             "an unchecked seat was handed a diagram the checked one would refuse",
         );
         let dirty = self.seed_worklists(Default::default(), None, None).expect("untracked worklists cannot be refused");

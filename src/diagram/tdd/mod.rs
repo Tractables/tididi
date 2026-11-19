@@ -21,7 +21,7 @@ mod tests;
 use std::sync::Arc;
 
 use crate::vtree::{SameLayout, Vtree, VtreeIdx};
-use crate::diagram::WeightStore;
+use crate::diagram::{WeightStore, Weights};
 
 use super::build_error::TddBuildError;
 use super::level::TddLevel;
@@ -110,11 +110,12 @@ pub struct Tdd {
     /// Which levels the reduction passes still have to revisit (not part of
     /// the function denoted).
     pub(crate) dirty: Dirty,
-    /// Per-node semiring values for the diagram's weight-marginal levels, when
-    /// the caller put the diagram in weighted mode ([`set_weights`]).
-    /// `None` is integer mode: marginal levels carry model counts instead.
+    /// The weights this diagram carries on a vtree that is not a weighted
+    /// home ([`set_weights`]); always `None` on a weighted home, whose
+    /// weights every diagram on it reads ([`weight_table`]).
     ///
     /// [`set_weights`]: Self::set_weights
+    /// [`weight_table`]: Self::weight_table
     pub(crate) weights: Option<WeightStore>,
 }
 
@@ -372,17 +373,18 @@ impl Tdd {
         builder.seat(output, dirty, None)
     }
 
-    /// Put the diagram in weighted mode: its weight-marginal levels keep their
-    /// per-node semiring values in `ws` instead of model counts.
+    /// Put the diagram in weighted mode: a level it sums out holds weight
+    /// values under `ws` instead of model counts. On a vtree with many
+    /// weighted diagrams, give the weights to the home instead
+    /// ([`Home::weighted`](crate::vtree::Home::weighted)).
     ///
-    /// Attach the store before the first operation that marginalizes a level:
-    /// a level summed out without one holds counts, and nothing converts them.
-    /// A structural diagram may replace its table; after marginalization, stored
-    /// values and their weight interpretation must remain consistent.
+    /// Attach the weights before the first operation that marginalizes a level:
+    /// a level summed out without them holds counts, and nothing converts them.
+    /// Weights equal to the attached ones may be attached again at any time;
+    /// other weights only while no level is summed out.
     /// Conjunction ([`and`](crate::and), [`Tdd::and_clause`]), projection,
     /// conditioning, negation, disjunction and care restriction preserve weights.
-    /// [`Tdd::graft_over`] accepts a destination store for renamed parts.
-    /// A weight-marginal level exists only in a diagram carrying a store.
+    /// [`Tdd::graft_over`] accepts destination weights for renamed parts.
     ///
     /// Keep a weighted value while releasing structure:
     ///
@@ -405,27 +407,39 @@ impl Tdd {
     ///
     /// # Errors
     ///
-    /// [`TddBuildError`] for missing variable weights, incompatible stored
-    /// marginal values, or a changed weight interpretation after marginalization.
-    /// Validation completes before the store is replaced; an error leaves the
-    /// diagram and its previous store unchanged.
+    /// [`TddBuildError::IncompatibleWeights`] on a weighted home, whose
+    /// diagrams read the home's weights, and for weights other than the
+    /// attached ones once a level is summed out; [`TddBuildError`] for
+    /// missing variable weights or summed values that are not weight values
+    /// of `ws`'s arithmetic. Validation completes before the weights are
+    /// replaced; an error leaves the diagram unchanged.
     pub fn set_weights(&mut self, ws: WeightStore) -> Result<(), TddBuildError> {
+        if self.vtree.weights().is_some() {
+            return Err(TddBuildError::IncompatibleWeights);
+        }
         ws.install(&self.vtree, &self.levels, &mut self.weights)
     }
 
-    /// The attached weight store, or `None` in integer mode.
+    /// The weights the diagram is computed under: its home's on a weighted
+    /// home, else those attached by [`set_weights`](Self::set_weights);
+    /// `None` in integer mode.
     pub fn weights(&self) -> Option<&WeightStore> {
-        self.weights.as_ref()
+        self.weight_table()
     }
 
-    /// Detach the weight store, leaving the diagram in integer mode.
+    /// Detach the weights [`set_weights`](Self::set_weights) attached,
+    /// leaving the diagram in integer mode. On a weighted home, whose weights
+    /// are not the diagram's, `Ok(None)`.
     ///
     /// # Errors
     ///
     /// [`TddBuildError::WeightedLevelWithoutStore`] naming the first
-    /// weight-marginal level, whose values the store's weights and arithmetic
-    /// interpret. The diagram is untouched and still carries its store.
+    /// weight-marginal level, whose values the weights interpret. The diagram
+    /// is untouched and still carries its weights.
     pub fn take_weights(&mut self) -> Result<Option<WeightStore>, TddBuildError> {
+        if self.weights.is_none() {
+            return Ok(None);
+        }
         if let Some(level) = self.levels.iter().position(TddLevel::is_weight_marginal) {
             return Err(TddBuildError::WeightedLevelWithoutStore {
                 level: VtreeIdx(level as u32),
@@ -440,15 +454,33 @@ impl Tdd {
         self.weights.take()
     }
 
-    /// The store of a weighted diagram.
+    /// The one read of the weights a diagram is computed under: the home's
+    /// on a weighted home, else the diagram's own. A sum-out stores weight
+    /// values exactly when this is `Some`.
+    #[inline]
+    pub(crate) fn weight_table(&self) -> Option<&Weights> {
+        match &self.weights {
+            Some(own) => Some(own),
+            None => self.vtree.weights(),
+        }
+    }
+
+    /// Whether the diagram holds weight values or may come to: it carries
+    /// weights of its own, or it has a summed-out level on a weighted home.
+    /// A structural diagram on a weighted home is an ordinary diagram.
+    #[inline]
+    pub(crate) fn holds_weights(&self) -> bool {
+        self.weights.is_some() || (self.vtree.weights().is_some() && self.has_marginal_level())
+    }
+
+    /// The weights of a weighted diagram.
     ///
     /// Panics if the diagram has none; a caller has already established that it
-    /// is weighted, and a weight-marginal level exists only with a store.
+    /// is weighted, and a weight-marginal level exists only under weights.
     #[inline]
-    pub(crate) fn weight_store(&self) -> &WeightStore {
-        self.weights
-            .as_ref()
-            .expect("a weighted operation on a diagram with no weight store")
+    pub(crate) fn weight_store(&self) -> &Weights {
+        self.weight_table()
+            .expect("a weighted operation on a diagram with no weights")
     }
 
     /// Whether the output is the [`ZERO`] sentinel for the constant-false function.

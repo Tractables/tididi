@@ -926,7 +926,7 @@ pub(super) fn build_level_dense(
             right_idx: ri,
             vtree: sweep.vtree,
             cache: run.stream_cache,
-            ws: sweep.ws.as_deref(),
+            ws: sweep.ws,
         };
         let children = Sides {
             left: &*left_level,
@@ -1192,7 +1192,7 @@ pub(super) fn build_level_dense(
                 right_idx: ri,
                 vtree: sweep.vtree,
                 cache: run.stream_cache,
-                ws: sweep.ws.as_deref(),
+                ws: sweep.ws,
             },
             &mut stream_state,
         )?;

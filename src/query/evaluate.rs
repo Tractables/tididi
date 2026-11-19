@@ -160,7 +160,7 @@ impl Engine {
     /// Numeric payload allocations are outside the best-effort byte budget.
     pub fn weighted_value(&self, tdd: &Tdd) -> Result<Option<WeightValue>, OperationError> {
         let _op = self.limits().enter()?;
-        let Some(ws) = tdd.weights.as_ref() else { return Ok(None); };
+        let Some(ws) = tdd.weight_table() else { return Ok(None); };
         let mut gate = self.limits().gate();
         let mut value = if tdd.is_one() { None } else { Some(weighted_output_value(self, tdd, ws, &mut gate)?) };
         if let Some(free) = tdd.vtree.free_set().filter(|_| !tdd.is_zero()) {

@@ -92,10 +92,10 @@ pub(super) fn fuse_pairs_inner(
     scratch: &mut ContractScratch,
 ) -> Result<usize, OperationError> {
     debug_assert!(listed.is_none() || parent_filter.is_some_and(|p| p.len() == 1), "a list is of one parent's nodes");
-    // Weighted marginalization keeps its values in the `WeightStore` and
+    // A weight-marginal level keeps weight values and its
     // `marginal_counts` is `None`: the exact domain runs the weighted arm, a
     // bounded-precision domain is skipped (its addition is order-dependent).
-    let weighted = match tdd.weights.as_ref() {
+    let weighted = match tdd.weight_table() {
         Some(ws) if ws.is_bounded() => return Ok(0),
         Some(_) => true,
         None => false,

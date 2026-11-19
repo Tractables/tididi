@@ -595,3 +595,78 @@ fn t1c_a_summed_level_read_while_its_parent_is_summed_is_refused() {
         t1_check(&|f, g| Engine::new().and_marginalizing(f, g, &[root]), &[left], weighted, "T1c");
     }
 }
+
+/// The weighted value of `f` and `g` agree: equal when exact, within
+/// rounding in a bounded arithmetic.
+fn same_value(f: &Tdd, g: &Tdd, arithmetic: Arithmetic, what: &str) {
+    assert!(g.weights.is_none(), "{what}: a diagram on a weighted home carries weights");
+    let (a, b) = (f.weighted_value().unwrap(), g.weighted_value().unwrap());
+    let (Some(a), Some(b)) = (a, b) else { panic!("{what}: no weights on {} {}", f.weights().is_some(), g.weights().is_some()) };
+    match arithmetic {
+        Arithmetic::ExactRational => assert_eq!(a.into_rational_opt(), b.into_rational_opt(), "{what}"),
+        _ => {
+            let scaled = |v: crate::diagram::WeightValue| v.as_scaled().expect("a scaled float").to_f64();
+            let (a, b) = (scaled(a), scaled(b));
+            assert!((a - b).abs() <= 1e-9 * a.abs().max(b.abs()), "{what}: {a} against {b}");
+        }
+    }
+}
+
+/// One random computation on a home that holds the weights, and on a home
+/// of the same shape whose diagrams each carry them, gives the same answers.
+#[test]
+fn a_weighted_home_computes_what_weights_on_each_diagram_compute() {
+    let eng = Engine::new();
+    let mut rng = Lcg::new(0x4e1d_40e5);
+    let (mut summed, mut placed) = (0, 0);
+    for index in 0..300u64 {
+        let n = 1 + rng.below(48) as u32;
+        let w = weights(n, &mut rng);
+        let arithmetic = [Arithmetic::ExactRational, Arithmetic::ScaledFloat][index as usize % 2];
+        let carried = Home::new(Vtree::random(n, index));
+        let held = Home::weighted(Vtree::random(n, index), WeightStore::new(w.clone(), arithmetic)).unwrap();
+        let seed = rng.below(u64::MAX);
+        let (mut on_carried, mut on_held) = (Lcg::new(seed), Lcg::new(seed));
+        let [a, b] = [(); 2].map(|()| make(&eng, &carried, Some((&w, arithmetic)), &mut on_carried).f);
+        let [ha, hb] = [(); 2].map(|()| make(&eng, &held, None, &mut on_held).f);
+        let what = |entry: &str| format!("case {index} {entry} {arithmetic:?}");
+        same_value(&a, &ha, arithmetic, &what("operand"));
+        same_value(&b, &hb, arithmetic, &what("operand"));
+        let mut both = |entry: &str, r: Result<Tdd, String>, s: Result<Tdd, String>| match (r, s) {
+            (Ok(r), Ok(s)) => {
+                summed += usize::from(s.has_marginal_level());
+                same_value(&r, &s, arithmetic, &what(entry));
+            }
+            (Err(e), Err(f)) => assert_eq!(e, f, "{}", what(entry)),
+            (r, s) => panic!("{}: {:?} against {:?}", what(entry), r.err(), s.err()),
+        };
+        let text = |e: OperationError| format!("{e:?}");
+        both("and borrowed", eng.and(&a, &b).map_err(text), eng.and(&ha, &hb).map_err(text));
+        both("and owned", eng.and(a.clone(), b.clone()).map_err(text), eng.and(ha.clone(), hb.clone()).map_err(text));
+        let hs = targets(carried.vtree(), &[], &mut rng);
+        both(
+            "and_marginalizing_where",
+            eng.and_marginalizing_where(&a, &b, under(&carried, &hs)).map_err(text),
+            eng.and_marginalizing_where(&ha, &hb, under(&held, &hs)).map_err(text),
+        );
+        if let (Some(into), Some(held_into)) = (union(&a, &b), union(&ha, &hb)) {
+            let onto = |f: &Tdd, g: &Tdd, into: &Arc<Vtree>| eng.and_onto(f, |v| v, g, |v| v, into).map_err(|r| format!("{:?}", r.error));
+            both("and_onto", onto(&a, &b, &into), onto(&ha, &hb, &held_into));
+            let place = |f: &Tdd, into: &Arc<Vtree>| {
+                eng.embed_over(f, into, |v| v, f.weights.clone()).map(|(f, _)| f).map_err(|e| format!("{e:?}"))
+            };
+            // A destination holding another diagram's summed region gives an
+            // invalid copy on either home, so placement is tried only without.
+            if into.bottomup().all(|t| !into.node(t).is_region()) {
+                placed += 1;
+                both("placement", place(&a, &into), place(&ha, &held_into));
+            }
+        }
+        let trim = |f: &Tdd, home: &Home| {
+            let mut f = f.clone();
+            eng.trim(&mut f, home).map(|_| f).map_err(text)
+        };
+        both("trim", trim(&a, &carried), trim(&ha, &held));
+    }
+    assert!(summed > 150 && placed > 100, "{summed} results with a summed-out level, {placed} placements");
+}

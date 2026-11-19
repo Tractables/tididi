@@ -83,7 +83,7 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Result<Vec<u32>,
         // the column, is left as it is: merging two of its slots or dropping
         // one would store the parent. A parent of one pair a node holds its
         // pairs in its node words, which the close describes again.
-        let bounded = tdd.weights.as_ref().filter(|w| w.is_bounded() && tdd.levels[v.idx()].is_weight_marginal());
+        let bounded = tdd.weight_table().filter(|w| w.is_bounded() && tdd.levels[v.idx()].is_weight_marginal());
         if bounded.is_some()
             && tdd.levels[v.idx()].slot_count() == store_len
             && let Some(d) = tdd.levels[parent.idx()].implicit()

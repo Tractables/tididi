@@ -33,7 +33,7 @@ pub(in crate::apply::conjoin) fn build_stream_state(
     if !sweep.targets.contains(shape.t.idx()) {
         return Ok(None);
     }
-    if let Some(ws) = sweep.ws.as_deref_mut() {
+    if let Some(ws) = sweep.ws {
         if ws.arithmetic() == Arithmetic::ScaledFloat {
             return Ok(Some(StreamLevelState::Float(open_stream_output::<FloatFold>(
                 eng, shape, sweep.vtree, levels, cache.float_mut(), ws,
@@ -44,7 +44,7 @@ pub(in crate::apply::conjoin) fn build_stream_state(
         )?)))
     } else {
         Ok(Some(StreamLevelState::Int(open_stream_output::<IntFold>(
-            eng, shape, sweep.vtree, levels, cache.int_mut(), &mut (),
+            eng, shape, sweep.vtree, levels, cache.int_mut(), &(),
         )?)))
     }
 }
@@ -70,7 +70,7 @@ pub(in crate::apply::conjoin) fn open_stream_output<F: MarginalDomain>(
     vtree: &crate::vtree::Vtree,
     levels: &mut [TddLevel],
     computed: &mut [Option<F::Col>],
-    store: &mut F::Store,
+    store: &F::Store,
 ) -> Result<F::Col, OperationError> {
     // 1. Compute the fold column for every non-leaf non-marginal descendant.
     //
@@ -126,12 +126,12 @@ pub(crate) fn commit_stream_state(
     vtree: &crate::vtree::Vtree,
     levels: &mut [TddLevel],
     cache: &mut StreamCache,
-    ws: Option<&mut WeightStore>,
+    ws: Option<&WeightStore>,
 ) {
     let t = InternalLevel::new(vtree, t).expect("a streaming target is an internal level");
     match st {
         StreamLevelState::Int(counts) => {
-            install_streamed::<IntFold>(levels, vtree, t, counts, cache.int_mut(), &mut ());
+            install_streamed::<IntFold>(levels, vtree, t, counts, cache.int_mut(), &());
         }
         StreamLevelState::Weighted(counts) => {
             let ws = ws.expect("a weighted column is only ever built with a store attached");

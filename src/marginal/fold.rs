@@ -27,10 +27,10 @@ pub(crate) fn marginalize_batch(
     // The integer readers read the level's own `marginal_counts`, which a
     // weight-marginal level does not have.
     debug_assert!(
-        tdd.weights.is_none(),
-        "the integer pass cannot run on a diagram carrying a weight store"
+        tdd.weight_table().is_none(),
+        "the integer pass cannot run on a weighted diagram"
     );
-    marginalize_targets::<IntFold>(eng, tdd, targets, vtree, &mut ())
+    marginalize_targets::<IntFold>(eng, tdd, targets, vtree, &())
 }
 
 /// Marginalize every target in order, then sum out the leaf targets.
@@ -57,7 +57,7 @@ pub(super) fn marginalize_targets<K: MarginalDomain>(
     tdd: &mut Tdd,
     targets: &[VtreeIdx],
     vtree: &Vtree,
-    store: &mut K::Store,
+    store: &K::Store,
 ) -> Result<(), OperationError> {
     if targets.is_empty() {
         return Ok(());
@@ -102,7 +102,7 @@ fn marginalize_level<K: MarginalDomain>(
     tdd: &mut Tdd,
     d: VtreeIdx,
     vtree: &Vtree,
-    store: &mut K::Store,
+    store: &K::Store,
     computed: &mut [Option<K::Col>],
     poll: &mut PollGate<'_>,
 ) -> Result<(), OperationError> {

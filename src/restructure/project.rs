@@ -199,6 +199,7 @@ impl Engine {
     ) -> Result<Tdd, EmbedError> {
         let lim = self.limits();
         let _op = lim.enter()?;
+        let (weights, on_weighted_home) = super::embed::destination_weights(into, weights)?;
         let vtree = tdd.vtree();
         let (original, dropped) = renaming(lim, vtree, &local_of, into.num_vars())?;
         if let Some((leaf, _)) = into.leaf_bottomup().find(|&(_, var)| original[var.idx()].is_none()) {
@@ -217,15 +218,19 @@ impl Engine {
             check_kept_weights(tdd, weights.as_ref(), &local_of).map_err(EmbedError::SourceWeights)?;
         }
         let plan = Plan::build(self, into, vtree, |local| original[local.idx()].expect("a leaf of the restriction"), false)?;
-        match weights {
-            Some(store) if summed => carry_marginal(self, tdd, into, &plan, store),
+        let mut result = match weights {
+            Some(store) if summed => carry_marginal(self, tdd, into, &plan, store)?,
             weights => self.project_along(tdd, into, &plan, &dropped).and_then(|mut result| {
-                if let Some(store) = weights {
+                if let Some(store) = weights.filter(|_| !on_weighted_home) {
                     result.set_weights(store).map_err(OperationError::from)?;
                 }
                 Ok(result)
-            }),
+            })?,
+        };
+        if on_weighted_home {
+            result.weights = None;
         }
+        Ok(result)
     }
 
     /// [`project_to_vars`](Self::project_to_vars) once `into` is matched in
