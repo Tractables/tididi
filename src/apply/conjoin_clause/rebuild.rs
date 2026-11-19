@@ -195,7 +195,23 @@ pub(super) fn rebuild_spine_level(
     // the input level's markers carry over exactly.
     level.value_ref_sides = old_value_ref_sides;
     if let Some(loose) = loose {
-        list_unnamed_children(eng, t, vtree, levels, tables, dropped, dead, loose)?;
+        // The lookups go from cheapest to dearest: a vtree node is read only
+        // for a spine child recorded bare.
+        let bare = |s: VtreeIdx, rel: bool| rel && tables.bare[s.idx()] && !vtree.node(s).is_leaf();
+        let bare_side = [bare(left, left_rel), bare(right, right_rel)];
+        tables.bare[t_idx] = dead || bare_side[0] || bare_side[1];
+        let (children, rel) = ([left, right], [left_rel, right_rel]);
+        let mut read = [false; 2];
+        for side in 0..2 {
+            let listed = tables.listed[children[side].idx()];
+            read[side] = match rel[side] {
+                true => listed || both_rel && (!compute_dt || bare_side[1 - side]),
+                false => !listed && if compute_dt { bare_side[1 - side] } else { dropped },
+            };
+        }
+        if read != [false; 2] {
+            list_unnamed_children(eng, t, vtree, levels, tables, read, loose)?;
+        }
     }
     Ok(())
 }
@@ -251,17 +267,17 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
 }
 
 /// Push to `loose` each structural internal child of the rebuilt spine level
-/// `t` with a node no pair of `t` names, and record in [`bare`] whether `t`
-/// may have a node with neither product. `dead` says whether some node of
-/// `t` had no pairs.
+/// `t` that `read` asks for and that holds a node no pair of `t` names.
 ///
-/// A child is read only where it can have such a node. The rebuild names
-/// every product of a node its input pairs named, unless the sibling's
-/// products are missing where a pair needs them:
+/// [`rebuild_spine_level`] asks only where a child can have such a node,
+/// and records in [`bare`] whether `t` may have a node with neither
+/// product. The rebuild names every product of a node its input pairs
+/// named, unless the sibling's products are missing where a pair needs
+/// them:
 /// - an off-spine child keeps its nodes, so one listed before stays listed;
 ///   otherwise it loses a name only where a pair lost every product, which
-///   without `d_t` is `dropped`, and with it needs a sibling node with
-///   neither product;
+///   without `d_t` is some node writing fewer pairs than it read, and with
+///   it needs a sibling node with neither product;
 /// - a spine child listed before may have products that nothing names;
 /// - at a level with both children on the spine, a child's `d_t` products
 ///   need a sibling node with a `c_t` product (or, with `d_t`, any), and
@@ -272,7 +288,6 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
 /// node with no pairs; a clause leaf has a product for every label.
 ///
 /// [`bare`]: ClauseTables::bare
-#[allow(clippy::too_many_arguments)]
 #[inline(never)]
 fn list_unnamed_children(
     eng: &Engine,
@@ -280,30 +295,14 @@ fn list_unnamed_children(
     vtree: &Vtree,
     levels: &[TddLevel],
     tables: &mut ClauseTables<'_>,
-    dropped: bool,
-    dead: bool,
+    mut read: [bool; 2],
     loose: &mut Vec<u32>,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
-    let dt = tables.need_dt[t.idx()];
-    let (left, right) = vtree.children(t);
-    let bare = |s: VtreeIdx| tables.on_spine[s.idx()] && !vtree.node(s).is_leaf() && tables.bare[s.idx()];
-    let bare_t = dead || bare(left) || bare(right);
     let children = <[VtreeIdx; 2]>::from(vtree.children(t));
-    let on_spine = children.map(|c| tables.on_spine[c.idx()]);
-    let mut read = [false; 2];
-    for side in 0..2 {
-        let (c, s) = (children[side], children[1 - side]);
-        if vtree.node(c).is_leaf() || levels[c.idx()].is_marginal() {
-            continue;
-        }
-        let listed = tables.listed[c.idx()];
-        read[side] = match (on_spine[side], on_spine[1 - side]) {
-            (true, both) => listed || both && (!dt || bare(s)),
-            (false, _) => !listed && if dt { bare(s) } else { dropped },
-        };
+    for (read, c) in read.iter_mut().zip(children) {
+        *read &= !vtree.node(c).is_leaf() && !levels[c.idx()].is_marginal();
     }
-    tables.bare[t.idx()] = bare_t;
     if read == [false; 2] {
         return Ok(());
     }
