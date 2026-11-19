@@ -658,12 +658,8 @@ fn a_weighted_home_computes_what_weights_on_each_diagram_compute() {
             let place = |f: &Tdd, into: &Arc<Vtree>| {
                 eng.embed_over(f, into, |v| v, f.weights.clone()).map(|(f, _)| f).map_err(|e| format!("{e:?}"))
             };
-            // A destination holding another diagram's summed region gives an
-            // invalid copy on either home, so placement is tried only without.
-            if into.bottomup().all(|t| !into.node(t).is_region()) {
-                placed += 1;
-                both("placement", place(&a, &into), place(&ha, &held_into));
-            }
+            placed += 1;
+            both("placement", place(&a, &into), place(&ha, &held_into));
         }
         let trim = |f: &Tdd, home: &Home| {
             let mut f = f.clone();

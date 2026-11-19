@@ -654,7 +654,7 @@ fn place_onto<'a>(
         };
     }
     if viewing && tdd.weights.is_none() && !tdd.is_zero() && tdd.require_structure().is_ok() {
-        let plan = match Plan::build(eng, tdd.vtree(), into, map, true) {
+        let plan = match Plan::build(eng, tdd.vtree(), into, map, true, Free::Leave) {
             Ok(plan) => plan,
             Err(error) => return Err((error, tdd)),
         };
