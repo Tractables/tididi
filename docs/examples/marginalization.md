@@ -122,8 +122,8 @@ Probability before: 9/16
 Probability after: 9/16
 ```
 
-[`Weights`](crate::diagram::Weights) retains the weighted values and
-their interpretation. Read them with [`weighted_value`](crate::Tdd::weighted_value);
+The summed level keeps the weighted values, and the vtree's
+[`Weights`](crate::diagram::Weights) their interpretation. Read them with [`weighted_value`](crate::Tdd::weighted_value);
 ordinary model counting cannot recover counts from weighted summaries.
 
 ## Change the probabilities

@@ -392,7 +392,7 @@ owns the circuit until finish; unlike Python, freeing the handle ends all checks
 
 ### Instances
 
-- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: 5264d539d34997ebd5104701bb2efbd0cd5fc017e3582fe6e19b1ba3fee3eb87 -->
+- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: 64b139db31473c7b003b671f5355936f9d39f62afba160a86859d8132622b2f0 -->
 - [Python ownership guide](../bindings/python/docs/ownership.rst) <!-- reviewed: 685e0b6279a4115660efab3cb519c70bfca9eac7320a8c905dd5f720637b2723 -->
 - [C ownership](../bindings/c/docs/ownership.rst) <!-- reviewed: 39ab8a8f865680890f676f3022da9389bf6a3c18cdac1c388f3333b4df0757b9 -->
 
@@ -413,7 +413,7 @@ evaluation has its own rational-string interface.
 
 ### Instances
 
-- [Rust API overview](api-guide.md) <!-- reviewed: 0726463dfbdc45498de077c83bcc30860726f54e50e891b8d74da8a6ba32ced2 -->
+- [Rust API overview](api-guide.md) <!-- reviewed: 648349efb6c2c7010e8def54ba5453688a18deb7d0ccd23068bfe539833b145a -->
 - [Python API reference](../bindings/python/docs/api.rst) <!-- reviewed: 619c8cf6bbe3d4b720da766850817f34b4fdf92c866f3c6cd9828cd555fdcd39 -->
 - [C api](../bindings/c/docs/api.rst) <!-- reviewed: a4cc0ac9db6cd02097704bc1e4d3dd2fed3acb087decd2073142fbaf614ea9cc -->
 
@@ -432,7 +432,7 @@ invariants and marginal levels; Python concentrates on using shared vtrees.
 
 ### Instances
 
-- [Rust data model](tdd.md) <!-- reviewed: 21cddd959eeadbb60d428d2b3e1e9662152bde94592e2059a60dd9791f7e5175 -->
+- [Rust data model](tdd.md) <!-- reviewed: 675c01a269101a83d8c644db15c673201dfd0a47d3e3db1c76f84a08b38ed5a7 -->
 - [Python data model](../bindings/python/docs/representation.rst) <!-- reviewed: ed52b71f88c82caf64b54c6227acbe5de4215ce34886e327f1b102cdd338b20c -->
 - [Shared decomposition figure](tdd-basics.svg) <!-- reviewed: 5f2ab1677522a6a53385289841534c2a0096087bc65c8ce7f6c51d3be0e83c12 -->
 
@@ -460,7 +460,7 @@ there is no separate Python implementation to describe.
 
 ### Instances
 
-- [Rust architecture reference](architecture.md) <!-- reviewed: cba1e36e4a26cd7af20e5a77a280cb83e7c8ae3a07ae004bd9d195ea3601b51a -->
+- [Rust architecture reference](architecture.md) <!-- reviewed: 61c73cb6ea08aca173c185c58204f62e6f334527f744c6e2cacc852858de2495 -->
 
 ## Reusable components
 
@@ -472,7 +472,8 @@ leaving 5 choices. The borrowed source still has 3 models.
 
 Introduce the application, the local rule, the variable mapping, then the
 connecting constraint. Explain matching variable grouping and destination
-identity at placement, and attached-weight loss before suggesting evaluation.
+identity at placement, and that the copy reads the destination vtree's weights,
+before suggesting evaluation.
 Distinguish graft for components already using disjoint variable identifiers.
 Then reuse a prepared placement for server B, comparing L∨R (12 models over
 the destination) with L∧¬R (4); server A remains free in both.
@@ -481,8 +482,8 @@ Do not invent a language counterpart that rebuilds the rule instead of reusing i
 
 ### Instances
 
-- [Rust walkthrough](examples/composition.md) <!-- reviewed: 9d75c19a0e79bf612dd6d66a77d3a5f2895c7c2acb8003dda3de93ba0bd84101 -->
-- [Rust program](../examples/composition.rs) <!-- reviewed: ab8256a1de3317d4f53841dec9361268a0ecd155a6a9791e554c4f5bc6a7e91e -->
+- [Rust walkthrough](examples/composition.md) <!-- reviewed: ce7db591ff8aacbc4b376bc40df7e03d01482fffe1b1268f3d3836a193cc1770 -->
+- [Rust program](../examples/composition.rs) <!-- reviewed: ecacee74a0ffad8632d95f0bd001e14d3f1b6c4c80b52fb060a478dd08a63252 -->
 
 ## Care sets
 
@@ -513,16 +514,17 @@ stays 9, while the original projected onto B has 3 choices. Observing R_B in
 the summarized circuit gives 6; observing R_A raises MarginalLevel. Keeping the
 original allows observing both remote options, giving 4 configurations.
 
-For the weighted version, start from a structural copy and attach independent
-probability-1/2 weights in exact rational arithmetic before marginalizing A.
+For the weighted version, copy the structural circuit onto a vtree of the same
+shape that carries independent probability-1/2 weights in exact rational
+arithmetic, then marginalize A.
 The weighted value stays 9/16. Change every probability to 1/3 and evaluate the
 original: 25/81. Evaluating the summarized circuit with a new algebra is refused
 because assignments were discarded. Do not suggest that changing a weight table
 can reconstruct a stored sum, or that projection and marginalization count the
 same thing. Select a vtree subtree, not variable IDs. Rust-only: the bindings
-currently expose structural evaluation, not marginalization or attached stores.
+currently expose structural evaluation, not marginalization or weighted vtrees.
 
 ### Instances
 
-- [Rust walkthrough](examples/marginalization.md) <!-- reviewed: b58839c8e1d4702a1d3d1c34b1df2bdd5bdb9026462a130a865c9f61570a3a4c -->
-- [Rust program](../examples/marginalization.rs) <!-- reviewed: 14f8dea082246f892802cf21e9b1a3a8de4e9fbf507a908cde17780b7d2f4590 -->
+- [Rust walkthrough](examples/marginalization.md) <!-- reviewed: 4406bcdb7635b73ef98da1a599cc587c83e3f15bde49dbc9f0569796fb051556 -->
+- [Rust program](../examples/marginalization.rs) <!-- reviewed: 22ee902ae81d2cc653ab1fb2928c5ece90cee0e645228d218daa3acb342dfb61 -->

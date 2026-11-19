@@ -1,4 +1,4 @@
-//! Numeric evaluation with a supplied algebra or the diagram's attached weights.
+//! Numeric evaluation with a supplied algebra or the weights of the diagram's vtree.
 
 use num_bigint::BigUint;
 use num_traits::Zero;

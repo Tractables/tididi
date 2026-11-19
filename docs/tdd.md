@@ -68,7 +68,7 @@ up to node numbering and pair order. This is the minimization result of
 ## When only a value is needed
 
 [`marginalize_levels`] replaces a subtree's structure with per-node counts,
-or with weighted values if the diagram has an attached [`Weights`].
+or with weighted values if the diagram's vtree carries [`Weights`].
 This preserves the chosen evaluation but discards the assignments behind it:
 keep the structure if you will need to recover assignments or change weights
 later. The [marginalization walkthrough](crate::guide::examples::marginalization)

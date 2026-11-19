@@ -41,7 +41,7 @@ pub(crate) struct StreamState<'a, F: ValueDomain> {
 /// not pin `levels`.
 pub(crate) enum StreamLevelState {
     Int(CountVec),
-    /// Weighted: semiring values carried into the external `Weights`.
+    /// Weighted: semiring values for the level's weight column.
     Weighted(Vec<WeightValue>),
     /// Scaled floats, kept by the apply until the level's parent has read
     /// them or the sweep ends.

@@ -88,7 +88,7 @@ pub(crate) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -
         // Marginal level: each node's signature (and mass) is its stored count
         // mod p — same value in both passes, independent of the leaf seeding.
         // A weight-marginal level keeps no integer counts; its per-node value
-        // lives in the diagram's `Weights`, and that value is the node's
+        // lives in the level's weight column, and that value is the node's
         // whole identity, so the signature is a fingerprint of the weight row
         // (`weight_mod_p`).
         if level.is_marginal() {

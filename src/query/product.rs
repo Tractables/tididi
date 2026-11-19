@@ -119,8 +119,8 @@ impl Engine {
     ///
     /// [`OperationError::VtreeMismatch`] for operands neither on one vtree nor
     /// on projections of one home ([`Vtree::projection`](crate::Vtree::projection)),
-    /// [`OperationError::IncompatibleWeights`] when either operand has weights
-    /// attached, [`OperationError::MarginalLevel`] at a level one operand
+    /// [`OperationError::IncompatibleWeights`] when either operand has a
+    /// weight-marginal level, [`OperationError::MarginalLevel`] at a level one operand
     /// summed out where the other still depends on the variables below it,
     /// [`OperationError::OverBudget`] when a buffer is refused, and
     /// [`OperationError::Stopped`] on cancellation. The operands are borrowed

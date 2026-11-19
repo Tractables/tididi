@@ -664,7 +664,7 @@ pub(crate) fn place_moving(
 }
 
 /// [`place_moving`] of an owned or borrowed diagram: a borrowed one has its
-/// levels copied into the destination's and its weight store copied. On a
+/// levels copied into the destination's, weight values included. On a
 /// projection, a summed-out level may sit at a leaf: a region, or a summed
 /// variable whose parent stays its parent. Refused, the diagram comes back
 /// as it was given.

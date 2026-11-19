@@ -45,7 +45,7 @@ pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoErr
 /// leaf labels, and child relationships against it. File-local vtree IDs need not
 /// equal the supplied vtree's in-memory indices. The false diagram
 /// has no node records from which to check its shape.
-/// The result shares the supplied `Arc<Vtree>`, has no attached weights, and
+/// The result shares the supplied `Arc<Vtree>` and its weights, and
 /// preserves the file's node order; reading does not minimize.
 ///
 /// On a vtree on a home ([`Vtree::projection`](crate::Vtree::projection)),

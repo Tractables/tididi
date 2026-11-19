@@ -11,7 +11,7 @@
 //!
 //! Both formats preserve Boolean structure, dropping unreachable nodes and
 //! renumbering the rest. They do not store literal weights or marginal values;
-//! attach weights again after reading, and serialize before marginalizing.
+//! read onto a weighted vtree for weights, and serialize before marginalizing.
 //! [`tdd_to_dot`] has the same structural requirement; [`vtree_to_dot`] renders
 //! just the variable tree.
 //!

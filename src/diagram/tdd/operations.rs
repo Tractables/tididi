@@ -1244,7 +1244,7 @@ impl Tdd {
     /// Targets are vtree node indices, not variable ids. An internal target also
     /// marginalizes its descendants; already marginal levels are skipped and a
     /// false diagram stays false. On a vtree without weights, the values are
-    /// exact model counts. On a weighted vtree ([`Vtree::with_weights`],
+    /// exact model counts. On a weighted vtree ([`Vtree::with_weights`](crate::Vtree::with_weights),
     /// [`Home::weighted`](crate::vtree::Home::weighted)), they use its
     /// [`Weights`](crate::diagram::Weights)' arithmetic and remain readable
     /// through [`weighted_value`](Self::weighted_value). Counts cannot later be

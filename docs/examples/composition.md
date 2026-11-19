@@ -105,8 +105,8 @@ Embedding preserves the component's variable grouping and left-to-right order.
 Our destination gives each copy its own matching two-leaf subtree. More general
 placements can leave gaps for extra variables, provided the destination restricted
 to the mapped variables still matches the source vtree; see the
-[`embed` contract](crate::Tdd::embed). Embedding copies structure but drops
-attached weights, so supply weights for the complete model when evaluating it.
+[`embed` contract](crate::Tdd::embed). Weights belong to a vtree: the copy reads
+the destination's, so weigh the destination for the complete model.
 
 If independently built components use disjoint variable identifiers, or are
 renamed apart, [`graft_over`](crate::Tdd::graft_over) can conjoin them while

@@ -65,8 +65,8 @@ Follow one conjunction, [`and(f, g)`]:
    their weights and returns the arenas to the pool if the operation fails.
 4. **Recycle.** The level arenas of owned operands, which the conjunction
    consumed, return to the engine's pools for the next operation. A borrowed
-   operand is read in place; a level the result would take from it, and its
-   weight store, are copied.
+   operand is read in place; a level the result would take from it is
+   copied, with its weight values.
 5. **Reduce.** The result already has the right function and count, but it
    may hold nodes the output no longer reaches and *twins*: nodes that every
    parent uses with exactly the same siblings. A full reduction prunes the
@@ -138,8 +138,8 @@ keep both contracts.
 ## Marginal levels
 
 [`Tdd::marginalize_levels`] replaces the structure of a subtree by one value
-per node: a model count, or a weighted value when the diagram has a
-[`Weights`]. Nodes of a marginal level point to *value slots*, and nodes
+per node: a model count, or a weighted value when the diagram's vtree
+carries [`Weights`]. Nodes of a marginal level point to *value slots*, and nodes
 with equal values share a slot. A reference from a structural parent into a
 marginal child may carry its value inline instead of a slot index; the
 `diagram` module owns that encoding and every other module decodes through
