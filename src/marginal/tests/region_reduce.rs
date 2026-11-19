@@ -32,7 +32,7 @@ fn every_reduction_pass_keeps_a_diagram_with_regions() {
     use crate::marginal::tests::region_entries::{region_case, value};
     use crate::reduce::{ContentTwinPolicy, ReductionPlan};
     let eng = Engine::new();
-    let (mut cases, mut refused) = (0, 0);
+    let (mut cases, mut refused, mut cleared) = (0, 0, 0);
     for seed in 0..600u64 {
         let Some((home, n, _, g)) = region_case(&eng, seed, 10) else { continue };
         let held: Vec<VarId> = (1..=n).map(VarId).filter(|&v| g.vtree().leaf_of(v).is_some()).collect();
@@ -63,6 +63,9 @@ fn every_reduction_pass_keeps_a_diagram_with_regions() {
                 for &v in &held {
                     let before = input.clone().exists_var(v).map(|t| format!("{:?}", value(&t)));
                     match r.clone().exists_var(v) {
+                        // The prune left only full counts at the region,
+                        // which the trim dropped with it.
+                        Ok(_) if matches!(before, Err(OperationError::MarginalLevel(_))) && !r.has_marginal_level() => cleared += 1,
                         Ok(after) => assert_eq!(Ok(format!("{:?}", value(&after))), before, "{what}: exists {v:?}"),
                         Err(OperationError::MarginalLevel(_)) => refused += 1,
                         Err(e) => panic!("{what}: exists {v:?}: {e:?}"),
@@ -71,6 +74,7 @@ fn every_reduction_pass_keeps_a_diagram_with_regions() {
             }
         }
     }
+    println!("{cases} cases, {refused} refused, {cleared} answered once the region went");
     assert!(cases > 1000 && refused > 0, "{cases} cases, {refused} refused");
 }
 

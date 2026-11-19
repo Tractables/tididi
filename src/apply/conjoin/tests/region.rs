@@ -153,7 +153,10 @@ impl Case {
             Ok(result) if clash => return assert!(result.is_zero() && smooth.is_zero(), "{what}: a conflict was not refused"),
             Ok(result) => result,
         };
-        check_form(&result, what);
+        // `and_onto` keeps a false result on its target.
+        if !(result.is_zero() && what.contains("and_onto")) {
+            check_form(&result, what);
+        }
         let vars = summed(&result);
         let operands: BTreeSet<VarId> = ops.iter().flat_map(|f| summed(f)).collect();
         match extra {

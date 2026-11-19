@@ -84,8 +84,11 @@ impl Audit {
             Ok(Ok(t)) => {
                 seen.runs += 1;
                 seen.false_with_nodes += usize::from(t.is_zero() && t.vtree().num_nodes() > 0);
+                // The smooth form `marginalize_levels` leaves on a home's
+                // root keeps its internal summed levels.
+                let smooth = t.vtree().bottomup().any(|u| !t.vtree().node(u).is_leaf() && t.level(u).is_marginal());
                 if t.vtree().on_home()
-                    && !t.has_marginal_level()
+                    && !smooth
                     && let Err(e) = check_trimmed(&t, false)
                 {
                     seen.untrimmed.push(format!("{case}: {e}"));
@@ -310,6 +313,9 @@ fn random_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, n: u32, rng: &mut
         a.run("project_to_subtree", || eng.project_to_subtree(&f, at));
         a.run("marginalize_levels", || mutate(&f, &|t| t.marginalize_levels(&[at])));
         a.run("and_marginalizing", || eng.and_marginalizing(&f, &g, &[at]));
+        let under_at: Vec<VarId> = f.vtree().leaf_bottomup().filter(|&(l, _)| f.vtree().in_subtree(l, at)).map(|(_, v)| v).collect();
+        a.run("marginalize", || mutate(&f, &|t| t.marginalize(|v| under_at.contains(&v))));
+        a.run("and_marginalizing_where", || eng.and_marginalizing_where(&f, &g, |v| under_at.contains(&v)));
         a.run("rotate_marginal_cluster", || {
             let mut t = f.clone();
             t.marginalize_levels(&[at])?;

@@ -32,6 +32,11 @@ pub(crate) fn exists_vars_on(
     // shortcut: the same request is refused whatever the operand happens to be.
     let targets = quantification_targets(eng, f.vtree(), vars)?;
     if targets.is_empty() {
+        // A trim can drop a leaf the summed function no longer reads while
+        // the function before the sum did: `∃` of it is refused all the same.
+        if !vars.is_empty() {
+            f.require_structure()?;
+        }
         return Ok(f);
     }
     structural::exists_leaves_structural(eng, f, &targets, reduction, close)
