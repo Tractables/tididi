@@ -129,24 +129,15 @@ where
         );
         *col = low(g_flat.len()) & !low(start);
         columns.col_of[start..g_flat.len()].fill(j as u8);
+        columns.col_pairs[j] = (g_flat.len() - start) as u8;
     }
     columns.g_flat = &g_flat[..];
     // Where every column holds one pair, pair `q` is column `q`'s, and a
     // word of pairs is a word of their columns.
-    let one_pair = g_flat.len() == g_width
-        && columns.cols[..g_width]
-            .iter()
-            .all(|c| c.count_ones() == 1);
+    let one_pair = g_flat.len() == g_width && columns.col_pairs[..g_width].iter().all(|&n| n == 1);
     // The number of g pairs of a set of columns, which a row's charge
     // counts: off a table of every set where the level has few columns and
     // rows enough to pay for it, else column by column.
-    for (n, col) in columns
-        .col_pairs
-        .iter_mut()
-        .zip(&columns.cols[..g_width])
-    {
-        *n = col.count_ones() as u8;
-    }
     columns.tabled = g_width <= CHARGE_TABLE_COLUMNS
         && (1 << g_width) <= f_width.saturating_mul(CHARGE_TABLE_ENTRIES_A_ROW);
     if columns.tabled {
