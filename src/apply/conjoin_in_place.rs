@@ -581,11 +581,10 @@ fn and_in_place_kernel(
     if role[root.idx()] == Role::True {
         return Ok(f);
     }
+    // The edits mark the levels they change for the close at the end.
+    f.levels.hold_counts(f.levels.is_closed());
     // What a later prune may walk: levels whose nodes the rewrite may leave
     // unnamed by their parent level, read before any edit forgets them.
-    // Whether every level was closed before the edits, which mark the
-    // levels they change for the close at the end.
-    let closed = f.levels.is_closed();
     let mut loose: Option<Vec<u32>> = match f.levels.is_canonical(f.output) {
         true => Some(Vec::new()),
         false => match f.dirty.loose() {
@@ -666,7 +665,7 @@ fn and_in_place_kernel(
     }
     match prune {
         true => eng.reduce(&mut f, ReductionPlan::Prune)?,
-        false => f.close_marked_levels(closed),
+        false => f.close_marked_levels(),
     }
     Ok(f)
 }

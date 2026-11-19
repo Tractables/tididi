@@ -493,6 +493,7 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, collapse: &[(VtreeIdx
     }
     f.vtree = own;
     f.levels = levels.into();
+    f.levels.hold_counts(closed);
     f.output = TddNodeId { vtree: f.vtree.root(), local };
     for &u in &changed {
         f.levels.mark_changed(u);
@@ -500,7 +501,7 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, collapse: &[(VtreeIdx
     for &u in &owes {
         f.invalidate(u);
     }
-    f.close_marked_levels(closed);
+    f.close_marked_levels();
     if canonical && !built && !shape.merged {
         f.levels.certify(f.output);
     }

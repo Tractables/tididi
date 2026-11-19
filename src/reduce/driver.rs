@@ -19,17 +19,14 @@ const CONTENT_SCAN_MAX_NODES: u64 = 131_072;
 pub(super) struct Reduction<'a> {
     eng: &'a Engine,
     tdd: &'a mut Tdd,
-    /// Whether the levels were closed when the reduction began. The passes
-    /// mark the levels they change, so on the levels they did not mark the
-    /// counts kept at that close hold, and the levels they marked are all
-    /// the end has to close.
-    counted: bool,
 }
 
 impl<'a> Reduction<'a> {
+    /// The passes mark the levels they change, so a count kept at the close
+    /// before them holds on a level they did not mark.
     pub(super) fn new(eng: &'a Engine, tdd: &'a mut Tdd) -> Self {
-        let counted = tdd.levels.is_closed();
-        Self { eng, tdd, counted }
+        tdd.levels.hold_counts(tdd.levels.is_closed());
+        Self { eng, tdd }
     }
 
     pub(super) fn run(&mut self, plan: ReductionPlan<'_>, scope: PruneScope) -> Result<(), OperationError> {
@@ -49,13 +46,13 @@ impl<'a> Reduction<'a> {
         let policy = match plan {
             ReductionPlan::Contract => {
                 contract_all_twins(self.eng, self.tdd)?;
-                self.tdd.close_marked_levels(self.counted);
+                self.tdd.close_marked_levels();
                 return Ok(());
             }
             ReductionPlan::Prune => {
-                prune_unreachable(self.eng, self.tdd, scope, self.counted)?;
+                prune_unreachable(self.eng, self.tdd, scope)?;
                 prune_value_slots(self.eng, self.tdd)?;
-                self.tdd.close_marked_levels(self.counted);
+                self.tdd.close_marked_levels();
                 return Ok(());
             }
             ReductionPlan::Full(policy) => {
@@ -69,7 +66,7 @@ impl<'a> Reduction<'a> {
         };
         #[cfg(debug_assertions)]
         let marginal_before: Vec<_> = self.tdd.levels.iter().map(|l| l.is_marginal()).collect();
-        prune_unreachable(self.eng, self.tdd, scope, self.counted)?;
+        prune_unreachable(self.eng, self.tdd, scope)?;
         #[cfg(debug_assertions)]
         self.assert_marginal_flags(&marginal_before, "prune");
         self.contract()?;
@@ -99,12 +96,12 @@ impl<'a> Reduction<'a> {
         Ok(())
     }
 
-    /// Close the levels the passes marked, and on a `structural` diagram list no level loose: the prune
-    /// left every node reachable, and a contraction only merges twins, whose
-    /// children are the same. At the `fixpoint` of every pass, clear the
-    /// worklists and certify a structural diagram.
+    /// Close the levels the passes marked, and on a `structural` diagram list
+    /// no level loose: the prune left every node reachable, and a contraction
+    /// only merges twins, whose children are the same. At the `fixpoint` of
+    /// every pass, clear the worklists and certify a structural diagram.
     fn finish(&mut self, structural: bool, fixpoint: bool) {
-        self.tdd.close_marked_levels(self.counted);
+        self.tdd.close_marked_levels();
         if structural {
             #[cfg(debug_assertions)]
             super::prune::debug_assert_all_reached(self.tdd);
@@ -137,9 +134,9 @@ impl<'a> Reduction<'a> {
         let _op = self.eng.limits().enter()?;
         match old {
             Some(old) if below_root_walk_applies(self.tdd) && !self.tdd.has_marginal_level() && old != self.tdd.output.local => {
-                prune_complement(self.eng, self.tdd, old, self.counted)?;
+                prune_complement(self.eng, self.tdd, old)?;
             }
-            _ => prune_unreachable(self.eng, self.tdd, PruneScope::BelowRoot, self.counted)?,
+            _ => prune_unreachable(self.eng, self.tdd, PruneScope::BelowRoot)?,
         }
         if shrink {
             for level in &mut self.tdd.levels {
@@ -184,9 +181,9 @@ impl<'a> Reduction<'a> {
         loop {
             self.eng.limits().check_stop()?;
             if next.as_ref().is_some_and(|levels| levels.is_empty()) { break; }
-            let merged = merge_content_equal_nodes(self.eng, self.tdd, next.take(), self.counted)?;
+            let merged = merge_content_equal_nodes(self.eng, self.tdd, next.take())?;
             if merged == 0 { break; }
-            prune_unreachable(self.eng, self.tdd, PruneScope::Whole, self.counted)?;
+            prune_unreachable(self.eng, self.tdd, PruneScope::Whole)?;
             self.contract()?;
             // A value merge at a marginal level may make its parents' nodes
             // equal: those boundaries are scanned again.
@@ -211,18 +208,7 @@ impl<'a> Reduction<'a> {
 /// folds. Marginalization creates pair-fusion work at the affected parents
 /// and orphans slots. Bounded-precision arithmetic skips fusion because it
 /// cannot sum exactly.
-///
-/// `closed` says the levels were closed before the folds. The folds mark
-/// the structural levels they change; what they leave unmarked became
-/// marginal or was cleared, which a close leaves as it is, so the close
-/// here keeps the counts of the levels nothing marked.
-pub(crate) fn restore_marginal_invariants(
-    eng: &Engine,
-    tdd: &mut Tdd,
-    levels: &[VtreeIdx],
-    vtree: &Vtree,
-    closed: bool,
-) -> Result<(), OperationError> {
+pub(crate) fn restore_marginal_invariants(eng: &Engine, tdd: &mut Tdd, levels: &[VtreeIdx], vtree: &Vtree) -> Result<(), OperationError> {
     if !tdd.weights().is_some_and(WeightStore::is_bounded) {
         let mut parents: Vec<_> = levels.iter().filter_map(|&level| vtree.node(level).parent()).collect();
         parents.sort_unstable();
@@ -232,6 +218,6 @@ pub(crate) fn restore_marginal_invariants(
         crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(tdd, Some(&parents), "marginalize_levels");
     }
     prune_value_slots(eng, tdd)?;
-    tdd.close_marked_levels(closed);
+    tdd.close_marked_levels();
     Ok(())
 }

@@ -47,12 +47,12 @@ fn a_refused_move_of_an_implicit_parent_is_an_error() {
     let mut tdd = original.clone();
     let capacity = tdd.levels[v.idx()].pairs.node_capacity();
     tdd.levels[v.idx()].pairs.set_node_capacity(OVER_BUDGET_NODES);
-    assert_eq!(merge_content_equal_nodes(&eng, &mut tdd, None, false), Err(OperationError::OverBudget));
+    assert_eq!(merge_content_equal_nodes(&eng, &mut tdd, None), Err(OperationError::OverBudget));
     assert_eq!(tdd.levels[v.idx()].implicit(), original.levels[v.idx()].implicit());
     assert_eq!(sorted_pairs(&tdd), sorted_pairs(&original));
 
     tdd.levels[v.idx()].pairs.set_node_capacity(capacity);
-    assert_eq!(merge_content_equal_nodes(&eng, &mut tdd, None, false), Ok(MERGED));
+    assert_eq!(merge_content_equal_nodes(&eng, &mut tdd, None), Ok(MERGED));
     assert!(tdd.levels[v.idx()].implicit().is_none(), "the merging move stores v");
     assert_eq!(tdd.model_count().unwrap(), count);
 }
@@ -69,7 +69,7 @@ fn every_refused_reservation_of_a_content_twin_merge_leaves_a_valid_diagram() {
         let eng = Engine::new();
         eng.refuse_nth_reserve(refused);
         let mut tdd = original.clone();
-        match merge_content_equal_nodes(&eng, &mut tdd, None, false) {
+        match merge_content_equal_nodes(&eng, &mut tdd, None) {
             Err(e) => {
                 assert_eq!(e, OperationError::OverBudget);
                 let level = tdd.levels[v.idx()].implicit();

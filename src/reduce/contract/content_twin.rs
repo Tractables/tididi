@@ -79,7 +79,6 @@ pub(crate) fn merge_content_equal_nodes(
     eng: &Engine,
     tdd: &mut Tdd,
     filter: Option<rustc_hash::FxHashSet<u32>>,
-    counted: bool,
 ) -> Result<usize, OperationError> {
     // Marginalized diagrams only (`# Soundness` above).
     if !tdd.has_marginal_level() {
@@ -126,12 +125,12 @@ pub(crate) fn merge_content_equal_nodes(
         if width <= 1 {
             continue;
         }
-        let entries = ContentEntries(level, level.known_live_pairs(counted));
+        let entries = ContentEntries(level, tdd.levels.known_live_pairs(level_idx));
         if !group_twins_by_entries(eng, &entries, width, &mut scratch)? {
             continue;
         }
         dups_merged += remap_groups_onto_first(lim, &mut scratch, width)?;
-        redirect_parent_refs(lim, tdd, level_v, &scratch.remap.content_target[..width], &mut live, counted)?;
+        redirect_parent_refs(lim, tdd, level_v, &scratch.remap.content_target[..width], &mut live)?;
     }
 
     Ok(dups_merged)
@@ -166,10 +165,8 @@ fn remap_groups_onto_first(
 
 /// Point the output ref and the parent's refs at each duplicate's canonical
 /// node, then mark the parent for the follow-up contract and content scans.
-/// The parent keeps its pairs, so a count of them known before (`counted`
-/// as for [`TddLevel::known_live_pairs`]) is left for the close.
-///
-/// [`TddLevel::known_live_pairs`]: crate::diagram::TddLevel::known_live_pairs
+/// The parent keeps its pairs, so a count of them known before is left for
+/// the close.
 ///
 /// # Errors
 ///
@@ -182,9 +179,8 @@ fn redirect_parent_refs(
     level_v: VtreeIdx,
     remap: &[u32],
     live: &mut Option<rustc_hash::FxHashSet<u32>>,
-    counted: bool,
 ) -> Result<(), OperationError> {
-    let pairs = tdd.vtree.node(level_v).parent().and_then(|p| tdd.levels[p.idx()].known_live_pairs(counted));
+    let pairs = tdd.vtree.node(level_v).parent().and_then(|p| tdd.levels.known_live_pairs(p.idx()));
     let Some(parent) = tdd.merge_level_nodes(lim, level_v, remap)? else { return Ok(()) };
     let level = &mut tdd.levels[parent.idx()];
     if let Some(pairs) = pairs.filter(|_| level.implicit().is_none()) {

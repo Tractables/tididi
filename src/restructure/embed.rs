@@ -873,7 +873,7 @@ fn assemble_moving<'a>(
     // seated and gives a moved diagram its levels back. The refusals after
     // it come where nothing was renumbered (a region alone) or from a
     // borrowed diagram, which `unseat` leaves as it was.
-    let closed = result.levels.is_closed();
+    result.levels.hold_counts(result.levels.is_closed());
     if !literal_tops.is_empty()
         && let Err(e) = crate::diagram::remap_refs_into_all(eng.limits(), &mut result, &literal_tops, &[u32::MAX, 0, 1])
     {
@@ -904,7 +904,7 @@ fn assemble_moving<'a>(
         return_levels(eng, std::mem::take(&mut moved.levels).into_vec());
     }
     if chains {
-        result.close_marked_levels(closed);
+        result.close_marked_levels();
     }
     // A moved level keeps its nodes and, through the pass-throughs and the
     // renumbered literal chains, the identities of its children's, so it

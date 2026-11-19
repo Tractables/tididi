@@ -346,10 +346,6 @@ pub(crate) enum PruneScope {
 /// below it is named by a surviving node of its parent level. The prune
 /// leaves no level loose.
 ///
-/// `counted` says the levels were closed when the reduction began, so
-/// that counts kept at that close hold on the levels its passes have not
-/// marked.
-///
 /// # Errors
 ///
 /// Returns `Err(OperationError::OverBudget)` if a reservation of the marks,
@@ -361,7 +357,6 @@ pub(crate) fn prune_unreachable(
     eng: &Engine,
     tdd: &mut Tdd,
     scope: PruneScope,
-    counted: bool,
 ) -> Result<(), OperationError> {
     // `ZERO` sentinel: the entire diagram computes ⊥ (UNSAT). No nodes are reachable.
     if tdd.is_zero() {
@@ -387,17 +382,17 @@ pub(crate) fn prune_unreachable(
         _ => None,
     };
     if below_root {
-        prune_walk(eng, tdd, None, Start::Output, counted)?;
+        prune_walk(eng, tdd, None, Start::Output)?;
     } else if let Some(seeds) = &seeded {
         let start = match seeds.root_clean {
             true => Start::Seeds(&seeds.seeds[..], &seeds.state[..], &seeds.top[..]),
             false => Start::Output,
         };
-        prune_walk(eng, tdd, Some(&seeds.state[..]), start, counted)?;
+        prune_walk(eng, tdd, Some(&seeds.state[..]), start)?;
         #[cfg(debug_assertions)]
         debug_assert_all_reached(tdd);
     } else {
-        prune_walk(eng, tdd, None, Start::Root, counted)?;
+        prune_walk(eng, tdd, None, Start::Root)?;
     }
     tdd.dirty.set_loose(Some(Vec::new()));
     Ok(())
@@ -555,7 +550,6 @@ pub(crate) fn debug_assert_all_reached(tdd: &Tdd) {
         &mut marks,
         &mut visits,
         &mut Vec::new(),
-        false,
     )
     .expect("unbounded limits refuse nothing");
     for v in &visits {
@@ -981,9 +975,9 @@ impl Child {
 /// A stored level it changes is left its live pairs for the close
 /// ([`TddLevel::leave_live_pairs`]): the pairs of its marked nodes where the
 /// marking read them (`v.kept`), else where it knew them before
-/// ([`TddLevel::known_live_pairs`], `counted` saying the levels were closed
-/// when the reduction began): those less the pairs of the nodes it drops,
-/// which a rewrite of references leaves as they were. Where every node
+/// ([`TddLevel::known_live_pairs`], as the level storage reads it): those
+/// less the pairs of the nodes it drops, which a rewrite of references
+/// leaves as they were. Where every node
 /// holds the same count of pairs (a description's, or one on a stored level
 /// of inline nodes alone), the level counts the nodes it keeps off the
 /// marks; a stored level otherwise reads the pairs of the nodes it drops in
@@ -997,7 +991,6 @@ fn compact_one_level(
     marks: &[u64],
     remap: &mut [u32],
     plan: Option<Plan>,
-    counted: bool,
 ) -> bool {
     let Visit {
         level: t,
@@ -1019,14 +1012,14 @@ fn compact_one_level(
         // keeps no count of its own on open levels: marked changed, it is
         // left the pairs read, for the close to keep.
         let level = &tdd.levels[t_idx];
-        if let Some(pairs) = kept.filter(|_| !counted && level.implicit().is_none() && level.known_live_pairs(false).is_none()) {
+        if let Some(pairs) = kept.filter(|_| !tdd.levels.counts_hold() && level.implicit().is_none() && level.known_live_pairs(false).is_none()) {
             tdd.levels.mark_changed(t);
             tdd.levels[t_idx].leave_live_pairs(pairs);
         }
         return false;
     }
     let level = &tdd.levels[t_idx];
-    let before = level.known_live_pairs(counted);
+    let before = tdd.levels.known_live_pairs(t_idx);
     // The pairs each node holds, where they are the same for every node: a
     // description's, or one on a stored level of no arena pairs and as many
     // pairs as nodes (each node there holds at most one).
@@ -1453,7 +1446,6 @@ fn moved(remap: Option<&[u32]>) -> impl Fn(i64) -> i64 + '_ {
 /// count of those pairs, or `Err(OperationError::OverBudget)` if the
 /// offsets an implicit level's nodes are read in are refused
 /// ([`mark_described`]), or the bytes.
-#[expect(clippy::too_many_arguments, reason = "the walk's scratch and the reduction's closed flag")]
 fn mark_children_of_level(
     lim: &Limits,
     tdd: &Tdd,
@@ -1462,13 +1454,11 @@ fn mark_children_of_level(
     children: [Option<usize>; 2],
     marks: &mut [u64],
     bytes: &mut Vec<u8>,
-    counted: bool,
 ) -> Result<Option<usize>, OperationError> {
-    let known = || tdd.levels[t.idx()].known_live_pairs(counted);
     match children {
-        [Some(l), Some(r)] => mark_sides::<true, true>(lim, tdd, t, base, [l, r], marks, bytes, known()),
-        [Some(l), None] => mark_sides::<true, false>(lim, tdd, t, base, [l, 0], marks, bytes, known()),
-        [None, Some(r)] => mark_sides::<false, true>(lim, tdd, t, base, [0, r], marks, bytes, known()),
+        [Some(l), Some(r)] => mark_sides::<true, true>(lim, tdd, t, base, [l, r], marks, bytes),
+        [Some(l), None] => mark_sides::<true, false>(lim, tdd, t, base, [l, 0], marks, bytes),
+        [None, Some(r)] => mark_sides::<false, true>(lim, tdd, t, base, [0, r], marks, bytes),
         [None, None] => Ok(None),
     }
 }
@@ -1487,8 +1477,7 @@ fn mark_children_of_level(
 /// slot are about one or more ([`STAGE_SLOTS_PER_NODE`]).
 ///
 /// A stored level counts the pairs of its marked nodes as it reads them,
-/// unless every node is marked and its live pairs are `known`.
-#[expect(clippy::too_many_arguments, reason = "the walk's scratch and the level's known count")]
+/// unless every node is marked and its live pairs are known.
 fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     lim: &Limits,
     tdd: &Tdd,
@@ -1497,7 +1486,6 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     child_base: [usize; 2],
     marks: &mut [u64],
     bytes: &mut Vec<u8>,
-    known: Option<usize>,
 ) -> Result<Option<usize>, OperationError> {
     let [left_base, right_base] = child_base;
     let (left, right) = tdd.vtree.children(t);
@@ -1515,7 +1503,7 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     }
     // The sides staged as bytes: their slots, rounded up to whole words.
     let marked = count(&marks[base..base + words(width)]);
-    let known = known.filter(|_| marked == width);
+    let known = tdd.levels.known_live_pairs(t.idx()).filter(|_| marked == width);
     let staged = |on: bool, c: VtreeIdx| {
         let slots = tdd.reference_slot_count(c);
         (on && slots <= marked.saturating_mul(STAGE_SLOTS_PER_NODE))
@@ -1881,7 +1869,6 @@ pub(super) fn prune_walk(
     tdd: &mut Tdd,
     forced: Option<&[u8]>,
     start: Start<'_>,
-    counted: bool,
 ) -> Result<(), OperationError> {
     let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
     let PruneScratch {
@@ -1910,7 +1897,7 @@ pub(super) fn prune_walk(
         eng.limits().reserve_exact(marks, total.saturating_sub(marks.len()))?;
         eng.limits().reserve_exact(visits, levels)?;
     }
-    let mut walk = mark_walk(eng.limits(), tdd, forced, start, marks, visits, bytes, counted)?;
+    let mut walk = mark_walk(eng.limits(), tdd, forced, start, marks, visits, bytes)?;
     match start {
         // A walk from the seeds is charged as one from the output would be.
         Start::Seeds(_, _, top) => {
@@ -1919,7 +1906,7 @@ pub(super) fn prune_walk(
         Start::Root => walk.slots = whole_slots,
         Start::Output => {}
     }
-    compact_visited(eng, tdd, marks, remap, visits, walk.remap_need, counted)?;
+    compact_visited(eng, tdd, marks, remap, visits, walk.remap_need)?;
 
     if let Some(base) = walk.output {
         tdd.output.local = NodeIdx(rank(&marks[base..], tdd.output.local.idx()));
@@ -1947,7 +1934,6 @@ struct Walked {
 
 /// The marking half of [`prune_walk`]: `visits` the levels it
 /// entered, top-down, each with its block of `marks` and its children.
-#[expect(clippy::too_many_arguments, reason = "the walk's scratch and the reduction's closed flag")]
 fn mark_walk(
     lim: &Limits,
     tdd: &Tdd,
@@ -1956,7 +1942,6 @@ fn mark_walk(
     marks: &mut Vec<u64>,
     visits: &mut Vec<Visit>,
     bytes: &mut Vec<u8>,
-    counted: bool,
 ) -> Result<Walked, OperationError> {
     let vtree = &tdd.vtree;
     let out = tdd.output;
@@ -2038,7 +2023,7 @@ fn mark_walk(
         };
         let (lb, rb) = (block(left, lw)?, block(right, rw)?);
 
-        visits[i].kept = mark_children_of_level(lim, tdd, t, visits[i].base, [lb, rb], marks, bytes, counted)?;
+        visits[i].kept = mark_children_of_level(lim, tdd, t, visits[i].base, [lb, rb], marks, bytes)?;
 
         let (lc, rc) = (Child::read(marks, lb, lw), Child::read(marks, rb, rw));
         visits[i].left = lc;
@@ -2160,7 +2145,6 @@ fn compact_visited(
     remap: &mut Vec<u32>,
     visits: &[Visit],
     remap_need: usize,
-    counted: bool,
 ) -> Result<(), OperationError> {
     eng.limits().try_resize(remap, remap_need, UNREACHED)?;
     // What the compaction does with the levels held as descriptions is
@@ -2178,7 +2162,7 @@ fn compact_visited(
     for k in (0..visits.len()).rev() {
         let v = visits[k];
         let plan = plans.take(v.level);
-        if compact_one_level(tdd, v, marks, remap, plan, counted) {
+        if compact_one_level(tdd, v, marks, remap, plan) {
             if !room {
                 tdd.dirty.reserve_all(k + 1);
                 room = true;
@@ -2225,7 +2209,6 @@ pub(super) fn prune_complement(
     eng: &Engine,
     tdd: &mut Tdd,
     old: NodeIdx,
-    counted: bool,
 ) -> Result<(), OperationError> {
     debug_assert!(below_root_walk_applies(tdd) && !tdd.has_marginal_level());
     debug_assert_ne!(old, tdd.output.local);
@@ -2300,12 +2283,13 @@ pub(super) fn prune_complement(
         let last = tdd.levels[c.idx()].slot_count() - 1;
         match plans.as_mut().and_then(|plans| plans.take(c)) {
             Some(plan) => {
-                compact_one_level(tdd, visits[j], marks, remap, Some(plan), counted);
+                compact_one_level(tdd, visits[j], marks, remap, Some(plan));
             }
             None => {
                 let level = &tdd.levels[c.idx()];
-                let pairs = level
-                    .known_live_pairs(counted)
+                let pairs = tdd
+                    .levels
+                    .known_live_pairs(c.idx())
                     .map(|n| n - level.pair_count_at(k as usize));
                 tdd.levels.mark_changed(c);
                 let level = &mut tdd.levels[c.idx()];
