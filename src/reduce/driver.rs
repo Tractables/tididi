@@ -87,7 +87,9 @@ impl<'a> Reduction<'a> {
             }
             ReductionPlan::Prune => {
                 prune_unreachable(self.eng, self.tdd, scope)?;
-                prune_value_slots(self.eng, self.tdd)?;
+                if self.tdd.has_marginal_level() {
+                    prune_value_slots(self.eng, self.tdd)?;
+                }
                 self.tdd.close_marked_levels(closed);
                 return self.settle();
             }
