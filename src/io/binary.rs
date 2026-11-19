@@ -641,6 +641,15 @@ impl<'a> Body<'a> {
     /// One `LEB128` varint of at most `bits` bits, 64 or 128.
     fn varint_bits(&mut self, what: &str, bits: u32) -> Result<u128, IoError> {
         let start = self.at;
+        // Nine bytes hold 63 bits, which fit either width.
+        let mut short = 0u64;
+        for (k, &byte) in self.bytes[start..].iter().take(9).enumerate() {
+            short |= u64::from(byte & 0x7f) << (7 * k);
+            if byte & 0x80 == 0 {
+                self.at = start + k + 1;
+                return Ok(u128::from(short));
+            }
+        }
         let mut v = 0u128;
         for shift in (0..bits).step_by(7) {
             let Some(&byte) = self.bytes.get(self.at) else {
