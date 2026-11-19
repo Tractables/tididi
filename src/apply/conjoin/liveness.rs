@@ -18,7 +18,7 @@
 
 use crate::Engine;
 use super::{OperationError, NO_PRODUCT, TddLevel, ChildPair};
-use crate::diagram::{decoded, ChildDecoder, EncodedChildRef, Sides};
+use crate::diagram::{decoded, ChildDecoder, Sides};
 
 /// The fewest cells a product grid of two multi-pair levels has for its
 /// level to build the masks. Under it they cost more than they save: on such
@@ -279,37 +279,19 @@ pub(super) fn build_reach_columns(eng: &Engine, reach: &[u128], columns: &mut Ve
 /// by pairs ([`fill_pair_columns`]) has.
 pub(super) const ROW_COLUMNS_MAX_WIDTH: usize = 63;
 
-/// The [`PairTable`] of the apply's levels read by pairs, allocated at the
-/// first: the workspace is moved whole between applies.
-#[derive(Debug, Default)]
-pub(crate) struct PairColumns(Vec<PairTable>);
-
-impl PairColumns {
-    pub(super) fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::execution::pool::Scratch)) {
-        visit(&mut self.0);
-    }
-
-    /// The table of the level [`fill_pair_columns`] last admitted.
-    #[inline(always)]
-    pub(super) fn table(&self) -> &PairTable {
-        &self.0[0]
-    }
-}
-
 /// The g pairs of a level read by pairs ([`fill_pair_columns`]), decoded
 /// as the level's views read them, in column order, and their columns:
 /// the one read of g's pairs that both sides' row columns and the row
 /// loop take.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(crate) struct PairTable {
-    pairs: [ChildPair; ROW_COLUMNS_MAX_WIDTH],
-    len: usize,
+    pairs: Vec<ChildPair>,
     /// Each pair's column.
-    pub(super) col_of: [u8; ROW_COLUMNS_MAX_WIDTH],
+    pub(super) col_of: Vec<u8>,
     /// Each column's pairs, as a mask of their bits.
-    pub(super) cols: [u64; ROW_COLUMNS_MAX_WIDTH],
+    pub(super) cols: Vec<u64>,
     /// Each column's number of pairs.
-    pub(super) col_pairs: [u8; ROW_COLUMNS_MAX_WIDTH],
+    pub(super) col_pairs: Vec<u8>,
     /// Whether every column holds one pair: pair `q` is then column `q`'s.
     pub(super) one: bool,
     /// The last pair of each column, as a mask.
@@ -318,31 +300,22 @@ pub(crate) struct PairTable {
     pub(super) inner: u64,
 }
 
-impl Default for PairTable {
-    fn default() -> Self {
-        let none = EncodedChildRef::from_raw(0);
-        Self {
-            pairs: [ChildPair::new(none, none); ROW_COLUMNS_MAX_WIDTH],
-            len: 0,
-            col_of: [0; ROW_COLUMNS_MAX_WIDTH],
-            cols: [0; ROW_COLUMNS_MAX_WIDTH],
-            col_pairs: [0; ROW_COLUMNS_MAX_WIDTH],
-            one: false,
-            tops: 0,
-            inner: 0,
-        }
-    }
-}
-
 impl PairTable {
+    pub(super) fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::execution::pool::Scratch)) {
+        visit(&mut self.pairs);
+        visit(&mut self.col_of);
+        visit(&mut self.cols);
+        visit(&mut self.col_pairs);
+    }
+
     /// g's pairs, in column order.
     #[inline(always)]
     pub(super) fn pairs(&self) -> &[ChildPair] {
-        &self.pairs[..self.len]
+        &self.pairs
     }
 }
 
-/// Whether a masked level is read by pairs, and then its [`PairColumns`]
+/// Whether a masked level is read by pairs, and then its [`PairTable`]
 /// in `out`: each child row's word is over g's pairs, the
 /// [`build_row_columns`] of a reach mask a pair, in place of its word over
 /// g's nodes. That takes g's first `g_width` nodes holding at most
@@ -355,7 +328,7 @@ pub(super) fn fill_pair_columns(
     g_width: usize,
     (child_g_widths, complete): (Sides<usize>, Sides<bool>),
     views: Sides<ChildDecoder>,
-    out: &mut PairColumns,
+    out: &mut PairTable,
 ) -> bool {
     if g_width > ROW_COLUMNS_MAX_WIDTH
         || bucket_shift(child_g_widths.left) != 0
@@ -365,13 +338,13 @@ pub(super) fn fill_pair_columns(
     {
         return false;
     }
-    if out.0.is_empty() {
-        if lim.reserve_exact(&mut out.0, 1).is_err() {
-            return false;
-        }
-        out.0.push(PairTable::default());
+    out.pairs.clear();
+    out.col_of.clear();
+    out.cols.clear();
+    out.col_pairs.clear();
+    if lim.reserve_exact(&mut out.cols, g_width).is_err() || lim.reserve_exact(&mut out.col_pairs, g_width).is_err() {
+        return false;
     }
-    let out = &mut out.0[0];
     let decode = views.left.is_marginal() || views.right.is_marginal();
     let (mut n, mut one, mut tops, mut inner) = (0, true, 0u64, 0u64);
     let fits = level.try_for_each_node(0..g_width, |j, pairs| {
@@ -379,12 +352,15 @@ pub(super) fn fill_pair_columns(
         if end > ROW_COLUMNS_MAX_WIDTH {
             return Err(());
         }
-        for ((slot, col), p) in out.pairs[n..end].iter_mut().zip(&mut out.col_of[n..end]).zip(pairs) {
-            *slot = if decode { decoded(*p, views.left, views.right) } else { *p };
-            *col = j as u8;
+        if lim.reserve_exact(&mut out.pairs, pairs.len()).is_err()
+            || lim.reserve_exact(&mut out.col_of, pairs.len()).is_err()
+        {
+            return Err(());
         }
-        out.cols[j] = ((1u64 << end) - 1) & !((1u64 << n) - 1);
-        out.col_pairs[j] = pairs.len() as u8;
+        out.pairs.extend(pairs.iter().map(|&p| if decode { decoded(p, views.left, views.right) } else { p }));
+        out.col_of.extend(std::iter::repeat_n(j as u8, pairs.len()));
+        out.cols.push(((1u64 << end) - 1) & !((1u64 << n) - 1));
+        out.col_pairs.push(pairs.len() as u8);
         if end > n {
             tops |= 1 << (end - 1);
             inner |= ((1u64 << (end - 1)) - 1) & !((1u64 << n) - 1);
@@ -393,7 +369,6 @@ pub(super) fn fill_pair_columns(
         n = end;
         Ok(())
     });
-    out.len = n;
     out.one = one;
     out.tops = tops;
     out.inner = inner;

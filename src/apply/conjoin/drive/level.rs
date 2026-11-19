@@ -556,7 +556,7 @@ fn build_level_prefilter_masks(
             g_width: gw.left,
             base: bases.left.idx(),
         },
-        (matches!(lookups, PlainLookups::CompleteLeft { .. }), pairs.then(|| run.pair_cols.table())),
+        (matches!(lookups, PlainLookups::CompleteLeft { .. }), pairs.then_some(&*run.pair_cols)),
         run.products.arena.slab(),
         &mut run.prefilter_masks.left,
     )?;
@@ -569,7 +569,7 @@ fn build_level_prefilter_masks(
             g_width: gw.right,
             base: bases.right.idx(),
         },
-        (matches!(lookups, PlainLookups::CompleteRight { .. }), pairs.then(|| run.pair_cols.table())),
+        (matches!(lookups, PlainLookups::CompleteRight { .. }), pairs.then_some(&*run.pair_cols)),
         run.products.arena.slab(),
         &mut run.prefilter_masks.right,
     )
@@ -1185,7 +1185,7 @@ pub(super) fn build_level_dense(
         let relay = stream_state.is_none();
         run_row_loop(
             eng,
-            (route, lookups, single_pair, pairs.then(|| run.pair_cols.table()), relay),
+            (route, lookups, single_pair, pairs.then_some(&*run.pair_cols), relay),
             words.then_some((&mut *run.words, f_rows)),
             (
                 rows,

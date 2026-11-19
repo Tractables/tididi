@@ -372,7 +372,7 @@ pub(super) struct ApplyRun<'a, 'r> {
     /// The four dead-pair pre-filter masks, reused across internal levels.
     pub(super) prefilter_masks: &'a mut liveness::PrefilterMaskScratch,
     /// g's pairs at a level read by pairs.
-    pub(super) pair_cols: &'a mut liveness::PairColumns,
+    pub(super) pair_cols: &'a mut liveness::PairTable,
     /// The g-pair vectors of the levels whose cells are read by them.
     pub(super) words: &'a mut super::WordScratch,
     /// What the sweep lists as it goes: the levels it carried, lent and
