@@ -479,18 +479,19 @@ where
             let few = f_pairs.len() <= FEW_PAIRS && !super::super::ands_buffered_forced();
             if !few {
                 many.clear();
-                lim.reserve(many, f_pairs.len())?;
+                lim.try_resize(many, f_pairs.len(), 0)?;
             }
             let (mut l, mut r, mut live) = (0, 0, 0);
-            for (k, p) in f_pairs.iter().enumerate() {
+            let ands_out = if few {
+                &mut few_ands[..f_pairs.len()]
+            } else {
+                &mut many[..]
+            };
+            for (p, out_and) in f_pairs.iter().zip(ands_out) {
                 let (wl, wr) = (word_left(p), word_right(p));
                 let and = wl & wr;
                 (l, r, live) = (l | wl, r | wr, live | and);
-                if few {
-                    few_ands[k] = and;
-                } else {
-                    many.push(and);
-                }
+                *out_and = and;
             }
             if l & r & ROW_LIVE == 0 {
                 if W > 0 {
