@@ -661,7 +661,13 @@ const KICK_DRAWS: usize = 50;
 /// closed, and a move replaces the levels it rebuilds, which keep no count,
 /// or puts back the levels it replaced: a count kept on an open level holds.
 fn live_pairs(members: &[&mut Tdd]) -> usize {
-    members.iter().map(|m| m.levels.pair_count_known(true)).sum()
+    let n = members.iter().map(|m| m.levels.pair_count_known(true)).sum();
+    debug_assert_eq!(
+        n,
+        members.iter().flat_map(|m| m.levels.iter()).map(TddLevel::live_pairs).sum::<usize>(),
+        "a pool member's kept count other than its live pairs"
+    );
+    n
 }
 
 /// What a descent knows of the moves it refused, which holds while the
