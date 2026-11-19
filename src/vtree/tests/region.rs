@@ -15,7 +15,7 @@ fn vars(ids: &[u32]) -> Vec<VarId> {
 /// [`Vtree::free_set`].
 fn free_vars(own: &Vtree) -> Vec<VarId> {
     let Some(link) = own.home.as_deref() else { return Vec::new() };
-    let mut ranks = link.ranks.iter().copied().peekable();
+    let mut ranks = link.ranks().iter().copied().peekable();
     let mut extents: Vec<(u32, u32)> = link.regions.iter().flat_map(|region| region.extent.iter().copied()).collect();
     extents.sort_unstable();
     let mut extents = extents.into_iter().peekable();
@@ -75,7 +75,7 @@ fn with_regions(home: &Home, leaves: &[u32], regions: &[(&[u32], u32)]) -> Vtree
             found.push(Region { at: i as u32, extent, count });
         }
     }
-    Vtree::build_projection(home, ranks, found)
+    Vtree::linked(home, Vtree::build_ranks(home, &ranks, &found), found)
 }
 
 /// The region at `anchor`'s home leaf.
@@ -445,4 +445,177 @@ mod free_set {
             check(set, &unpinned, algebras, &format!("seed {seed} pinned"));
         }
     }
+}
+
+/// A projection by definition: an own node for each home node with a kept
+/// home leaf under each child.
+enum Def {
+    Childless(VtreeIdx),
+    Node(VtreeIdx, Box<Def>, Box<Def>),
+}
+
+fn by_definition(home: &Vtree, h: VtreeIdx, kept: &[bool]) -> Option<Def> {
+    match *home.node(h) {
+        VtreeNode::Leaf { .. } => kept[h.idx()].then_some(Def::Childless(h)),
+        VtreeNode::Internal { left, right, .. } => {
+            match (by_definition(home, left, kept), by_definition(home, right, kept)) {
+                (Some(l), Some(r)) => Some(Def::Node(h, Box::new(l), Box::new(r))),
+                (l, r) => l.or(r),
+            }
+        }
+    }
+}
+
+/// Whether `own` is the projection of its home on the home leaves `kept`,
+/// node for node, each own node standing for its home node and found from
+/// it.
+fn is_by_definition(own: &Vtree, kept: &[bool], what: &str) {
+    assert_eq!(own.validate(), Ok(()), "{what}");
+    let home = own.link_home().expect("a projection").vtree();
+    let def = by_definition(home, home.root(), kept).expect("a kept leaf");
+    let mut stack = vec![(own.root(), &def)];
+    while let Some((t, def)) = stack.pop() {
+        let h = match def {
+            Def::Childless(h) => {
+                assert!(own.node(t).is_leaf(), "{what}: node {} is not childless", t.0);
+                assert!(own.node(t).is_region() || own.leaf_var(t) == home.leaf_var(*h), "{what}: leaf {}", t.0);
+                *h
+            }
+            Def::Node(h, l, r) => {
+                let (a, b) = own.children(t);
+                stack.extend([(a, &**l), (b, &**r)]);
+                *h
+            }
+        };
+        assert_eq!(own.home_node(t), h, "{what}: node {}", t.0);
+        assert_eq!(own.node_at_home(h), Some(t), "{what}: home node {}", h.0);
+    }
+}
+
+/// The home leaves of `ranks` as a table by home node.
+fn kept_of(home: &Home, ranks: impl IntoIterator<Item = u32>) -> Vec<bool> {
+    let mut kept = vec![false; home.vtree().num_nodes()];
+    for r in ranks {
+        kept[home.index().leaf_at[r as usize].idx()] = true;
+    }
+    kept
+}
+
+/// The four producers, `projection`, `union`, `sub_projection` and
+/// `from_in_order`, and the cold builder of regions, against the projection
+/// by definition on random homes of up to 12 leaves.
+#[test]
+fn the_producers_build_the_projection_by_definition() {
+    // Unions, sub-projections, sub-projections with regions, unions with
+    // regions.
+    let mut seen = [0; 4];
+    for seed in 0..400u64 {
+        let mut rng = Lcg::new(seed ^ 0x6c69_6e6b);
+        let n = 1 + rng.below(12) as u32;
+        let home = Home::new(Vtree::random(n, seed));
+        let index = home.index();
+        let pick = |rng: &mut Lcg| -> Vec<u32> {
+            let ranks: Vec<u32> = (0..n).filter(|_| rng.coin()).collect();
+            if ranks.is_empty() { vec![rng.below(u64::from(n)) as u32] } else { ranks }
+        };
+        let var = |r: u32| index.var_at[r as usize];
+        let (ra, rb) = (pick(&mut rng), pick(&mut rng));
+        let pa = Vtree::projection(&home, ra.iter().rev().map(|&r| var(r))).unwrap();
+        let pb = Vtree::projection(&home, rb.iter().map(|&r| var(r))).unwrap();
+        for (p, ranks) in [(&pa, &ra), (&pb, &rb)] {
+            if ranks.len() == n as usize {
+                assert!(Arc::ptr_eq(p, home.vtree()));
+                continue;
+            }
+            is_by_definition(p, &kept_of(&home, ranks.iter().copied()), "projection");
+            let locals: Vec<VarId> = (1..=ranks.len() as u32).map(VarId).collect();
+            let depth = |mut h: VtreeIdx| {
+                let mut d = 0;
+                while let Some(parent) = home.vtree().node(h).parent() {
+                    (h, d) = (parent, d + 1);
+                }
+                d
+            };
+            let depths: Vec<u32> = ranks.windows(2).map(|w| depth(home.node_over(w[0], w[1]))).collect();
+            let local = Vtree::from_in_order(&locals, &depths, ranks.len() as u32).unwrap();
+            let twin = p.local_twin(|t| VarId(t.0 + 1), ranks.len() as u32);
+            assert!(local.same_tree(&twin), "from_in_order, seed {seed}");
+        }
+
+        let mut both: Vec<u32> = ra.iter().chain(&rb).copied().collect();
+        both.sort_unstable();
+        both.dedup();
+        let union = Vtree::union(&pa, &pb).unwrap();
+        match both.len() == n as usize {
+            true => assert!(Arc::ptr_eq(&union, home.vtree())),
+            false => {
+                seen[0] += usize::from(!Arc::ptr_eq(&union, &pa) && !Arc::ptr_eq(&union, &pb));
+                is_by_definition(&union, &kept_of(&home, both.iter().copied()), "union");
+            }
+        }
+
+        if pa.home.is_some() {
+            let keep: Vec<bool> = (0..pa.num_nodes()).map(|_| rng.coin()).collect();
+            let mut map = Vec::new();
+            if let Ok(sub) = pa.sub_projection_mapped(&home, |t| keep[t.idx()], Some(&mut map)) {
+                let kept = ra.iter().enumerate().filter(|&(i, _)| keep[i]).map(|(_, &r)| r);
+                if !Arc::ptr_eq(&sub, &pa) {
+                    seen[1] += 1;
+                    is_by_definition(&sub, &kept_of(&home, kept), "sub-projection");
+                }
+                for (t, &to) in map.iter().enumerate() {
+                    let h = pa.home_node(VtreeIdx(t as u32));
+                    assert_eq!(to, sub.node_at_home(h), "sub-projection map, seed {seed}, node {t}");
+                }
+            }
+        }
+
+        // Regions: some positions of `ra` anchor an extent reaching towards
+        // the next position.
+        if ra.len() == n as usize {
+            continue;
+        }
+        let mut regions = Vec::new();
+        for (i, &r) in ra.iter().enumerate() {
+            if rng.below(3) == 0 {
+                let end = ra.get(i + 1).copied().unwrap_or(n).min(r + 1 + rng.below(3) as u32);
+                let count = end - r;
+                regions.push(Region { at: i as u32, extent: Box::new([(r, end)]), count });
+            }
+        }
+        if regions.is_empty() {
+            continue;
+        }
+        let own = Vtree::project_regions(
+            &home,
+            ra.iter().enumerate().filter(|&(i, _)| regions.iter().all(|g| g.at as usize != i)).map(|(_, &r)| r).collect(),
+            regions.iter().map(|g| (ra[g.at as usize], g.extent.clone())).collect(),
+        );
+        is_by_definition(&own, &kept_of(&home, ra.iter().copied()), "regions");
+        let keep: Vec<bool> = (0..own.num_nodes()).map(|_| rng.coin()).collect();
+        let mut map = Vec::new();
+        if let Ok(sub) = own.sub_projection_mapped(&home, |t| keep[t.idx()], Some(&mut map)) {
+            let anchors: Vec<u32> = regions.iter().map(|g| ra[g.at as usize]).collect();
+            let kept = own.projected_leaves().zip(&ra).filter(|&(t, r)| anchors.contains(r) || keep[t.idx()]).map(|(_, &r)| r);
+            seen[2] += usize::from(!Arc::ptr_eq(&sub, &own));
+            is_by_definition(&sub, &kept_of(&home, kept.collect::<Vec<_>>()), "sub-projection with regions");
+            assert_eq!(sub.regions().count(), regions.len());
+            for (t, &to) in map.iter().enumerate() {
+                assert_eq!(to, sub.node_at_home(own.home_node(VtreeIdx(t as u32))), "sub map with regions, node {t}");
+            }
+        }
+        let outside: Vec<u32> = (0..n).filter(|&r| regions.iter().all(|g| !(g.extent[0].0..g.extent[0].1).contains(&r))).filter(|_| rng.coin()).collect();
+        if let Some(&first) = outside.first() {
+            let other = Vtree::projection(&home, outside.iter().map(|&r| var(r))).unwrap();
+            if let Ok(LeafSets::Union(union)) = Vtree::leaf_sets(&own, &other) {
+                let mut all: Vec<u32> = ra.iter().chain(&outside).copied().collect();
+                all.sort_unstable();
+                all.dedup();
+                seen[3] += 1;
+                is_by_definition(&union, &kept_of(&home, all), "union with regions");
+                assert_eq!(union.regions().count(), regions.len(), "seed {seed}, first {first}");
+            }
+        }
+    }
+    assert!(seen.iter().all(|&count| count > 20), "{seen:?}");
 }

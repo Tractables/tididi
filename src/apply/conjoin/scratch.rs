@@ -26,6 +26,15 @@ pub(crate) struct ApplyScratch {
     pub(crate) right_floats: Pool<Vec<f64>>,
     /// The slots of the child rows a streamed level keeps as floats.
     pub(crate) row_slots: Pool<Vec<u32>>,
+    /// The tables of a conjunction with one leaf set inside the other, by
+    /// node of the larger vtree, every entry free between conjunctions:
+    /// checked out preserving.
+    pub(crate) cone_targets: Pool<Vec<crate::restructure::embed::Target>>,
+    pub(crate) cone_slots: Pool<Vec<super::view::Slot>>,
+    /// The smaller operand's leaves and their images.
+    pub(crate) cone_leaves: Pool<Vec<(crate::vtree::VtreeIdx, crate::vtree::VtreeIdx)>>,
+    /// The tables of a conjunction across leaf sets neither equal nor nested.
+    pub(crate) union: Pool<super::union::UnionTables>,
 }
 
 impl Pools for ApplyScratch {
@@ -45,6 +54,10 @@ impl Pools for ApplyScratch {
         visit(&self.left_floats);
         visit(&self.right_floats);
         visit(&self.row_slots);
+        visit(&self.cone_targets);
+        visit(&self.cone_slots);
+        visit(&self.cone_leaves);
+        visit(&self.union);
     }
 }
 
@@ -104,7 +117,6 @@ impl PooledScratch for ApplyWorkspace {
     fn retain(&mut self, lim: &Limits) -> usize {
         self.lists.clear();
         self.stream_cache.discard_columns();
-        self.products.drop_unused_lists(lim);
         self.release_oversized(lim)
     }
 }

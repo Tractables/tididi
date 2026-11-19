@@ -70,23 +70,60 @@ use crate::vtree::{Vtree, VtreeIdx};
 /// A leaf level is never compacted, and the root has no parent level, so
 /// neither is listed.
 ///
+/// A level of `chain`, the chain above the cone the sweep built
+/// ([`Cone::chain`]), is a built level, though the plan leaves it free in
+/// `g`; a level the sweep stopped short of is free in `g`, and taken from
+/// `f`, with what it holds.
+///
 /// The list is written into the allocation of the larger operand list, grown
 /// once to the most it can hold. It lists each level once.
+///
+/// [`Cone::chain`]: super::super::setup::Cone::chain
 pub(super) fn loose_levels(
     vtree: &Vtree,
-    run: &ApplyRun<'_, '_>,
+    run: &mut ApplyRun<'_, '_>,
+    chain: &[VtreeIdx],
     operands: Operands<Vec<u32>>,
+) -> Vec<u32> {
+    let mut table = std::mem::take(&mut run.lists.loose_in);
+    if table.len() < vtree.num_nodes() {
+        table.resize(vtree.num_nodes(), 0);
+    }
+    let mut touched = std::mem::take(&mut run.lists.loose_touched);
+    let loose = loose_levels_in(vtree, run, chain, operands, &mut table, &mut touched);
+    for t in touched.drain(..) {
+        table[t as usize] = 0;
+    }
+    run.lists.loose_in = table;
+    run.lists.loose_touched = touched;
+    loose
+}
+
+/// [`loose_levels`] in `loose_in`, a table of zeros, of which the entries
+/// it sets are listed in `touched`.
+fn loose_levels_in(
+    vtree: &Vtree,
+    run: &ApplyRun<'_, '_>,
+    chain: &[VtreeIdx],
+    operands: Operands<Vec<u32>>,
+    loose_in: &mut [u8],
+    touched: &mut Vec<u32>,
 ) -> Vec<u32> {
     // Which operand has each level loose: 1 for `f`, 2 for `g`, as
     // `identity_carrier` names them; `LISTED` once a level under a free one
-    // is listed.
+    // is listed; `CHAIN` at a level of the chain the sweep built.
     const LISTED: u8 = 4;
-    let mut loose_in = vec![0u8; vtree.num_nodes()];
-    for &t in &operands.f {
-        loose_in[t as usize] |= 1;
+    const CHAIN: u8 = 8;
+    touched.reserve(operands.f.len() + operands.g.len() + chain.len());
+    for (list, by) in [(&operands.f, 1), (&operands.g, 2)] {
+        for &t in list {
+            loose_in[t as usize] |= by;
+        }
+        touched.extend_from_slice(list);
     }
-    for &t in &operands.g {
-        loose_in[t as usize] |= 2;
+    for &t in chain {
+        loose_in[t.idx()] |= CHAIN;
+        touched.push(t.0);
     }
     let internal = |t: VtreeIdx| !vtree.node(t).is_leaf();
     let cone = run.cone;
@@ -103,7 +140,7 @@ pub(super) fn loose_levels(
             && vtree
                 .node(c)
                 .parent()
-                .is_some_and(|p| cone.free_at(p.idx()) && from(p) == by);
+                .is_some_and(|p| cone.free_at(p.idx()) && loose_in[p.idx()] & CHAIN == 0 && from(p) == by);
         if listed {
             loose_in[c.idx()] |= LISTED;
         }
@@ -117,75 +154,72 @@ pub(super) fn loose_levels(
         true => ((f_list, 1), (g_list, 2)),
         false => ((g_list, 2), (f_list, 1)),
     };
-    loose.retain(|&c| under_free(c, by, &mut loose_in));
-    // Each level below the root is listed once at most, from its parent.
-    loose.reserve(
-        vtree
-            .internal_bottomup_slice()
-            .len()
-            .saturating_sub(1)
-            .saturating_sub(loose.len()),
-    );
+    loose.retain(|&c| under_free(c, by, loose_in));
+    // At most the other list's levels under a free one, and the two
+    // children of each level built.
+    loose.reserve(other.len() + 2 * (cone.built.len() + chain.len()));
     for &c in &other {
-        if under_free(c, other_by, &mut loose_in) {
+        if under_free(c, other_by, loose_in) {
             loose.push(c);
         }
     }
     let under_free_levels = loose.len();
-    for &p in cone.built {
-        let (left, right) = vtree.children(p);
-        let by = run.lists.identity_carrier(p.idx());
-        if by != 0 {
-            loose.extend(
-                [left, right]
-                    .into_iter()
-                    .filter(|&c| internal(c) && loose_in[c.idx()] & by != 0)
-                    .map(|c| c.0),
-            );
-            continue;
-        }
-        let built = !run.levels[p.idx()].nodes().is_empty();
-        let tight_in = |c: VtreeIdx, by: u8, widths: &[usize]| {
-            loose_in[c.idx()] & by == 0 || (widths[c.idx()] == 1 && built)
-        };
-        let kills_none = |s: VtreeIdx| match internal(s) {
-            true => {
-                run.f_widths[s.idx()].checked_mul(run.g_widths[s.idx()])
-                    == Some(run.levels[s.idx()].nodes().len())
-            }
-            false => run.f_identity[s.idx()] || run.g_identity[s.idx()],
-        };
-        // The operand the conjunction built `p` as, if any.
-        let as_operand = run
-            .lists
-            .as_operand
-            .binary_search_by_key(&p.idx(), |e| e.0)
-            .ok()
-            .map(|i| run.lists.as_operand[i].1);
-        let held = run.lists.outer_held.binary_search(&p.idx()).is_ok();
-        let named_as_operand = |c: VtreeIdx| {
-            as_operand.is_some_and(|by| {
-                let widths = if by == 1 {
-                    &run.f_widths[..]
-                } else {
-                    &run.g_widths[..]
-                };
-                loose_in[c.idx()] & by == 0 && run.levels[c.idx()].node_count() == widths[c.idx()]
-            })
-        };
-        for (c, s) in [(left, right), (right, left)] {
-            if !internal(c) || named_as_operand(c) {
+    for levels in [cone.built, chain] {
+        for &p in levels {
+            let (left, right) = vtree.children(p);
+            let by = run.lists.identity_carrier(p.idx());
+            if by != 0 {
+                loose.extend(
+                    [left, right]
+                        .into_iter()
+                        .filter(|&c| internal(c) && loose_in[c.idx()] & by != 0)
+                        .map(|c| c.0),
+                );
                 continue;
             }
-            let tight_f = tight_in(c, 1, run.f_widths);
-            if tight_f && tight_in(c, 2, run.g_widths) && kills_none(s) {
-                continue;
+            let built = !run.levels[p.idx()].nodes().is_empty();
+            let tight_in = |c: VtreeIdx, by: u8, widths: &[usize]| {
+                loose_in[c.idx()] & by == 0 || (widths[c.idx()] == 1 && built)
+            };
+            let kills_none = |s: VtreeIdx| match internal(s) {
+                true => {
+                    run.f_widths[s.idx()].checked_mul(run.g_widths[s.idx()])
+                        == Some(run.levels[s.idx()].nodes().len())
+                }
+                false => run.f_identity[s.idx()] || run.g_identity[s.idx()],
+            };
+            // The operand the conjunction built `p` as, if any.
+            let as_operand = run
+                .lists
+                .as_operand
+                .binary_search_by_key(&p.idx(), |e| e.0)
+                .ok()
+                .map(|i| run.lists.as_operand[i].1);
+            let held = run.lists.outer_held.binary_search(&p.idx()).is_ok();
+            let named_as_operand = |c: VtreeIdx| {
+                as_operand.is_some_and(|by| {
+                    let widths = if by == 1 {
+                        &run.f_widths[..]
+                    } else {
+                        &run.g_widths[..]
+                    };
+                    loose_in[c.idx()] & by == 0 && run.levels[c.idx()].node_count() == widths[c.idx()]
+                })
+            };
+            for (c, s) in [(left, right), (right, left)] {
+                if !internal(c) || named_as_operand(c) {
+                    continue;
+                }
+                let tight_f = tight_in(c, 1, run.f_widths);
+                if tight_f && tight_in(c, 2, run.g_widths) && kills_none(s) {
+                    continue;
+                }
+                if tight_f && held && !internal(s) {
+                    super::super::note_held_tight();
+                    continue;
+                }
+                loose.push(c.0);
             }
-            if tight_f && held && !internal(s) {
-                super::super::note_held_tight();
-                continue;
-            }
-            loose.push(c.0);
         }
     }
     // In the order of the levels' parents bottom-up, the left child first,
@@ -360,8 +394,8 @@ fn adds_no_twins(
 /// does the result.
 ///
 /// [`SweepLists::collect_built`]: super::super::setup::SweepLists::collect_built
-pub(super) fn split_built(vtree: &Vtree, run: &mut ApplyRun) {
-    run.lists.collect_built(run.cone.built);
+pub(super) fn split_built(vtree: &Vtree, run: &mut ApplyRun, chain: &[VtreeIdx]) {
+    run.lists.collect_built(run.cone.built, chain);
     let lists = &mut *run.lists;
     for &t in &lists.built {
         let twin_free = lists

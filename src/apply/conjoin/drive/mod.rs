@@ -98,7 +98,9 @@ fn sweep_levels(
     // their regions before the sweep, and their nodes are counted as if they
     // were built in their places bottom-up.
     let mut output_nodes = 0u64;
-    for (k, &t) in cone.built.iter().enumerate() {
+    let mut next = cone.built.first().copied();
+    let mut k = 0;
+    while let Some(t) = next {
         let (left, right) = vtree.children(t);
         if progress {
             // The level's place among all internal levels, from 1.
@@ -113,6 +115,12 @@ fn sweep_levels(
         lim.level_done(before)?;
         build_level(eng, run, f, g, sweep, (t, left, right), before)?;
         output_nodes += run.levels[t.idx()].slot_count() as u64;
+        k += 1;
+        next = match cone.built.get(k) {
+            Some(&t) => Some(t),
+            None if cone.chain => reach_parent(eng, run, f, g, vtree, t)?,
+            None => None,
+        };
     }
     if progress {
         lim.conjunction_reached(internal.len() as u32);
@@ -124,7 +132,107 @@ fn sweep_levels(
         sweep.ws.as_deref_mut(),
     )?;
     // The root has no following level boundary at which to check its output.
-    lim.level_done(output_nodes + cone.free_nodes)
+    lim.level_done(output_nodes + run.cone.free_nodes)
+}
+
+/// The parent of `c`, the last level an adopting conjunction built, `g`'s
+/// top or a level of the chain above it, readied for the sweep, unless the
+/// sweep stops at `c` ([`kept_above`]) or `c` is the root: `g`'s view builds
+/// its pass-through there, and the parent and its child off the chain, a
+/// leaf or the top of a region free in `g`, get what the setup gives the
+/// levels it lists and their children (`survey_listed`,
+/// `init_leaf_identity_over`, `apply_leaf_levels`, `region::take_regions`).
+///
+/// # Errors
+///
+/// [`OperationError::OverBudget`] when a level or table cannot grow.
+fn reach_parent(
+    eng: &Engine,
+    run: &mut ApplyRun,
+    f: &mut Held<'_>,
+    g: &mut Held<'_>,
+    vtree: &crate::vtree::Vtree,
+    c: VtreeIdx,
+) -> Result<Option<VtreeIdx>, OperationError> {
+    let Some(t) = vtree.node(c).parent() else { return Ok(None) };
+    if kept_above(run, c) {
+        run.stopped = true;
+        return Ok(None);
+    }
+    reach(eng, run, f, g, vtree, t, c)?;
+    Ok(Some(t))
+}
+
+#[cold]
+#[inline(never)]
+fn reach(
+    eng: &Engine,
+    run: &mut ApplyRun,
+    f: &mut Held<'_>,
+    g: &mut Held<'_>,
+    vtree: &crate::vtree::Vtree,
+    t: VtreeIdx,
+    c: VtreeIdx,
+) -> Result<(), OperationError> {
+    let lim = eng.limits();
+    let (left, right) = vtree.children(t);
+    let s = if left == c { right } else { left };
+    let leaf = vtree.node(s).is_leaf();
+    g.pass_through(lim, t)?;
+    let (at, side) = (t.idx(), s.idx());
+    run.f_widths[at] = f.level(at).slot_count();
+    run.g_widths[at] = g.level(at).slot_count();
+    (run.f_widths[side], run.g_widths[side]) = match leaf {
+        true => (LEAF_WIDTH, LEAF_WIDTH),
+        false => (f.level(side).slot_count(), 1),
+    };
+    for x in [at, side] {
+        let cells = grid_arena::grid_cells(run.f_widths[x], run.g_widths[x])?;
+        run.products.reach(eng, x, cells)?;
+    }
+    let (unscanned, leaves): (&[VtreeIdx], &[VtreeIdx]) = match leaf {
+        true => (&[], &[s]),
+        false => (&[s], &[]),
+    };
+    init_leaf_identity_over(eng, run.g_identity, g, &[t], unscanned, leaves)?;
+    init_leaf_identity_over(eng, run.f_identity, f, &[t], unscanned, leaves)?;
+    if leaf {
+        super::leaf_seed::leaf_grid(eng, run.products, side)?;
+    } else {
+        // As `region::take_regions` takes a top for an adopting conjunction.
+        run.g_identity[side] = true;
+        super::identity::publish_identity_level(run.products, side, run.f_widths[side]);
+        run.products.note_complete(side);
+        f.carry(lim, side, &mut run.levels[side])?;
+    }
+    if lim.output_node_cap().is_some() {
+        run.cone.free_nodes = run.cone.free_nodes.saturating_sub(run.f_widths[at] as u64);
+    }
+    Ok(())
+}
+
+/// Every level a conjunction visited: those of `cone`, and each level of
+/// `chain`, the levels it built above them ([`reach_parent`]), with its
+/// child off the chain, the sibling of the level below.
+fn visited<'a>(vtree: &'a crate::vtree::Vtree, cone: super::setup::Cone<'a>, chain: &'a [VtreeIdx]) -> impl Iterator<Item = usize> + 'a {
+    let mut below = cone.built.last().copied();
+    cone.nodes().chain(chain.iter().flat_map(move |&t| {
+        let (left, right) = vtree.children(t);
+        let side = if Some(left) == below { right } else { left };
+        below = Some(t);
+        [t.idx(), side.idx()]
+    }))
+}
+
+/// Whether the parent of `v`, a level of the chain from `g`'s top to the
+/// root, and every level above it are `f`'s as stored: `g` has one node at
+/// `v` and the products there are `f`'s nodes in order, so no node of `f`
+/// died at `v` and the levels above read the same nodes. The test reads
+/// the child, never the level it decides on: at `g`'s top a node of `f` can
+/// lose a pair and no node.
+#[inline]
+fn kept_above(run: &ApplyRun, v: VtreeIdx) -> bool {
+    run.g_widths[v.idx()] == 1 && run.products.is_complete(v.idx())
 }
 
 /// Build the level at `t` from its children's, by the route it is given, and
@@ -154,7 +262,7 @@ fn build_level(
     let taken = take_level_fast_path(eng, run, f, g, shape)?
         || take_relabel_level(eng, run, f, g, shape, sweep)?;
     debug_assert!(
-        taken || !run.cone.free_at(t.idx()),
+        taken || !run.cone.free_at(t.idx()) || g.reached().last() == Some(&t),
         "a free level at {} takes the other operand's level",
         t.idx(),
     );
@@ -299,6 +407,28 @@ pub(crate) enum ConjoinMode<'a> {
     /// each operand's free levels ([`ApplyRun::cone`]), which only a plain
     /// conjunction may have.
     Restore { free: Operands<VtreeMask<'a>> },
+    /// Build into an owned `f`'s level array, `g` read through a view whose
+    /// plan [`Plan::cone`](crate::restructure::embed::Plan::cone) built:
+    /// `cone` lists the internal levels with a leaf of `g` under them up to
+    /// `g`'s top, children first, and `free` holds the others, the chain
+    /// from `g`'s top to the root included, which the sweep reaches up a
+    /// level at a time ([`Cone::chain`](super::setup::Cone)).
+    Adopt { free: VtreeMask<'a>, cone: &'a [VtreeIdx] },
+}
+
+/// Conjoin a plain owned `f` and a plain `g` read through a view whose leaves
+/// are among `f`'s ([`ConjoinMode::Adopt`]): only the levels of `cone` and
+/// the leaves and tops beside them are read, and the result takes `f`'s
+/// level array, with every level outside them as `f` had it.
+pub(crate) fn apply_and_adopting(
+    eng: &Engine,
+    f: &mut Held<'_>,
+    g: &mut Held<'_>,
+    free: VtreeMask<'_>,
+    cone: &[VtreeIdx],
+) -> Result<Tdd, OperationError> {
+    debug_assert!(f.owned().is_some() && g.is_viewed());
+    apply_and_held(eng, f, g, VtreeMask::default(), ConjoinMode::Adopt { free, cone }).map(Conjoined::diagram)
 }
 
 /// Conjoin structural, unweighted operands, returning them intact on refusal,
@@ -413,9 +543,10 @@ fn apply_and_held(
     targets: VtreeMask<'_>,
     mode: ConjoinMode,
 ) -> Result<Conjoined, OperationError> {
-    let free = match mode {
-        ConjoinMode::Restore { free } => free,
-        _ => Operands::default(),
+    let (free, listed) = match mode {
+        ConjoinMode::Restore { free } => (free, None),
+        ConjoinMode::Adopt { free, cone } => (Operands { f: VtreeMask::default(), g: free }, Some(cone)),
+        _ => (Operands::default(), None),
     };
     debug_assert!(
         [(&*f, free.f), (&*g, free.g)]
@@ -506,7 +637,7 @@ fn apply_and_held(
     // are, the sweep builds into the workspace's side array, and the finish
     // moves the levels the conjunction visited into `f`'s array. No level
     // outside them is taken from the pool, moved or given back.
-    let adopted = found_free && !restoring && !f.is_borrowed();
+    let adopted = (found_free || listed.is_some()) && !restoring && !f.is_borrowed();
     let levels = match adopted {
         true => {
             let mut side = std::mem::take(&mut scratch.side);
@@ -526,7 +657,7 @@ fn apply_and_held(
         eng,
         &vtree,
         Operands { f: &*f, g: &*g },
-        (targets, free, found_free),
+        (targets, free, found_free, listed),
         kind,
         levels,
         &mut scratch,
@@ -605,6 +736,8 @@ fn apply_and_held(
         }
         return Err(e);
     }
+    // The levels the sweep built, short of the chain where it stopped.
+    let cone = run.cone;
     if let Some(count) = sweep.counted {
         return Ok(Conjoined::Counted(count));
     }
@@ -658,11 +791,11 @@ fn apply_and_held(
         // contraction's worklists.
         run.lists.as_operand.sort_unstable();
         run.lists.outer_held.sort_unstable();
-        let loose = operand_loose.map(|ops| owed::loose_levels(&vtree, &run, ops));
-        owed::split_built(&vtree, &mut run);
+        let loose = operand_loose.map(|ops| owed::loose_levels(&vtree, &mut run, g.reached(), ops));
+        owed::split_built(&vtree, &mut run, g.reached());
         loose
     } else {
-        run.lists.collect_built(cone.built);
+        run.lists.collect_built(cone.built, g.reached());
         run.lists.keep_seat_closes(closed);
         None
     };
@@ -670,16 +803,18 @@ fn apply_and_held(
     // An adopting conjunction moves the levels it visited into `f`'s array,
     // which becomes the result's, and gives the side array back to the
     // workspace with what it then holds of `f` emptied.
+    let mut taken_dirty = None;
     let side = match adopted {
         true => {
             let f = f.owned().expect("an adopting conjunction owns f");
+            taken_dirty = Some(std::mem::take(&mut f.dirty));
             let mut own = std::mem::take(&mut f.levels).into_vec();
             let levels = assembly.parts_mut().0;
-            for t in cone.nodes() {
+            for t in visited(&vtree, cone, g.reached()) {
                 std::mem::swap(&mut levels[t], &mut own[t]);
             }
             std::mem::swap(levels, &mut own);
-            for t in cone.nodes() {
+            for t in visited(&vtree, cone, g.reached()) {
                 own[t] = TddLevel::new();
             }
             Some(own)
@@ -687,7 +822,10 @@ fn apply_and_held(
         false => None,
     };
     let finished = if plain {
-        let mut owed = crate::diagram::Dirty::stacked(g.dirty(), f.dirty(), lists.built.len());
+        let mut owed = match taken_dirty {
+            Some(over) => crate::diagram::Dirty::stacked_onto(over, g.dirty(), lists.built.len()),
+            None => crate::diagram::Dirty::stacked(g.dirty(), f.dirty(), lists.built.len()),
+        };
         owed.requeue(
             crate::diagram::Pass::LeafContract,
             lists.twin_free.iter().map(|t| t.0),
@@ -741,7 +879,10 @@ fn apply_and_held(
         };
         match crate::diagram::inline_small_marginal_refs_in(lim, &vtree, levels, cone.built, None, rewrote) {
             Ok(()) if cone.constant => {
-                let owed = crate::diagram::Dirty::stacked(&Default::default(), f.dirty(), cone.built.len());
+                let owed = match taken_dirty {
+                    Some(over) => crate::diagram::Dirty::stacked_onto(over, &Default::default(), cone.built.len()),
+                    None => crate::diagram::Dirty::stacked(&Default::default(), f.dirty(), cone.built.len()),
+                };
                 assembly.finish_with_or_return(output, owed, cone.built, Some(&lists.built[..]))
             }
             Ok(()) => assembly.finish_changed_or_return(output, Some(&lists.built[..])),

@@ -6,6 +6,7 @@
 
 use crate::{Engine, OperationError};
 use crate::diagram::TddLevel;
+use crate::limits::growth::Charged;
 use super::grid_arena::GridArena;
 use super::setup::Operands;
 use super::sparse::CellLookup;
@@ -128,47 +129,113 @@ pub(super) struct Products {
     has_pl: Vec<bool>,
     /// Which levels are complete; see [`Self::is_complete`].
     complete: Vec<bool>,
+    /// The bytes the product lists hold, the lists of `touched` excepted:
+    /// parking the workspace reads this, not every list, so it costs the
+    /// levels an operation wrote whatever the most levels one ever had.
+    list_bytes: u64,
+    /// The lists handed out for writing since the count was last settled,
+    /// each once, as `is_touched` marks them.
+    touched: Vec<u32>,
+    is_touched: Vec<bool>,
+}
+
+/// The product lists counted and released as one buffer, from the running
+/// count [`Products::list_bytes`].
+struct ListsBuffer<'a> {
+    lists: &'a mut Vec<Vec<ProductEntry>>,
+    bytes: &'a mut u64,
+}
+
+impl Charged for ListsBuffer<'_> {
+    fn charged_bytes(&self) -> u64 {
+        self.lists.charged_bytes().saturating_add(*self.bytes)
+    }
+}
+
+impl crate::execution::pool::Scratch for ListsBuffer<'_> {
+    fn release(&mut self) {
+        *self.lists = Vec::new();
+        *self.bytes = 0;
+    }
 }
 
 impl Products {
     pub(super) fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::execution::pool::Scratch)) {
+        self.settle_list_bytes();
         self.arena.buffers(visit);
-        visit(&mut crate::execution::pool::Nested(&mut self.product_lists));
+        visit(&mut ListsBuffer { lists: &mut self.product_lists, bytes: &mut self.list_bytes });
         visit(&mut self.live_counts);
         visit(&mut self.has_pl);
         visit(&mut self.complete);
+        visit(&mut self.touched);
+        visit(&mut self.is_touched);
     }
 
-    /// Drop the product lists beyond the last operation's levels, so that
-    /// parking the workspace costs that operation's own levels and not the
-    /// most any operation ever had. A workspace that had seen a diagram of
-    /// 86 000 levels made every later conjunction of a few levels walk all
-    /// 86 000 lists twice on its way back to the pool. A later, larger
-    /// operation grows the vector again with empty lists.
-    pub(super) fn drop_unused_lists(&mut self, lim: &crate::limits::Limits) {
-        let used = self.live_counts.len();
-        if self.product_lists.len() > used {
-            for list in self.product_lists.drain(used..) { lim.discard(list); }
+    /// Take list `t` out of the running count until it is settled, as it
+    /// is about to be handed out for writing.
+    #[inline]
+    fn touch(&mut self, t: usize) {
+        if !self.is_touched[t] {
+            self.is_touched[t] = true;
+            self.list_bytes -= self.product_lists[t].charged_bytes();
+            self.touched.push(t as u32);
         }
-        self.has_pl.truncate(used);
-        self.complete.truncate(used);
+    }
+
+    #[inline]
+    fn touch_three(&mut self, left: usize, right: usize, out: usize) {
+        self.touch(left);
+        self.touch(right);
+        self.touch(out);
+    }
+
+    /// Count the touched lists again as they now are.
+    fn settle_list_bytes(&mut self) {
+        for t in self.touched.drain(..) {
+            self.is_touched[t as usize] = false;
+            self.list_bytes += self.product_lists[t as usize].charged_bytes();
+        }
     }
 
     /// Clear the products of a conjunction over `n` levels at the levels of
     /// `cone`; a level under a free level is read by no other level, and its
-    /// entries are left as they are and never read.
+    /// entries are left as they are and never read. The tables only grow,
+    /// so a conjunction over few levels of a large vtree resets those alone.
     pub(super) fn reset(
         &mut self, eng: &Engine, sparse: bool, n: usize, f_widths: &[usize], g_widths: &[usize],
         cone: super::setup::Cone<'_>,
     ) -> Result<(), OperationError> {
-        if self.product_lists.len() < n { self.product_lists.resize_with(n, Vec::new); }
-        self.has_pl.resize(n, false);
-        self.complete.resize(n, false);
-        self.live_counts.resize(n, 0);
+        fn grow<T: Clone>(table: &mut Vec<T>, n: usize, value: T) {
+            if table.len() < n {
+                table.resize(n, value);
+            }
+        }
+        if self.product_lists.len() < n {
+            self.product_lists.resize_with(n, Vec::new);
+        }
+        grow(&mut self.has_pl, n, false);
+        grow(&mut self.complete, n, false);
+        grow(&mut self.live_counts, n, 0);
+        grow(&mut self.is_touched, n, false);
         for i in cone.nodes() {
-            self.product_lists[i].clear(); self.has_pl[i] = false; self.complete[i] = false; self.live_counts[i] = 0;
+            self.clear_level(i);
         }
         self.arena.reset(eng, sparse, n, f_widths, g_widths, cone)
+    }
+
+    fn clear_level(&mut self, t: usize) {
+        self.product_lists[t].clear();
+        self.has_pl[t] = false;
+        self.complete[t] = false;
+        self.live_counts[t] = 0;
+    }
+
+    /// Clear the products at level `t`, which [`reset`](Self::reset) did
+    /// not, and ready its grid of `cells` cells
+    /// ([`GridArena::lay_out`](super::grid_arena::GridArena::lay_out)).
+    pub(super) fn reach(&mut self, eng: &Engine, t: usize, cells: usize) -> Result<(), OperationError> {
+        self.clear_level(t);
+        self.arena.lay_out(eng, t, cells)
     }
 
     /// Whether level `t` is complete: every product `f[i] ∧ g[j]` of its
@@ -237,6 +304,7 @@ impl Products {
     }
 
     pub(super) fn lists(&mut self, left: usize, right: usize, out: usize) -> ProductLists<'_> {
+        self.touch_three(left, right, out);
         split_lists(&mut self.product_lists, left, right, out)
     }
 
@@ -250,6 +318,7 @@ impl Products {
         g_widths: Sides<usize>,
         identity: Sides<Operands<bool>>,
     ) -> (ProductLists<'_>, Sides<CellLookup<'_>>) {
+        self.touch_three(left, right, out);
         let cells = |c: usize, g_width: usize, id: Operands<bool>| {
             if id.g {
                 CellLookup::GIdentity
@@ -272,6 +341,7 @@ impl Products {
     }
 
     pub(super) fn row_buffers(&mut self, t: usize) -> (&mut Vec<u32>, &mut Vec<ProductEntry>) {
+        self.touch(t);
         (self.arena.slab_vec(), &mut self.product_lists[t])
     }
 
@@ -354,6 +424,7 @@ impl Products {
         if let Some(base) = self.arena.materialized(t) {
             self.arena.slab_mut()[base.idx()..base.idx() + map.len()].copy_from_slice(map);
         } else {
+            self.touch(t);
             let list = &mut self.product_lists[t];
             list.clear();
             eng.limits().reserve(list, nodes)?;
@@ -393,6 +464,7 @@ impl Products {
         g_identity: bool, f_identity: bool,
     ) -> Result<(), OperationError> {
         if self.has_pl[ci] { return Ok(()); }
+        self.touch(ci);
         let list = &mut self.product_lists[ci];
         if !fill_identity_product_list(eng, f_width, g_width, g_identity, f_identity, list)? {
             if self.arena.materialized(ci).is_none() && self.complete[ci] {

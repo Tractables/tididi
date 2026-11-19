@@ -80,6 +80,8 @@ pub(super) struct GridArena {
     grids: Vec<Option<GridBase>>,
     /// The bump allocator's state; `None` on a pre-planned layout.
     bump: Option<Bump>,
+    /// The end of a pre-planned layout.
+    planned: usize,
 }
 
 impl GridArena {
@@ -90,7 +92,9 @@ impl GridArena {
     ) -> Result<(), OperationError> {
         // A level outside `cone` is read by no other level, and its entry is
         // never read.
-        self.grids.resize(n, None);
+        if self.grids.len() < n {
+            self.grids.resize(n, None);
+        }
         let mut bump = self.bump.take().unwrap_or_default();
         bump.end = 0;
         bump.free.clear();
@@ -107,7 +111,25 @@ impl GridArena {
                 cursor = cursor.checked_add(cells).ok_or(OperationError::OverBudget)?;
             }
             try_resize_dead(eng, &mut self.cells, cursor)?;
+            self.planned = cursor;
         }
+        Ok(())
+    }
+
+    /// Ready level `t`, which [`reset`](Self::reset) did not, for `cells`
+    /// cells: no grid while bumping, else a grid past the layout's end.
+    pub(super) fn lay_out(&mut self, eng: &Engine, t: usize, cells: usize) -> Result<(), OperationError> {
+        if self.bump.is_some() {
+            self.grids[t] = None;
+            return Ok(());
+        }
+        let end = self.planned.checked_add(cells).ok_or(OperationError::OverBudget)?;
+        // Amortized: a forced walk lays out one small grid per level to the root.
+        let more = end.saturating_sub(self.cells.len());
+        eng.limits().reserve(&mut self.cells, more)?;
+        try_resize_dead(eng, &mut self.cells, end)?;
+        self.grids[t] = Some(GridBase(self.planned));
+        self.planned = end;
         Ok(())
     }
 

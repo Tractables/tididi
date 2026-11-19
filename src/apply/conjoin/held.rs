@@ -204,6 +204,25 @@ impl Held<'_> {
         }
     }
 
+    /// Have the view build its pass-through at `t` ([`View::pass_through`]).
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::OverBudget`] when the level cannot grow.
+    pub(super) fn pass_through(&mut self, lim: &Limits, t: VtreeIdx) -> Result<(), OperationError> {
+        let Held { tdd, view } = self;
+        let tdd: &Tdd = match tdd {
+            Hold::Owned(tdd) => tdd,
+            Hold::Borrowed(tdd) => tdd,
+        };
+        view.as_deref_mut().expect("a pass-through is built by a view").pass_through(lim, tdd, t)
+    }
+
+    /// The levels [`Held::pass_through`] built, bottom-up.
+    pub(super) fn reached(&self) -> &[VtreeIdx] {
+        self.view.as_deref().map_or(&[], View::reached)
+    }
+
     /// Make the operand's level at the free node `t` the level it stands
     /// for, where an owned operand on its own vtree holds it empty; a view
     /// builds it when it is carried.

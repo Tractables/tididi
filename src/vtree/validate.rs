@@ -50,7 +50,7 @@ impl Vtree {
         let n = self.nodes.len();
         if n == 0 {
             return match self.home.as_deref() {
-                Some(link) if link.ranks.is_empty() && link.node_of.is_empty() && link.in_order.is_empty() => Ok(()),
+                Some(link) if link.slot.is_empty() => Ok(()),
                 _ => invalid("no nodes".to_string()),
             };
         }

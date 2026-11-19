@@ -87,6 +87,12 @@ pub(super) struct Cone<'a> {
     pub(super) constant: bool,
     /// Each operand's free levels.
     masks: Operands<VtreeMask<'a>>,
+    /// Whether `built` ends at `g`'s top, below the chain from there to the
+    /// root, which the free levels hold and at each level of which `g` is
+    /// its output passing through: the sweep goes on up the chain a level
+    /// at a time, and stops at the first level whose products are `f`'s
+    /// nodes in order (`drive::sweep_levels`).
+    pub(super) chain: bool,
 }
 
 impl Cone<'_> {
@@ -221,6 +227,10 @@ pub(super) struct SweepLists {
     pub(super) twin_free: Vec<VtreeIdx>,
     /// The stack of a walk down a region (`region::constant_true`).
     pub(super) stack: Vec<VtreeIdx>,
+    /// `drive::owed::loose_levels`' flags by level, all zero between
+    /// conjunctions, and the levels it set them at.
+    pub(super) loose_in: Vec<u8>,
+    pub(super) loose_touched: Vec<u32>,
 }
 
 impl SweepLists {
@@ -253,15 +263,16 @@ impl SweepLists {
         identity_carrier(self.moved[t])
     }
 
-    /// List in `built` the levels of `cone` no identity fast path moved:
-    /// the levels a plain conjunction built, the relabelled ones included.
-    pub(super) fn collect_built(&mut self, cone: &[VtreeIdx]) {
-        let moved = &self.moved;
-        self.built.extend(
-            cone.iter()
-                .copied()
-                .filter(|t| identity_carrier(moved[t.idx()]) == 0),
-        );
+    /// List in `built` the levels of `cone` and of `chain`, the levels of
+    /// the chain above it the sweep built ([`Cone::chain`]), no identity fast
+    /// path moved: the levels a plain conjunction built, the relabelled ones
+    /// included.
+    #[inline(always)]
+    pub(super) fn collect_built(&mut self, cone: &[VtreeIdx], chain: &[VtreeIdx]) {
+        let Self { moved, built, .. } = self;
+        for levels in [cone, chain] {
+            built.extend(levels.iter().copied().filter(|t| identity_carrier(moved[t.idx()]) == 0));
+        }
     }
 
     /// Whether the seat closes level `t`, given whether `f` and `g` were
@@ -329,6 +340,8 @@ impl SweepLists {
         visit(&mut self.owed_twins);
         visit(&mut self.twin_free);
         visit(&mut self.stack);
+        visit(&mut self.loose_in);
+        visit(&mut self.loose_touched);
     }
 }
 
@@ -372,6 +385,10 @@ pub(super) struct ApplyRun<'a, 'r> {
     /// only each region's top from `f`, and the finish moves the levels it
     /// visited into `f`'s array (`drive::apply_and_held`).
     pub(super) adopted: bool,
+    /// Whether the sweep stopped short of the root on the chain from `g`'s
+    /// top ([`Cone::chain`]): every level above, and the output, are `f`'s
+    /// as stored.
+    pub(super) stopped: bool,
     /// Whether nothing but pairs changes hands: no weights, no summed-out
     /// or marginal level. Only such a conjunction
     /// reads [`SweepLists::as_operand`].
@@ -618,6 +635,9 @@ struct Snapshot {
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] when a list cannot grow.
+// Out of line, as is `survey_listed`: inlined, the code of its loop moved
+// with unrelated edits to `apply_and_setup`.
+#[inline(never)]
 fn survey<'r, L: Levels + ?Sized>(
     eng: &Engine,
     vtree: &'r Vtree,
@@ -700,6 +720,7 @@ fn survey<'r, L: Levels + ?Sized>(
             free_nodes: 0,
             constant: false,
             masks,
+            chain: false,
         };
         let snapshot = Snapshot {
             total_cells,
@@ -776,6 +797,7 @@ fn survey<'r, L: Levels + ?Sized>(
         free_nodes,
         constant: false,
         masks,
+        chain: false,
     };
     let snapshot = Snapshot {
         total_cells,
@@ -783,6 +805,81 @@ fn survey<'r, L: Levels + ?Sized>(
         might_use_sparse,
     };
     Ok((snapshot, cone))
+}
+
+/// [`survey`] of plain operands of which `g` is free at every internal level
+/// but those of `listed`, children first, and the chain above them
+/// ([`Cone::chain`]): only the levels listed, their leaf
+/// children and their free children, the tops, are read. The output-node
+/// cap counts the levels outside them by `f`'s node count, read only where
+/// a cap is set.
+#[expect(clippy::too_many_arguments, reason = "the survey's inputs and outputs")]
+#[inline(never)]
+fn survey_listed<'r>(
+    eng: &Engine,
+    vtree: &'r Vtree,
+    ops: Operands<&Held<'_>>,
+    masks: Operands<VtreeMask<'r>>,
+    listed: &'r [VtreeIdx],
+    min_grid: usize,
+    widths: Operands<&mut [usize]>,
+    lists: &'r mut ConeLists,
+) -> Result<(Snapshot, Cone<'r>), OperationError> {
+    let Operands { f, g } = ops;
+    let lim = eng.limits();
+    let ConeLists { tops, leaves, .. } = lists;
+    tops.clear();
+    leaves.clear();
+    lim.reserve(tops, listed.len() + 1)?;
+    lim.reserve(leaves, 2 * listed.len() + 1)?;
+    let leaf_cells = (LEAF_WIDTH * LEAF_WIDTH) as u64;
+    let mut total_cells = 0u64;
+    let mut might_use_sparse = false;
+    let mut swept_nodes = 0u64;
+    for &t in listed {
+        let at = t.idx();
+        let (w1, w2) = (f.level(at).slot_count(), g.level(at).slot_count());
+        widths.f[at] = w1;
+        widths.g[at] = w2;
+        swept_nodes += w1 as u64;
+        let cells = (w1 as u64).saturating_mul(w2 as u64);
+        let combinations = combinations_bound(f.level(at), g.level(at));
+        might_use_sparse |= cells > min_grid as u64 || combinations > min_grid as u128;
+        if cells <= min_grid as u64 {
+            total_cells = total_cells.saturating_add(cells);
+        }
+        let (left, right) = vtree.children(t);
+        for child in [left, right] {
+            if vtree.node(child).is_leaf() {
+                widths.f[child.idx()] = LEAF_WIDTH;
+                widths.g[child.idx()] = LEAF_WIDTH;
+                if leaf_cells <= min_grid as u64 {
+                    total_cells = total_cells.saturating_add(leaf_cells);
+                }
+                leaves.push(child);
+            } else if masks.g.contains(child.idx()) {
+                widths.f[child.idx()] = f.level(child).slot_count();
+                widths.g[child.idx()] = 1;
+                tops.push(child);
+            }
+        }
+    }
+    let free_nodes = match lim.output_node_cap() {
+        Some(_) => (f.tdd().levels.node_count() as u64).saturating_sub(swept_nodes),
+        None => 0,
+    };
+    let cone = Cone {
+        built: listed,
+        free_before: &[],
+        tops,
+        free: &[],
+        leaves,
+        free_nodes,
+        constant: false,
+        masks,
+        chain: true,
+    };
+    Ok((Snapshot { total_cells, any_entry_marginal: false, might_use_sparse }, cone))
 }
 
 /// Mark in `out` each internal level at which both operands are constant
@@ -875,7 +972,7 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
     eng: &Engine,
     vtree: &'r Vtree,
     ops: Operands<&Held<'_>>,
-    (targets, free, found_free): (VtreeMask<'_>, Operands<VtreeMask<'r>>, bool),
+    (targets, free, found_free, listed): (VtreeMask<'_>, Operands<VtreeMask<'r>>, bool, Option<&'r [VtreeIdx]>),
     kind: crate::value::StreamKind,
     levels: &'a mut [TddLevel],
     scratch: &'r mut ApplyWorkspace,
@@ -944,9 +1041,10 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
             might_use_sparse,
         },
         cone,
-    ) = match (ops.f.own_levels(), ops.g.own_levels()) {
-        (Some(f), Some(g)) => survey(eng, vtree, Operands { f, g }, free, min_grid, out, cone)?,
-        _ => survey(eng, vtree, ops, free, min_grid, out, cone)?,
+    ) = match (listed, ops.f.own_levels(), ops.g.own_levels()) {
+        (Some(listed), ..) => survey_listed(eng, vtree, ops, free, listed, min_grid, out.0, cone)?,
+        (None, Some(f), Some(g)) => survey(eng, vtree, Operands { f, g }, free, min_grid, out, cone)?,
+        (None, ..) => survey(eng, vtree, ops, free, min_grid, out, cone)?,
     };
     let cone = Cone {
         constant: found_free,
@@ -986,6 +1084,7 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
         lists,
         restoring: false,
         adopted: false,
+        stopped: false,
         plain: false,
         built_marginal: false,
         cone,

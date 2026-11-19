@@ -150,6 +150,9 @@ pub(super) fn compute_apply_output(
     run: &ApplyRun,
     vtree: &crate::vtree::Vtree,
 ) -> Option<NodeIdx> {
+    if run.stopped {
+        return Some(f.output().local);
+    }
     let out_ti = f.output().vtree.idx();
     let out_local = run.products.lookup(out_ti, f.output().local.0, g.output().local.0,
         run.g_widths[out_ti], run.g_identity[out_ti], run.f_identity[out_ti])?;

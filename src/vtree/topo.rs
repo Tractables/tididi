@@ -80,6 +80,7 @@ impl TopoOrder {
     /// already in bottom-up layout: position is index.
     /// The variable leaves are the first `num_leaves` nodes, then the
     /// regions, then the internal nodes.
+    #[inline]
     pub(super) fn identity(nodes: &[VtreeNode], num_leaves: u32) -> Self {
         let n = nodes.len() as u32;
         debug_assert!(nodes.iter().enumerate().all(|(i, t)| {
@@ -87,42 +88,6 @@ impl TopoOrder {
             (i < num_leaves, i < n.div_ceil(2)) == (t.is_leaf() && !t.is_region(), t.is_leaf())
         }));
         TopoOrder { order: (0..n).map(VtreeIdx).collect(), pos: (0..n).collect() }
-    }
-
-    /// The order for a freshly built tree whose childless nodes are its
-    /// first indices, variable leaves first: those in index order, then the
-    /// internal nodes deepest level first and left to right within a level,
-    /// the order [`identity`](Self::identity) gives a reindexed tree. The
-    /// local searches sweep internal nodes in this order, so a projection
-    /// takes it, to be searched as its home is.
-    pub(super) fn by_level(nodes: &[VtreeNode], root: VtreeIdx) -> Self {
-        let n = nodes.len();
-        let childless = n.div_ceil(2);
-        let mut order: Vec<VtreeIdx> = Vec::with_capacity(n);
-        order.extend((0..childless as u32).map(VtreeIdx));
-        if n > 1 {
-            // Breadth first visiting right children first, then reversed:
-            // each level right to left, top down, becomes left to right,
-            // bottom up.
-            order.push(root);
-            let mut at = childless;
-            while at < order.len() {
-                if let VtreeNode::Internal { left, right, .. } = nodes[order[at].idx()] {
-                    for child in [right, left] {
-                        if child.idx() >= childless {
-                            order.push(child);
-                        }
-                    }
-                }
-                at += 1;
-            }
-            order[childless..].reverse();
-        }
-        let mut pos = vec![0; n];
-        for (i, &t) in order.iter().enumerate() {
-            pos[t.idx()] = i as u32;
-        }
-        TopoOrder { order, pos }
     }
 
     /// Localized repair after a single rotation. Nothing moves when the order

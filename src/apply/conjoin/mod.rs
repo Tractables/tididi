@@ -57,7 +57,7 @@ use sparse::{apply_sparse_level, count_sparse_level, CandidateFold, Complete, Ma
 
 // An operand as the sweep holds it, owned or borrowed.
 mod held;
-mod view;
+pub(crate) mod view;
 use held::{Held, Here};
 use view::View;
 
@@ -93,6 +93,7 @@ mod products;
 pub(in crate::apply::conjoin) use grid_arena::GridBase;
 mod output;
 mod projected;
+mod union;
 use crate::apply::extend;
 use output::*;
 mod drive;
@@ -877,12 +878,8 @@ impl crate::Engine {
             Ok(op) => op,
             Err(error) => return Err(AndRefused { error, f, g }),
         };
-        if f.vtree().link_home().is_some() || g.vtree().link_home().is_some() {
-            return projected::conjoin_projections(self, Cow::Borrowed(&*f), Cow::Borrowed(&*g))
-                .map_err(|error| AndRefused { error, f, g });
-        }
-        if let Err(error) = crate::apply::check_vtree(&f, &g) {
-            return Err(AndRefused { error, f, g });
+        if !Arc::ptr_eq(f.vtree(), g.vtree()) || f.vtree().num_nodes() == 0 {
+            return projected::conjoin_projections_kept(self, f, g);
         }
         conjoin_kept(self, f, g, Operands::default(), Operands::default(), Operands::default()).map(|mut out| {
             crate::reduce::close_constant(self, &mut out);

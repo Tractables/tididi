@@ -13,13 +13,14 @@ use std::sync::Arc;
 use super::{
     EmbedError, EmbedRefused, Embedding,
     graft::check_part_weights,
-    placement::MovePlacement,
+    placement::{push_free_level, MovePlacement},
 };
 
 use crate::Engine;
+use crate::apply::conjoin::view::{copied_dirty, moved_dirty, reserve_moved, Slot, View};
 use crate::diagram::{
-    ChildSide, LeafLabel, NEG_LEAF_IDX, NodeIdx, ONE_LEAF_IDX, POS_LEAF_IDX, Tdd, WeightStore,
-    WeightValue, return_levels,
+    ChildSide, LeafLabel, NEG_LEAF_IDX, NodeIdx, ONE_LEAF_IDX, POS_LEAF_IDX, Tdd, TddLevel, WeightStore,
+    WeightValue, return_levels, try_take_levels,
 };
 use crate::limits::OperationError;
 use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx};
@@ -452,11 +453,14 @@ pub(crate) struct Plan {
     mirrors: bool,
     /// The number of pass-throughs.
     pub(crate) pass_throughs: usize,
+    /// For a plan [`Plan::cone`] built, every internal destination node with
+    /// a source variable under it, children before parents; empty otherwise.
+    cone: Vec<VtreeIdx>,
 }
 
 /// What a destination node's level is under a [`Plan`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Target {
+pub(crate) enum Target {
     /// No renamed source variable is under the node: a free level, constant
     /// true.
     Free,
@@ -501,10 +505,123 @@ impl Plan {
     /// The pass-throughs of the plan, `into`'s internal nodes with renamed
     /// variables on one side only, bottom-up.
     pub(crate) fn pass_throughs<'a>(&'a self, into: &'a Vtree) -> impl Iterator<Item = &'a VtreeIdx> {
-        into.internal_bottomup_slice()
-            .iter()
+        let all = match self.cone.is_empty() {
+            true => into.internal_bottomup_slice(),
+            false => &self.cone[..],
+        };
+        all.iter()
             .filter(|&&t| matches!(self.targets[t.idx()], Target::PassThrough(_)))
             .take(self.pass_throughs)
+    }
+
+    /// For a plan [`Plan::cone`] built, the internal destination nodes with
+    /// a source variable under them, children before parents.
+    pub(crate) fn cone_nodes(&self) -> &[VtreeIdx] {
+        &self.cone
+    }
+
+    /// The plan that embeds `source` in `into`, a projection of the same home
+    /// on a superset of its variables, with `leaves` the image of each leaf
+    /// of `source`: the nodes of `into` with a variable of `source` under
+    /// them are found from the leaves upward, and only their entries of
+    /// `targets`, every one [`Target::Free`] and grown to `into` where
+    /// shorter, are written. [`Plan::release`] clears them. The work clock is
+    /// charged one unit a node found.
+    ///
+    /// The chain from the image of `source`'s root to `into`'s root is left
+    /// free, but for its first level where that root is a leaf: a
+    /// conjunction reads `source` there as one node passing through, and
+    /// builds the levels of the chain it reaches one at a time
+    /// ([`View::pass_through`](crate::apply::conjoin::view::View::pass_through)).
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::OverBudget`] when a table cannot grow, or the stop;
+    /// `targets` comes back with every entry free.
+    pub(crate) fn cone(
+        lim: &crate::limits::Limits,
+        source: &Vtree,
+        into: &Vtree,
+        leaves: &[(VtreeIdx, VtreeIdx)],
+        mut targets: Vec<Target>,
+    ) -> Result<Plan, (OperationError, Vec<Target>)> {
+        let mut plan = Plan { targets: Vec::new(), embedding: Embedding { levels: Vec::new() }, mirrors: false, pass_throughs: 0, cone: Vec::new() };
+        if let Err(error) = lim.try_resize(&mut plan.embedding.levels, source.num_nodes(), into.root()) {
+            return Err((error, targets));
+        }
+        if targets.len() < into.num_nodes()
+            && let Err(error) = lim.try_resize(&mut targets, into.num_nodes(), Target::Free)
+        {
+            return Err((error, targets));
+        }
+        plan.targets = targets;
+        match plan.find_cone(lim, source, into, leaves) {
+            Ok(()) => Ok(plan),
+            Err(error) => Err((error, plan.release())),
+        }
+    }
+
+    fn find_cone(&mut self, lim: &crate::limits::Limits, source: &Vtree, into: &Vtree, leaves: &[(VtreeIdx, VtreeIdx)]) -> Result<(), OperationError> {
+        let mut gate = lim.gate();
+        for &(s, d) in leaves {
+            self.embedding.levels[s.idx()] = d;
+            self.targets[d.idx()] = Target::Image { source: s, mirrored: false };
+        }
+        let mut found = |plan: &mut Plan, t: VtreeIdx, target: Target| -> Result<(), OperationError> {
+            gate.poll(1)?;
+            lim.try_push(&mut plan.cone, t)?;
+            plan.targets[t.idx()] = target;
+            plan.pass_throughs += usize::from(matches!(target, Target::PassThrough(_)));
+            Ok(())
+        };
+        for &s in source.internal_bottomup_slice() {
+            let home = source.home_node(s);
+            let mut image = into.root();
+            for c in <[VtreeIdx; 2]>::from(source.children(s)) {
+                let mut u = self.embedding.levels[c.idx()];
+                loop {
+                    u = into.node(u).parent().expect("a source node's image is under its parent's");
+                    if into.home_node(u) == home {
+                        break;
+                    }
+                    found(self, u, Target::PassThrough(c))?;
+                }
+                image = u;
+            }
+            self.embedding.levels[s.idx()] = image;
+            found(self, image, Target::Image { source: s, mirrored: false })?;
+        }
+        let top = source.root();
+        if source.node(top).is_leaf()
+            && let Some(parent) = into.node(self.embedding.levels[top.idx()]).parent()
+        {
+            found(self, parent, Target::PassThrough(top))?;
+        }
+        gate.flush()
+    }
+
+    /// The plan of a source whose levels are read through `targets`, by node
+    /// of the destination, with `embedding` the image of each source node and
+    /// `cone`, children before parents, every internal destination node with
+    /// a source variable under it, `pass_throughs` of them pass-throughs.
+    pub(crate) fn from_parts(targets: Vec<Target>, embedding: Vec<VtreeIdx>, cone: Vec<VtreeIdx>, pass_throughs: usize) -> Plan {
+        Plan { targets, embedding: Embedding { levels: embedding }, mirrors: false, pass_throughs, cone }
+    }
+
+    /// The tables of [`Plan::from_parts`], as they are.
+    pub(crate) fn into_parts(self) -> (Vec<Target>, Vec<VtreeIdx>, Vec<VtreeIdx>) {
+        (self.targets, self.embedding.levels, self.cone)
+    }
+
+    /// The targets table of a plan [`Plan::cone`] built, every entry free.
+    pub(crate) fn release(mut self) -> Vec<Target> {
+        for &d in &self.embedding.levels {
+            self.targets[d.idx()] = Target::Free;
+        }
+        for &t in &self.cone {
+            self.targets[t.idx()] = Target::Free;
+        }
+        self.targets
     }
 
     /// Check the renaming against both trees and record the correspondence.
@@ -610,6 +727,7 @@ impl Plan {
             embedding: Embedding { levels: embedding },
             mirrors,
             pass_throughs,
+            cone: Vec::new(),
         })
     }
 }
@@ -739,20 +857,20 @@ pub(crate) fn place_by<'a>(
             Err(e) => Err((e.into(), tdd)),
         };
     }
-    assemble_moving(eng, tdd, into, plan, free, true).map_err(|(e, tdd)| (e.into(), tdd))
+    assemble_view(eng, tdd, into, plan, free, true).map_err(|(e, tdd)| (e.into(), tdd))
 }
 
 /// Copy a structural diagram's levels onto the destination through
-/// [`assemble_moving`], without its weights, and drop the pass-through nodes
+/// [`assemble_view`], without its weights, and drop the pass-through nodes
 /// over a leaf that no level names.
 fn assemble(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<Tdd, EmbedError> {
     if tdd.is_zero() || tdd.is_one() {
         return Ok(crate::build::constant_padded_on(eng, into, tdd.is_one())?);
     }
-    let mut result = assemble_moving(eng, std::borrow::Cow::Borrowed(tdd), into, plan, Free::Build, false)
+    let mut result = assemble_view(eng, std::borrow::Cow::Borrowed(tdd), into, plan, Free::Build, false)
         .map_err(|(e, _)| e)?;
     // One unit per internal node and one per slot of its level, less the
-    // units `assemble_moving` polled: a large diagram's copy, charged a unit
+    // units `assemble_view` polled: a large diagram's copy, charged a unit
     // a level, would go a whole embedding without a test.
     let internal = into.internal_bottomup_slice();
     let built = internal.iter().filter(|&&t| plan.is_free(t)).count() + plan.pass_throughs;
@@ -776,18 +894,57 @@ fn assemble(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<T
     Ok(result)
 }
 
-/// Move the levels of a structural diagram onto the destination and build
-/// what it adds; the diagram comes back, levels and worklists in place, when
-/// the result's storage is refused. A borrowed diagram has its levels copied
-/// into the destination's instead, and a refusal drops the copies. The
-/// result takes a moved diagram's worklists and weight store, and copies of
-/// a borrowed one's (its store only when `copy_weights`), once nothing is
-/// left to refuse.
+/// Make the diagram `tdd`'s [`View`] on `into` describes: a moved diagram's
+/// levels moved to their images, a borrowed one's copied, the view's built
+/// levels taken, and free levels built or left empty as `free` says. The
+/// result takes the view's worklists, and a moved diagram's weight store or
+/// a copy of a borrowed one's (only when `copy_weights`). Refused, `tdd`
+/// comes back as it was given.
 #[expect(
     clippy::result_large_err,
     reason = "the refusal hands back what it was given"
 )]
-fn assemble_moving<'a>(
+fn assemble_view<'a>(
+    eng: &Engine,
+    tdd: std::borrow::Cow<'a, Tdd>,
+    into: &Arc<Vtree>,
+    plan: &Plan,
+    free: Free,
+    copy_weights: bool,
+) -> Result<Tdd, (OperationError, std::borrow::Cow<'a, Tdd>)> {
+    if !is_region_alone(&tdd, into) {
+        return seat_view(eng, tdd, into, plan, free, copy_weights);
+    }
+    // The inlining can be refused after the levels moved: it works on a copy.
+    let placed = seat_view(eng, std::borrow::Cow::Borrowed(&*tdd), into, plan, free, copy_weights)
+        .map_err(|(e, _)| e)
+        .and_then(|mut result| inline_root_region(eng, &mut result).map(|()| result));
+    placed.map_err(|e| (e, tdd))
+}
+
+/// Whether `tdd` is an unweighted region alone placed under a parent, whose
+/// small counts are inline references there instead of slots.
+fn is_region_alone(tdd: &Tdd, into: &Vtree) -> bool {
+    tdd.vtree().num_nodes() == 1
+        && tdd.weights.is_none()
+        && tdd.vtree().node(tdd.vtree().root()).is_region()
+        && into.num_nodes() > 1
+}
+
+/// Inline the small counts of `result`, a region alone placed under a
+/// parent, and prune their slots from the region.
+#[cold]
+fn inline_root_region(eng: &Engine, result: &mut Tdd) -> Result<(), OperationError> {
+    crate::diagram::inline_small_marginal_refs(eng.limits(), result, None)
+        .and_then(|()| crate::reduce::slot_prune::prune_value_slots(eng, result).map(drop))
+}
+
+/// [`assemble_view`] without the inlining of a region alone.
+#[expect(
+    clippy::result_large_err,
+    reason = "the refusal hands back what it was given"
+)]
+fn seat_view<'a>(
     eng: &Engine,
     mut tdd: std::borrow::Cow<'a, Tdd>,
     into: &Arc<Vtree>,
@@ -796,295 +953,135 @@ fn assemble_moving<'a>(
     copy_weights: bool,
 ) -> Result<Tdd, (OperationError, std::borrow::Cow<'a, Tdd>)> {
     use std::borrow::Cow;
-    // Room for the inner pass's share of the leaf pass's worklist (below),
-    // taken while a refusal has nothing to undo.
-    if let Cow::Owned(moved) = &mut tdd
-        && let Err(e) = moved.dirty.reserve_leaf_owes_inner(eng)
-    {
-        return Err((e, tdd));
-    }
-    let mut placement = match MovePlacement::new(eng, into, None) {
-        Ok(placement) => placement,
+    let levels = match try_take_levels(eng, into.num_nodes()) {
+        Ok(levels) => levels,
         Err(e) => return Err((e, tdd)),
     };
-    // Moving the levels out and back forgets what `tdd` is known to be: a
-    // refusal takes it back with them. A copy leaves `tdd` as it is.
-    let mut known = match &mut tdd {
-        Cow::Owned(tdd) => {
-            let known = tdd.levels.known();
-            placement.move_part(tdd, &plan.embedding.levels);
-            Some(known)
-        }
-        Cow::Borrowed(source) => {
-            if let Err(e) = placement.copy_part(source, &plan.embedding.levels) {
-                return Err((e, tdd));
-            }
-            None
+    let mut slots = eng.scratch.apply.cone_slots.checkout_preserving(eng);
+    let view = match View::placing(eng, &tdd, into, plan, std::mem::take(&mut *slots), levels) {
+        Ok(view) => view,
+        Err((e, back)) => {
+            *slots = back;
+            return Err((e, tdd));
         }
     };
-    // Undo a refused placement: a moved diagram takes its levels back.
-    let mut refuse = |e: OperationError, mut placement: MovePlacement<'_>, mut tdd: Cow<'a, Tdd>| {
-        if let (Cow::Owned(source), Some(known)) = (&mut tdd, known.take()) {
-            placement.mirror(plan);
-            placement.move_back(source, &plan.embedding.levels);
-            source.levels.reinstate_known(known);
-        }
-        (e, tdd)
-    };
-    // A mirrored image reads its pairs the other way round, before anything
-    // reads its sides (`literal_chain`). A refusal undoes it by the same
-    // call, so anything that reorders a mirrored level's pairs belongs on
-    // the seated result, past the last refusal.
-    placement.mirror(plan);
-    let (mut literal_tops, output) =
-        match build_embedded_levels(eng, into, plan, free, tdd.output().local, &mut placement) {
-            Ok(built) => built,
-            Err(e) => return Err(refuse(e, placement, tdd)),
-        };
-    let chains = !literal_tops.is_empty();
-    // Room for the result's loose levels where `tdd`'s are known and some
-    // may be listed, and a borrowed diagram's worklists copied with room
-    // for the inner pass's share of the leaf pass's, taken before the seat:
-    // `unseat` does not undo the renumbering below.
-    let mut listed = Vec::new();
-    let listing = tdd.dirty.loose().is_some_and(|loose| !loose.is_empty() || chains);
-    let copied = match listing {
-        true => eng.limits().reserve_exact(&mut listed, into.num_nodes()),
-        false => Ok(()),
-    }
-    .and_then(|()| match &tdd {
-        Cow::Owned(_) => Ok(None),
+    let (mut at, mut levels, output, tops) = view.into_parts();
+    let closed = tdd.levels.is_closed();
+    // A moved diagram's worklists are taken, with room made in place.
+    let carried = match &mut tdd {
+        Cow::Owned(moved) => reserve_moved(eng, &mut moved.dirty, &moved.vtree, !tops.is_empty()).map(|listed| (None, listed)),
         Cow::Borrowed(source) => {
-            source.dirty.clone_on(eng).and_then(|mut copied| copied.reserve_leaf_owes_inner(eng).map(|()| Some(copied)))
+            copied_dirty(eng, &source.dirty, source.vtree(), into, plan, &tops).map(|copied| (Some(copied), Vec::new()))
         }
+    };
+    let borrowed = match &tdd {
+        Cow::Borrowed(source) => Some(*source),
+        Cow::Owned(_) => None,
+    };
+    let ready = carried.and_then(|carried| {
+        take_placement(eng, borrowed, into, plan, &at, &mut levels, free, copy_weights).map(|weights| (carried, weights))
     });
-    let copied = match copied {
-        Ok(copied) => copied,
-        Err(e) => return Err(refuse(e, placement, tdd)),
+    let ((copied, listed), weights) = match ready {
+        Ok(ready) => ready,
+        Err(e) => {
+            return_levels(eng, levels);
+            at.clear();
+            *slots = at;
+            return Err((e, tdd));
+        }
     };
-    // Seated owing nothing: `tdd` keeps its worklists until the last
-    // refusal is behind, which leaves nothing to put back.
-    let mut result = match placement.seat(output, crate::diagram::Dirty::default()) {
-        Ok(result) => result,
-        Err((e, placement)) => return Err(refuse(e, placement, tdd)),
+    let own = |d: VtreeIdx| matches!(at[d.idx()], Slot::Own(_));
+    let (weights, dirty) = match &mut tdd {
+        Cow::Owned(moved) => {
+            let source = &mut moved.levels[..];
+            for (s, &d) in plan.embedding.levels.iter().enumerate() {
+                if own(d) {
+                    std::mem::swap(&mut levels[d.idx()], &mut source[s]);
+                }
+            }
+            let carried = moved.take_worklists();
+            (moved.weights.take(), moved_dirty(carried, listed, &moved.vtree, into, plan, &tops))
+        }
+        Cow::Borrowed(_) => (weights, copied.expect("a borrowed diagram's worklists are copied")),
     };
-    // `Pos` and `Neg` are the chain's nodes 0 and 1; nothing reads `One`.
-    // The last refusal: the renumbering is planned whole, so a refusal finds
-    // `result` as seated and gives a moved diagram its levels back.
-    let closed = result.levels.is_closed();
-    if !literal_tops.is_empty()
-        && let Err(e) = crate::diagram::remap_refs_into_all(eng.limits(), &mut result, &literal_tops, &[u32::MAX, 0, 1])
-    {
-        return Err((e, unseat(eng, result, tdd, plan, known.take())));
-    }
-    // A region at the root holds the output's count in a slot; under a
-    // parent a small count is an inline reference instead, and the slot is
-    // pruned from the moved level. No refusal that gives a moved diagram its
-    // levels back may follow; this one's leaves the region's store as it
-    // was, as the inlining writes only the new parent and the prune refuses
-    // before it touches a store.
-    if tdd.vtree().num_nodes() == 1
-        && let Err(e) = inline_root_region(eng, &tdd, into, &mut result)
-    {
-        return Err((e, unseat(eng, result, tdd, plan, known.take())));
-    }
-    let mut carried = match (&mut tdd, copied) {
-        (Cow::Owned(moved), _) => moved.take_worklists(),
-        (Cow::Borrowed(_), copied) => copied.expect("a borrowed diagram's worklists are copied"),
-    };
-    // Taking a moved diagram's store cannot be refused, so a refusal here
-    // has moved nothing.
-    if tdd.weights.is_some() && (copy_weights || matches!(tdd, Cow::Owned(_))) {
-        match placed_weights(eng, &mut tdd, plan) {
-            Ok(weights) => result.weights = Some(weights),
-            Err(e) => return Err((e, unseat(eng, result, tdd, plan, known.take()))),
+    if free != Free::Leave {
+        for &t in into.internal_bottomup_slice() {
+            if plan.is_free(t) {
+                push_free_level(&mut levels[t.idx()], into, t);
+            }
         }
     }
-    // Every level of a moved `tdd` is now one the placement took from the
-    // pool, empty: they go back for the takes that follow.
+    for t in plan.mirrored_images() {
+        if own(t) {
+            levels[t.idx()].swap_sides();
+            levels[t.idx()].close();
+            levels[t.idx()].close_held_pairs();
+        }
+    }
+    let weights = weights.map(|mut weights| {
+        weights.rekey_levels(|level| Some(plan.embedding.levels[level].idx()));
+        weights
+    });
+    let mut result = Tdd { vtree: Arc::clone(into), levels: levels.into(), weights, output, dirty };
+    // The view closed what it built, and the levels taken unchanged were
+    // closed where `tdd`'s were.
+    match closed {
+        true => result.close_changed_levels(&[]),
+        false => result.close_levels(),
+    }
+    // Every level of a moved `tdd` the result took is now one taken from
+    // the pool, empty: they go back for the takes that follow.
     if let Cow::Owned(moved) = &mut tdd {
         return_levels(eng, std::mem::take(&mut moved.levels).into_vec());
     }
-    if chains {
-        result.close_marked_levels(closed);
-    }
-    // A moved level keeps its nodes and, through the pass-throughs and the
-    // renumbered literal chains, the identities of its children's, so it
-    // owes the contraction passes what it owed in `tdd`, at its image. A
-    // leaf read through a literal chain is the exception: its two literals
-    // are two nodes of a pass-through level, so a leaf twin over it is an
-    // inner twin, which only the inner pass contracts: the inner pass is
-    // owed where the leaf pass is, over a chain. New pass-through nodes have
-    // distinct child identities,
-    // and free levels have one node, so neither introduces twins. A later
-    // child contraction queues its parents. The lists are bounded as a seat
-    // bounds an assembly's.
-    let loose = carried.take_loose();
-    carried.remap(&plan.embedding.levels);
-    if chains {
-        literal_tops.sort_unstable();
-        carried.leaf_owes_inner(|t| {
-            let (left, right) = into.children(VtreeIdx(t));
-            literal_tops.binary_search(&left).is_ok() || literal_tops.binary_search(&right).is_ok()
-        });
-    }
-    carried.dedup_above(into.num_nodes());
-    debug_assert!(result.dirty.is_empty(), "a seat that rebuilt nothing owes nothing");
-    result.dirty = carried;
-    if let Some(mut loose) = loose {
-        loose.sort_unstable();
-        moved_loose(tdd.vtree(), into, plan, &loose, &literal_tops, &mut listed);
-        result.dirty.set_loose(Some(listed));
-    }
+    at.clear();
+    *slots = at;
     Ok(result)
 }
 
-/// Inline the small counts of `result`, `tdd` placed under a parent where
-/// `tdd` is an unweighted region alone.
-#[cold]
-fn inline_root_region(eng: &Engine, tdd: &Tdd, into: &Vtree, result: &mut Tdd) -> Result<(), OperationError> {
-    if tdd.weights.is_some() || !tdd.vtree().node(tdd.vtree().root()).is_region() || into.num_nodes() == 1 {
-        return Ok(());
-    }
-    crate::diagram::inline_small_marginal_refs(eng.limits(), result, None)
-        .and_then(|()| crate::reduce::slot_prune::prune_value_slots(eng, result).map(drop))
-}
-
-/// The weight store of [`assemble_moving`]'s result: a moved diagram's own,
-/// a borrowed one's copied, its columns keyed by the levels' images.
-#[cold]
-fn placed_weights(eng: &Engine, tdd: &mut std::borrow::Cow<'_, Tdd>, plan: &Plan) -> Result<WeightStore, OperationError> {
-    let mut weights = match tdd {
-        std::borrow::Cow::Owned(moved) => moved.weights.take().expect("a weighted diagram"),
-        std::borrow::Cow::Borrowed(source) => source.weights.as_ref().expect("a weighted diagram").try_clone_on(eng.limits())?,
-    };
-    weights.rekey_levels(|level| Some(plan.embedding.levels[level].idx()));
-    Ok(weights)
-}
-
-/// Give a moved diagram back the levels a seated `result` took from it, as
-/// the refusal before the seat does: each mirrored image read the right way
-/// round again, every level back in its place, and what was known of them.
-/// The seat's close may have described a level again, which holds the same
-/// pairs. The rest of `result`'s levels go back to the pool. A copied
-/// diagram was never touched.
-fn unseat<'a>(
+/// What [`seat_view`] can be refused once the view is built, taken before
+/// anything moves: the free levels' work units where they are built, a
+/// borrowed diagram's own levels copied into `levels`, the result's level
+/// array, and its weight store copied when `copy_weights`. `at` is the
+/// view's table, and `borrowed` the diagram when it is copied.
+#[expect(clippy::too_many_arguments, reason = "the placement's parts, taken apart by the view")]
+fn take_placement(
     eng: &Engine,
-    mut result: Tdd,
-    mut tdd: std::borrow::Cow<'a, Tdd>,
-    plan: &Plan,
-    known: Option<crate::diagram::Known>,
-) -> std::borrow::Cow<'a, Tdd> {
-    let mut levels = std::mem::take(&mut result.levels).into_vec();
-    if let (std::borrow::Cow::Owned(source), Some(known)) = (&mut tdd, known) {
-        for t in plan.mirrored_images() {
-            levels[t.idx()].swap_sides();
-        }
-        let source_levels = &mut source.levels[..];
-        for (from, &to) in plan.embedding.levels.iter().enumerate() {
-            std::mem::swap(&mut source_levels[from], &mut levels[to.idx()]);
-        }
-        source.levels.reinstate_known(known);
-    }
-    return_levels(eng, levels);
-    tdd
-}
-
-/// Mark mirrored images as changed and build the free and pass-through levels
-/// of `plan` into `placement`, returning the tops of the pass-through chains
-/// over a leaf read as `Pos`/`Neg` whose readers must be renumbered once
-/// seated, and the output's index once a chain reaching the root holds it.
-fn build_embedded_levels(
-    eng: &Engine,
+    borrowed: Option<&Tdd>,
     into: &Vtree,
     plan: &Plan,
+    at: &[Slot],
+    levels: &mut [TddLevel],
     free: Free,
-    output_local: NodeIdx,
-    placement: &mut MovePlacement<'_>,
-) -> Result<(Vec<VtreeIdx>, NodeIdx), OperationError> {
-    let mut gate = eng.limits().gate();
-    let mut literal_tops = Vec::new();
-    let mut output = output_local;
-    // A mirrored image was changed in place by `placement.mirror`, and its
-    // seat closes it.
-    if plan.mirrors {
+    copy_weights: bool,
+) -> Result<Option<WeightStore>, OperationError> {
+    let lim = eng.limits();
+    if free != Free::Leave {
+        let mut gate = lim.gate();
         for &t in into.internal_bottomup_slice() {
-            if plan.is_mirrored(t) {
-                placement.changed_at(t);
+            if plan.is_free(t) {
+                gate.poll(1)?;
             }
         }
+        gate.flush()?;
     }
-    // The free levels when they are built, then the pass-throughs, each
-    // after the levels under it. A free level left empty costs nothing
-    // here, and a conjunction that builds it carries it as an identity
-    // level, which costs nothing there either.
-    let built: &[VtreeIdx] = match free {
-        Free::Build | Free::Operand => into.internal_bottomup_slice(),
-        Free::Leave => &[],
+    let weights = match borrowed.and_then(|source| source.weights.as_ref()) {
+        Some(weights) if copy_weights => Some(weights.try_clone_on(lim)?),
+        _ => None,
     };
-    for &t in built
-        .iter()
-        .filter(|&&t| plan.is_free(t))
-        .chain(plan.pass_throughs(into))
-    {
-        gate.poll(1)?;
-        if plan.is_free(t) {
-            placement.free(t);
-            continue;
-        }
-        let (left, right) = into.children(t);
-        let (free_side, carried) = if plan.is_free(left) {
-            (ChildSide::Left, right)
-        } else {
-            (ChildSide::Right, left)
-        };
-        // A refused join is undone with the placement by the caller.
-        if !into.node(carried).is_leaf() {
-            placement.pass_through(t, free_side)?;
-        } else if into.node(carried).is_region() {
-            match image_above(into, plan, t) {
-                Some((parent, side)) if placement.holds_counts(carried) => placement.pass_over_region(t, free_side, parent, side)?,
-                _ => placement.pass_through(t, free_side)?,
+    if let Some(source) = borrowed {
+        for (s, &d) in plan.embedding.levels.iter().enumerate() {
+            if matches!(at[d.idx()], Slot::Own(_)) {
+                source.levels[s].try_copy_over(lim, &mut levels[d.idx()])?;
             }
-        } else if placement.is_marginal(carried) {
-            // A summed variable's values live in its parent's references,
-            // which a new parent between them does not take.
-            return Err(OperationError::MarginalLevel(plan.covered_by(carried).unwrap_or(carried)));
-        } else {
-            lift_leaf(into, plan, placement, t, free_side, output_local, &mut literal_tops, &mut output)?;
         }
     }
-    gate.flush()?;
-    Ok((literal_tops, output))
-}
-
-/// Lift the leaf child of the pass-through `t` in the one form its chain's
-/// reader names it ([`literal_chain`]), pushing a literal chain's top to
-/// `literal_tops` and setting `output` to the chain's node where the chain
-/// reaches the root.
-#[expect(clippy::too_many_arguments, reason = "both assemblies' state, passed as it is")]
-fn lift_leaf(
-    into: &Vtree,
-    plan: &Plan,
-    placement: &mut MovePlacement<'_>,
-    t: VtreeIdx,
-    free_side: ChildSide,
-    output_local: NodeIdx,
-    literal_tops: &mut Vec<VtreeIdx>,
-    output: &mut NodeIdx,
-) -> Result<(), OperationError> {
-    let chain = literal_chain(into, plan, |p, side| placement.first_ref(p, side), output_local, t);
-    match chain {
-        Chain::Literals(top) => literal_tops.push(top),
-        Chain::Output(_) => *output = NodeIdx(0),
-        Chain::One => {}
-    }
-    placement.pass_over_leaf(t, free_side, chain.labels())
+    Ok(weights)
 }
 
 /// The nearest ancestor of `t` that is the image of a source level, and the
 /// side of it `t` is under.
-fn image_above(into: &Vtree, plan: &Plan, mut t: VtreeIdx) -> Option<(VtreeIdx, ChildSide)> {
+pub(crate) fn image_above(into: &Vtree, plan: &Plan, mut t: VtreeIdx) -> Option<(VtreeIdx, ChildSide)> {
     while let Some(parent) = into.node(t).parent() {
         if plan.covered_by(parent).is_some() {
             return Some((parent, ChildSide::of(into, parent, t)));
@@ -1094,7 +1091,7 @@ fn image_above(into: &Vtree, plan: &Plan, mut t: VtreeIdx) -> Option<(VtreeIdx, 
     None
 }
 
-/// The levels of [`assemble_moving`]'s result that may hold a node no pair
+/// The levels of a placement's result that may hold a node no pair
 /// of their parent level names, pushed to `out` bottom-up, given `loose`,
 /// the source's such levels, and `literal_tops`, the tops of the
 /// pass-through chains that read a leaf as `Pos` and `Neg`, both sorted.
@@ -1187,7 +1184,9 @@ pub(crate) fn literal_chain(
 ) -> Chain {
     let mut top = t;
     loop {
-        match into.node(top).parent() {
+        // A free parent is above the chain a cone plan leaves free, over
+        // which no source level is.
+        match into.node(top).parent().filter(|&p| !plan.is_free(p)) {
             Some(p) if plan.covered_by(p).is_none() => top = p,
             Some(p) => {
                 return match first_ref(p, ChildSide::of(into, p, top)) {
@@ -1245,7 +1244,13 @@ fn assemble_marginal(
             (ChildSide::Right, left)
         };
         if into.node(carried).is_var_leaf() && !placement.is_marginal(carried) {
-            lift_leaf(into, plan, &mut placement, t, free_side, tdd.output().local, &mut literal_tops, &mut output)?;
+            let chain = literal_chain(into, plan, |p, side| placement.first_ref(p, side), tdd.output().local, t);
+            match chain {
+                Chain::Literals(top) => literal_tops.push(top),
+                Chain::Output(_) => output = NodeIdx(0),
+                Chain::One => {}
+            }
+            placement.pass_over_leaf(t, free_side, chain.labels())?;
         } else {
             placement.pass_through(t, free_side)?;
         }

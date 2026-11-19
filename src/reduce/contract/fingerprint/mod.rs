@@ -632,6 +632,34 @@ impl TwinEntries for ContentEntries<'_> {
 /// scattered writes miss it, where the refinement reads a bit per node.
 const NARROW_SCREENED_WIDTH: usize = 1 << 12;
 
+/// The fewest parent pairs per child node at which a refinement of a parent
+/// level of [`refine::SMALL_PAIRS`] to [`SHORT_NODE_PAIRS`] pairs a node, on
+/// average, goes by fingerprints instead. There most parent nodes take the
+/// wide path, sorting and tabling a dozen pairs each, and few child nodes
+/// leave the partition early: measured at 40 to 170 instructions a pair,
+/// where the fingerprints take 15 to 45. With longer parent nodes the
+/// refinement's degree and run splits take 6 to 30 instructions a pair.
+const NAMED_OFTEN: usize = 64;
+
+/// The most pairs a parent node holds, on average, for [`NAMED_OFTEN`].
+const SHORT_NODE_PAIRS: usize = 24;
+
+/// Whether a search of `width` child nodes under `parent_level`, which the
+/// refinement would make, goes by fingerprints ([`NAMED_OFTEN`]). The pairs
+/// are counted by the parent's arena, not node by node: this runs before
+/// every refinement, most of which read far fewer pairs than the level
+/// has nodes.
+fn named_often(parent_level: &TddLevel, width: usize) -> bool {
+    let Some(stored) = parent_level.stored() else {
+        return false;
+    };
+    let pairs = stored.arena_len();
+    let nodes = parent_level.slot_count();
+    pairs >= NAMED_OFTEN.saturating_mul(width)
+        && pairs >= refine::SMALL_PAIRS.saturating_mul(nodes)
+        && pairs <= SHORT_NODE_PAIRS.saturating_mul(nodes)
+}
+
 /// Find nodes with identical parent-context multisets at the explicit child
 /// level `t1` of `parent`. Marginal children are handled by pair fusion
 /// instead. See [`group_twins_by_entries`] for what is left in `scratch`.
@@ -644,7 +672,8 @@ const NARROW_SCREENED_WIDTH: usize = 1 << 12;
 /// against the fingerprint search over the same contexts. Where a parent
 /// node of [`refine::HAND_OFF_PAIRS`] pairs or more has them in no order,
 /// the refinement gives up before its wide parent nodes, and the level goes
-/// by fingerprints. With `screen`, the parent level is first tested for a
+/// by fingerprints; so does a level whose parent level names each node
+/// often through short parent nodes ([`NAMED_OFTEN`]). With `screen`, the parent level is first tested for a
 /// parent node that names two nodes with the same siblings
 /// ([`screen_twins`]), without which no node has a twin: worth it where few
 /// nodes are expected to have one, as under a parent level no merge has
@@ -723,6 +752,9 @@ pub(super) fn find_twin_groups(
                 }
                 Screen::Apart => false,
             });
+    if refines && named_often(parent_level, width) {
+        by_fingerprints = true;
+    }
     let found = if by_fingerprints {
         group_twins_by_entries(eng, &entries, width, scratch)?
     } else if refines {

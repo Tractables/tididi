@@ -109,6 +109,13 @@ impl LevelStorage {
         (i < self.levels.len()).then_some(VtreeIdx(i as u32))
     }
 
+    /// Record that no level is marginal, which the caller knows from how it
+    /// built them, so [`first_marginal`](Self::first_marginal) reads no level.
+    pub(crate) fn know_no_marginal(&mut self) {
+        debug_assert!(!self.levels.iter().any(TddLevel::is_marginal));
+        *self.summary.marginal.0.get_mut() = self.levels.len();
+    }
+
     pub(crate) fn node_count(&self) -> usize {
         self.summary.nodes.read(|| self.levels.iter().map(TddLevel::slot_count).sum())
     }
@@ -575,6 +582,21 @@ impl Dirty {
         out
     }
 
+    /// [`stacked`](Self::stacked) reusing the lists of an `over` the caller
+    /// gives up, `under`'s appended: a list denotes a set, so its order is
+    /// immaterial.
+    pub(crate) fn stacked_onto(mut over: Dirty, under: &Dirty, rebuilt: usize) -> Dirty {
+        let mut out = Dirty::default();
+        for pass in Pass::ALL {
+            let mut list = std::mem::take(over.list(pass));
+            let under = &under.lists[pass as usize];
+            list.reserve(under.len() + room(pass, rebuilt));
+            list.extend_from_slice(under);
+            *out.list(pass) = list;
+        }
+        out
+    }
+
     /// Copy pending work under the operation's allocation budget.
     pub(crate) fn clone_on(&self, eng: &crate::Engine) -> Result<Self, crate::OperationError> {
         fn copy_slice<T: Copy>(
@@ -596,6 +618,25 @@ impl Dirty {
             out.loose = Some(to);
         }
         copy_slice(eng, &mut out.fused, &self.fused)?;
+        Ok(out)
+    }
+
+    /// The lists [`remap`](Self::remap) leaves, in new lists of their exact
+    /// length, the inner pass's with room for
+    /// [`leaf_owes_inner`](Self::leaf_owes_inner) where `owing`; the loose
+    /// levels unknown.
+    pub(crate) fn remapped_on(&self, eng: &crate::Engine, map: &[VtreeIdx], owing: bool) -> Result<Self, crate::OperationError> {
+        let mut out = Self::default();
+        let owed = if owing { self.lists[Pass::LeafContract as usize].len() } else { 0 };
+        for pass in Pass::ALL {
+            let from = &self.lists[pass as usize];
+            let room = if pass == Pass::Contract { owed } else { 0 };
+            if from.len() + room > 0 {
+                let to = out.list(pass);
+                eng.limits().reserve_exact(to, from.len() + room)?;
+                to.extend(from.iter().map(|&t| map[t as usize].0));
+            }
+        }
         Ok(out)
     }
 
