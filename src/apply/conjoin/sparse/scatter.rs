@@ -3998,13 +3998,16 @@ pub(super) fn emit_owned(
             lim.reserve(moved_pairs, n)?;
             moved_pairs.extend_from_slice(&arena[base..base + n]);
             arena.truncate(base + total);
+            // Slices, so that their bounds stay in registers across the
+            // loop's stores.
+            let (ranges, counts, singles) = (&mut arena[base..], &mut pair_counts[..], &mut single_pairs[..]);
             for (&k, &pair) in owners.iter().zip(moved_pairs.iter()) {
-                let cursor = pair_counts[k as usize];
+                let cursor = counts[k as usize];
                 if cursor == INLINE {
-                    single_pairs[k as usize] = pair;
+                    singles[k as usize] = pair;
                 } else {
-                    arena[base + cursor as usize] = pair;
-                    pair_counts[k as usize] = cursor + 1;
+                    ranges[cursor as usize] = pair;
+                    counts[k as usize] = cursor + 1;
                 }
             }
         }
