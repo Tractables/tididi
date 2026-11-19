@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crate::{Engine, OperationError};
 use crate::diagram::{
-    Assembly, ChildPair, ChildSide, Dirty, EncodedNode, ImplicitLevel, MarginalStorage, NodeIdx, Tdd,
+    Assembly, ChildPair, ChildSide, EncodedNode, ImplicitLevel, MarginalStorage, NodeIdx, Tdd,
     TddBuildError, TddLevel, TddNodeId, WeightStore, WeightValue, LEAF_WIDTH, ONE_LEAF_IDX, floor,
     stored_levels_forced, try_take_levels,
 };
@@ -51,7 +51,7 @@ pub(crate) struct PassThrough {
     pub(crate) carries_leaf: bool,
     pub(crate) one: NodeIdx,
     pub(crate) width: usize,
-    free_side: ChildSide,
+    pub(crate) free_side: ChildSide,
 }
 
 impl PassThrough {
@@ -73,7 +73,7 @@ impl PassThrough {
     }
 
     /// The `(left, right)` children of each join, in slot order.
-    fn pairs(&self) -> impl Iterator<Item = (NodeIdx, NodeIdx)> + '_ {
+    pub(crate) fn pairs(&self) -> impl Iterator<Item = (NodeIdx, NodeIdx)> + '_ {
         (0..self.width).map(move |i| self.pair(i))
     }
 
@@ -185,44 +185,6 @@ impl<'a> MovePlacement<'a> {
         }
     }
 
-    /// Copy every level of `source`, its weight columns left to the caller,
-    /// through a checked placement map, each over the level the placement
-    /// took from
-    /// the pool, in that level's storage ([`TddLevel::try_copy_over`]).
-    /// Hands back a refusal, for the caller to drop the placement.
-    ///
-    /// [`TddLevel::try_copy_over`]: crate::diagram::TddLevel
-    pub(super) fn copy_part(&mut self, source: &Tdd, map: &[VtreeIdx]) -> Result<(), OperationError> {
-        debug_assert_eq!(source.vtree().num_nodes(), map.len());
-        self.changed.take_from(source);
-        let (levels, _) = self.assembly.parts_mut();
-        let lim = self.eng.limits();
-        for (from, &to) in map.iter().enumerate() {
-            source.levels[from].try_copy_over(lim, &mut levels[to.idx()])?;
-        }
-        Ok(())
-    }
-
-    /// Exchange the two sides of every pair of each placed level `plan`
-    /// mirrors ([`TddLevel::swap_sides`]): the level of the same functions
-    /// over its image, whose children are the source node's swapped. Its own
-    /// inverse, so a refused placement undoes it before
-    /// [`move_back`](Self::move_back).
-    ///
-    /// [`TddLevel::swap_sides`]: crate::diagram::TddLevel
-    pub(super) fn mirror(&mut self, plan: &crate::restructure::embed::Plan) {
-        let (levels, _) = self.assembly.parts_mut();
-        for t in plan.mirrored_images() {
-            levels[t.idx()].swap_sides();
-        }
-    }
-
-    /// Record level `at`, changed in place by [`mirror`](Self::mirror), for
-    /// the seat to close; called bottom-up with the levels built.
-    pub(super) fn changed_at(&mut self, at: VtreeIdx) {
-        self.changed.push(at);
-    }
-
     /// Make an internal level marginal with no values: a level under a
     /// marginal parent, whose values the parent's subsume.
     pub(super) fn subsume(&mut self, at: VtreeIdx) {
@@ -245,11 +207,6 @@ impl<'a> MovePlacement<'a> {
     #[inline]
     pub(super) fn true_node(&self, child: VtreeIdx) -> NodeIdx {
         true_node(self.vtree, child)
-    }
-
-    /// Build the level of `at`, a node no placed variable is under.
-    pub(super) fn free(&mut self, at: VtreeIdx) {
-        push_free_level(&mut self.assembly.parts_mut().0[at.idx()], self.vtree, at);
     }
 
     /// Lift all references from one child through a join with a free sibling.
@@ -276,63 +233,6 @@ impl<'a> MovePlacement<'a> {
     /// Whether the placed level at `at` is summed out.
     pub(super) fn is_marginal(&self, at: VtreeIdx) -> bool {
         self.assembly.level(at).is_marginal()
-    }
-
-    /// Whether the placed level at `at` holds integer counts.
-    pub(super) fn holds_counts(&self, at: VtreeIdx) -> bool {
-        let level = self.assembly.level(at);
-        level.is_marginal() && !level.is_weight_marginal()
-    }
-
-    /// Lift an integer region through a join with a free sibling at `at`,
-    /// the foot of a chain of joins under `parent`, which reads the chain on
-    /// `side`: one node per slot of the region, at the same index, then one
-    /// per inline value `parent` holds on `side`, which it names instead.
-    /// An inline value is no slot, so the nodes for them are new. Hands back
-    /// a refusal; `parent` is rewritten whole or not at all.
-    #[cold]
-    pub(super) fn pass_over_region(&mut self, at: VtreeIdx, free_side: ChildSide, parent: VtreeIdx, side: ChildSide) -> Result<(), OperationError> {
-        let lim = self.eng.limits();
-        let through = PassThrough::new(self.vtree, at, free_side, |c| self.assembly.level(c).slot_count());
-        let slots = through.width as u32;
-        let mut inline = Vec::new();
-        let (levels, _) = self.assembly.parts_mut();
-        let read = &levels[parent.idx()];
-        let value_refs = read.has_value_refs(side);
-        let decoder = crate::diagram::ChildDecoder::marginal();
-        for (_, pairs) in read.internal_inputs_iter() {
-            for pair in pairs {
-                let r = side.pick(pair.left, pair.right);
-                if !r.is_reserved() && matches!(decoder.value(r), crate::diagram::ValueRef::Inline(_)) {
-                    lim.try_push(&mut inline, r)?;
-                }
-            }
-        }
-        for (left, right) in through.pairs() {
-            self.join(at, left, right)?;
-        }
-        for &value in &inline {
-            let (left, right) = free_side.pick((through.one, NodeIdx(value.0)), (NodeIdx(value.0), through.one));
-            self.join(at, left, right)?;
-        }
-        let (levels, _) = self.assembly.parts_mut();
-        levels[at.idx()].set_has_value_refs(free_side.pick(ChildSide::Right, ChildSide::Left), value_refs);
-        if inline.is_empty() {
-            return Ok(());
-        }
-        let mut next = slots;
-        crate::diagram::for_each_side_ref_mut(lim, &mut levels[parent.idx()], side, |r| {
-            let encoded = crate::diagram::EncodedChildRef(*r);
-            if !encoded.is_reserved() && matches!(decoder.value(encoded), crate::diagram::ValueRef::Inline(_)) {
-                *r = next;
-                next += 1;
-            }
-        })?;
-        levels[parent.idx()].set_has_value_refs(side, false);
-        if !self.changed.levels.contains(&parent) {
-            self.changed.levels.push(parent);
-        }
-        Ok(())
     }
 
     /// Lift a leaf child through a join with a free sibling, one node per
@@ -365,32 +265,6 @@ impl<'a> MovePlacement<'a> {
         self.prune |= self.assembly.level(l).is_marginal() || self.assembly.level(r).is_marginal();
         self.changed.push(at);
         self.assembly.parts_mut().0[at.idx()].push_node(self.eng.limits(), &[ChildPair::new(left, right)])
-    }
-
-    /// Seat the chosen root reference without the repairs of
-    /// [`finish`](Self::finish), for structural parts: a pass-through over a
-    /// leaf keeps the wrappers nothing above reads. The result owes the
-    /// contraction passes `carried`, what the moved levels owed where they
-    /// came from. Newly built levels have no twins. Hands the placement back
-    /// when the result's worklists are refused.
-    #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
-    pub(super) fn seat(self, local: NodeIdx, carried: Dirty) -> Result<Tdd, (OperationError, Self)> {
-        let output = TddNodeId { vtree: self.vtree.root(), local };
-        let Self { eng, vtree, assembly, prune, contract, changed } = self;
-        match assembly.finish_with_or_return(output, carried, &[], changed.to_close()) {
-            Ok(tdd) => Ok(tdd),
-            Err((e, assembly)) => Err((e, Self { eng, vtree, assembly, prune, contract, changed })),
-        }
-    }
-
-    /// Move the structural levels [`move_part`](Self::move_part) placed back
-    /// into `source`, through the same map.
-    pub(super) fn move_back(mut self, source: &mut Tdd, map: &[VtreeIdx]) {
-        let (levels, _) = self.assembly.parts_mut();
-        let source_levels = &mut source.levels[..];
-        for (from, &to) in map.iter().enumerate() {
-            source_levels[from] = std::mem::take(&mut levels[to.idx()]);
-        }
     }
 
     /// Check that the destination store covers every placed level's column.

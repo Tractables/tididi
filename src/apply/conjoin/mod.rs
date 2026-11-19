@@ -57,7 +57,7 @@ use sparse::{apply_sparse_level, count_sparse_level, CandidateFold, Complete, Ma
 
 // An operand as the sweep holds it, owned or borrowed.
 mod held;
-mod view;
+pub(crate) mod view;
 use held::{Held, Here};
 use view::View;
 
