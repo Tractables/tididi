@@ -98,7 +98,7 @@ pub(crate) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -
                     let big_i = big.and_then(|b| b.get(i));
                     signatures[t.idx()][i] = count_mod_p(c, big_i);
                 }
-            } else if let Some(values) = tdd.weights().and_then(|ws| ws.column(level, t.idx())) {
+            } else if let Some(values) = level.weight_values() {
                 for (i, value) in values.iter().enumerate() {
                     signatures[t.idx()][i] = weight_mod_p(value);
                 }

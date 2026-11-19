@@ -32,10 +32,6 @@ impl InternalLevel {
 
 /// Storage transitions required by a marginalization pass.
 pub(crate) trait MarginalDomain: ValueDomain {
-    /// The store the marginal columns of this domain go into, when there is an
-    /// external one. Only the subsumed-child reclaim needs it generically.
-    fn weight_store(store: &mut Self::Store) -> Option<&mut WeightStore>;
-
     /// Commit a finished column into level `t` mid-apply, turning the level
     /// marginal. The caller has already checked the marginalization
     /// precondition (`diagram::assert_can_make_marginal`).
@@ -102,10 +98,6 @@ pub(crate) trait MarginalDomain: ValueDomain {
 }
 
 impl MarginalDomain for IntFold {
-    fn weight_store(_store: &mut ()) -> Option<&mut WeightStore> {
-        None
-    }
-
     #[inline]
     fn commit_in_flight(
         levels: &mut [TddLevel],
@@ -115,7 +107,7 @@ impl MarginalDomain for IntFold {
     ) -> Option<CountVec> {
         let (counts, big) = col.into_parts();
         let i = t.vtree_idx().idx();
-        crate::diagram::MarginalStorage::new(&mut levels[i], None, i).install_counts(counts, big);
+        crate::diagram::MarginalStorage::new(&mut levels[i]).install_counts(counts, big);
         None
     }
 
@@ -129,12 +121,12 @@ impl MarginalDomain for IntFold {
 
     fn install(
         level: &mut TddLevel,
-        t: InternalLevel,
+        _t: InternalLevel,
         col: CountVec,
         _store: &mut (),
     ) {
         let (counts, big) = col.into_parts();
-        crate::diagram::MarginalStorage::new(level, None, t.vtree_idx().idx()).install_counts(counts, big);
+        crate::diagram::MarginalStorage::new(level).install_counts(counts, big);
     }
 
     fn sum_out_leaf(
@@ -160,23 +152,19 @@ impl MarginalDomain for IntFold {
     }
 }
 impl MarginalDomain for WeightFold {
-    fn weight_store(store: &mut WeightStore) -> Option<&mut WeightStore> {
-        Some(store)
-    }
-
     #[inline]
     fn commit_in_flight(
         levels: &mut [TddLevel],
         t: InternalLevel,
         col: Vec<WeightValue>,
-        store: &mut WeightStore,
+        _store: &mut WeightStore,
     ) -> Option<Vec<WeightValue>> {
         // No parent contract-dirty marking: the shared level-state machine
         // establishes invariant 10 at slot-prune, which runs in weighted mode too via
         // `prune_value_slots`; only the integer
         // count-preservation localizer around it is gated off.
         let i = t.vtree_idx().idx();
-        crate::diagram::MarginalStorage::new(&mut levels[i], Some(store), i).install_weights(col);
+        crate::diagram::MarginalStorage::new(&mut levels[i]).install_weights(col);
         None
     }
 
@@ -189,13 +177,13 @@ impl MarginalDomain for WeightFold {
 
     fn install(
         level: &mut TddLevel,
-        t: InternalLevel,
+        _t: InternalLevel,
         col: Vec<WeightValue>,
-        store: &mut WeightStore,
+        _store: &mut WeightStore,
     ) {
         // The column is full width, one slot per node, which is the slot count
         // the level records.
-        crate::diagram::MarginalStorage::new(level, Some(store), t.vtree_idx().idx()).install_weights(col);
+        crate::diagram::MarginalStorage::new(level).install_weights(col);
     }
 
     fn sum_out_leaf(
@@ -218,10 +206,6 @@ impl MarginalDomain for WeightFold {
 /// stay with the apply, and a finished diagram's go to the store as
 /// [`WeightValue::Scaled`] values, as the weighted domain's do.
 impl MarginalDomain for FloatFold {
-    fn weight_store(store: &mut WeightStore) -> Option<&mut WeightStore> {
-        Some(store)
-    }
-
     /// The level becomes marginal at the column's width with no store
     /// column, and the column goes back to the apply: a parent summed out
     /// in the same sweep reads it there, so it never takes a
@@ -231,10 +215,10 @@ impl MarginalDomain for FloatFold {
         levels: &mut [TddLevel],
         t: InternalLevel,
         col: FloatCol,
-        store: &mut WeightStore,
+        _store: &mut WeightStore,
     ) -> Option<FloatCol> {
         let i = t.vtree_idx().idx();
-        crate::diagram::MarginalStorage::new(&mut levels[i], Some(store), i).hold_weights(col.len() as u32);
+        crate::diagram::MarginalStorage::new(&mut levels[i]).hold_weights(col.len() as u32);
         Some(col)
     }
 
@@ -291,7 +275,7 @@ pub(crate) fn install_finished<K: MarginalDomain>(
     tdd.install_marginal_level(lim, t, remap.as_deref(), |storage| K::install(storage, level, col, store))?;
 
     // `t` now subsumes its children — free their dead stores (O(1)).
-    free_subsumed_marginal_children(&mut tdd.levels, vtree, t, K::weight_store(store));
+    free_subsumed_marginal_children(&mut tdd.levels, vtree, t);
     Ok(())
 }
 
@@ -309,7 +293,7 @@ pub(crate) fn install_streamed<K: MarginalDomain>(
     let t = level.vtree_idx();
     assert_can_make_marginal(levels, vtree, t);
     computed[t.idx()] = K::commit_in_flight(levels, level, col, store);
-    free_subsumed_marginal_children(levels, vtree, t, K::weight_store(store));
+    free_subsumed_marginal_children(levels, vtree, t);
     let (l, r) = vtree.children(t);
     computed[l.idx()] = None;
     computed[r.idx()] = None;
@@ -457,21 +441,20 @@ pub(crate) fn cascade<K: MarginalDomain, S: InstallTarget + ?Sized>(
 /// moment `parent` becomes marginal.
 ///
 /// A marginal parent carries no pair lists, so nothing reads its children's
-/// stores again. The integer store is emptied and the weighted column cleared
-/// through `ws`; either way the child's `slot_count()` then reports 0 while it stays
+/// stores again. The integer store is emptied and the weighted column
+/// cleared; either way the child's `slot_count()` then reports 0 while it stays
 /// marginal. A weight-marginal leaf's column is left alone (invariant 11).
 pub(crate) fn free_subsumed_marginal_children(
     levels: &mut [TddLevel],
     vtree: &Vtree,
     parent: VtreeIdx,
-    mut ws: Option<&mut WeightStore>,
 ) {
     if vtree.node(parent).is_leaf() {
         return;
     }
     let (l, r) = vtree.children(parent);
     for c in [l.idx(), r.idx()] {
-        crate::diagram::MarginalStorage::new(&mut levels[c], ws.as_deref_mut(), c)
+        crate::diagram::MarginalStorage::new(&mut levels[c])
             .clear(vtree.node(VtreeIdx(c as u32)).is_var_leaf());
     }
 }

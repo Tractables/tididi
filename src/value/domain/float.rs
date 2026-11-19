@@ -36,7 +36,7 @@ pub(crate) enum FloatColumn<'a> {
     Folded(FloatSlice<'a>),
     /// Such a column held narrow, with the range of its offsets.
     Narrow(Plain<'a>),
-    /// A level an earlier operation made marginal: its weight-store column.
+    /// A level an earlier operation made marginal: its weight values.
     Stored(&'a [WeightValue]),
     /// A structural vtree leaf's three label values, in label order.
     Leaf([ScaledFloat; crate::diagram::LEAF_WIDTH]),
@@ -597,7 +597,7 @@ fn read_float(
     if let Some(col) = &computed[level_idx] {
         return col.get(level.child_decoder().index(side));
     }
-    if let Some(values) = level.is_weight_marginal().then(|| ws.column(level, level_idx)).flatten() {
+    if let Some(values) = level.weight_values() {
         return scaled(&values[ChildDecoder::marginal().index(side)]);
     }
     unreachable!("scaled-float value not available for level {}", level_idx);
@@ -693,7 +693,7 @@ impl ValueDomain for FloatFold {
         if let Some(col) = &computed[level_idx] {
             return StreamChild { col: FloatColumn::folded(col.slice()), view: level.child_decoder() };
         }
-        if let Some(col) = level.is_weight_marginal().then(|| store.column(level, level_idx)).flatten() {
+        if let Some(col) = level.weight_values() {
             return StreamChild { col: FloatColumn::Stored(col), view: ChildDecoder::marginal() };
         }
         let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(level_idx as u32)) else {

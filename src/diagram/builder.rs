@@ -89,18 +89,17 @@ impl InternTable {
     }
 }
 
-/// A borrowed level together with the store interpreting its weighted columns.
+/// A borrowed level together with the store interpreting its weighted values.
 #[derive(Clone, Copy, Debug)]
 pub struct LevelView<'a> {
     level: &'a TddLevel,
     weights: Option<&'a WeightStore>,
-    source: VtreeIdx,
 }
 
 impl<'a> LevelView<'a> {
     /// Borrow a structural or count-marginal level; weighted levels need [`Tdd::level_view`].
     pub fn unweighted(level: &'a TddLevel) -> Option<Self> {
-        (!level.is_weight_marginal()).then_some(Self { level, weights: None, source: VtreeIdx(0) })
+        (!level.is_weight_marginal()).then_some(Self { level, weights: None })
     }
 
     /// The level's structural data or count column.
@@ -172,7 +171,7 @@ impl std::fmt::Debug for TddBuilder {
 impl Tdd {
     /// Borrow a level together with any weighted values needed to copy it.
     pub fn level_view(&self, t: VtreeIdx) -> LevelView<'_> {
-        LevelView { level: self.level(t), weights: self.weights(), source: t }
+        LevelView { level: self.level(t), weights: self.weights() }
     }
 
     /// Start a diagram over `vtree`, with one empty level per vtree node.
@@ -363,23 +362,14 @@ impl TddBuilder {
         if from.level.is_marginal() && !from.level.is_weight_marginal() && self.weights.is_some() {
             return Err(TddBuildError::CountLevelWithWeights { level: t }.into());
         }
-        let column = if from.level.is_weight_marginal() {
-            let ws = from.weights.ok_or(TddBuildError::WeightedLevelWithoutStore { level: t })?;
-            let column = ws.column(from.level, from.source.idx()).unwrap_or(&[]);
-            if column.len() != from.level.slot_count() {
+        if from.level.is_weight_marginal() {
+            from.weights.ok_or(TddBuildError::WeightedLevelWithoutStore { level: t })?;
+            if from.level.weight_values().unwrap_or(&[]).len() != from.level.slot_count() {
                 return Err(TddBuildError::InvalidWeightColumn { level: t, reason: "does not match the level's slot count" }.into());
             }
-            let mut copy = Vec::new();
-            lim.reserve_exact(&mut copy, column.len())?;
-            copy.extend_from_slice(column);
-            Some(copy)
-        } else { None };
+        }
         from.level.try_clone_over(lim, 0, 0, &mut self.levels[t.idx()])?;
         if self.weights.is_none() { self.weights = from.weights.map(WeightStore::empty_like); }
-        if let Some(ws) = self.weights.as_mut() {
-            ws.take_level(t.idx());
-            if let Some(column) = column { ws.set_level(t.idx(), column); }
-        }
         if let Some(table) = self.interned.get_mut(t.idx()) { *table = None; }
         Ok(())
     }

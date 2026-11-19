@@ -36,8 +36,8 @@ impl Tdd {
     pub(crate) fn reindex_level(
         &mut self, lim: &Limits, v: VtreeIdx, referenced: &[u32], remap: &mut [u32], merge: bool,
     ) -> Result<usize, OperationError> {
-        let plan = MarginalStorage::new(&mut self.levels[v.idx()], self.weights.as_mut(), v.idx())
-            .plan_compact(lim, referenced, remap, merge)?;
+        let plan = MarginalStorage::new(&mut self.levels[v.idx()])
+            .plan_compact(lim, self.weights.as_ref(), referenced, remap, merge)?;
         let refs = match referenced.is_empty() {
             true => None,
             false => {
@@ -45,7 +45,7 @@ impl Tdd {
                 Some(plan_refs_remap(lim, self, v, view, remap)?)
             }
         };
-        let merged = MarginalStorage::new(&mut self.levels[v.idx()], self.weights.as_mut(), v.idx())
+        let merged = MarginalStorage::new(&mut self.levels[v.idx()])
             .compact(referenced, remap, plan);
         if let Some(refs) = refs {
             finish_refs_remap(self, refs, remap);

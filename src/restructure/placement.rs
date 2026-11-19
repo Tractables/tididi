@@ -170,23 +170,22 @@ impl<'a> MovePlacement<'a> {
         Ok(Self { eng, vtree, assembly, prune: false, contract: false, changed })
     }
 
-    /// Move every level and its weighted column through a checked placement map.
+    /// Move every level through a checked placement map.
     /// The caller has checked that stored values retain their interpretation.
     pub(super) fn move_part(&mut self, source: &mut Tdd, map: &[VtreeIdx]) {
         debug_assert_eq!(source.vtree().num_nodes(), map.len());
         self.changed.take_from(source);
-        let (levels, weights) = self.assembly.parts_mut();
+        let (levels, _) = self.assembly.parts_mut();
         // One mutable access to the source's levels for the whole move: each
         // access forgets what the storage knows of them.
         let source_levels = &mut source.levels[..];
         for (from, &to) in map.iter().enumerate() {
-            MarginalStorage::new(&mut levels[to.idx()], weights.as_mut(), to.idx())
-                .move_from(&mut source_levels[from], source.weights.as_mut(), from);
+            MarginalStorage::new(&mut levels[to.idx()])
+                .move_from(&mut source_levels[from]);
         }
     }
 
-    /// Copy every level of `source`, its weight columns left to the caller,
-    /// through a checked placement map, each over the level the placement
+    /// Copy every level of `source` through a checked placement map, each over the level the placement
     /// took from
     /// the pool, in that level's storage ([`TddLevel::try_copy_over`]).
     /// Hands back a refusal, for the caller to drop the placement.
@@ -227,18 +226,13 @@ impl<'a> MovePlacement<'a> {
     /// marginal parent, whose values the parent's subsume.
     pub(super) fn subsume(&mut self, at: VtreeIdx) {
         self.changed.push(at);
-        let (levels, weights) = self.assembly.parts_mut();
-        MarginalStorage::new(&mut levels[at.idx()], weights.as_mut(), at.idx()).install_weights(Vec::new());
+        let (levels, _) = self.assembly.parts_mut();
+        MarginalStorage::new(&mut levels[at.idx()]).install_weights(Vec::new());
     }
 
     /// Multiply every value of a weight-marginal level by `factor`.
     pub(super) fn scale(&mut self, at: VtreeIdx, factor: &WeightValue) {
-        let (levels, weights) = self.assembly.parts_mut();
-        if let Some(values) = weights.as_mut().and_then(|w| w.level_vals_mut(at.idx())) {
-            for value in values.iter_mut() {
-                *value = value.mul(factor);
-            }
-        }
+        let (levels, _) = self.assembly.parts_mut();
         if let Some(values) = levels[at.idx()].weight_values_mut() {
             for value in values.iter_mut() {
                 *value = value.mul(factor);

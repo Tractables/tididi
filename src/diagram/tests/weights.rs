@@ -1,4 +1,4 @@
-//! Attaching a weight store: refused once a level holds integer counts.
+//! Attaching a weight store, and the weight values a level holds.
 
 use std::sync::Arc;
 
@@ -36,27 +36,27 @@ fn a_weighted_leaf_requires_its_store() {
 }
 
 #[test]
-fn weighted_levels_require_their_columns() {
+fn copied_weighted_levels_keep_their_columns() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let f = weighted_with_a_marginal_level(&eng, &vtree);
     crate::test_helpers::assert_canonical(&f);
     let mut b = copy_levels(&eng, &vtree, &f);
-    assert!(b.set_weights(f.weights().unwrap().empty_like()).is_err());
+    b.set_weights(f.weights().unwrap().empty_like()).unwrap();
     let g = b.finish(f.output()).unwrap();
     crate::test_helpers::assert_canonical(&g);
     assert_eq!(value_of(&g), value_of(&f));
 }
 
 #[test]
-fn replacing_weights_cannot_erase_live_columns() {
+fn replacing_weights_keeps_live_columns() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let mut f = weighted_with_a_marginal_level(&eng, &vtree);
     crate::test_helpers::assert_canonical(&f);
     let before = value_of(&f);
     let empty = f.weights().unwrap().empty_like();
-    assert!(f.set_weights(empty).is_err());
+    f.set_weights(empty).unwrap();
     assert_eq!(value_of(&f), before);
     crate::test_helpers::assert_canonical(&f);
 }
@@ -158,14 +158,14 @@ fn subsumed_empty_columns_remain_valid_in_both_arithmetics() {
 fn an_incompatible_column_does_not_replace_the_store() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let mut f = weighted_with_a_marginal_level(&eng, &vtree);
+    let f = weighted_with_a_marginal_level(&eng, &vtree);
     crate::test_helpers::assert_canonical(&f);
     let expected = value_of(&f);
     let (left, _) = vtree.children(vtree.root());
-    let mut store = f.weights().unwrap().clone();
-    let col = store.level_vals_mut(left.idx()).unwrap();
-    col[0] = crate::diagram::WeightValue::Log(crate::diagram::SignedLog::zero());
-    assert!(f.set_weights(store).is_err());
+    let store = f.weights().unwrap().clone();
+    let mut g = f.clone();
+    g.levels[left.idx()].weight_values_mut().unwrap()[0] = crate::diagram::WeightValue::Log(crate::diagram::SignedLog::zero());
+    assert!(g.set_weights(store).is_err());
     assert_eq!(value_of(&f), expected);
     crate::test_helpers::assert_canonical(&f);
 }
@@ -212,9 +212,10 @@ fn copied_pinned_leaf_columns_are_checked_in_both_arithmetics() {
         crate::test_helpers::assert_canonical(&f);
         let copied = copy_levels(&eng, &tree, &f).finish(f.output()).unwrap();
         crate::test_helpers::assert_canonical(&copied);
-        let mut malformed = f.weights().unwrap().clone();
-        malformed.level_vals_mut(leaf.idx()).unwrap().swap(0, 1);
-        assert!(f.set_weights(malformed).is_err());
+        let store = f.weights().unwrap().clone();
+        let mut malformed = f.clone();
+        malformed.levels[leaf.idx()].weight_values_mut().unwrap().swap(0, 1);
+        assert!(malformed.set_weights(store).is_err());
         crate::test_helpers::assert_canonical(&f);
     }
 }
@@ -351,4 +352,29 @@ fn a_false_result_carries_no_column_into_a_later_conjunction() {
         .filter_map(|(name, f, expected)| (value_of(&f) != *expected).then(|| format!("{name} = {}, expected {expected}", value_of(&f))))
         .collect();
     assert!(wrong.is_empty(), "{wrong:?}");
+}
+
+/// A copy of a weighted diagram reserves each level's values: every refused
+/// reservation returns `OverBudget`, and the copy that is granted carries the
+/// values.
+#[test]
+fn a_refused_copy_of_weight_values_is_over_budget() {
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(4));
+    let f = weighted_with_a_marginal_level(&eng, &vtree);
+    let (left, _) = vtree.children(vtree.root());
+    let mut refused = 0;
+    let copy = loop {
+        eng.refuse_nth_reserve(refused);
+        let result = eng.try_clone(&f);
+        eng.limits().grant_every_reserve();
+        match result {
+            Ok(copy) => break copy,
+            Err(e) => assert_eq!(e, crate::OperationError::OverBudget),
+        }
+        refused += 1;
+    };
+    assert!(refused > 0);
+    assert_eq!(copy.level(left).weight_values().map(<[_]>::len), f.level(left).weight_values().map(<[_]>::len));
+    assert_eq!(value_of(&copy), value_of(&f));
 }

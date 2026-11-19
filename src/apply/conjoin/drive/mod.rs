@@ -121,7 +121,6 @@ fn sweep_levels(
         eng,
         run.levels,
         run.stream_cache,
-        sweep.ws.as_deref_mut(),
     )?;
     // The root has no following level boundary at which to check its output.
     lim.level_done(output_nodes + cone.free_nodes)
@@ -430,26 +429,12 @@ fn apply_and_held(
 
     let _op = lim.begin_operation();
 
-    // The weight store follows the diagram: the operands' stores merge into the
-    // result's, and every level this apply marginalizes writes its values there.
-    // Their marginal levels are the two disjoint subtrees they were built over,
-    // so the merge loses nothing.
     let take_weights = |op: &mut Held<'_>| match op.owned() {
-        Some(op) => Ok(op.weights.take()),
-        None => op
-            .tdd()
-            .weights
-            .as_ref()
-            .map(|ws| ws.try_clone_on(lim))
-            .transpose(),
+        Some(op) => op.weights.take(),
+        None => op.tdd().weights.clone(),
     };
-    let ws: Option<crate::diagram::WeightStore> = match (take_weights(f)?, take_weights(g)?) {
-        (Some(mut a), Some(b)) => {
-            a.absorb(b);
-            Some(a)
-        }
-        (a, b) => a.or(b),
-    };
+    let (fw, gw) = (take_weights(f), take_weights(g));
+    let ws = fw.or(gw);
     debug_assert!(
         ws.is_some()
             || !f
@@ -481,7 +466,7 @@ fn apply_and_held(
     if f.tdd().is_zero() || g.tdd().is_zero() {
         lim.check_stop()?;
         let levels = diagram::try_take_levels(eng, num_nodes)?;
-        return diagram::Assembly::from_levels(eng, vtree, levels, ws.as_ref().map(crate::diagram::WeightStore::empty_like))
+        return diagram::Assembly::from_levels(eng, vtree, levels, ws)
             .finish(TddNodeId {
                 vtree: f.output().vtree,
                 local: ZERO,

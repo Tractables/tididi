@@ -84,14 +84,8 @@ impl Tdd {
         self.dirty.restore_fused(fused, &[]);
         return_levels(eng, std::mem::take(&mut other.levels).into_vec());
 
-        if let Some(rw) = other.detach_weights() {
-            match self.detach_weights() {
-                Some(mut lw) => {
-                    lw.absorb(rw);
-                    self.weights = Some(lw);
-                }
-                None => self.weights = Some(rw),
-            }
+        if self.weights.is_none() {
+            self.weights = other.detach_weights();
         }
     }
 }

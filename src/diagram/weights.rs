@@ -1,16 +1,12 @@
-//! External side-table of per-node weighted marginal values for algebraic
-//! model counting.
+//! The literal weights and arithmetic of a weighted diagram.
 //!
-//! A weight-marginal level's values live here, indexed by vtree level, rather
-//! than in `TddLevel`, whose size a static assert holds down. The integer
-//! count store (`marginal_counts` / `marginal_counts_big`) stays `None` in
-//! weighted mode. The per-node payload is a [`WeightValue`] (exact `BigRational`
-//! or bounded-precision `SignedLog` or `ScaledFloat`); leaf base values come from the store's
+//! A weight-marginal level holds its own values
+//! ([`TddLevel::weight_values`](crate::diagram::TddLevel::weight_values)),
+//! each a [`WeightValue`] (exact `BigRational` or bounded-precision
+//! `SignedLog` or `ScaledFloat`); leaf base values come from the store's
 //! [`RationalWeights`], converted to the active mode by `WeightStore::leaf_val`.
 
 use std::sync::Arc;
-
-use rustc_hash::FxHashMap;
 
 use crate::diagram::{EvalAlgebra, RationalWeights, ScaledFloat, SignedLog, WeightValue};
 use crate::diagram::LeafLabel;
@@ -45,12 +41,8 @@ pub enum Arithmetic {
 /// replaced by values, those levels cannot be evaluated under new weights.
 /// For repeated evaluations with changing weights, retain a structural diagram
 /// and use [`Tdd::evaluate`](crate::Tdd::evaluate).
-///
-/// Each stored column belongs to a marginal vtree level; its entries use the
-/// same slot indices as that level's marginal child references.
 #[derive(Clone)]
 pub struct WeightStore {
-    per_level: FxHashMap<usize, Vec<WeightValue>>,
     config: WeightConfig,
 }
 
@@ -64,7 +56,6 @@ struct WeightConfig {
 impl std::fmt::Debug for WeightStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WeightStore")
-            .field("levels", &self.per_level.len())
             .field("arithmetic", &self.config.arithmetic)
             .finish()
     }
@@ -119,7 +110,7 @@ impl WeightStore {
         self.check_variables(vtree.leaf_bottomup().map(|(_, var)| var))?;
         for (leaf, var) in vtree.leaf_bottomup() {
             if levels[leaf.idx()].is_weight_marginal() {
-                let values = self.level(leaf.idx()).unwrap_or(&[]);
+                let values = levels[leaf.idx()].weight_values().unwrap_or(&[]);
                 if levels[leaf.idx()].slot_count() != LEAF_WIDTH || values.len() != LEAF_WIDTH {
                     return Err(TddBuildError::InvalidWeightColumn { level: leaf, reason: "must hold three leaf-label slots" });
                 }
@@ -137,7 +128,7 @@ impl WeightStore {
             if !level.is_weight_marginal() {
                 return Err(TddBuildError::CountLevelWithWeights { level: t });
             }
-            let values = self.level(t.idx()).unwrap_or(&[]);
+            let values = level.weight_values().unwrap_or(&[]);
             if values.len() != level.slot_count() {
                 return Err(TddBuildError::InvalidWeightColumn { level: t, reason: "does not match the level's slot count" });
             }
@@ -150,32 +141,13 @@ impl WeightStore {
 
     /// A store over `algebra` with no level marginal yet.
     pub fn new(algebra: RationalWeights, arithmetic: Arithmetic) -> Self {
-        Self { per_level: FxHashMap::default(), config: WeightConfig { algebra: Arc::new(algebra), arithmetic } }
-    }
-
-    /// A copy whose columns are reserved through `lim`, so a copy the host
-    /// cannot serve comes back as
-    /// [`OperationError::OverBudget`](crate::OperationError::OverBudget). The
-    /// weight table is shared, not copied.
-    pub(crate) fn try_clone_on(&self, lim: &crate::limits::Limits) -> Result<Self, crate::limits::OperationError> {
-        let mut per_level = FxHashMap::default();
-        lim.reserve_map(&mut per_level, self.per_level.len())?;
-        for (&level, values) in &self.per_level {
-            let mut column = Vec::new();
-            lim.reserve_exact(&mut column, values.len())?;
-            column.extend(values.iter().cloned());
-            per_level.insert(level, column);
-        }
-        Ok(Self { per_level, config: self.config.clone() })
+        Self { config: WeightConfig { algebra: Arc::new(algebra), arithmetic } }
     }
 
     /// A second empty store over the same weight table, for another diagram of
     /// the same weighted build. The table is shared, not copied.
     pub fn empty_like(&self) -> Self {
-        Self {
-            per_level: FxHashMap::default(),
-            config: self.config.clone(),
-        }
+        Self { config: self.config.clone() }
     }
 
     /// The algebra the values are folded in: the weight table and its
@@ -189,19 +161,6 @@ impl WeightStore {
     #[inline]
     pub fn arithmetic(&self) -> Arithmetic {
         self.config.arithmetic
-    }
-
-    /// Take over every level `other` holds that this store does not.
-    ///
-    /// Requires compatible weight configurations. Used where two diagrams meet:
-    /// their marginal levels are the two disjoint
-    /// vtree subtrees they were built over, except for leaf columns, which are
-    /// a pure function of the weight table and therefore already equal.
-    pub(crate) fn absorb(&mut self, other: Self) {
-        debug_assert!(self.compatible(&other), "merged columns must use compatible weights");
-        for (level, values) in other.per_level {
-            self.per_level.entry(level).or_insert(values);
-        }
     }
 
     /// True in a bounded-precision arithmetic: there value equality is not
@@ -233,68 +192,5 @@ impl WeightStore {
             Arithmetic::ScaledFloat => WeightValue::Scaled(ScaledFloat::from_rational(&r)),
             Arithmetic::ExactRational => WeightValue::exact(r),
         }
-    }
-
-    /// Set the per-node values of weight-marginal level `level` (one entry per
-    /// node, indexed like a marginal level's count table).
-    pub(crate) fn set_level(&mut self, level: usize, values: Vec<WeightValue>) {
-        self.per_level.insert(level, values);
-    }
-
-    /// The per-node values of the level of vtree node `level` (its
-    /// `VtreeIdx::idx()`), or `None` if that level is not weight-marginal. A
-    /// weight-marginal level ([`TddLevel::is_weight_marginal`]) keeps its
-    /// values here rather than in the diagram, so this is how a traversal
-    /// reads them; a parent pair's side into such a level decodes through the
-    /// level's [`ChildDecoder`] to an index into this slice.
-    ///
-    /// [`TddLevel::is_weight_marginal`]: crate::diagram::TddLevel::is_weight_marginal
-    /// [`ChildDecoder`]: crate::diagram::ChildDecoder
-    #[inline]
-    pub fn level(&self, level: usize) -> Option<&[WeightValue]> {
-        self.per_level.get(&level).map(Vec::as_slice)
-    }
-
-    /// The store's column of `level`, the level of vtree node `index`; in a
-    /// debug build checked against the level's own.
-    #[inline]
-    pub(crate) fn column<'a>(&'a self, level: &crate::diagram::TddLevel, index: usize) -> Option<&'a [WeightValue]> {
-        let column = self.level(index);
-        debug_assert!(
-            level.weight_values().is_none_or(|own| {
-                let stored = column.unwrap_or(&[]);
-                stored.len() == own.len() && stored.iter().zip(own).all(|(a, b)| crate::diagram::semiring::same_value(a, b))
-            }),
-            "level {index}: the store's column differs from the level's",
-        );
-        column
-    }
-
-    /// `&mut` into one level's value vec, for in-place compaction. A caller
-    /// that moves or drops slots must rewrite the parent refs into this level
-    /// in the same pass.
-    #[inline]
-    pub(crate) fn level_vals_mut(&mut self, level: usize) -> Option<&mut Vec<WeightValue>> {
-        self.per_level.get_mut(&level)
-    }
-
-    /// Remove `level`'s values from this store and hand them over, or `None` if
-    /// that level is not weight-marginal.
-    #[inline]
-    pub(crate) fn take_level(&mut self, level: usize) -> Option<Vec<WeightValue>> {
-        self.per_level.remove(&level)
-    }
-
-    /// True once `set_level` has been called for `level`.
-    #[inline]
-    pub(crate) fn is_set(&self, level: usize) -> bool {
-        self.per_level.contains_key(&level)
-    }
-
-    /// Move the column of each level `old` to level `map(old)`, dropping the
-    /// columns `map` sends to `None`.
-    pub(crate) fn rekey_levels(&mut self, map: impl Fn(usize) -> Option<usize>) {
-        let old = std::mem::take(&mut self.per_level);
-        self.per_level = old.into_iter().filter_map(|(level, values)| Some((map(level)?, values))).collect();
     }
 }

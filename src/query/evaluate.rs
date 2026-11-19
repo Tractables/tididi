@@ -504,7 +504,7 @@ fn weighted_output_value(eng: &Engine, tdd: &Tdd, ws: &WeightStore, gate: &mut P
     let out_t = tdd.output.vtree.idx();
     let out_i = tdd.output.local.idx();
     if tdd.levels[out_t].is_weight_marginal() {
-        return Ok(ws.column(&tdd.levels[out_t], out_t).expect("output level weight-marginalized")[out_i].clone());
+        return Ok(tdd.levels[out_t].weight_values().expect("output level weight-marginalized")[out_i].clone());
     }
     // Leaf output level: the fold below stores nothing for leaves (their values
     // come from the semiring on demand), so read the leaf value directly.

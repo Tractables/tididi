@@ -869,13 +869,8 @@ fn assemble_moving<'a>(
         (Cow::Owned(moved), _) => moved.take_worklists(),
         (Cow::Borrowed(_), copied) => copied.expect("a borrowed diagram's worklists are copied"),
     };
-    // Taking a moved diagram's store cannot be refused, so a refusal here
-    // has moved nothing.
     if tdd.weights.is_some() && (copy_weights || matches!(tdd, Cow::Owned(_))) {
-        match placed_weights(eng, &mut tdd, plan) {
-            Ok(weights) => result.weights = Some(weights),
-            Err(e) => return Err((e, unseat(eng, result, tdd, plan, known.take()))),
-        }
+        result.weights = Some(placed_weights(&mut tdd));
     }
     // Every level of a moved `tdd` is now one the placement took from the
     // pool, empty: they go back for the takes that follow.
@@ -928,15 +923,13 @@ fn inline_root_region(eng: &Engine, tdd: &Tdd, into: &Vtree, result: &mut Tdd) -
 }
 
 /// The weight store of [`assemble_moving`]'s result: a moved diagram's own,
-/// a borrowed one's copied, its columns keyed by the levels' images.
+/// a borrowed one's copied.
 #[cold]
-fn placed_weights(eng: &Engine, tdd: &mut std::borrow::Cow<'_, Tdd>, plan: &Plan) -> Result<WeightStore, OperationError> {
-    let mut weights = match tdd {
+fn placed_weights(tdd: &mut std::borrow::Cow<'_, Tdd>) -> WeightStore {
+    match tdd {
         std::borrow::Cow::Owned(moved) => moved.weights.take().expect("a weighted diagram"),
-        std::borrow::Cow::Borrowed(source) => source.weights.as_ref().expect("a weighted diagram").try_clone_on(eng.limits())?,
-    };
-    weights.rekey_levels(|level| Some(plan.embedding.levels[level].idx()));
-    Ok(weights)
+        std::borrow::Cow::Borrowed(source) => source.weights.clone().expect("a weighted diagram"),
+    }
 }
 
 /// Give a moved diagram back the levels a seated `result` took from it, as

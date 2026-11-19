@@ -91,7 +91,7 @@ impl LevelFold for OverflowingCounts<'_> {
         col: &mut CountVec,
     ) -> Result<(), OperationError> {
         let level = &tdd.levels[t.idx()];
-        let values = crate::diagram::MarginalValues::read(level, None, t.idx()).expect("marginal count column");
+        let values = crate::diagram::MarginalValues::read(level).expect("marginal count column");
         for i in 0..values.len() {
             col.set(eng, i, values.count(i).to_count())?;
         }

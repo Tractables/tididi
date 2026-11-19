@@ -153,7 +153,7 @@ fn subsumed_store_detected_and_freed() {
     assert!(err.contains(&v_right.idx().to_string()), "must name the level: {err}");
     assert!(check_marginal_canonical_form(&tdd).is_err());
 
-    free_subsumed_marginal_children(&mut tdd.levels, &vtree, root, None);
+    free_subsumed_marginal_children(&mut tdd.levels, &vtree, root);
     check_subsumed_stores_empty(&tdd).unwrap();
     check_marginal_canonical_form(&tdd).unwrap();
     let deep = &tdd.levels[v_right.idx()];
@@ -251,8 +251,7 @@ fn weighted_detects_unmerged_twins() {
 #[test]
 fn weighted_column_survives_the_checks() {
     let tdd = toy_weighted(weighted_store(), vec![rat(3, 7), rat(1, 2)], &[&[(0, 0), (1, 1)]]);
-    let ws = tdd.weights().expect("weighted diagram");
-    let col = ws.level(weighted_marginal_level().idx()).expect("column installed");
+    let col = tdd.levels[weighted_marginal_level().idx()].weight_values().expect("column installed");
     use crate::diagram::weight_key;
     let got: Vec<_> = col.iter().map(weight_key).collect();
     let want: Vec<_> = [rat(3, 7), rat(1, 2)]

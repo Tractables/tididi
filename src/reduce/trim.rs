@@ -519,10 +519,6 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, dropped: Option<&[Vtr
         Some(kept) if !summed => Some(own_counts(eng, kept, &shape, &plans, m)?),
         _ => None,
     };
-    let mut moved = Vec::new();
-    if summed && f.weights.is_some() {
-        lim.try_resize(&mut moved, vtree.num_nodes(), UNNAMED)?;
-    }
     let mut levels = Vec::new();
     lim.try_resize(&mut levels, m, TddLevel::default())?;
     let mut changed = Vec::new();
@@ -550,9 +546,6 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, dropped: Option<&[Vtr
             }
             form => (std::mem::take(&mut old[end.idx()]), form),
         };
-        if let Some(to) = moved.get_mut(end.idx()) {
-            *to = u as u32;
-        }
         let (mut edited, mut owed) = (false, false);
         if let Some(room) = room {
             level.store_moved(room, |_| true, |l| l, |r| r);
@@ -590,21 +583,12 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, dropped: Option<&[Vtr
         if own.node(u).is_leaf() && !(summed && own.node(u).is_region()) {
             let t = vtree.leaf_of(own.leaf_var(u)).expect("an own leaf");
             levels[u.idx()] = std::mem::take(&mut old[t.idx()]);
-            if let Some(to) = moved.get_mut(t.idx()) {
-                *to = u.0;
-            }
         }
     }
     for &(u, t) in &placed {
         levels[u.idx()] = std::mem::take(&mut old[t.idx()]);
-        if let Some(to) = moved.get_mut(t.idx()) {
-            *to = u.0;
-        }
     }
     crate::diagram::return_levels(eng, old);
-    if let Some(ws) = f.weights.as_mut().filter(|_| !moved.is_empty()) {
-        ws.rekey_levels(|t| Some(moved[t]).filter(|&u| u != UNNAMED).map(|u| u as usize));
-    }
 
     if m == 1 {
         f.dirty = Default::default();

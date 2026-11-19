@@ -116,11 +116,6 @@ pub(crate) fn seed_output_leaves(
                 // mass with no error anywhere.
                 let leaf_slots = crate::diagram::LEAF_WIDTH;
                 debug_assert!(
-                    ws.is_none_or(|w| w.level(left_idx).is_none_or(|v| v.len() == leaf_slots)),
-                    "weight-marginal leaf {left_idx}: WeightStore column is not the \
-                     pinned {leaf_slots}-slot leaf_val cache",
-                );
-                debug_assert!(
                     (!w1 || f.level(left_idx).slot_count() == leaf_slots)
                         && (!w2 || g.level(left_idx).slot_count() == leaf_slots),
                     "weight-marginal leaf {left_idx}: operand slot carriers \

@@ -147,24 +147,21 @@ pub(crate) fn commit_stream_state(
     }
 }
 
-/// Move into the weight store every column the apply still keeps: those of
-/// the levels it summed out whose parent it did not. Called once the sweep
-/// has built its last level, before anything reads the store.
+/// Install in its level every column the apply still keeps: those of the
+/// levels it summed out whose parent it did not. Called once the sweep has
+/// built its last level, before anything reads the values.
 ///
 /// # Errors
 ///
-/// [`OperationError::OverBudget`] when a store column's reservation is refused.
+/// [`OperationError::OverBudget`] when a column's reservation is refused.
 pub(crate) fn store_kept_columns(
     eng: &Engine,
     levels: &mut [TddLevel],
     cache: &mut StreamCache,
-    ws: Option<&mut WeightStore>,
 ) -> Result<(), OperationError> {
     let StreamCache::Float(cols) = cache else { return Ok(()) };
-    let mut ws = ws;
     for (i, slot) in cols.iter_mut().enumerate() {
         let Some(values) = slot.take() else { continue };
-        let ws = ws.as_deref_mut().expect("a scaled-float column is only ever built with a store attached");
         debug_assert!(
             levels[i].is_weight_marginal() && levels[i].slot_count() == values.len(),
             "a kept column belongs to a weight-marginal level of its width",
@@ -173,7 +170,7 @@ pub(crate) fn store_kept_columns(
         eng.limits().reserve_exact(&mut column, values.len())?;
         column.extend(values.iter().map(WeightValue::scaled));
         drop(values);
-        crate::diagram::MarginalStorage::new(&mut levels[i], Some(ws), i).install_weights(column);
+        crate::diagram::MarginalStorage::new(&mut levels[i]).install_weights(column);
     }
     Ok(())
 }

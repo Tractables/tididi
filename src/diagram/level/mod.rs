@@ -34,9 +34,8 @@ use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 ///   node `i`, with `u128::MAX` marking a value at least that large; read
 ///   [`marginal_counts_big`](Self::marginal_counts_big)`.get(i)` for the exact value. When
 ///   [`is_weight_marginal`](Self::is_weight_marginal) the counts are `None`
-///   and value `i` is entry `i` of the diagram's
-///   [`WeightStore::level`](crate::diagram::WeightStore::level) for this
-///   level;
+///   and value `i` is entry `i` of
+///   [`weight_values`](Self::weight_values);
 /// - otherwise structural: [`node`](Self::node)`(i)` is node `i`, and its
 ///   pairs are [`pairs_iter_of_idx`](Self::pairs_iter_of_idx) of that slot.
 ///

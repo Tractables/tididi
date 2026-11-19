@@ -334,22 +334,12 @@ fn carry_marginal(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan, weigh
         }
         return Err(EmbedError::Unsummed { variable: vtree.leaf_var(n) });
     }
-    let source = tdd.weights();
     let mut assembly = Assembly::new(eng, into)?;
     let (levels, store) = assembly.parts_mut();
     let store = store.insert(weights);
     for s in into.bottomup() {
         gate.poll(1)?;
-        let d = plan.embedding.levels[s.idx()];
-        let level = tdd.level(d);
-        level.try_copy_over(lim, &mut levels[s.idx()])?;
-        if level.is_weight_marginal() {
-            let column = source.and_then(|w| w.column(level, d.idx())).unwrap_or(&[]);
-            let mut copy = Vec::new();
-            lim.reserve_exact(&mut copy, column.len())?;
-            copy.extend_from_slice(column);
-            store.set_level(s.idx(), copy);
-        }
+        tdd.level(plan.embedding.levels[s.idx()]).try_copy_over(lim, &mut levels[s.idx()])?;
     }
     gate.flush()?;
     store.check_levels(into, levels).map_err(EmbedError::DestinationWeights)?;

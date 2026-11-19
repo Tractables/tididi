@@ -118,9 +118,9 @@ pub(super) fn fuse_pairs_inner(
             );
             continue;
         }
-        // Weighted reads and mints go through this level's `WeightStore` vec, so
-        // a marginal level with no store yet is not fusable.
-        if weighted && !tdd.weights.as_ref().is_some_and(|ws| ws.is_set(v.idx())) {
+        // Weighted reads and mints go through this level's values, so a level
+        // whose values its operation still holds is not fusable.
+        if weighted && tdd.levels[v.idx()].weights_held() {
             continue;
         }
         let boundary = Boundary { v, parent, side };

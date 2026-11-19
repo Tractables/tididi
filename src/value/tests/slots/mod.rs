@@ -20,17 +20,17 @@ fn refused_weight_slot_preserves_values_and_width() {
     let (level, _) = vtree.children(vtree.root());
     eng.marginalize_levels(&mut tdd, &[level]).unwrap();
     assert_canonical(&tdd);
-    let values: Vec<_> = tdd.weight_store().level(level.idx()).unwrap().iter().map(|v| v.clone().into_rational()).collect();
+    let values: Vec<_> = tdd.levels[level.idx()].weight_values().unwrap().iter().map(|v| v.clone().into_rational()).collect();
     let width = tdd.levels[level.idx()].slot_count();
     let expected = tdd.weighted_value().unwrap().unwrap().into_rational();
     // Force the next append to grow instead of using spare capacity.
-    let column = tdd.weights.as_mut().unwrap().level_vals_mut(level.idx()).unwrap();
+    let column = tdd.levels[level.idx()].weight_values_mut().unwrap();
     *column = std::mem::take(column).into_boxed_slice().into_vec();
     eng.refuse_nth_reserve(0);
     let result = WeightFold::push_slot(&eng, &mut tdd, level, WeightValue::ExactSmall(0));
     eng.limits().grant_every_reserve();
     assert_eq!(result, Err(OperationError::OverBudget));
-    assert_eq!(tdd.weight_store().level(level.idx()).unwrap().iter().map(|v| v.clone().into_rational()).collect::<Vec<_>>(), values);
+    assert_eq!(tdd.levels[level.idx()].weight_values().unwrap().iter().map(|v| v.clone().into_rational()).collect::<Vec<_>>(), values);
     assert_eq!(tdd.levels[level.idx()].slot_count(), width);
     assert_eq!(tdd.weighted_value().unwrap().unwrap().into_rational(), expected);
     assert_canonical(&tdd);
@@ -38,7 +38,7 @@ fn refused_weight_slot_preserves_values_and_width() {
     let slot = WeightFold::push_slot(&eng, &mut tdd, level, WeightValue::ExactSmall(0)).unwrap();
     assert_eq!(slot as usize, width);
     assert_eq!(tdd.levels[level.idx()].slot_count(), width + 1);
-    assert_eq!(tdd.weight_store().level(level.idx()).unwrap()[slot as usize].clone().into_rational(), rat(0, 1));
+    assert_eq!(tdd.levels[level.idx()].weight_values().unwrap()[slot as usize].clone().into_rational(), rat(0, 1));
     // Slot creation precedes reference rewriting; discard this unused test slot.
     tdd.minimize().unwrap();
     assert_eq!(tdd.weighted_value().unwrap().unwrap().into_rational(), expected);

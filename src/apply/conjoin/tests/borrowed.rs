@@ -317,13 +317,12 @@ fn a_borrowed_operand_conjoins_onto_as_an_owned_one() {
 }
 
 /// What a weighted or summed-out diagram holds besides its stored levels:
-/// each level's marginal form and slot count, and its weight store's
-/// column, as text.
+/// each level's marginal form, slot count and weight values, as text.
 fn values(t: &Tdd) -> Vec<(bool, usize, String)> {
     (0..t.levels.len())
         .map(|i| {
             let level = &t.levels[i];
-            let column = t.weights.as_ref().and_then(|ws| ws.level(i)).map(|c| format!("{c:?}")).unwrap_or_default();
+            let column = t.levels[i].weight_values().map(|c| format!("{c:?}")).unwrap_or_default();
             (level.is_marginal(), level.slot_count(), column)
         })
         .collect()

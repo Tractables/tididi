@@ -116,8 +116,7 @@ pub fn toy_weighted(
     }
     let wvals: Vec<crate::diagram::WeightValue> =
         values.into_iter().map(crate::diagram::WeightValue::exact).collect();
-    levels[right.idx()].become_marginal_weighted(wvals.clone());
-    ws.set_level(right.idx(), wvals);
+    levels[right.idx()].become_marginal_weighted(wvals);
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
     tdd.set_weights(ws).unwrap();
@@ -149,7 +148,6 @@ pub fn boundary_internal_marginal_vtree() -> Vtree {
 /// its width with theirs.
 pub fn set_weight_column(tdd: &mut Tdd, t: VtreeIdx, values: Vec<crate::diagram::WeightValue>) {
     let width = values.len() as u32;
-    tdd.weights.as_mut().expect("a weighted diagram").set_level(t.idx(), values.clone());
     *tdd.levels[t.idx()].weight_values_mut().expect("a weight-marginal level") = values;
     tdd.levels[t.idx()].set_weight_width(width);
 }

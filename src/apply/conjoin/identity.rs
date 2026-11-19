@@ -255,8 +255,8 @@ fn refute_generated(
 /// `subvars >= 128`, builds the target.
 pub(super) fn level_marginal_is_constant_true(level: &TddLevel, subvars: u32) -> bool {
     debug_assert!(level.is_marginal());
-    // Weighted marginal levels carry no integer counts (values live
-    // in the WeightStore), so this integer constant-true fast-path can't apply.
+    // Weighted marginal levels carry no integer counts, so this integer
+    // constant-true fast-path can't apply.
     // Returning false just skips the optimization — always sound (the general
     // apply path handles the marginal child structurally).
     if level.is_weight_marginal() {

@@ -116,7 +116,7 @@ fn content_twins_under_a_marginal_sibling_fold_their_pairs() {
     );
     // `v_right` is marginal over the marginal `sub_right_r`, whose store the
     // marginalization step frees as `v_right` becomes marginal.
-    free_subsumed_marginal_children(&mut tdd.levels, &vtree, v_right, None);
+    free_subsumed_marginal_children(&mut tdd.levels, &vtree, v_right);
 
     // Tag marginal-side slots so the `has_value_refs` markers are set on v_left
     // (right child sub_left_r is marginal) and root (right child v_right is marginal).
@@ -282,7 +282,7 @@ fn minimize_relocates_weight_store_rows_with_their_slots() {
         "setup: a surviving pair must name a slot above the orphaned one, or nothing moves"
     );
 
-    let column = |t: &Tdd, v| t.weights().expect("weighted").level(v).expect("column").len();
+    let column = |t: &Tdd, v: usize| t.levels[v].weight_values().expect("column").len();
     let left_before = column(&tdd, left.idx());
     let right_before = column(&tdd, right.idx());
     let exact = |t: &Tdd| exact_weight(&t.weighted_value().unwrap().expect("a weighted diagram has a value"));

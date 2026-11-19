@@ -516,9 +516,6 @@ impl Route {
         for &s in &mirrored {
             levels[to[s.idx()].idx()].swap_sides();
         }
-        if let Some(weights) = f.weights.as_mut().filter(|_| f.vtree.has_regions()) {
-            weights.rekey_levels(|s| Some(to[s].idx()));
-        }
         f.dirty.remap_keeping(&to, |_| mirrored.is_empty());
         f.vtree = into;
         f.levels = levels.into();

@@ -16,7 +16,7 @@ fn inspect_leaf_fusion_state(
 ) -> (Vec<ChildPair>, BigRational) {
     let pairs: Vec<ChildPair> = tdd.levels[root.idx()].pairs_vec(0).to_vec();
     let after = with_ws(tdd, |ws| {
-        assert_refs_and_width_in_sync(tdd, ws, root, leaf);
+        assert_refs_and_width_in_sync(tdd, root, leaf);
         assert_leaf_column_pinned(tdd, ws, leaf);
         node_value(tdd, ws, root, leaf, 0)
     });
@@ -58,7 +58,7 @@ fn weighted_leaf_fusion_folds_pos_plus_neg_onto_the_pinned_one_slot() {
     let groups = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
     let (pairs, after) = inspect_leaf_fusion_state(&tdd, root, leaf);
     assert_eq!(pairs.len(), 1, "the two pairs must collapse to one");
-    let fused = with_ws(&tdd, |ws| marginal_value(ws, leaf, pairs[0].right.0));
+    let fused = marginal_value(&tdd, leaf, pairs[0].right.0);
 
     assert_eq!(
         groups, 1,
@@ -117,8 +117,8 @@ fn weighted_leaf_fusion_declines_a_sum_the_pinned_column_cannot_hold() {
 
     let before: Vec<ChildPair> = tdd.levels[root.idx()].pairs_vec(0).to_vec();
     let before_val = with_ws(&tdd, |ws| {
-        let col: Vec<BigRational> = ws
-            .level(leaf.idx())
+        let col: Vec<BigRational> = tdd.levels[leaf.idx()]
+            .weight_values()
             .expect("pinned leaf column")
             .iter()
             .map(|v| {

@@ -165,10 +165,8 @@ impl Case {
         for t in result.vtree().regions().filter(|_| !result.is_zero()) {
             assert!(result.level(t).is_marginal(), "{what}: region {} is not summed out: {result:?}", t.0);
         }
-        if let Some(store) = result.weights() {
-            for t in result.vtree().bottomup() {
-                assert!(!result.level(t).is_weight_marginal() || store.is_set(t.idx()), "{what}: no column at {}: {result:?}", t.0);
-            }
+        for t in result.vtree().bottomup() {
+            assert!(!result.level(t).is_weight_marginal() || result.level(t).weight_values().is_some(), "{what}: no column at {}: {result:?}", t.0);
         }
         check_values(&result, smooth, self.n, self.arithmetic, what);
         self.seen.intervals = self.seen.intervals.max(max_intervals(&result));

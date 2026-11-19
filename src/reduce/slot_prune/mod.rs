@@ -66,14 +66,14 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Result<Vec<u32>,
             continue;
         }
         // Invariant 11: a weight-marginal leaf's column is the label-ordered
-        // cache of `WeightStore::leaf_val`, shared by every diagram over this
-        // vtree, so compacting it would corrupt every other holder.
+        // cache of `WeightStore::leaf_val`, and readers decode a leaf-side
+        // reference as a label, so its slots never move.
         if tdd.vtree.node(v).is_var_leaf() && tdd.levels[v.idx()].is_weight_marginal() {
             continue;
         }
         // Empty stores need no parent walks. Weighted live width still needs
-        // synchronization, even when no store column is installed.
-        let store_len = MarginalValues::read(&tdd.levels[v.idx()], tdd.weights.as_ref(), v.idx()).map_or(0, |values| values.len());
+        // synchronization, even when the level holds no values.
+        let store_len = MarginalValues::read(&tdd.levels[v.idx()]).map_or(0, |values| values.len());
         if store_len == 0 {
             tdd.reindex_level(lim, v, &[], &mut [], true)?;
             continue;
@@ -116,8 +116,8 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Result<Vec<u32>,
         // repeats one, and otherwise keeps its values apart, left as it is
         // when every slot is referenced.
         let merge = match bounded {
-            Some(weights) if referenced.len() >= SAMPLE_FROM => {
-                sample_repeats(lim, weights.column(&tdd.levels[v.idx()], v.idx()).expect("a nonempty weighted store has a column"), referenced)?
+            Some(_) if referenced.len() >= SAMPLE_FROM => {
+                sample_repeats(lim, tdd.levels[v.idx()].weight_values().expect("a nonempty weighted store has a column"), referenced)?
             }
             _ => true,
         };

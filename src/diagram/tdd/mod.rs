@@ -245,7 +245,7 @@ impl Tdd {
             levels,
             output: self.output,
             dirty: self.dirty.clone(),
-            weights: self.weights.as_ref().map(|w| w.try_clone_on(lim)).transpose()?,
+            weights: self.weights.clone(),
         })
     }
 }
@@ -423,8 +423,8 @@ impl Tdd {
     /// # Errors
     ///
     /// [`TddBuildError::WeightedLevelWithoutStore`] naming the first
-    /// weight-marginal level, whose per-node values live in the store. The
-    /// diagram is untouched and still carries its store.
+    /// weight-marginal level, whose values the store's weights and arithmetic
+    /// interpret. The diagram is untouched and still carries its store.
     pub fn take_weights(&mut self) -> Result<Option<WeightStore>, TddBuildError> {
         if let Some(level) = self.levels.iter().position(TddLevel::is_weight_marginal) {
             return Err(TddBuildError::WeightedLevelWithoutStore {
