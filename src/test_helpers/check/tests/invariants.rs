@@ -395,7 +395,9 @@ fn canonicity_rejects_a_duplicated_node() {
             b.push(eng, t, &pairs).unwrap();
         }
     }
-    let corrupted = b.finish(tdd.output()).expect("a duplicated node is still well-formed");
+    // `finish` refuses the repeated pairs, which are what this checker is
+    // tested on.
+    let corrupted = unsafe { b.finish_unchecked(tdd.output()) };
 
     assert!(
         check_canonicity(&corrupted, CANONICITY_ROUNDS).is_err(),

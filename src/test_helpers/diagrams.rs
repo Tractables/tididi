@@ -72,9 +72,10 @@ pub fn inline_marginal() -> (Tdd, [VtreeIdx; 3]) {
 fn marginal_slot_donor(eng: &Engine) -> (Tdd, VtreeIdx) {
     let vtree = Arc::new(Vtree::balanced(64));
     let mut builder = Tdd::builder(eng, &vtree).unwrap();
+    let root = vtree.root();
     let mut labels = vec![[ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX]; vtree.num_nodes()];
     for level in vtree.bottomup() {
-        if vtree.node(level).is_leaf() { continue; }
+        if vtree.node(level).is_leaf() || level == root { continue; }
         let (left, right) = vtree.children(level);
         let right_true = labels[right.idx()][0];
         labels[level.idx()] = std::array::from_fn(|label| {
@@ -87,13 +88,14 @@ fn marginal_slot_donor(eng: &Engine) -> (Tdd, VtreeIdx) {
             builder.push(eng, level, &[ChildPair::new(labels[left.idx()][label], right_true)]).unwrap()
         });
     }
-    let root = vtree.root();
     let (left, source) = vtree.children(root);
     let output = builder.push(eng, root, &[
         ChildPair::new(labels[left.idx()][1], labels[source.idx()][0]),
         ChildPair::new(labels[left.idx()][2], labels[source.idx()][1]),
     ]).unwrap();
-    let mut donor = builder.finish(TddNodeId { vtree: root, local: output }).unwrap();
+    // Each level holds true beside its literals, nodes that overlap, which
+    // `finish` refuses as a repeated pair; only the summed level is kept.
+    let mut donor = unsafe { builder.finish_unchecked(TddNodeId { vtree: root, local: output }) };
     eng.marginalize_levels(&mut donor, &[source]).unwrap();
     let mut counts = donor.level(source).marginal_counts().unwrap().to_vec();
     counts.sort_unstable();

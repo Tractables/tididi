@@ -96,6 +96,35 @@ fn a_negative_singleton_exchanges_the_literals_and_keeps_true() {
 }
 
 #[test]
+fn a_class_referenced_as_true_and_as_a_literal_repeats_no_pair() {
+    // (x1 ∧ x2 ∧ x3) ∨ (¬x1 ∧ ¬x3) over (x1, (x2, x3)): the level over x2
+    // references x2's positive node and its true node.
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(3));
+    let root = vtree.root();
+    let (x1, inner) = vtree.children(root);
+    assert_eq!(vtree.leaf_of(VarId(1)), Some(x1));
+    assert_eq!(vtree.leaf_of(VarId(2)), Some(vtree.children(inner).0));
+    let mut b = Tdd::builder(&eng, &vtree).unwrap();
+    let both = b.push(&eng, inner, &[ChildPair::new(POS_LEAF_IDX, POS_LEAF_IDX)]).unwrap();
+    let not_x3 = b.push(&eng, inner, &[ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX), ChildPair::new(NEG_LEAF_IDX, NEG_LEAF_IDX)]).unwrap();
+    let out = b.push(&eng, root, &[ChildPair::new(POS_LEAF_IDX, both), ChildPair::new(NEG_LEAF_IDX, not_x3)]).unwrap();
+    let f = b.finish(TddNodeId { vtree: root, local: out }).unwrap();
+    assert_canonical(&f);
+    let expansion = VariableExpansion {
+        classes: vec![vec![pos(1)], vec![pos(2), neg(4)], vec![pos(3)]],
+        num_vars: 4,
+        ..VariableExpansion::default()
+    };
+    let g = eng.expand_variables(&f, &expansion).unwrap();
+    assert_canonical(&g);
+    let expected = expected_models(&models(&f, 3), &expansion);
+    assert_eq!(models(&g, 4), expected);
+    let complement: Vec<bool> = expected.iter().map(|&m| !m).collect();
+    assert_eq!(models(&eng.negate(&g).unwrap(), 4), complement);
+}
+
+#[test]
 fn a_class_with_constants_and_a_free_variable_reconstructs_the_count() {
     let eng = Engine::new();
     let expansion = VariableExpansion {

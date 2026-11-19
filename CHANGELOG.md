@@ -75,6 +75,12 @@ Fixed:
   `Engine`) could answer wrong on a diagram with a marginal level away
   from the quantified leaves; they now return
   `OperationError::MarginalLevel` whenever any level is marginal.
+- `TddBuilder::finish` and `read_tdd` accepted a level holding a pair twice,
+  within one node or across two, and `negate` and the model count were then
+  wrong on the diagram. They now return `TddBuildError::RepeatedPair`,
+  unless a level under it is marginal, where a repeated pair is a legal
+  multiplicity. The binary reader trusts the levels it reads and does not
+  check.
 
 ## 0.2.0
 

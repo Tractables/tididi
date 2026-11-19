@@ -90,7 +90,9 @@ impl Tdd {
     /// variables. It has the id space `1..=expansion.num_vars` and this
     /// vtree's execution context. No apply runs: the levels above the classes
     /// are copied, and each level of a class subtree gets at most three nodes,
-    /// one for each value of the class's leaf that the levels above reference.
+    /// one for each value of the class's leaf that the levels above reference;
+    /// where they reference true and a literal of one class, each reference to
+    /// true becomes two pairs, one per literal, and no node for true is built.
     /// The result is canonical when this diagram is. Weights are not carried,
     /// and a diagram with summed-out levels is refused. Runs on this diagram's
     /// context; use [`Engine::expand_variables`] inside a bounded batch.
@@ -252,6 +254,23 @@ fn expand_classes(eng: &Engine, tdd: &Tdd, class_vtree: &Arc<Vtree>, classes: &[
         }
     }
 
+    // The true node of a class subtree holds the pairs of its positive and
+    // negative nodes, so beside either of them it would repeat that node's
+    // pair in the class root's level. Where the levels above reference both,
+    // each reference to true becomes one to each literal node instead, and
+    // the true node is not built.
+    for (leaf, var) in reduced.leaf_bottomup() {
+        if let Some(used) = &mut used[leaf.idx()]
+            && classes[var.idx()].len() > 1
+            && used[ONE_LEAF_IDX.idx()]
+            && (used[POS_LEAF_IDX.idx()] || used[NEG_LEAF_IDX.idx()])
+        {
+            used[ONE_LEAF_IDX.idx()] = false;
+            used[POS_LEAF_IDX.idx()] = true;
+            used[NEG_LEAF_IDX.idx()] = true;
+        }
+    }
+
     // The node each referenced leaf node became, in its class subtree.
     let mut remap: Vec<Option<[Option<NodeIdx>; 3]>> = Vec::new();
     lim.try_resize(&mut remap, reduced.num_nodes(), None)?;
@@ -269,20 +288,29 @@ fn expand_classes(eng: &Engine, tdd: &Tdd, class_vtree: &Arc<Vtree>, classes: &[
             out.replace_level(eng, expanded, level)?;
             continue;
         }
-        // A reference into a class leaf goes to the node built for it;
-        // references into other levels are kept.
+        // A reference into a class leaf goes to the node built for it, or
+        // to both literal nodes for a true node not built; references into
+        // other levels are kept.
         let redirect = |child: VtreeIdx, map: Option<&[Option<NodeIdx>; 3]>, side: EncodedChildRef| match map {
-            Some(map) if side != ZERO.into() => {
-                map[leaf_node(tdd.level(child), side)].expect("a referenced class node is built").into()
-            }
-            _ => side,
+            Some(map) if side != ZERO.into() => match map[leaf_node(tdd.level(child), side)] {
+                Some(node) => ([node.into(); 2], 1),
+                None => {
+                    let built = |at: NodeIdx| map[at.idx()].expect("a true node not built has both literal nodes").into();
+                    ([built(POS_LEAF_IDX), built(NEG_LEAF_IDX)], 2)
+                }
+            },
+            _ => ([side; 2], 1),
         };
         let level = tdd.level(t);
         let mut pairs = Vec::new();
         for node in level.nodes() {
             pairs.clear();
             for pair in level.pairs_iter_of(&node) {
-                pairs.push(ChildPair::new(redirect(left, left_map, pair.left), redirect(right, right_map, pair.right)));
+                let (lefts, nl) = redirect(left, left_map, pair.left);
+                let (rights, nr) = redirect(right, right_map, pair.right);
+                for &l in &lefts[..nl] {
+                    pairs.extend(rights[..nr].iter().map(|&r| ChildPair::new(l, r)));
+                }
             }
             out.push(eng, expanded, &pairs)?;
         }
@@ -292,7 +320,9 @@ fn expand_classes(eng: &Engine, tdd: &Tdd, class_vtree: &Arc<Vtree>, classes: &[
         Some(map) if output.local != ZERO => map[output.local.idx()].expect("the output's class node is built"),
         _ => output.local,
     };
-    Ok(out.finish(TddNodeId { vtree: idx_map[reduced.root().idx()], local })?)
+    let output = TddNodeId { vtree: idx_map[reduced.root().idx()], local };
+    debug_assert!(out.check_pairs(output).is_ok(), "an expansion repeated a pair in a level");
+    Ok(out.finish_trusting_pairs(output)?)
 }
 
 /// Map each node of `reduced` to the node at the same position of
