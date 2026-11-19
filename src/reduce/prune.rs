@@ -338,8 +338,8 @@ pub(crate) enum PruneScope {
 /// from — an output below the root, a leaf or marginal root level — walks the
 /// whole diagram instead. A `Whole` scope on a structural diagram that knows
 /// its loose levels ([`Dirty::loose`](crate::diagram::Dirty::loose)) walks
-/// down through the levels above them, settled first where that pays
-/// ([`settle_loose`], [`settle_pays`]), and
+/// down through the levels above them, settled first while that pays
+/// ([`seed_list`]), and
 /// the levels that lose a node, starting below the levels it knows are all
 /// reached ([`Seeds`]): where the output is the root level's only node, the
 /// levels with no loose level on their path from the root. A level the walk
@@ -377,14 +377,7 @@ pub(crate) fn prune_unreachable(
     let below_root = matches!(scope, PruneScope::BelowRoot) && below_root_walk_applies(tdd);
     let seeded = match tdd.dirty.loose() {
         Some(loose) if !below_root && below_root_walk_applies(tdd) && !tdd.has_marginal_level() => {
-            if tdd.dirty.loose_is_exact() {
-                debug_assert_eq!(settle_loose(eng, tdd, loose).ok().as_deref(), Some(loose), "an exact list settles to itself");
-                Some(Seeds::of(eng, tdd, loose)?)
-            } else if settle_pays(tdd, loose) {
-                Some(Seeds::of(eng, tdd, &settle_loose(eng, tdd, loose)?)?)
-            } else {
-                Some(Seeds::of(eng, tdd, loose)?)
-            }
+            Some(Seeds::of(eng, tdd, &seed_list(eng, tdd, loose)?)?)
         }
         _ => None,
     };
@@ -405,36 +398,40 @@ pub(crate) fn prune_unreachable(
     Ok(())
 }
 
-/// Whether a prune settles `loose` ([`settle_loose`]) before its walk: when
-/// the parent levels the settle would read hold at most half of the
-/// diagram's slots and arena pairs. A settle that reads more costs about
-/// what it can save the walk, which enters the parents of listed levels
-/// anyway; the half is an arbitrary cut between those regimes. Listed
-/// siblings next to each other count their parent once.
-pub(super) fn settle_pays(tdd: &Tdd, loose: &[u32]) -> bool {
-    let vtree = &tdd.vtree;
-    let size = |t: VtreeIdx| {
-        let level = &tdd.levels[t.idx()];
-        level.slot_count() + level.pairs.len()
+/// The list a prune seeds its walk from ([`Seeds::of`]): `tdd`'s loose
+/// levels `loose`, as they are when exact, and otherwise settled
+/// ([`settle_loose`]) while the settle's reads pay. A parent level the settle
+/// reads is one the walk enters anyway unless the read drops each of its
+/// listed children, so the settle reads parents, bottom-up, only while the
+/// slots and arena pairs of those read come to at most those of the ones
+/// read that the walk no longer enters, plus an eighth of the diagram's
+/// slots and arena pairs; the eighth is an arbitrary allowance. Levels not
+/// read stay listed.
+pub(super) fn seed_list<'a>(
+    eng: &Engine,
+    tdd: &Tdd,
+    loose: &'a [u32],
+) -> Result<std::borrow::Cow<'a, [u32]>, OperationError> {
+    if tdd.dirty.loose_is_exact() {
+        debug_assert_eq!(settle_loose(eng, tdd, loose).ok().as_deref(), Some(loose), "an exact list settles to itself");
+        return Ok(std::borrow::Cow::Borrowed(loose));
+    }
+    let eighth = || {
+        let all: usize = (0..tdd.vtree.num_nodes())
+            .map(|t| VtreeIdx(t as u32))
+            .filter(|&t| tdd.is_structural_internal(t))
+            .map(|t| level_size(&tdd.levels[t.idx()]))
+            .sum();
+        all / 8
     };
-    let (mut read, mut last) = (0usize, None);
-    for &c in loose {
-        let p = vtree.node(VtreeIdx(c)).parent();
-        if p != last && p.is_some_and(|p| p != vtree.root() && tdd.is_structural_internal(p)) {
-            read += size(p.unwrap());
-        }
-        last = p;
-    }
-    let mut all = 0usize;
-    for t in (0..vtree.num_nodes()).map(|t| VtreeIdx(t as u32)) {
-        if tdd.is_structural_internal(t) {
-            all += size(t);
-            if all >= 2 * read {
-                return true;
-            }
-        }
-    }
-    false
+    let level = |t: VtreeIdx| &tdd.levels[t.idx()];
+    Ok(std::borrow::Cow::Owned(settle_listed(eng, &tdd.vtree, &level, loose, eighth)?))
+}
+
+/// A level's slots and arena pairs: what a read of its pairs or a walk
+/// across it is taken to cost.
+fn level_size(level: &TddLevel) -> usize {
+    level.slot_count() + level.pairs.len()
 }
 
 /// A level the walk must enter whatever it finds: a parent of a listed
@@ -653,6 +650,20 @@ pub(crate) fn settle_loose_in<'a>(
     level: &dyn Fn(VtreeIdx) -> &'a TddLevel,
     listed: &[u32],
 ) -> Result<Vec<u32>, OperationError> {
+    settle_listed(eng, vtree, level, listed, || usize::MAX)
+}
+
+/// [`settle_loose_in`] that stops reading parent levels once the
+/// [`level_size`] of those read passes that of the ones whose listed
+/// children the reads all dropped by more than `slack`, which is asked
+/// for only then.
+fn settle_listed<'a>(
+    eng: &Engine,
+    vtree: &Vtree,
+    level: &dyn Fn(VtreeIdx) -> &'a TddLevel,
+    listed: &[u32],
+    mut slack: impl FnMut() -> usize,
+) -> Result<Vec<u32>, OperationError> {
     if listed.is_empty() {
         return Ok(Vec::new());
     }
@@ -688,11 +699,20 @@ pub(crate) fn settle_loose_in<'a>(
     parents.sort_unstable_by_key(|&p| vtree.topo_pos(p));
     parents.dedup();
     let mut gate = lim.gate();
+    let (mut spent, mut saved, mut allowance) = (0usize, 0usize, None);
     for &p in parents.iter() {
         let (left, right) = vtree.children(p);
         if p != vtree.root() && !flags[left.idx()][UNDER] && !flags[right.idx()][UNDER] {
+            if spent > saved && spent - saved > *allowance.get_or_insert_with(&mut slack) {
+                break;
+            }
+            let size = level_size(level(p));
+            spent += size;
             let sides = [flags[left.idx()][AT], flags[right.idx()][AT]];
             let stays = unnamed_children(lim, (vtree, level), p, sides, counts, &mut gate)?;
+            if stays == [false; 2] {
+                saved += size;
+            }
             flags[left.idx()][AT] = stays[0];
             flags[right.idx()][AT] = stays[1];
         }
