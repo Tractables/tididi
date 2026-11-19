@@ -679,7 +679,7 @@ pub(crate) fn settle_loose_in<'a>(
 /// pair ([`count_named`]). A level with no node holds none, and a level that
 /// cannot be read counts as holding one: one that is not structural
 /// internal, and each child of a `p` that is not.
-fn unnamed_children<'a>(
+pub(crate) fn unnamed_children<'a>(
     lim: &Limits,
     (vtree, level_at): (&Vtree, &dyn Fn(VtreeIdx) -> &'a TddLevel),
     p: VtreeIdx,

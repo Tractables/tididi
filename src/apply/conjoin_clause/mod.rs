@@ -52,9 +52,14 @@ pub(crate) struct ClauseWork {
     /// The both-relevant type-3 pairs of the node being rebuilt, held back
     /// until its left index changes so the pair list stays sorted.
     t3_buf: Vec<ChildPair>,
-    /// Per child of the spine level being rebuilt, which of its nodes an
-    /// emitted pair names; empty for a child that is not tracked.
-    named: [Vec<bool>; 2],
+    /// Per level, whether the accumulator listed it loose under a spine
+    /// parent; covered only while the loose levels are known.
+    listed: MarkBuffer,
+    /// Per spine level, its [`NO_CT`] and [`NO_PRODUCTS`] bits; sized only
+    /// while the loose levels are known.
+    gaps: Vec<u8>,
+    /// The counts a read of a rebuilt level's pairs for unnamed children takes.
+    counts: Vec<u32>,
 }
 
 impl Buffers for ClauseWork {
@@ -66,9 +71,9 @@ impl Buffers for ClauseWork {
         visit(&mut self.spine_internal);
         visit(&mut self.dt_pairs);
         visit(&mut self.t3_buf);
-        for named in &mut self.named {
-            visit(named);
-        }
+        self.listed.buffers(visit);
+        visit(&mut self.gaps);
+        visit(&mut self.counts);
     }
 }
 
@@ -78,10 +83,10 @@ impl PooledScratch for ClauseWork {
     fn prepare(&mut self) {
         self.on_spine.debug_assert_clear();
         self.need_dt.debug_assert_clear();
+        self.listed.debug_assert_clear();
         self.spine_internal.clear();
         self.dt_pairs.clear();
         self.t3_buf.clear();
-        self.named.iter_mut().for_each(Vec::clear);
     }
 
     /// The marks are cleared on every exit, an error's too, so the parked
@@ -89,6 +94,7 @@ impl PooledScratch for ClauseWork {
     fn retain(&mut self, lim: &crate::limits::Limits) -> usize {
         self.on_spine.unmark_all();
         self.need_dt.unmark_all();
+        self.listed.unmark_all();
         self.release_oversized(lim)
     }
 }
@@ -335,6 +341,23 @@ fn rebuild_along_spine(
     // written before any parent reads them. The stop axis and the output cap
     // are checked after each level, the cap against the rebuilt levels' nodes.
     let mut out_nodes = 0u64;
+    // The accumulator's loose levels stand where the parent level is off the
+    // spine, and at an off-spine child of a spine level, whose nodes the
+    // rebuild only drops names of. The rebuild lists a spine child itself.
+    let mut loose = f.dirty.take_loose();
+    if let Some(list) = &mut loose {
+        work.listed.cover(lim, num_nodes)?;
+        lim.try_resize(&mut work.gaps, num_nodes, 0)?;
+        let (on_spine, listed) = (&work.on_spine, &mut work.listed);
+        list.retain(|&c| {
+            let c = VtreeIdx(c);
+            if !vtree.node(c).parent().is_some_and(|p| on_spine[p.idx()]) {
+                return true;
+            }
+            listed.mark(c);
+            !on_spine[c.idx()]
+        });
+    }
     let mut tables = ClauseTables {
         cd_map: &mut work.cd_map,
         level_base: &work.level_base,
@@ -344,14 +367,10 @@ fn rebuild_along_spine(
         dt_pairs: &mut work.dt_pairs,
         spare_nodes: &mut Vec::new(),
         spare_pairs: &mut Vec::new(),
-        named: &mut work.named,
+        listed: &work.listed,
+        gaps: &mut work.gaps,
+        counts: &mut work.counts,
     };
-    // The accumulator's loose levels stand where the parent level is off the
-    // spine; the rebuild lists the children of the spine levels itself.
-    let mut loose = f.dirty.take_loose();
-    if let Some(loose) = &mut loose {
-        loose.retain(|&c| !vtree.node(VtreeIdx(c)).parent().is_some_and(|p| work.on_spine[p.idx()]));
-    }
     for &t in work.spine_internal.iter() {
         rebuild_spine_level(eng, t, vtree, &mut levels, &mut tables, loose.as_mut())?;
         out_nodes += levels[t.idx()].slot_count() as u64;
