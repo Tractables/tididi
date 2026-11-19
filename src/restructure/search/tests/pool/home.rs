@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use num_rational::BigRational;
 
-use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
 use crate::restructure::search::{PoolMove, PoolRestarts, PoolSearchConfig, RotationMove};
 use crate::test_helpers::check::check_all_fast;
 use crate::test_helpers::same_storage;
@@ -34,28 +34,27 @@ fn clauses(vars: &[VarId], rng: &mut Lcg) -> Vec<Vec<i32>> {
         .collect()
 }
 
-fn compile(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<i32>], weights: Option<&WeightStore>) -> Tdd {
+fn compile(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
     let mut f = crate::test_helpers::padded(Tdd::one(vtree), vtree);
     for clause in clauses {
         f = eng.and_clause(f, clause).unwrap();
     }
     eng.minimize(&mut f).unwrap();
-    if let Some(store) = weights {
-        f.set_weights(store.clone()).unwrap();
-    }
     f
 }
 
-fn store(n: u32, rng: &mut Lcg) -> WeightStore {
+fn store(n: u32, rng: &mut Lcg) -> Weights {
     let weight = |rng: &mut Lcg| BigRational::new((1 + rng.below(5) as i64).into(), 6.into());
     let table: Vec<_> = (0..n).map(|_| LiteralWeights { negative: weight(rng), positive: weight(rng) }).collect();
-    WeightStore::new(RationalWeights::from_literals(&table), Arithmetic::ExactRational)
+    Weights::new(RationalWeights::from_literals(&table), Arithmetic::ExactRational)
 }
 
-fn unweighted(f: &Tdd) -> Tdd {
-    let mut f = f.clone();
-    f.take_weights().unwrap();
-    f
+/// A random home of `n` leaves, weighted half the time.
+fn random_home(n: u32, seed: u64, rng: &mut Lcg) -> Home {
+    match rng.coin() {
+        true => Home::weighted(Vtree::random(n, seed), store(n, rng)).unwrap(),
+        false => Home::new(Vtree::random(n, seed)),
+    }
 }
 
 fn weighted(eng: &Engine, f: &Tdd) -> Option<BigRational> {
@@ -69,8 +68,8 @@ fn vars(v: &Vtree) -> Vec<VarId> {
 }
 
 /// Two to six members on projections of `home`, the home's root among them
-/// now and then, members on one leaf set now and then sharing their vtree,
-/// some weighted; and the same functions on the home's root. With `full`,
+/// now and then, members on one leaf set now and then sharing their vtree;
+/// and the same functions on the home's root. With `full`,
 /// every member is on all the home's leaves, all on one vtree if `share`.
 fn pools(eng: &Engine, home: &Home, full: bool, share: bool, rng: &mut Lcg) -> (Vec<Tdd>, Vec<Tdd>) {
     let n = home.vtree().num_leaves();
@@ -91,13 +90,12 @@ fn pools(eng: &Engine, home: &Home, full: bool, share: bool, rng: &mut Lcg) -> (
             false => Arc::clone(&root),
         };
         let cnf = clauses(&leaves, rng);
-        let weights = rng.coin().then(|| store(n, rng));
-        let mut f = compile(eng, &vtree, &cnf, weights.as_ref());
+        let mut f = compile(eng, &vtree, &cnf);
         if twin && (share || !full) && i > 0 && let Ok(LeafSets::Equal(same)) = Vtree::leaf_sets(f.vtree(), own[i - 1].vtree()) {
             f.reseat(&same);
         }
         own.push(f);
-        embedded.push(compile(eng, &root, &cnf, weights.as_ref()));
+        embedded.push(compile(eng, &root, &cnf));
     }
     (own, embedded)
 }
@@ -147,9 +145,9 @@ fn check_pool(eng: &Engine, before: &[Tdd], after: &[Tdd], embedded: &[Tdd], kep
                 }
             }
         }
-        let mut expected = unweighted(b);
+        let mut expected = b.clone();
         eng.restructure_to(&mut expected, a.vtree(), usize::MAX).unwrap();
-        assert!(eng.equivalent(&expected, &unweighted(a)).unwrap());
+        assert!(eng.equivalent(&expected, a).unwrap());
     }
 }
 
@@ -176,7 +174,7 @@ fn a_pool_on_projections_searches_as_on_the_root() {
     for seed in 0..60u64 {
         let mut rng = Lcg::new(seed ^ 0x51ed_270b);
         let n = 2 + rng.below(63) as u32;
-        let home = Home::new(Vtree::random(n, seed));
+        let home = random_home(n, seed, &mut rng);
         let (own, embedded) = pools(&eng, &home, false, false, &mut rng);
         let config = config(&mut rng);
         let mut searched = own.clone();
@@ -200,7 +198,7 @@ fn members_with_every_leaf_make_the_moves_of_the_search_on_the_root() {
     for seed in 0..40u64 {
         let mut rng = Lcg::new(seed ^ 0x0dd_ba11);
         let n = 2 + rng.below(40) as u32;
-        let home = Home::new(Vtree::random(n, seed));
+        let home = random_home(n, seed, &mut rng);
         let share = rng.coin();
         let (own, embedded) = pools(&eng, &home, true, share, &mut rng);
         let config = config(&mut rng);
@@ -238,7 +236,7 @@ fn a_pool_move_on_projections_ends_on_one_home() {
     for seed in 0..80u64 {
         let mut rng = Lcg::new(seed ^ 0x007a_11ed);
         let n = 2 + rng.below(63) as u32;
-        let home = Home::new(Vtree::random(n, seed));
+        let home = random_home(n, seed, &mut rng);
         let full = rng.below(4) == 0;
         let (own, embedded) = pools(&eng, &home, full, rng.coin(), &mut rng);
         let internal: Vec<VtreeIdx> = home.vtree().internal_bottomup().map(|(v, _, _)| v).collect();

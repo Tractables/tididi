@@ -379,13 +379,13 @@ fn maintenance_uses_the_explicit_engines_limits() {
 
 #[test]
 fn weighted_updates_preserve_weights_on_refusal_and_on_the_last_removal() {
-    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
     use crate::test_helpers::rat;
-    let vtree = Arc::new(Vtree::balanced(3));
+    let table = vec![LiteralWeights { negative: rat(2, 1), positive: rat(2, 1) }; 3];
+    let vtree = Arc::new(Vtree::balanced(3)
+        .with_weights(Weights::new(RationalWeights::from_literals(&table), Arithmetic::ExactRational)).unwrap());
     for (model, insert) in [(vec![-1], true), (vec![1, 2, 3], false)] {
-        let mut original = Tdd::cube(&vtree, [1, 2, 3]).unwrap();
-        let table = vec![LiteralWeights { negative: rat(2, 1), positive: rat(2, 1) }; 3];
-        original.set_weights(WeightStore::new(RationalWeights::from_literals(&table), Arithmetic::ExactRational)).unwrap();
+        let original = Tdd::cube(&vtree, [1, 2, 3]).unwrap();
         let mut succeeded = false;
         for cut in 0..400 {
             let eng = Engine::new();
@@ -609,24 +609,24 @@ fn an_edit_after_a_rebuild_that_moved_the_vtree_is_an_edit() {
     assert_matches_operations(batch.diagram(), &want, "remove then insert");
 }
 
-/// Removing the last model on a home leaves false on the empty projection
-/// with the diagram's weight store, and the batch goes on from there.
+/// Removing the last model on a weighted home leaves false on the empty
+/// projection, which reads the home's weights, and the batch goes on from
+/// there.
 #[test]
-fn the_false_exit_on_a_home_keeps_the_weight_store() {
-    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+fn the_false_exit_on_a_weighted_home_keeps_its_weights() {
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
     use crate::test_helpers::rat;
     use crate::vtree::Home;
-    let home = Home::new(Vtree::balanced(3));
-    let mut f = Tdd::cube(home.vtree(), [1, -2, 3]).unwrap();
     let table = vec![LiteralWeights { negative: rat(1, 1), positive: rat(3, 1) }; 3];
-    f.set_weights(WeightStore::new(RationalWeights::from_literals(&table), Arithmetic::ExactRational)).unwrap();
+    let home = Home::weighted(Vtree::balanced(3), Weights::new(RationalWeights::from_literals(&table), Arithmetic::ExactRational)).unwrap();
+    let mut f = Tdd::cube(home.vtree(), [1, -2, 3]).unwrap();
     let mut batch = f.maintain().unwrap();
     batch.remove_model([1, -2, 3]).unwrap();
     assert_eq!(batch.rebuilds(), 0, "the removal is an edit");
     let zero = batch.diagram();
     assert!(zero.is_zero());
     assert_eq!(zero.vtree().num_nodes(), 0);
-    assert!(zero.weights.is_some());
+    assert!(zero.weights().is_some());
     batch.insert_model([1, 2, 3]).unwrap();
     f.minimize().unwrap();
     assert_eq!(f.weighted_value().unwrap().unwrap().as_rational().into_owned(), rat(27, 1));

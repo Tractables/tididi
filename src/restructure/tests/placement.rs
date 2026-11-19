@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{and, Engine, Tdd, Vtree};
-use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
+use crate::diagram::{Arithmetic, RationalWeights, Weights};
 use crate::test_helpers::assert_canonical;
 use crate::vtree::VarId;
 
@@ -10,11 +10,11 @@ fn copied_and_moved_parts_agree_on_renamed_sparse_layouts() {
     let eng = Engine::new();
     let maps = [vec![VarId(4), VarId(1), VarId(6)], vec![VarId(3), VarId(7)]];
     for seed in 0..8 {
-        let a = Arc::new(Vtree::random(3, seed));
+        let unit = Weights::new(RationalWeights::unit(3), Arithmetic::ExactRational);
+        let a = Arc::new(Vtree::random(3, seed).with_weights(unit).unwrap());
         let b = Arc::new(Vtree::random(2, seed + 10));
         let rows: Vec<u64> = (0..8).filter(|&row| (row * 3 + seed) % 5 < 3).collect();
-        let mut first = Tdd::from_models(&a, &[VarId(1), VarId(2), VarId(3)], &rows).unwrap();
-        first.set_weights(WeightStore::new(RationalWeights::unit(3), Arithmetic::ExactRational)).unwrap();
+        let first = Tdd::from_models(&a, &[VarId(1), VarId(2), VarId(3)], &rows).unwrap();
         let second = Tdd::clause(&b, [1, -2]).unwrap();
         assert_canonical(&first);
         assert_canonical(&second);
@@ -60,9 +60,9 @@ fn leaf_labels_survive_copying_and_moving_through_connectors() {
 #[test]
 fn moving_preserves_level_allocations_and_relocates_weight_columns() {
     let eng = Engine::new();
-    let source = Arc::new(Vtree::balanced(3));
+    let unit = Weights::new(RationalWeights::unit(3), Arithmetic::ExactRational);
+    let source = Arc::new(Vtree::balanced(3).with_weights(unit).unwrap());
     let mut circuit = Tdd::clause(&source, [1, -2]).unwrap();
-    circuit.set_weights(WeightStore::new(RationalWeights::unit(3), Arithmetic::ExactRational)).unwrap();
     let (_, inner) = source.children(source.root());
     eng.marginalize_levels(&mut circuit, &[inner]).unwrap();
     assert_canonical(&circuit);
@@ -72,7 +72,7 @@ fn moving_preserves_level_allocations_and_relocates_weight_columns() {
     let value = circuit.weighted_value().unwrap().unwrap();
     let (placed, map) = Tdd::graft_over(&eng,
         vec![(circuit, vec![VarId(4), VarId(2), VarId(5)])], &[VarId(1)], 5,
-        Some(WeightStore::new(RationalWeights::unit(5), Arithmetic::ExactRational))).unwrap();
+        Some(Weights::new(RationalWeights::unit(5), Arithmetic::ExactRational))).unwrap();
     assert_canonical(&placed);
     assert_eq!(placed.level(map.part(0).level_of(root)).nodes.stored().as_ptr(), nodes);
     assert_eq!(placed.level(map.part(0).level_of(inner)).weight_values().unwrap().as_ptr(), column);

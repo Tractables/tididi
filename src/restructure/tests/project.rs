@@ -147,7 +147,7 @@ mod weighted {
 
     use num_rational::BigRational;
 
-    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, TddBuildError, WeightStore};
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, TddBuildError, Weights};
     use crate::restructure::EmbedError;
     use crate::test_helpers::{assert_canonical, compile_clauses, test_cases, vtree_shapes};
     use crate::vtree::{VarId, Vtree, VtreeIdx};
@@ -161,9 +161,9 @@ mod weighted {
     }
 
     /// The weights of `vars`, the variable at position `i` as local `i + 1`.
-    fn store_over(vars: &[VarId], arithmetic: Arithmetic) -> WeightStore {
+    fn store_over(vars: &[VarId], arithmetic: Arithmetic) -> Weights {
         let table: Vec<_> = vars.iter().map(|&v| weight_of(v)).collect();
-        WeightStore::new(RationalWeights::from_literals(&table), arithmetic)
+        Weights::new(RationalWeights::from_literals(&table), arithmetic)
     }
 
     fn exact(f: &Tdd) -> BigRational {
@@ -182,10 +182,20 @@ mod weighted {
     /// summed out.
     fn summed(f: &Tdd, t: VtreeIdx, arithmetic: Arithmetic) -> Tdd {
         let vars: Vec<VarId> = (1..=f.vtree().num_vars()).map(VarId).collect();
-        let mut g = f.clone();
-        g.set_weights(store_over(&vars, arithmetic)).unwrap();
-        Engine::new().marginalize_levels(&mut g, &[t]).unwrap();
+        let vtree = weighted(Vtree::clone(f.vtree()), store_over(&vars, arithmetic));
+        let engine = Engine::new();
+        let (mut g, _) = engine.embed(f, &vtree, |v| v).unwrap();
+        engine.marginalize_levels(&mut g, &[t]).unwrap();
         g
+    }
+
+    fn weighted(vtree: Vtree, weights: Weights) -> Arc<Vtree> {
+        Arc::new(vtree.with_weights(weights).unwrap())
+    }
+
+    /// `vtree` projected onto `keep`, weighted by `store_over(weights)`.
+    fn projected(vtree: &Vtree, keep: &[VarId], weights: &[VarId], arithmetic: Arithmetic) -> Arc<Vtree> {
+        weighted(vtree.project_to_vars(local_in(keep), keep.len() as u32).unwrap(), store_over(weights, arithmetic))
     }
 
     /// The variables outside `t` and the first leaf of each side of `t`, in
@@ -211,15 +221,15 @@ mod weighted {
         let engine = Engine::new();
         let vtree = g.vtree();
         let local_of = local_in(keep);
-        let into = Arc::new(vtree.project_to_vars(local_of, keep.len() as u32).unwrap());
         let arithmetic = g.weights().unwrap().arithmetic();
+        let into = projected(vtree, keep, keep, arithmetic);
         // Bounded values summed out may leave twins the oracle flags in the
         // source already; exact ones are canonical before and after.
         let exactly = arithmetic == Arithmetic::ExactRational;
         if exactly {
             assert_canonical(g);
         }
-        let p = engine.project_over(g, &into, local_of, Some(store_over(keep, arithmetic))).unwrap();
+        let p = engine.project_over(g, &into, local_of).unwrap();
         if exactly {
             assert_canonical(&p);
         }
@@ -291,7 +301,7 @@ mod weighted {
     }
 
     #[test]
-    fn a_structural_diagram_is_projected_and_takes_the_store() {
+    fn a_structural_diagram_is_projected_and_takes_the_destination_weights() {
         let vtree = Arc::new(Vtree::balanced(4));
         let f = compile_clauses(&vtree, &[vec![1, 2], vec![3, 4]]);
         let keep = [VarId(1), VarId(3)];
@@ -299,10 +309,10 @@ mod weighted {
         let into = Arc::new(vtree.project_to_vars(local_of, 2).unwrap());
         let engine = Engine::new();
         let plain = engine.project_to_vars(&f, local_of, 2).unwrap();
-        let g = engine.project_over(&f, &into, local_of, Some(store_over(&keep, Arithmetic::ExactRational))).unwrap();
+        let g = engine.project_over(&f, &projected(&vtree, &keep, &keep, Arithmetic::ExactRational), local_of).unwrap();
         assert!(g.weights().is_some());
         assert_eq!((g.model_count().unwrap(), g.node_count()), (plain.model_count().unwrap(), plain.node_count()));
-        let bare = engine.project_over(&f, &into, local_of, None).unwrap();
+        let bare = engine.project_over(&f, &into, local_of).unwrap();
         assert!(bare.weights().is_none());
         assert_eq!((bare.model_count().unwrap(), bare.node_count()), (plain.model_count().unwrap(), plain.node_count()));
     }
@@ -318,23 +328,19 @@ mod weighted {
         let engine = Engine::new();
         let mut keep = kept_around(&vtree, left);
         keep.retain(|&v| v != VarId(7));
-        let local_of = local_in(&keep);
-        let into = Arc::new(vtree.project_to_vars(local_of, keep.len() as u32).unwrap());
-        let store = store_over(&keep, Arithmetic::ExactRational);
-        assert_eq!(engine.project_over(&g, &into, local_of, Some(store)).unwrap_err(), EmbedError::Unsummed { variable: VarId(7) });
+        let into = projected(&vtree, &keep, &keep, Arithmetic::ExactRational);
+        assert_eq!(engine.project_over(&g, &into, local_in(&keep)).unwrap_err(), EmbedError::Unsummed { variable: VarId(7) });
         // Nothing kept on the right: the root goes, and with it the right side.
         let keep = [VarId(1), VarId(3)];
-        let local_of = local_in(&keep);
-        let into = Arc::new(vtree.project_to_vars(local_of, 2).unwrap());
-        let store = store_over(&keep, Arithmetic::ExactRational);
+        let into = projected(&vtree, &keep, &keep, Arithmetic::ExactRational);
         assert!(matches!(
-            engine.project_over(&g, &into, local_of, Some(store)).unwrap_err(),
+            engine.project_over(&g, &into, local_in(&keep)).unwrap_err(),
             EmbedError::Unsummed { variable } if vtree.in_subtree(vtree.leaf_of(variable).unwrap(), right),
         ));
     }
 
     #[test]
-    fn values_need_a_store_that_agrees_with_the_source() {
+    fn values_need_destination_weights_that_agree_with_the_source() {
         let vtree = Arc::new(Vtree::balanced(4));
         let f = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3, 4]]);
         let g = summed(&f, vtree.root(), Arithmetic::ExactRational);
@@ -343,21 +349,17 @@ mod weighted {
         let into = Arc::new(vtree.project_to_vars(local_of, keep.len() as u32).unwrap());
         let engine = Engine::new();
         assert!(matches!(
-            engine.project_over(&g, &into, local_of, None).unwrap_err(),
+            engine.project_over(&g, &into, local_of).unwrap_err(),
             EmbedError::SourceWeights(TddBuildError::WeightedLevelWithoutStore { .. }),
         ));
         let swapped: Vec<VarId> = keep.iter().rev().copied().collect();
         assert_eq!(
-            engine.project_over(&g, &into, local_of, Some(store_over(&swapped, Arithmetic::ExactRational))).unwrap_err(),
+            engine.project_over(&g, &projected(&vtree, &keep, &swapped, Arithmetic::ExactRational), local_of).unwrap_err(),
             EmbedError::SourceWeights(TddBuildError::IncompatibleWeights),
         );
         assert_eq!(
-            engine.project_over(&g, &into, local_of, Some(store_over(&keep, Arithmetic::ScaledFloat))).unwrap_err(),
+            engine.project_over(&g, &projected(&vtree, &keep, &keep, Arithmetic::ScaledFloat), local_of).unwrap_err(),
             EmbedError::SourceWeights(TddBuildError::IncompatibleWeights),
-        );
-        assert_eq!(
-            engine.project_over(&g, &into, local_of, Some(store_over(&keep[..1], Arithmetic::ExactRational))).unwrap_err(),
-            EmbedError::DestinationWeights(TddBuildError::MissingVariableWeight(VarId(2))),
         );
     }
 
@@ -373,21 +375,22 @@ mod weighted {
         let local_of = local_in(&keep);
         let into = Arc::new(vtree.project_to_vars(local_of, 3).unwrap());
         assert_eq!(
-            engine.project_over(&counted, &into, local_of, None).unwrap_err(),
+            engine.project_over(&counted, &into, local_of).unwrap_err(),
             EmbedError::Operation(OperationError::MarginalLevel(left)),
         );
         // The restriction is x3 under the root's right; a right-linear vtree
         // over the three puts x2 and x3 together.
         let g = summed(&f, left, Arithmetic::ExactRational);
-        let other = Arc::new(Vtree::linear(3));
+        let other = weighted(Vtree::linear(3), store_over(&keep, Arithmetic::ExactRational));
         assert!(matches!(
-            engine.project_over(&g, &other, local_of, Some(store_over(&keep, Arithmetic::ExactRational))).unwrap_err(),
+            engine.project_over(&g, &other, local_of).unwrap_err(),
             EmbedError::NotIsomorphic { .. },
         ));
         // A leaf of `into` that no variable is kept as.
-        let wide = Arc::new(Vtree::balanced(4));
+        let all = [VarId(1), VarId(2), VarId(3), VarId(4)];
+        let wide = weighted(Vtree::balanced(4), store_over(&all, Arithmetic::ExactRational));
         assert!(matches!(
-            engine.project_over(&g, &wide, local_of, Some(store_over(&[VarId(1), VarId(2), VarId(3), VarId(4)], Arithmetic::ExactRational))).unwrap_err(),
+            engine.project_over(&g, &wide, local_of).unwrap_err(),
             EmbedError::NotIsomorphic { .. },
         ));
     }

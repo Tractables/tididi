@@ -208,7 +208,7 @@ fn check_summed_on(f: &Tdd, g: &Tdd, targets: &[VtreeIdx], route: SparseRoute, w
 /// loop folds, and the sparse-marginal levels build what it builds.
 #[test]
 fn the_streamed_levels_read_by_vectors_fold_what_the_row_loop_folds() {
-    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
     let mut rng = Lcg::new(0x3c5e_a1f7);
     let before = word_cells_levels();
     let mut cases = 0usize;
@@ -272,14 +272,11 @@ fn the_streamed_levels_read_by_vectors_fold_what_the_row_loop_folds() {
                 positive: rat(1 + rng.below(5) as i64, 6),
             })
             .collect();
-        let weighted = |t: &Tdd, arithmetic| {
-            let mut t = t.clone();
-            t.set_weights(WeightStore::new(
-                RationalWeights::from_literals(&values),
-                arithmetic,
-            ))
-            .unwrap();
-            t
+        let weighted = |arithmetic| {
+            let weights = Weights::new(RationalWeights::from_literals(&values), arithmetic);
+            let on = Arc::new(Vtree::clone(&vtree).with_weights(weights).unwrap());
+            let place = |t: &Tdd| Tdd::from_levels_unchecked(Arc::clone(&on), t.levels.to_vec(), t.output);
+            (place(&f), place(&g))
         };
         for (targets_name, targets) in &target_sets {
             check_summed(
@@ -289,7 +286,7 @@ fn the_streamed_levels_read_by_vectors_fold_what_the_row_loop_folds() {
                 &format!("{what}, summing out {targets_name}"),
             );
             for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
-                let (wf, wg) = (weighted(&f, arithmetic), weighted(&g, arithmetic));
+                let (wf, wg) = weighted(arithmetic);
                 check_summed(
                     &wf,
                     &wg,

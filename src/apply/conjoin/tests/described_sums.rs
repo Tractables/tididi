@@ -9,7 +9,7 @@
 use super::implicit::affine_function;
 use super::*;
 use super::{DESCRIBED_SUMS, FLOAT_ROWS, FloatRows};
-use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
 use crate::limits::{LimitConfig, StopAt, StopRules};
 use crate::test_helpers::{Lcg, rat, with_floor};
 use crate::vtree::{VarId, Vtree, VtreeIdx};
@@ -97,7 +97,7 @@ fn bits(v: &crate::diagram::WeightValue) -> (u64, i64) {
 /// on every summed one.
 fn same_sums(out: &Tdd, oracle: &Tdd) {
     assert_eq!(out.output, oracle.output, "another root");
-    assert!(out.weights.is_some() && oracle.weights.is_some());
+    assert!(out.weights().is_some() && oracle.weights().is_some());
     let (mut a_buf, mut b_buf) = (Vec::new(), Vec::new());
     for (t, (a, b)) in out.levels.iter().zip(&oracle.levels).enumerate() {
         assert_eq!(a.is_marginal(), b.is_marginal(), "level {t}");
@@ -168,16 +168,15 @@ fn parts(
     given: &[(u32, bool)],
     rng: &mut Lcg,
 ) -> (Arc<Vtree>, Vec<Tdd>) {
-    let vtree = Arc::new(Vtree::balanced(n));
+    let weights = Weights::new(weights(rng, n, wide), Arithmetic::ScaledFloat);
+    let vtree = Arc::new(Vtree::balanced(n).with_weights(weights).unwrap());
     let eng = Engine::new();
-    let store = WeightStore::new(weights(rng, n, wide), Arithmetic::ScaledFloat);
     let parts = (0..m)
         .map(|j| {
             let mut f = affine_function(&eng, &vtree, m, j, rng);
             for &(v, value) in given {
                 f = eng.condition_var(f, VarId(v), value).unwrap();
             }
-            f.set_weights(store.empty_like()).unwrap();
             f
         })
         .collect();
@@ -243,10 +242,7 @@ fn conditioned_and_empty_products_match_the_cells() {
     let mut rng = Lcg::new(0x5d_0023);
     let (vtree, mut parts) = parts(16, 2, false, &[], &mut rng);
     let eng = Engine::new();
-    let mut not = eng.negate(&parts[0]).unwrap();
-    not.set_weights(parts[0].weights.as_ref().unwrap().empty_like())
-        .unwrap();
-    parts[1] = not;
+    parts[1] = eng.negate(&parts[0]).unwrap();
     for h in 1..=5 {
         same_both_ways(&parts, &targets_up_to(&vtree, h));
     }
@@ -261,23 +257,19 @@ fn conditioned_and_empty_products_match_the_cells() {
 /// and the nodes of height 4.
 fn carried_operands(n: u32, seed: u64) -> (Arc<Vtree>, Tdd, Tdd, Vec<VtreeIdx>) {
     let mut rng = Lcg::new(seed);
-    let vtree = Arc::new(Vtree::balanced(n));
-    let eng = Engine::new();
     let half = LiteralWeights {
         negative: rat(1, 2),
         positive: rat(1, 2),
     };
     let uniform = RationalWeights::from_literals(&vec![half; n as usize]);
-    let store = WeightStore::new(uniform, Arithmetic::ScaledFloat);
+    let weights = Weights::new(uniform, Arithmetic::ScaledFloat);
+    let vtree = Arc::new(Vtree::balanced(n).with_weights(weights).unwrap());
+    let eng = Engine::new();
     let factors: Vec<Tdd> = (0..4)
         .map(|j| affine_function(&eng, &vtree, 4, j, &mut rng))
         .collect();
-    let weighted = |mut f: Tdd| {
-        f.set_weights(store.empty_like()).unwrap();
-        f
-    };
-    let f02 = weighted(eng.and(&factors[0], &factors[2]).unwrap());
-    let f1 = weighted(factors[1].clone());
+    let f02 = eng.and(&factors[0], &factors[2]).unwrap();
+    let f1 = factors[1].clone();
     let h3 = targets_up_to(&vtree, 3);
     let h4: Vec<VtreeIdx> = targets_up_to(&vtree, 4)
         .into_iter()
@@ -295,7 +287,7 @@ fn carried_operands(n: u32, seed: u64) -> (Arc<Vtree>, Tdd, Tdd, Vec<VtreeIdx>) 
         }
         low.extend([lll, llr, lrl, lrr, ll, lr, l]);
     }
-    let third = weighted(eng.exists_vars(factors[3].clone(), &low_vars).unwrap());
+    let third = eng.exists_vars(factors[3].clone(), &low_vars).unwrap();
     let mut partial = eng.and_marginalizing(&f02, &f1, &low).unwrap();
     partial.minimize().unwrap();
     (vtree, partial, third, h4)

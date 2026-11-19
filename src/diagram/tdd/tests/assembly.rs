@@ -11,7 +11,7 @@ fn checked_assembly_charges_worklists_even_when_levels_are_already_allocated() {
     let eng = Engine::new();
     let output = source.output;
     let _scope = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
-    let assembly = crate::diagram::Assembly::from_levels(&eng, tree, source.levels.into_vec(), None);
+    let assembly = crate::diagram::Assembly::from_levels(&eng, tree, source.levels.into_vec());
     assert_eq!(assembly.finish(output).err(), Some(OperationError::OverBudget));
     assert_eq!(eng.scratch.levels.occupancy(), 1, "refused levels go back to the pool");
 }
@@ -27,23 +27,23 @@ fn checked_assembly_polls_while_seeding_worklists() {
     let _scope = eng.limits().scope(LimitConfig::none().with_stop_rules(StopRules {
         unconditional: Some(StopAt::WorkUnits(3)), ..StopRules::default()
     }));
-    let assembly = crate::diagram::Assembly::from_levels(&eng, tree, source.levels.into_vec(), None);
+    let assembly = crate::diagram::Assembly::from_levels(&eng, tree, source.levels.into_vec());
     assert_eq!(assembly.finish(output).err(), Some(OperationError::Stopped));
     assert_eq!(eng.limits().meters().work_units, 3);
 }
 
 #[test]
-fn operation_assembly_owns_weights_and_recycles_refused_results() {
-    use crate::diagram::{Assembly, Arithmetic, RationalWeights, WeightStore};
-    let vtree = Arc::new(Vtree::balanced(4));
-    let mut source = Tdd::clause(&vtree, [1, -2]).unwrap();
-    source.set_weights(WeightStore::new(RationalWeights::unit(4), Arithmetic::ExactRational)).unwrap();
+fn operation_assembly_reads_the_vtree_weights_and_recycles_refused_results() {
+    use crate::diagram::{Assembly, Arithmetic, RationalWeights, Weights};
+    let weights = Weights::new(RationalWeights::unit(4), Arithmetic::ExactRational);
+    let vtree = Arc::new(Vtree::balanced(4).with_weights(weights).unwrap());
+    let source = Tdd::clause(&vtree, [1, -2]).unwrap();
     assert_canonical(&source);
     let output = source.output();
     for refuse in [false, true] {
         let eng = Engine::new();
         let copy = source.clone();
-        let assembly = Assembly::from_levels(&eng, Arc::clone(&vtree), copy.levels.into_vec(), copy.weights);
+        let assembly = Assembly::from_levels(&eng, Arc::clone(&vtree), copy.levels.into_vec());
         let result = if refuse {
             let _scope = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
             assembly.finish(output)

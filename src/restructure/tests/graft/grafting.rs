@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 
 
-use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Tdd, TddBuildError, WeightStore};
+use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Tdd, Weights};
 use crate::vtree::{VarId, Vtree, VtreeError};
 use crate::test_helpers::{assert_canonical, compile_clauses, rat};
 
@@ -125,12 +125,11 @@ fn graft_with_layout_renames_local_parts_and_maps_their_levels() {
     assert_eq!(layout.part(0).level_of(local.root()), left);
 }
 
-/// A weighted part keeps its values across the graft: each part's store rows
-/// move into the merged store under their grafted level index, so the merged
-/// diagram evaluates to the product the parts stand for — and still does after
-/// the reduction that follows a graft.
+/// A weighted part keeps its values across the graft: the merged diagram
+/// evaluates to the product the parts stand for, and still does after the
+/// reduction that follows a graft.
 #[test]
-fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
+fn graft_over_carries_each_part_weighted_values_into_the_merged_diagram() {
     let global = RationalWeights::from_literals(&(0..7).map(test_literal_weight).collect::<Vec<_>>());
 
     let eng = Engine::new();
@@ -148,12 +147,12 @@ fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
     let mut parts = Vec::new();
     for (cs, l2g) in clauses.iter().zip(placements.iter()) {
         // A part's semiring is in its OWN variable space, which is why the
-        // merged store cannot be derived from the parts.
+        // merged weights cannot be derived from the parts.
         let localized = RationalWeights::from_literals(
             &l2g.iter().map(|g| test_literal_weight(g.idx())).collect::<Vec<_>>(),
         );
-        let mut part = compile_clauses(&local, cs);
-        part.set_weights(WeightStore::new(localized, Arithmetic::ExactRational)).unwrap();
+        let weighted = Vtree::balanced(3).with_weights(Weights::new(localized, Arithmetic::ExactRational)).unwrap();
+        let mut part = compile_clauses(&Arc::new(weighted), cs);
         eng.marginalize_levels(&mut part, &[inner]).expect("no wall is installed in a test");
         assert!(part.levels[inner.idx()].is_weight_marginal(), "setup: a part must carry values");
         parts.push((part, l2g.clone()));
@@ -164,7 +163,7 @@ fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
         parts,
         &[VarId(7)],
         7,
-        Some(WeightStore::new(global.clone(), Arithmetic::ExactRational)),
+        Some(Weights::new(global.clone(), Arithmetic::ExactRational)),
     )
     .expect("the parts carry disjoint variables");
 
@@ -186,55 +185,21 @@ fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
     assert_eq!(rational_value(&grafted), want, "the graft lost or misplaced a part's weights");
     grafted.minimize().unwrap();
     assert_canonical(&grafted);
-    assert_eq!(rational_value(&grafted), want, "reduction after the graft moved the store off its levels");
+    assert_eq!(rational_value(&grafted), want, "reduction after the graft moved values off their levels");
 }
 
-/// [`Tdd::take_weights`] is the one public way to separate a store from its
-/// diagram, and a diagram whose levels still read their values out of it keeps
-/// it.
-///
-/// The shape that needs the detach is the component graft: a part is compiled
-/// weighted, its store is held aside while the part itself is rebuilt, and the
-/// graft re-attaches it under the merged level numbering. A part with no
-/// weight-marginal level hands its store over and takes it back with its value
-/// intact. A part that has one is refused instead, because handing the store
-/// away would leave that level reading values nothing holds any more.
 #[test]
-fn a_part_whose_levels_still_read_the_store_keeps_it() {
+fn a_weighted_part_grafted_over_its_own_weights_keeps_its_value() {
     let eng = Engine::new();
-    let local = Arc::new(Vtree::balanced(3));
-    let (_, inner) = local.children(local.root());
     let table = RationalWeights::from_literals(&(0..3).map(test_literal_weight).collect::<Vec<_>>());
-    let store = || WeightStore::new(table.clone(), Arithmetic::ExactRational);
-    let clauses = [vec![1, 2], vec![2, -3]];
-
-    // Held aside and given back, which is what the component graft does.
-    let mut part = compile_clauses(&local, &clauses);
-    part.set_weights(store()).unwrap();
+    let store = || Weights::new(table.clone(), Arithmetic::ExactRational);
+    let local = Arc::new(Vtree::balanced(3).with_weights(store()).unwrap());
+    let part = compile_clauses(&local, &[vec![1, 2], vec![2, -3]]);
     let want = rational_value(&part);
-    let held = part.take_weights().expect("no level of this part reads the store");
-    assert!(held.is_some(), "the part was put in weighted mode, so it had a store to give");
-    assert!(part.weights().is_none(), "a granted detach leaves the diagram in integer mode");
-    part.set_weights(held.expect("the detach handed the store over")).unwrap();
     let (grafted, _) =
         Tdd::graft_over(&eng, vec![(part, vec![VarId(1), VarId(2), VarId(3)])], &[], 3, Some(store()))
             .expect("one part covers every variable exactly once");
-    assert_eq!(rational_value(&grafted), want, "the store did not survive the round trip through the graft");
-
-    // A marginalized level's values need the store, so the detach is refused.
-    let mut part = compile_clauses(&local, &clauses);
-    part.set_weights(store()).unwrap();
-    eng.marginalize_levels(&mut part, &[inner]).expect("no wall is installed in a test");
-    assert!(part.levels[inner.idx()].is_weight_marginal(), "setup: the part must carry values");
-    let want = rational_value(&part);
-    match part.take_weights() {
-        Err(TddBuildError::WeightedLevelWithoutStore { level }) => {
-            assert_eq!(level, inner, "the refusal names the level that would be stranded");
-        }
-        other => panic!("a level reading the store must refuse the detach, got {other:?}"),
-    }
-    assert!(part.weights().is_some(), "a refused detach leaves the store where it was");
-    assert_eq!(rational_value(&part), want, "a refused detach left the diagram readable");
+    assert_eq!(rational_value(&grafted), want);
 }
 
 #[test]

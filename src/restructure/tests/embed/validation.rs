@@ -103,10 +103,12 @@ fn embedding_checks_planning_work_before_the_false_shortcut() {
 
 #[test]
 fn embedding_retries_after_each_refused_reservation_without_changing_the_source() {
-    use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
+    use crate::diagram::{Arithmetic, RationalWeights, Weights};
 
-    let (_, mut f) = pair_relation();
-    f.set_weights(WeightStore::new(RationalWeights::unit(2), Arithmetic::ExactRational)).unwrap();
+    let weights = Weights::new(RationalWeights::unit(2), Arithmetic::ExactRational);
+    let small = Arc::new(Vtree::linear(2).with_weights(weights).unwrap());
+    let mut f = Tdd::clause(&small, [1, 2]).unwrap();
+    f.minimize().unwrap();
     let before = format!("{f:?}");
     let big = Arc::new(Vtree::linear(6));
     let rename = |var: VarId| VarId(if var == VarId(1) { 2 } else { 5 });

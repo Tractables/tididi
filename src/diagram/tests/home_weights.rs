@@ -1,9 +1,10 @@
-//! Weights held by a home: checked once, read by every diagram on it, and
-//! never carried by one.
+//! Weights held by a home or a root vtree: checked once and read by every
+//! diagram on it.
 
 use std::sync::Arc;
 
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, TddBuildError, Weights};
+use crate::restructure::EmbedError;
 use crate::restructure::search::{MinimizePairs, RotationSearchConfig};
 use crate::test_helpers::{exact_weight, rat};
 use crate::vtree::{Home, VarId, Vtree};
@@ -45,48 +46,22 @@ fn a_home_takes_weights_once_and_keeps_them() {
 }
 
 #[test]
-fn a_diagram_on_a_weighted_home_reads_the_home_weights_and_carries_none() {
+fn a_diagram_on_a_weighted_home_reads_the_home_weights() {
     let eng = Engine::new();
     let home = Home::weighted(Vtree::balanced(4), table(4)).unwrap();
     let own = Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)]).unwrap();
     let mut f = eng.and_clause(eng.clause(&own, [1, -2]).unwrap(), &[2, 3]).unwrap();
     assert_eq!(f.weights(), home.weights());
-    assert_eq!(f.set_weights(table(4)).unwrap_err(), TddBuildError::IncompatibleWeights);
-    assert_eq!(f.take_weights().unwrap(), None);
-    assert_eq!(f.weights(), home.weights());
-    let mut b = Tdd::builder(&eng, &own).unwrap();
-    assert_eq!(b.set_weights(table(4)).unwrap_err(), TddBuildError::IncompatibleWeights);
 
-    let mut bare = eng.and_clause(eng.clause(&Arc::new(Vtree::balanced(4)), [1, -2]).unwrap(), &[2, 3]).unwrap();
-    bare.set_weights(table(4)).unwrap();
-    assert_eq!(value_of(&f), value_of(&bare));
+    let root = Arc::new(Vtree::balanced(4).with_weights(table(4)).unwrap());
+    let g = eng.and_clause(eng.clause(&root, [1, -2]).unwrap(), &[2, 3]).unwrap();
+    assert_eq!(value_of(&f), value_of(&g));
     eng.marginalize(&mut f, |v| v.0 <= 2).unwrap();
-    assert!(f.has_marginal_level() && f.weights.is_none());
+    assert!(f.has_marginal_level());
+    assert_eq!(f.weights(), home.weights());
     assert!(f.vtree().bottomup().all(|t| !f.level(t).is_marginal() || f.level(t).is_weight_marginal()));
-    assert_eq!(value_of(&f), value_of(&bare));
+    assert_eq!(value_of(&f), value_of(&g));
     crate::test_helpers::assert_canonical(&f);
-}
-
-/// The weights of a diagram on a vtree that is not a weighted home: equal
-/// ones may be attached again at any time, other ones only while no level
-/// is summed out.
-#[test]
-fn equal_weights_are_attached_again_and_other_weights_refused_after_a_sum() {
-    let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
-    let mut f = eng.and_clause(eng.clause(&vtree, [1, -2]).unwrap(), &[2, 3]).unwrap();
-    let other = Weights::new(RationalWeights::unit(4), Arithmetic::ExactRational);
-    f.set_weights(other.clone()).unwrap();
-    f.set_weights(table(4)).unwrap();
-    let before = value_of(&f);
-    let (left, _) = vtree.children(vtree.root());
-    eng.marginalize_levels(&mut f, &[left]).unwrap();
-    f.set_weights(table(4)).unwrap();
-    assert_eq!(value_of(&f), before);
-    assert_eq!(f.set_weights(other).unwrap_err(), TddBuildError::IncompatibleWeights);
-    let scaled = Weights::new(table(4).algebra().clone(), Arithmetic::ScaledFloat);
-    assert!(f.set_weights(scaled).is_err());
-    assert_eq!(value_of(&f), before);
 }
 
 #[test]
@@ -99,7 +74,6 @@ fn a_borrowed_weighted_operand_on_a_home_is_not_cloned() {
     eng.marginalize(&mut g, |v| v.0 >= 6).unwrap();
     let holders = Arc::strong_count(&home.weights().unwrap().table);
     let h = eng.and(&f, &g).unwrap();
-    assert!(h.weights.is_none());
     assert_eq!(Arc::strong_count(&home.weights().unwrap().table), holders);
     assert_eq!(value_of(&h), value_of(&f) * value_of(&g) / value_of(&Tdd::one(&Vtree::empty_projection(&home))));
 }
@@ -121,11 +95,10 @@ fn a_rotation_search_keeps_the_weights_of_the_home() {
     assert_eq!(value_of(&f), before);
 }
 
-/// A root that is not a home, with weights: its diagrams carry none, and
-/// the level sum-outs, placement and projection compute what weights on
-/// each diagram compute.
+/// A root that is not a home, with weights: the level sum-outs and placement
+/// compute what a weighted home computes.
 #[test]
-fn a_weighted_root_computes_what_weights_on_each_diagram_compute() {
+fn a_weighted_root_computes_what_a_weighted_home_computes() {
     assert_eq!(Vtree::balanced(4).with_weights(table(3)).unwrap_err(), TddBuildError::MissingVariableWeight(VarId(4)));
     let home = Home::new(Vtree::balanced(4));
     assert!(Vtree::clone(home.vtree()).with_weights(table(4)).is_ok());
@@ -137,30 +110,26 @@ fn a_weighted_root_computes_what_weights_on_each_diagram_compute() {
 
     let eng = Engine::new();
     let weighted = Arc::new(Vtree::balanced(6).with_weights(table(6)).unwrap());
-    let bare = Arc::new(Vtree::balanced(6));
+    let home = Home::weighted(Vtree::balanced(6), table(6)).unwrap();
     let build = |vtree: &Arc<Vtree>| {
         let f = eng.and_clause(eng.clause(vtree, [1, -2, 4]).unwrap(), &[2, 3, -6]).unwrap();
         let g = eng.and_clause(eng.clause(vtree, [-1, 5]).unwrap(), &[3, -4, 6]).unwrap();
         (f, g)
     };
     let (f, g) = build(&weighted);
-    let (mut fb, gb) = build(&bare);
+    let (fh, gh) = build(home.vtree());
     assert_eq!(f.weights(), Some(&table(6)));
-    assert_eq!(value_of(&f), {
-        fb.set_weights(table(6)).unwrap();
-        value_of(&fb)
-    });
-    let mut f = f;
-    assert_eq!(f.set_weights(table(6)).unwrap_err(), TddBuildError::IncompatibleWeights);
+    assert_eq!(value_of(&f), value_of(&fh));
     let (left, _) = weighted.children(weighted.root());
     let h = eng.and_marginalizing(&f, &g, &[left]).unwrap();
-    let hb = eng.and_marginalizing(&fb, &gb, &[left]).unwrap();
-    assert!(h.level(left).is_weight_marginal() && h.weights.is_none());
-    assert_eq!(value_of(&h), value_of(&hb));
+    let under_left: Vec<VarId> = weighted.leaf_bottomup().filter(|&(l, _)| weighted.in_subtree(l, left)).map(|(_, v)| v).collect();
+    let hh = eng.and_marginalizing_where(&fh, &gh, |v| under_left.contains(&v)).unwrap();
+    assert!(h.level(left).is_weight_marginal());
+    assert_eq!(value_of(&h), value_of(&hh));
 
     let into = Arc::new(Vtree::balanced(6).with_weights(table(6)).unwrap());
-    let (placed, _) = eng.embed_over(&h, &into, |v| v, None).unwrap();
-    assert!(placed.weights.is_none());
-    assert_eq!(value_of(&placed), value_of(&hb));
-    assert!(eng.embed_over(&h, &into, |v| v, Some(table(6))).is_err());
+    let (placed, _) = eng.embed_over(&h, &into, |v| v).unwrap();
+    assert_eq!(placed.weights(), Some(&table(6)));
+    assert_eq!(value_of(&placed), value_of(&hh));
+    assert!(matches!(eng.embed_over(&h, &Arc::new(Vtree::balanced(6)), |v| v), Err(EmbedError::SourceWeights(_))));
 }

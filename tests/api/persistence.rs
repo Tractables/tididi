@@ -3,7 +3,7 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 use num_rational::BigRational;
-use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
 use tididi::io::{read_tdd, write_tdd};
 
 use tididi::vtree::VarId;
@@ -47,15 +47,13 @@ fn named_roots_and_weight_metadata_survive_a_fresh_context() {
             ("true", vec![true; 16]),
             ("false", vec![false; 16]),
         ]);
+        let weighted_tree = Arc::new(Vtree::clone(tree).with_weights(Weights::new(
+            RationalWeights::from_literals(&weights),
+            Arithmetic::ExactRational,
+        )).unwrap());
         let mut encoded_roots = BTreeMap::new();
         for (name, truth) in &root_truths {
-            let mut diagram = or_of_cubes(tree, &[VarId(1), VarId(2), VarId(3), VarId(4)], |row| truth[row]);
-            diagram
-                .set_weights(WeightStore::new(
-                    RationalWeights::from_literals(&weights),
-                    Arithmetic::ExactRational,
-                ))
-                .unwrap();
+            let diagram = or_of_cubes(&weighted_tree, &[VarId(1), VarId(2), VarId(3), VarId(4)], |row| truth[row]);
             let mut bytes = Vec::new();
             write_tdd(&mut bytes, &diagram).unwrap();
             encoded_roots.insert(*name, bytes);
@@ -80,10 +78,11 @@ fn named_roots_and_weight_metadata_survive_a_fresh_context() {
         }
         assert_eq!(restored_weights, weights);
         let algebra = RationalWeights::from_literals(&restored_weights);
-        let store = WeightStore::new(algebra.clone(), Arithmetic::ExactRational);
+        let restored_weighted = Arc::new(Vtree::clone(&restored_tree)
+            .with_weights(Weights::new(algebra.clone(), Arithmetic::ExactRational)).unwrap());
         let mut restored_roots = BTreeMap::new();
         for (name, bytes) in &encoded_roots {
-            let mut diagram = read_tdd(&mut Cursor::new(bytes), &restored_tree).unwrap();
+            let diagram = read_tdd(&mut Cursor::new(bytes), &restored_tree).unwrap();
             assert!(Arc::ptr_eq(diagram.vtree(), &restored_tree));
             assert!(diagram.weights().is_none()); // the structural format omits weights
             let expected = &root_truths[name];
@@ -93,12 +92,12 @@ fn named_roots_and_weight_metadata_survive_a_fresh_context() {
                 expected,
                 &format!("shape {shape}, restored {name}"),
             );
-            diagram.set_weights(store.clone()).unwrap();
             let expected_mass = weighted_sum(expected, &weights).0;
             assert_eq!(diagram.evaluate(&algebra).unwrap(), expected_mass);
+            let (weighted, _) = engine.embed(&diagram, &restored_weighted, |v| v).unwrap();
             assert_eq!(
                 engine
-                    .weighted_value(&diagram)
+                    .weighted_value(&weighted)
                     .unwrap()
                     .unwrap()
                     .as_rational()
@@ -110,17 +109,18 @@ fn named_roots_and_weight_metadata_survive_a_fresh_context() {
                 .map(|var| VarId(var + 1))
                 .collect();
             assert_eq!(engine.support(&diagram).unwrap(), expected_support);
-            restored_roots.insert(*name, diagram);
+            restored_roots.insert(*name, weighted);
         }
 
-        // Use names to construct a fresh query and combine roots sharing the reloaded vtree.
+        // Use names to construct a fresh query and combine roots sharing the
+        // reloaded vtree's weighted twin.
         let named_query = engine
             .xor(
                 engine
-                    .literal(&restored_tree, tididi::Literal::pos(names["rain"]))
+                    .literal(&restored_weighted, tididi::Literal::pos(names["rain"]))
                     .unwrap(),
                 engine
-                    .literal(&restored_tree, tididi::Literal::pos(names["sensor"]))
+                    .literal(&restored_weighted, tididi::Literal::pos(names["sensor"]))
                     .unwrap(),
             )
             .unwrap();

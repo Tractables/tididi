@@ -10,7 +10,7 @@ use num_bigint::BigUint;
 use num_rational::BigRational;
 
 use crate::cnf::{ClauseSink, CnfScheme};
-use crate::diagram::{Arithmetic, ColumnAlgebra, LeafLabel, LiteralWeights, PairIndex, RationalWeights, SlotPairs, WeightStore};
+use crate::diagram::{Arithmetic, ColumnAlgebra, LeafLabel, LiteralWeights, PairIndex, RationalWeights, SlotPairs, Weights};
 use crate::query::PinSemantics;
 use crate::restructure::search::{MinimizePairs, RotationSearchConfig};
 use crate::test_helpers::check::check_trimmed;
@@ -188,10 +188,10 @@ impl Audit {
     }
 }
 
-fn weights(n: u32, rng: &mut Lcg) -> WeightStore {
+fn weights(n: u32, rng: &mut Lcg) -> Weights {
     let mut w = || BigRational::new((rng.below(7) as i64 - 2).into(), (1 + rng.below(4) as i64).into());
     let literals: Vec<_> = (0..=n).map(|_| LiteralWeights { negative: w(), positive: w() }).collect();
-    WeightStore::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational)
+    Weights::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational)
 }
 
 /// A diagram on `home` after random conditioning, forgetting, conjunction
@@ -219,6 +219,22 @@ fn diagram(home: &Arc<Vtree>, n: u32, rng: &mut Lcg) -> Tdd {
 }
 
 /// `g`, on a projection of `home`, placed on `home`.
+/// `t`, on a home of `onto`'s shape and variables or a projection of one,
+/// moved to the same place on `onto`.
+fn reseated(t: &Tdd, onto: &Home) -> Tdd {
+    let own = if t.vtree().is_home() {
+        Arc::clone(onto.vtree())
+    } else if t.vtree().num_nodes() == 0 {
+        Vtree::empty_projection(onto)
+    } else {
+        Vtree::projection(onto, t.vtree().leaf_bottomup().map(|(_, v)| v)).unwrap()
+    };
+    let mut t = t.clone();
+    // Safety: the two homes have one shape, so the two projections do.
+    unsafe { t.reseat_vtree_unchecked(&own) };
+    t
+}
+
 fn on_home(g: &Tdd, home: &Arc<Vtree>) -> Tdd {
     if g.vtree().num_nodes() == 0 {
         return if g.is_one() { Tdd::one(home) } else { Tdd::zero(home) };
@@ -300,6 +316,7 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
     a.check("projected_model_count", || g.projected_model_count(&pv), || f.projected_model_count(&pv), PartialEq::eq);
     let ws = weights(n, rng);
     let algebra = ws.algebra().clone();
+    let weighted = Home::weighted(Vtree::clone(home), ws).unwrap();
     a.check("evaluate", || g.evaluate(&algebra), || f.evaluate(&algebra), PartialEq::eq);
     a.check("evaluate_columns", || g.evaluate_columns(&Counts { free: true }), || f.evaluate_columns(&Counts { free: true }), PartialEq::eq);
     if g.vtree().free_leaves() > 0 && !g.is_zero() {
@@ -310,16 +327,8 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
     }
     a.check(
         "weighted_value",
-        || {
-            let mut w = g.clone();
-            w.set_weights(ws.clone()).unwrap();
-            w.weighted_value().map(|v| v.map(|v| exact_weight(&v)))
-        },
-        || {
-            let mut w = f.clone();
-            w.set_weights(ws.clone()).unwrap();
-            w.weighted_value().map(|v| v.map(|v| exact_weight(&v)))
-        },
+        || reseated(g, &weighted).weighted_value().map(|v| v.map(|v| exact_weight(&v))),
+        || reseated(f, &weighted).weighted_value().map(|v| v.map(|v| exact_weight(&v))),
         PartialEq::eq,
     );
     if g.vtree().num_nodes() > 0 {
@@ -456,7 +465,7 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
     // Moves between vtrees.
     a.check("embed", || g.embed(home, |v| v).map(|r| r.0), || Ok::<_, crate::restructure::EmbedError>(f.clone()), same_tdd);
     a.check("embed_moving", || eng.embed_moving(g.clone(), home, |v| v).map(|r| r.0).map_err(|r| r.error), || Ok(f.clone()), same_tdd);
-    a.check("embed_over", || eng.embed_over(g, home, |v| v, None).map(|r| r.0), || Ok(f.clone()), same_tdd);
+    a.check("embed_over", || eng.embed_over(g, home, |v| v).map(|r| r.0), || Ok(f.clone()), same_tdd);
     a.check(
         "embedding_plan",
         || eng.embedding_plan(g.vtree(), home, |v| v).and_then(|plan| eng.embed_with(g, &plan)),
@@ -472,7 +481,7 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
     );
     a.check(
         "project_over",
-        || eng.project_over(g, home, Some, None),
+        || eng.project_over(g, home, Some),
         || Ok(f.clone()),
         same_tdd,
     );

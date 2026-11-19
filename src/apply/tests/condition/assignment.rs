@@ -1,14 +1,11 @@
 use super::*;
-use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
+use crate::diagram::{Arithmetic, RationalWeights, Weights};
 use crate::test_helpers::{assert_canonical, eval};
 use crate::vtree::Vtree;
 
-fn set_unit_weights(f: &mut Tdd, n: usize) {
-    f.set_weights(WeightStore::new(
-        RationalWeights::unit(n),
-        Arithmetic::ExactRational,
-    ))
-    .unwrap();
+fn unit_weighted(n: u32) -> Arc<Vtree> {
+    let weights = Weights::new(RationalWeights::unit(n as usize), Arithmetic::ExactRational);
+    Arc::new(Vtree::balanced(n).with_weights(weights).unwrap())
 }
 
 fn assert_expected_count_or_weight(f: &Tdd, weighted: bool, expected: u32) {
@@ -87,11 +84,10 @@ fn assignment_duplicates_and_errors_are_decided_before_rewriting() {
 
 #[test]
 fn conditioning_a_weighted_leaf_preserves_the_weight_configuration() {
-    let tree = Arc::new(Vtree::balanced(1));
+    let tree = unit_weighted(1);
     let eng = Engine::new();
     for assignment in [vec![1], vec![-1], vec![1, -1]] {
-        let mut f = Tdd::clause(&tree, [1]).unwrap();
-        set_unit_weights(&mut f, 1);
+        let f = Tdd::clause(&tree, [1]).unwrap();
         assert_canonical(&f);
         let result = eng.condition(f, assignment.clone()).unwrap();
         assert_canonical(&result);
@@ -102,10 +98,9 @@ fn conditioning_a_weighted_leaf_preserves_the_weight_configuration() {
 
 #[test]
 fn a_false_cofactor_with_a_weighted_sibling_keeps_its_store_and_no_false_nodes() {
-    let tree = Arc::new(Vtree::balanced(4));
+    let tree = unit_weighted(4);
     let eng = Engine::new();
     let mut f = Tdd::clause(&tree, [1]).unwrap();
-    set_unit_weights(&mut f, 4);
     let (_, right) = tree.children(tree.root());
     eng.marginalize_levels(&mut f, &[right]).unwrap();
     assert_canonical(&f);
@@ -186,8 +181,8 @@ fn sparse_assignments_on_rotated_trees_match_enumeration() {
 #[test]
 fn falsity_cascades_preserve_marginal_sibling_values_on_either_side() {
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(8));
     for weighted in [false, true] {
+        let tree = if weighted { unit_weighted(8) } else { Arc::new(Vtree::balanced(8)) };
         for target_right in [false, true] {
             let (left, right) = tree.children(tree.root());
             let (target, sibling, offset) = if target_right {
@@ -202,9 +197,6 @@ fn falsity_cascades_preserve_marginal_sibling_values_on_either_side() {
                 )
                 .unwrap();
             assert_canonical(&f);
-            if weighted {
-                set_unit_weights(&mut f, 8);
-            }
             eng.marginalize_levels(&mut f, &[sibling]).unwrap();
             assert_canonical(&f);
             assert!(!f.level(target).is_marginal());
@@ -224,9 +216,9 @@ fn falsity_cascades_preserve_marginal_sibling_values_on_either_side() {
 
 #[test]
 fn conditioning_recovers_from_each_reservation_refusal() {
-    let vtree = Arc::new(Vtree::balanced(8));
     let setup = Engine::new();
     for marginal in [None, Some(false), Some(true)] {
+        let vtree = if marginal == Some(true) { unit_weighted(8) } else { Arc::new(Vtree::balanced(8)) };
         let mut f = setup
             .and(
                 Tdd::clause(&vtree, [1, 5]).unwrap(),
@@ -234,10 +226,7 @@ fn conditioning_recovers_from_each_reservation_refusal() {
             )
             .unwrap();
         assert_canonical(&f);
-        if let Some(weighted) = marginal {
-            if weighted {
-                set_unit_weights(&mut f, 8);
-            }
+        if marginal.is_some() {
             setup
                 .marginalize_levels(&mut f, &[vtree.children(vtree.root()).0])
                 .unwrap();

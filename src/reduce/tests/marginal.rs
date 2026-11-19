@@ -226,8 +226,8 @@ fn test_content_merge_stands_down_without_a_marginal_level() {
 /// Reduction relocates a weight-marginal level's store rows along with its
 /// slots.
 ///
-/// A weighted level keeps its per-node values in the diagram's `WeightStore`,
-/// keyed by vtree level and indexed by slot. Slot-prune compacts that column —
+/// A weighted level keeps its per-node values in its own weight column,
+/// indexed by slot. Slot-prune compacts that column —
 /// orphaned slots go and the survivors move down — and rewrites the parent
 /// refs to match. If the column and the refs were ever compacted apart, a
 /// parent would read some other node's weight and the diagram's value would
@@ -238,19 +238,12 @@ fn test_content_merge_stands_down_without_a_marginal_level() {
 /// its sides named, so every surviving slot above must shift down.
 #[test]
 fn minimize_relocates_weight_store_rows_with_their_slots() {
-    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, ChildDecoder, WeightStore};
-
-
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, ChildDecoder, Weights};
     use crate::reduce::{ReductionPlan};
     use crate::test_helpers::{assert_canonical, compile_clauses, exact_weight, rat};
 
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
-    let root = vtree.root();
-    let (left, right) = vtree.children(root);
-
-    let mut tdd = compile_clauses(&vtree, &[vec![1, 2], vec![2, -3], vec![3, 4], vec![-1, 4]]);
-    tdd.set_weights(WeightStore::new(
+    let vtree = Arc::new(Vtree::balanced(4).with_weights(Weights::new(
         RationalWeights::from_literals(&[
             LiteralWeights { negative: rat(1, 2), positive: rat(1, 3) },
             LiteralWeights { negative: rat(2, 5), positive: rat(3, 7) },
@@ -258,7 +251,11 @@ fn minimize_relocates_weight_store_rows_with_their_slots() {
             LiteralWeights { negative: rat(1, 1), positive: rat(4, 9) },
         ]),
         Arithmetic::ExactRational,
-    )).unwrap();
+    )).unwrap());
+    let root = vtree.root();
+    let (left, right) = vtree.children(root);
+
+    let mut tdd = compile_clauses(&vtree, &[vec![1, 2], vec![2, -3], vec![3, 4], vec![-1, 4]]);
     eng.marginalize_levels(&mut tdd, &[left, right]).expect("no wall is installed in a test");
     assert!(
         tdd.levels[left.idx()].is_weight_marginal() && tdd.levels[right.idx()].is_weight_marginal(),

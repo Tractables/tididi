@@ -3,7 +3,7 @@
 
 use num_rational::BigRational;
 
-use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
 use crate::test_helpers::check::check_trimmed;
 use crate::test_helpers::{and2, equiv, exact_weight, rand_conj};
 use crate::vtree::rng::Lcg;
@@ -12,10 +12,10 @@ use crate::literal;
 
 use super::*;
 
-fn weights(num_vars: u32, rng: &mut Lcg) -> WeightStore {
+fn weights(num_vars: u32, rng: &mut Lcg) -> Weights {
     let mut w = || BigRational::new((rng.below(7) as i64 - 2).into(), (1 + rng.below(4) as i64).into());
     let literals: Vec<_> = (0..=num_vars).map(|_| LiteralWeights { negative: w(), positive: w() }).collect();
-    WeightStore::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational)
+    Weights::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational)
 }
 
 /// A diagram over `home` after random conditioning, forgetting,
@@ -54,9 +54,8 @@ fn same_queries(f: &Tdd, g: &Tdd, n: u32, rng: &mut Lcg, label: &str) {
     let ws = weights(n, rng);
     let algebra = ws.algebra().clone();
     assert_eq!(f.evaluate(&algebra).unwrap(), g.evaluate(&algebra).unwrap(), "{label}: evaluation");
-    let (mut fw, mut gw) = (f.clone(), g.clone());
-    fw.set_weights(ws.clone()).unwrap();
-    gw.set_weights(ws).unwrap();
+    let weighted = Arc::new(Vtree::clone(f.vtree()).with_weights(ws).unwrap());
+    let (fw, gw) = (f.embed(&weighted, |v| v).unwrap().0, g.embed(&weighted, |v| v).unwrap().0);
     let value = |t: &Tdd| exact_weight(&t.weighted_value().unwrap().unwrap());
     assert_eq!(value(&fw), value(&gw), "{label}: weighted value");
 }
@@ -304,9 +303,7 @@ fn column_values(column: &crate::value::CountVec) -> Vec<num_bigint::BigUint> {
 /// A copy of `f` owing every reduction pass every level, as a fresh seat
 /// leaves a diagram.
 fn owing_everything(f: &Tdd) -> Tdd {
-    let mut copy = Tdd::from_levels_unchecked(Arc::clone(f.vtree()), f.levels().to_vec(), f.output());
-    copy.weights = f.weights.clone();
-    copy
+    Tdd::from_levels_unchecked(Arc::clone(f.vtree()), f.levels().to_vec(), f.output())
 }
 
 /// One case of [`the_in_place_trim_is_the_rebuild`]: diagrams that dropped
@@ -317,7 +314,11 @@ fn in_place_against_rebuild(seed: u64, seen: &mut [usize; 6]) {
     use crate::test_helpers::{assert_canonical, assert_same_shape, trim_by_rebuild};
     let mut rng = Lcg::new(seed.wrapping_mul(0x9e37_79b9) ^ 0x7121);
     let n = 2 + rng.below(9) as u32;
-    let hm = Home::new(Vtree::random(n, seed));
+    let weighted = rng.below(4) == 0;
+    let hm = match weighted {
+        true => Home::weighted(Vtree::random(n, seed), weights(n, &mut rng)).unwrap(),
+        false => Home::new(Vtree::random(n, seed)),
+    };
     let home = Arc::clone(hm.vtree());
     let mut f = if seed.is_multiple_of(2) {
         random_diagram(&home, n, &mut rng)
@@ -327,10 +328,6 @@ fn in_place_against_rebuild(seed: u64, seen: &mut [usize; 6]) {
     };
     if rng.coin() {
         f.attach_level_counts().unwrap();
-    }
-    let weighted = rng.below(4) == 0;
-    if weighted {
-        f.set_weights(weights(n, &mut rng)).unwrap();
     }
     let label = format!("seed {seed}, {n} variables");
 
@@ -427,12 +424,12 @@ fn trim_summed(f: &mut Tdd, home: &Home) -> Result<bool, OperationError> {
 /// dropped over the marginal leaf 2.
 fn summed_leaf_under_a_dropped_level(clause: &[i32], vars: &[u32], arithmetic: Option<Arithmetic>) -> (Tdd, Tdd, Home) {
     use crate::marginal::tests::region::weights;
-    let home = Home::new(Vtree::balanced(4));
+    let home = match arithmetic {
+        Some(arithmetic) => Home::weighted(Vtree::balanced(4), Weights::new(weights(4, &mut Lcg::new(7)), arithmetic)).unwrap(),
+        None => Home::new(Vtree::balanced(4)),
+    };
     let own = Vtree::projection(&home, vars.iter().map(|&v| crate::vtree::VarId(v))).unwrap();
     let mut f = crate::test_helpers::padded(Tdd::clause(&own, clause.iter().copied()).unwrap(), &own);
-    if let Some(arithmetic) = arithmetic {
-        f.set_weights(WeightStore::new(weights(4, &mut Lcg::new(7)), arithmetic)).unwrap();
-    }
     let leaf = own.leaf_of(crate::vtree::VarId(2)).unwrap();
     crate::marginal::marginalize_levels(&Engine::new(), &mut f, &[leaf]).unwrap();
     (f.clone(), f, home)

@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use num_bigint::BigUint;
 use num_rational::BigRational;
-use tididi::diagram::{Arithmetic, ChildPair, LiteralWeights, RationalWeights, TddNodeId, WeightStore, POS_LEAF_IDX};
+use tididi::diagram::{Arithmetic, ChildPair, LiteralWeights, RationalWeights, TddNodeId, Weights, POS_LEAF_IDX};
 use tididi::vtree::{Home, VarId, Vtree, VtreeIdx};
 use tididi::restructure::EmbedError;
 use tididi::{Engine, OperationError, Tdd};
@@ -201,11 +201,6 @@ fn a_placement_onto_a_region_the_diagram_has_not_summed_is_refused() {
     let region = into.bottomup().find(|&t| into.node(t).is_region()).unwrap();
     let x3 = Tdd::clause(&Vtree::projection(&home, [VarId(3)]).unwrap(), [3]).unwrap();
     let one = Tdd::one(&Vtree::projection(&home, [VarId(3)]).unwrap());
-    let weighted = || {
-        let mut w = x3.clone();
-        w.set_weights(weights(4, &mut Rng(7))).unwrap();
-        w
-    };
     let mut wrong = Vec::new();
     let mut expect = |name: &str, call: &mut dyn FnMut() -> Result<(), EmbedError>| {
         match catch_unwind(AssertUnwindSafe(call)) {
@@ -214,12 +209,8 @@ fn a_placement_onto_a_region_the_diagram_has_not_summed_is_refused() {
             Err(e) => wrong.push(format!("{name}: {}", text(&*e))),
         }
     };
-    expect("embed_over", &mut || eng.embed_over(&x3, &into, |v| v, None).map(drop));
-    expect("embed_over weighted", &mut || {
-        let w = weighted();
-        eng.embed_over(&w, &into, |v| v, w.weights().cloned()).map(drop)
-    });
-    expect("embed_over true", &mut || eng.embed_over(&one, &into, |v| v, None).map(drop));
+    expect("embed_over", &mut || eng.embed_over(&x3, &into, |v| v).map(drop));
+    expect("embed_over true", &mut || eng.embed_over(&one, &into, |v| v).map(drop));
     expect("embed", &mut || eng.embed(&x3, &into, |v| v).map(drop));
     expect("Tdd::embed", &mut || x3.embed(&into, |v| v).map(drop));
     expect("embed_moving", &mut || eng.embed_moving(x3.clone(), &into, |v| v).map(drop).map_err(|r| r.error));
@@ -230,10 +221,10 @@ fn a_placement_onto_a_region_the_diagram_has_not_summed_is_refused() {
     assert_eq!(both.model_count().unwrap(), eng.and(&f, &x3).unwrap().model_count().unwrap());
 }
 
-fn weights(n: u32, rng: &mut Rng) -> WeightStore {
+fn weights(n: u32, rng: &mut Rng) -> Weights {
     let mut w = || BigRational::new((1 + rng.below(6) as i64).into(), (1 + rng.below(4) as i64).into());
     let literals: Vec<_> = (0..n).map(|_| LiteralWeights { negative: w(), positive: w() }).collect();
-    WeightStore::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational)
+    Weights::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational)
 }
 
 /// The count, and the weighted value where weights are attached.
@@ -257,7 +248,10 @@ fn sum_outs_between_other_operations_agree_with_the_home() {
     for seed in 0..1500u64 {
         let mut rng = Rng(seed ^ 0x9e37_79b9);
         let n = 2 + rng.below(6) as u32;
-        let home = Home::new(Vtree::random(n, seed));
+        let home = match rng.below(3) {
+            0 => Home::weighted(Vtree::random(n, seed), weights(n, &mut rng)).unwrap(),
+            _ => Home::new(Vtree::random(n, seed)),
+        };
         let vars: Vec<VarId> = (1..=n).filter(|_| rng.below(4) != 0).map(VarId).collect();
         if vars.is_empty() {
             continue;
@@ -271,11 +265,6 @@ fn sum_outs_between_other_operations_agree_with_the_home() {
             let c = clause(&mut rng);
             f = f.and_clause(&c).unwrap();
             twin = twin.and_clause(&c).unwrap();
-        }
-        if rng.below(3) == 0 {
-            let ws = weights(n, &mut rng);
-            f.set_weights(ws.clone()).unwrap();
-            twin.set_weights(ws).unwrap();
         }
         let mut trace = format!("seed {seed} n {n} vars {:?}:", vars.iter().map(|v| v.0).collect::<Vec<_>>());
         let mut note = |what: String, trace: &str| seen.entry(what).or_insert((0, trace.to_string())).0 += 1;

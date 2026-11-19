@@ -7,8 +7,8 @@ use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::{ToPrimitive, Zero};
 
-use crate::diagram::{Arithmetic, ChildDecoder, ChildPair, EncodedChildRef, TddBuilder, TddLevel, ValueRef, WeightStore, WeightValue, ONE_LEAF_IDX, POS_LEAF_IDX};
-use crate::marginal::tests::region::{operand, under, weights};
+use crate::diagram::{Arithmetic, ChildDecoder, ChildPair, EncodedChildRef, TddBuilder, TddLevel, ValueRef, Weights, WeightValue, ONE_LEAF_IDX, POS_LEAF_IDX};
+use crate::marginal::tests::region::{operand, reweighted, under, weights};
 use crate::test_helpers::check::check_trimmed;
 use crate::test_helpers::deadline_probe;
 use crate::value::CountRead;
@@ -156,7 +156,7 @@ fn named_true(f: &Tdd, leaves: &[(VtreeIdx, u32)]) -> Option<(TddBuilder, crate:
         }
         levels[p.idx()] = level;
     }
-    Some((TddBuilder::from_levels(v, levels, f.weights().cloned()), f.output()))
+    Some((TddBuilder::from_levels(v, levels), f.output()))
 }
 
 /// One or two variable leaves of `f` at random, no two siblings: a node over
@@ -206,12 +206,14 @@ fn with_region(case: u64, rng: &mut Lcg) -> Option<(Home, Tdd, Option<Arithmetic
     let modes = [None, Some(Arithmetic::ExactRational), Some(Arithmetic::ScaledFloat)];
     let arithmetic = modes[case as usize % modes.len()];
     let n = 3 + rng.below(8) as u32;
-    let home = Home::new(Vtree::random(n, case));
+    let mut home = Home::new(Vtree::random(n, case));
     let all: Vec<VarId> = home.vtree().leaf_bottomup().map(|(_, var)| var).collect();
     let used: Vec<VarId> = all.iter().copied().filter(|_| rng.below(4) != 0).collect();
     let mut f = operand(&eng, &home, &used, rng);
     if let Some(arithmetic) = arithmetic {
-        f.set_weights(WeightStore::new(weights(n, rng), arithmetic)).unwrap();
+        let weighted = Home::weighted(Vtree::random(n, case), Weights::new(weights(n, rng), arithmetic)).unwrap();
+        f = reweighted(&f, &home, &weighted);
+        home = weighted;
     }
     let h = VtreeIdx(rng.below(home.vtree().num_nodes() as u64) as u32);
     eng.marginalize(&mut f, under(&home, &[h])).ok()?;

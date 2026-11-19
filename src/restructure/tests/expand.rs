@@ -256,11 +256,11 @@ fn an_identity_expansion_keeps_the_function() {
 
 #[test]
 fn a_weighted_diagram_expands_without_its_weights() {
-    use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
+    use crate::diagram::{Arithmetic, RationalWeights, Weights};
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(2));
-    let mut f = Tdd::clause(&vtree, [1, 2]).unwrap();
-    f.set_weights(WeightStore::new(RationalWeights::unit(2), Arithmetic::ExactRational)).unwrap();
+    let weights = Weights::new(RationalWeights::unit(2), Arithmetic::ExactRational);
+    let vtree = Arc::new(Vtree::balanced(2).with_weights(weights).unwrap());
+    let f = Tdd::clause(&vtree, [1, 2]).unwrap();
     let expansion = VariableExpansion { classes: vec![vec![pos(3)], vec![pos(1), pos(2)]], num_vars: 3, ..VariableExpansion::default() };
     let g = eng.expand_variables(&f, &expansion).unwrap();
     assert_canonical(&g);

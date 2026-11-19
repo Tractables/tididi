@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use super::*;
 use crate::Engine;
-use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
 use crate::limits::{LimitConfig, SparseRoute, StopAt, StopRules};
 use crate::test_helpers::{compile_clauses_on, rand_cnf, rat, same_storage, vtree_shapes, CnfShape, Lcg};
 use crate::vtree::{VarId, Vtree};
@@ -174,13 +174,12 @@ fn a_borrowed_operand_conjoins_as_an_owned_one_keeping_counts() {
 fn a_weighted_or_marginal_borrowed_operand_conjoins_as_an_owned_one() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(8));
-    let f = compile_clauses_on(&eng, &vtree, &[vec![1, 2, -3], vec![3, 4], vec![-5, 6, 7], vec![8, -1]]);
     let g = compile_clauses_on(&eng, &vtree, &[vec![2, 5], vec![-4, 6], vec![7, 8, -2], vec![1, -6]]);
     let values: Vec<LiteralWeights<_>> = (0..8).map(|i| LiteralWeights { negative: rat(i + 1, 1), positive: rat(i + 2, 1) }).collect();
-    let store = WeightStore::new(RationalWeights::from_literals(&values), Arithmetic::ExactRational);
-    let (mut f_weighted, mut g_weighted) = (f.clone(), g.clone());
-    f_weighted.set_weights(store.clone()).unwrap();
-    g_weighted.set_weights(store).unwrap();
+    let weights = Weights::new(RationalWeights::from_literals(&values), Arithmetic::ExactRational);
+    let weighted_tree = Arc::new(Vtree::balanced(8).with_weights(weights).unwrap());
+    let f_weighted = compile_clauses_on(&eng, &weighted_tree, &[vec![1, 2, -3], vec![3, 4], vec![-5, 6, 7], vec![8, -1]]);
+    let g_weighted = compile_clauses_on(&eng, &weighted_tree, &[vec![2, 5], vec![-4, 6], vec![7, 8, -2], vec![1, -6]]);
     // g with the variables 1 to 4 summed out, and a formula over the others.
     let mut marginal = g.clone();
     eng.marginalize_levels(&mut marginal, &[vtree.children(vtree.root()).0]).unwrap();
@@ -364,26 +363,24 @@ fn a_borrowed_operand_sums_out_as_an_owned_one() {
                 (0..nvars as i64).map(|i| LiteralWeights { negative: rat(1 + i % 4, 3), positive: rat(2 + i % 3, 5) }).collect();
             let stores = [
                 None,
-                Some(WeightStore::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational)),
-                Some(WeightStore::new(RationalWeights::from_literals(&literals), Arithmetic::SignedLog)),
-                Some(WeightStore::new(RationalWeights::from_literals(&literals), Arithmetic::ScaledFloat)),
+                Some(Weights::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational)),
+                Some(Weights::new(RationalWeights::from_literals(&literals), Arithmetic::SignedLog)),
+                Some(Weights::new(RationalWeights::from_literals(&literals), Arithmetic::ScaledFloat)),
             ];
             for store in &stores {
                 let eng = Engine::new();
-                let weighted = |mut t: Tdd| {
-                    if let Some(store) = store {
-                        t.set_weights(store.empty_like()).unwrap();
-                    }
-                    t
+                let tree = match store {
+                    Some(store) => Arc::new(Vtree::clone(&tree).with_weights(store.clone()).unwrap()),
+                    None => Arc::clone(&tree),
                 };
                 // Each step joins the next two clauses into the walk's diagram.
-                let mut acc = weighted(eng.one(&tree));
+                let mut acc = eng.one(&tree);
                 for (k, pair) in clauses.chunks(2).enumerate() {
-                    let g = weighted(compile_clauses_on(&eng, &tree, pair));
+                    let g = compile_clauses_on(&eng, &tree, pair);
                     let rest = clauses.get(2 * (k + 1)..).unwrap_or_default();
                     let targets = finished(&tree, &acc, rest);
                     marginal += usize::from(acc.has_marginal_level());
-                    let at = |borrow: (bool, bool)| format!("{shape}, {:?}, step {k}, borrowing {borrow:?}", store.as_ref().map(WeightStore::arithmetic));
+                    let at = |borrow: (bool, bool)| format!("{shape}, {:?}, step {k}, borrowing {borrow:?}", store.as_ref().map(Weights::arithmetic));
                     let (owned, owned_work) = on_fresh(false, |eng| eng.and_marginalizing(acc.clone(), g.clone(), &targets).unwrap());
                     let (acc_before, g_before) = (values(&acc), values(&g));
                     for borrow in BORROWS {

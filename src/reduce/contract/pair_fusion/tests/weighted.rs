@@ -2,7 +2,7 @@
 //!
 //! The integer fusion tests (`fallible.rs`) cover the count
 //! arithmetic. These cover what is genuinely different once the fused value is a
-//! SIGNED semiring element read out of the external `WeightStore`:
+//! SIGNED semiring element held in the level's weight column:
 //!
 //!   * a group can cancel to exactly ZERO, which is a real value and must never
 //!     be confused with the bit-31 structural-FALSE sentinel;
@@ -29,7 +29,7 @@ use num_traits::Zero;
 use crate::diagram::{LiteralWeights, RationalWeights, SignedLog, WeightValue};
 use crate::marginal::marginalize_leaf_weighted;
 use crate::diagram::{ChildDecoder, LeafLabel, TddLevel, TddNodeId, LEAF_WIDTH};
-use crate::diagram::{Arithmetic, WeightStore};
+use crate::diagram::{Arithmetic, Weights};
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 use crate::test_helpers::{rat, toy_weighted};
 use std::sync::Arc;
@@ -39,9 +39,8 @@ fn store_len(tdd: &Tdd, level: VtreeIdx) -> usize {
     tdd.levels[level.idx()].weight_values().map_or(0, <[WeightValue]>::len)
 }
 
-/// Read the store the fixture attached to `tdd`.
-fn with_ws<R>(tdd: &Tdd, f: impl FnOnce(&WeightStore) -> R) -> R {
-    f(tdd.weights().expect("the fixture attaches a weight store"))
+fn with_ws<R>(tdd: &Tdd, f: impl FnOnce(&Weights) -> R) -> R {
+    f(tdd.weights().expect("the fixture's vtree is weighted"))
 }
 
 /// Two variables' `(w⁻, w⁺)` literal weights. Deliberately awkward rationals so
@@ -81,7 +80,7 @@ fn weighted_fixture(
     values: &[BigRational],
     nodes: &[Vec<(u32, u32)>],
 ) -> (Tdd, VtreeIdx, VtreeIdx) {
-    let ws = WeightStore::new(
+    let ws = Weights::new(
         RationalWeights::from_literals(&fixture_weights()),
         Arithmetic::ExactRational,
     );
@@ -111,7 +110,11 @@ fn weighted_leaf_fixture(
     weights: &[LiteralWeights<BigRational>],
     nodes: &[Vec<(u32, u32)>],
 ) -> (Tdd, VtreeIdx, VtreeIdx) {
-    let vtree = Arc::new(Vtree::balanced(2));
+    let ws = Weights::new(
+        RationalWeights::from_literals(weights),
+        Arithmetic::ExactRational,
+    );
+    let vtree = Arc::new(Vtree::balanced(2).with_weights(ws.clone()).unwrap());
     let root = vtree.root();
     let (left, right) = vtree.children(root);
     assert!(
@@ -129,14 +132,9 @@ fn weighted_leaf_fixture(
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
 
-    let ws = WeightStore::new(
-        RationalWeights::from_literals(weights),
-        Arithmetic::ExactRational,
-    );
     // `marginalize_leaf_weighted` borrows the vtree while mutating the diagram.
     let vt = Arc::clone(&tdd.vtree);
     marginalize_leaf_weighted(&crate::limits::Limits::new(), &mut tdd, right, &vt, &ws).unwrap();
-    tdd.set_weights(ws).unwrap();
     assert!(
         tdd.levels[right.idx()].is_weight_marginal(),
         "leaf fixture: the marginal-side leaf level must end WEIGHT-marginal"
@@ -147,7 +145,7 @@ fn weighted_leaf_fixture(
 /// THE PIN INVARIANT, asserted from the outside: the leaf's column is still the
 /// exactly-`LEAF_WIDTH`, label-ordered `leaf_val` cache, and the level still
 /// advertises that width. A leaf fold that minted (or rewrote) a slot fails here.
-fn assert_leaf_column_pinned(tdd: &Tdd, ws: &WeightStore, leaf: VtreeIdx) {
+fn assert_leaf_column_pinned(tdd: &Tdd, ws: &Weights, leaf: VtreeIdx) {
     let VtreeNode::Leaf { var, .. } = *tdd.vtree.node(leaf) else {
         panic!("assert_leaf_column_pinned: not a vtree leaf")
     };
@@ -185,7 +183,7 @@ fn marginal_value(tdd: &Tdd, marginal: VtreeIdx, raw: u32) -> BigRational {
 /// count-neutral rewrite must preserve.
 fn node_value(
     tdd: &Tdd,
-    ws: &WeightStore,
+    ws: &Weights,
     root: VtreeIdx,
     marginal: VtreeIdx,
     n: usize,
@@ -213,7 +211,7 @@ fn assert_refs_and_width_in_sync(tdd: &Tdd, root: VtreeIdx, marginal: VtreeIdx) 
     assert_eq!(
         tdd.levels[marginal.idx()].slot_count(),
         store_len,
-        "weight-marginal level width must track the WeightStore length \
+        "weight-marginal level width must track its weight column's length \
          (a missed width bump mis-sizes apply buffers)",
     );
     for n in 0..tdd.levels[root.idx()].nodes().len() {
@@ -357,7 +355,7 @@ fn weighted_fusion_keeps_both_occurrences_on_an_equal_sum_collision() {
 
 /// The width pin on its own, over a group large enough to exercise the >2
 /// accumulate: every surviving marginal ref resolves in bounds and the weight-
-/// marginal level's `slot_count()` still equals the WeightStore length. (The
+/// marginal level's `slot_count()` still equals its weight column's length. (The
 /// intern-table-full SLOT fallback — the one branch that bumps the
 /// width — needs >2^30 distinct values to reach and cannot be
 /// provoked from a test; this asserts the invariant it exists to maintain.)
@@ -402,16 +400,14 @@ fn weighted_fusion_keeps_width_and_refs_in_sync() {
 fn weighted_fusion_does_not_run_in_the_log_domain() {
     let eng = Engine::new();
     let a = rat(3, 7);
-    // Build the fixture (attaching an Exact store), then REPLACE it with a
-    // Log-domain store carrying the same values.
-    let (mut tdd, root, marginal) = weighted_fixture(
-        &[a.clone(), rat(5, 7)],
-        &[vec![(LeafLabel::Pos as u32, 0), (LeafLabel::Pos as u32, 1)]],
+    // The fixture's diagram on Log-domain weights with the same values.
+    let mut tdd = toy_weighted(
+        Weights::new(RationalWeights::from_literals(&fixture_weights()), Arithmetic::SignedLog),
+        vec![a.clone(), rat(5, 7)],
+        &[&[(LeafLabel::Pos as u32, 0), (LeafLabel::Pos as u32, 1)]],
     );
-    tdd.weights = Some(WeightStore::new(
-        tdd.weights().unwrap().algebra().clone(),
-        Arithmetic::SignedLog,
-    ));
+    let root = tdd.vtree.root();
+    let (_, marginal) = tdd.vtree.children(root);
     crate::test_helpers::set_weight_column(
         &mut tdd,
         marginal,

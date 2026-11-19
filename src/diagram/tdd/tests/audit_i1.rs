@@ -11,7 +11,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use num_rational::BigRational;
 
 use crate::apply::{FilterOutcome, FoldCodes, FoldMonoid, FoldRange};
-use crate::diagram::{Arithmetic, ChildPair, LeafLabel, LiteralWeights, NodeIdx, PairIndex, RationalWeights, TddNodeId, WeightStore};
+use crate::diagram::{Arithmetic, ChildPair, LeafLabel, LiteralWeights, NodeIdx, PairIndex, RationalWeights, TddNodeId, Weights};
 use crate::reduce::{ContentTwinPolicy, ReductionPlan};
 use crate::restructure::search::{MinimizePairs, MultistartConfig, PoolSearchConfig, RotationMove, RotationSearchConfig};
 use crate::test_helpers::check::{check_trimmed, reachable_true_labels};
@@ -147,10 +147,21 @@ impl Audit {
     }
 }
 
-fn weights(n: u32, rng: &mut Lcg) -> WeightStore {
+fn weights(n: u32, rng: &mut Lcg) -> Weights {
     let mut w = || BigRational::new((1 + rng.below(5) as i64).into(), (1 + rng.below(4) as i64).into());
     let literals: Vec<_> = (0..=n).map(|_| LiteralWeights { negative: w(), positive: w() }).collect();
-    WeightStore::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational)
+    Weights::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational)
+}
+
+/// `t`, on a projection of a home of `onto`'s shape and variables, moved to
+/// the projection of `onto` on the same variables.
+fn reseated(t: &Tdd, onto: &Home) -> Tdd {
+    let vars: Vec<VarId> = t.vtree().leaf_bottomup().map(|(_, v)| v).collect();
+    let own = if vars.is_empty() { Vtree::empty_projection(onto) } else { Vtree::projection(onto, vars).unwrap() };
+    let mut t = t.clone();
+    // Safety: the two homes have one shape, so the two projections do.
+    unsafe { t.reseat_vtree_unchecked(&own) };
+    t
 }
 
 /// A random function of the home's variables, minimized and trimmed: it names
@@ -291,7 +302,7 @@ fn random_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, n: u32, rng: &mut
     });
     let rename: Vec<(VarId, VarId)> = if x == y { Vec::new() } else { vec![(x, y), (y, x)] };
     a.run("rename_vars", || f.clone().rename_vars(&rename));
-    a.run("project_over", || eng.project_over(&f, home, Some, None));
+    a.run("project_over", || eng.project_over(&f, home, Some));
     a.run("project_to_vars", || f.project_to_vars(Some, n));
     a.run("filter_nodes_with(Prune)", || match eng.filter_nodes_with(&f, |_| rng_keep(), ReductionPlan::Prune)? {
         FilterOutcome::Unchanged => Ok(f.clone()),
@@ -335,16 +346,13 @@ fn random_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, n: u32, rng: &mut
         FilterOutcome::Unchanged => Ok(f.clone()),
         FilterOutcome::Filtered { tdd, .. } | FilterOutcome::Unsatisfiable { tdd, .. } => Ok::<_, OperationError>(tdd),
     });
-    let ws = weights(n, rng);
-    let weighted = |t: &Tdd| {
-        let mut t = t.clone();
-        t.set_weights(ws.clone()).map(|()| t)
-    };
-    a.run("and, weighted", || eng.and(&weighted(&f)?, &weighted(&g)?));
-    a.run("or, weighted", || eng.or(weighted(&f)?, weighted(&g)?));
+    let weighted = Home::weighted(Vtree::clone(home), weights(n, rng)).unwrap();
+    let (fw, gw) = (reseated(&f, &weighted), reseated(&g, &weighted));
+    a.run("and, weighted", || eng.and(&fw, &gw));
+    a.run("or, weighted", || eng.or(fw.clone(), gw.clone()));
     a.run("embed onto the home", || f.embed(home, |v| v).map(|r| r.0));
     a.run("embed_moving onto the home", || eng.embed_moving(f.clone(), home, |v| v).map(|r| r.0).map_err(|r| r.error));
-    a.run("embed_over the home", || eng.embed_over(&f, home, |v| v, None).map(|r| r.0));
+    a.run("embed_over the home", || eng.embed_over(&f, home, |v| v).map(|r| r.0));
     a.run("embed_with a plan onto the home", || eng.embedding_plan(f.vtree(), home, |v| v).and_then(|plan| eng.embed_with(&f, &plan)));
 }
 
@@ -427,14 +435,11 @@ fn fixed_cases(a: &mut Audit, eng: &Engine) {
     });
 
     a.case = "x or not x on the projection on x, weighted".into();
-    let ws = weights(3, &mut Lcg::new(7));
+    let weighted = Home::weighted(Vtree::clone(&xyz), weights(3, &mut Lcg::new(7))).unwrap();
     let x = trimmed(crate::literal(&xyz, 1).unwrap());
-    let weighted = |mut t: Tdd| {
-        t.set_weights(ws.clone()).unwrap();
-        t
-    };
-    a.run("or of x and not x, weighted [fixed]", || eng.or(weighted(x.clone()), weighted(x.clone().negate().unwrap())));
-    a.run("add of x and not x, weighted [fixed]", || eng.add(weighted(x.clone()), weighted(x.clone().negate().unwrap())));
+    let xw = reseated(&x, &weighted);
+    a.run("or of x and not x, weighted [fixed]", || eng.or(xw.clone(), xw.clone().negate().unwrap()));
+    a.run("add of x and not x, weighted [fixed]", || eng.add(xw.clone(), xw.clone().negate().unwrap()));
     a.case = "x or not x on the projection on x".into();
     a.run("or of x and not x [fixed]", || eng.or(x.clone(), x.clone().negate().unwrap()));
 
@@ -662,21 +667,18 @@ fn audit_i1_and_marginalizing_of_a_summed_subtree_beside_true_leaves() {
 #[ignore = "not refused: answers as the unsummed conjunction"]
 fn audit_i1_and_of_a_summed_leaf_beside_a_true_leaf() {
     let eng = Engine::new();
-    let xyz = Arc::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap());
-    let (root, xy) = (xyz.root(), xyz.children(xyz.root()).0);
-    let x = xyz.children(xy).0;
     let one = LeafLabel::One as u32;
-    let f = built(&eng, &xyz, &[(xy, vec![(one, POS)]), (root, vec![(0, POS)])]);
-    let g = eng.and(eng.clause(&xyz, [1, 2]).unwrap(), eng.literal(&xyz, 3).unwrap()).unwrap();
     for weighted in [false, true] {
-        let (mut f, mut g) = (f.clone(), g.clone());
-        let mut want = eng.and(eng.cube(&xyz, [2, 3]).unwrap(), &g).unwrap();
+        let mut xyz = Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap();
         if weighted {
-            let ws = weights(3, &mut Lcg::new(3));
-            f.set_weights(ws.clone()).unwrap();
-            g.set_weights(ws.clone()).unwrap();
-            want.set_weights(ws).unwrap();
+            xyz = xyz.with_weights(weights(3, &mut Lcg::new(3))).unwrap();
         }
+        let xyz = Arc::new(xyz);
+        let (root, xy) = (xyz.root(), xyz.children(xyz.root()).0);
+        let x = xyz.children(xy).0;
+        let f = built(&eng, &xyz, &[(xy, vec![(one, POS)]), (root, vec![(0, POS)])]);
+        let mut g = eng.and(eng.clause(&xyz, [1, 2]).unwrap(), eng.literal(&xyz, 3).unwrap()).unwrap();
+        let want = eng.and(eng.cube(&xyz, [2, 3]).unwrap(), &g).unwrap();
         g.marginalize_levels(&[x]).unwrap();
         let value = |t: &Tdd| if weighted { format!("{:?}", t.weighted_value().map(|v| v.map(|v| crate::test_helpers::exact_weight(&v)))) } else { format!("{:?}", t.model_count()) };
         let got = catch_unwind(AssertUnwindSafe(|| eng.and(&f, &g).map(|t| value(&t)))).map_err(|_| "a panic");
@@ -746,10 +748,10 @@ fn audit_i1_exists_with_pruning_names_exactly_the_targets() {
     }
 }
 
-/// ((x y) z) with x, y, z = 1, 2, 3 on a home, x ∧ z with the level (x y)
-/// {(Pos, Pos), (Pos, Neg)}: y a full twin side.
-fn x_and_z_over_a_twin(eng: &Engine) -> (Arc<Vtree>, Tdd) {
-    let xyz = Arc::clone(Home::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap()).vtree());
+/// ((x y) z) with x, y, z = 1, 2, 3 on a home weighted by `ws`, x ∧ z with
+/// the level (x y) {(Pos, Pos), (Pos, Neg)}: y a full twin side.
+fn x_and_z_over_a_twin(eng: &Engine, ws: Weights) -> (Arc<Vtree>, Tdd) {
+    let xyz = Arc::clone(Home::weighted(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap(), ws).unwrap().vtree());
     let (root, xy) = (xyz.root(), xyz.children(xyz.root()).0);
     let f = built(eng, &xyz, &[(xy, vec![(POS, POS), (POS, NEG)]), (root, vec![(0, POS)])]);
     (xyz, f)
@@ -758,8 +760,7 @@ fn x_and_z_over_a_twin(eng: &Engine) -> (Arc<Vtree>, Tdd) {
 #[test]
 fn audit_i1_weighted_minimize_keeps_the_value() {
     let eng = Engine::new();
-    let (_, mut f) = x_and_z_over_a_twin(&eng);
-    f.set_weights(weights(3, &mut Lcg::new(11))).unwrap();
+    let (_, mut f) = x_and_z_over_a_twin(&eng, weights(3, &mut Lcg::new(11)));
     let before = f.weighted_value().unwrap().unwrap().as_rational().into_owned();
     f.minimize().unwrap();
     assert_eq!(vars_of(&f), [VarId(1), VarId(3)]);
@@ -770,13 +771,10 @@ fn audit_i1_weighted_minimize_keeps_the_value() {
 #[test]
 fn audit_i1_weighted_and_across_projections_is_on_the_variables_used() {
     let eng = Engine::new();
-    let home = Home::new(Vtree::balanced(4));
-    let ws = weights(4, &mut Lcg::new(5));
+    let home = Home::weighted(Vtree::balanced(4), weights(4, &mut Lcg::new(5))).unwrap();
     let on = |vars: &[u32], clause: &[i32]| {
         let own = Vtree::projection(&home, vars.iter().map(|&v| VarId(v))).unwrap();
-        let mut t = eng.clause(&own, clause.iter().copied()).unwrap();
-        t.set_weights(ws.clone()).unwrap();
-        t
+        eng.clause(&own, clause.iter().copied()).unwrap()
     };
     let (f, g) = (on(&[1, 2], &[1, 2]), on(&[1, 2, 3], &[1, -2]));
     let mut h = eng.and(&f, &g).unwrap();

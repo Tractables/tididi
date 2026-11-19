@@ -13,7 +13,7 @@ use super::{marginalize_closure, marginalize_leaf_inline};
 use crate::diagram::{LiteralWeights, RationalWeights};
 
 use crate::diagram::Tdd;
-use crate::diagram::{Arithmetic, WeightStore};
+use crate::diagram::{Arithmetic, Weights};
 use crate::test_helpers::check::marginal::subsumed_marginal_data_violations;
 use crate::test_helpers::{compile_clauses, exact_weight, rat};
 use crate::vtree::{VarId, Vtree, VtreeIdx};
@@ -33,10 +33,9 @@ fn weighted_closure_root(
     vtree: &Arc<Vtree>,
     algebra: RationalWeights,
 ) -> BigRational {
+    let vtree = &Arc::new(Vtree::clone(vtree).with_weights(Weights::new(algebra, Arithmetic::ExactRational)).unwrap());
     let (a, b) = vtree.children(vtree.root());
     let mut tdd = compile_clauses(vtree, clauses);
-    tdd.set_weights(WeightStore::new(algebra, Arithmetic::ExactRational))
-        .unwrap();
     eng.marginalize_levels(&mut tdd, &[a, b])
         .expect("no wall is installed in a test");
     check_marginal_invariants(&tdd, "weighted_closure_root");
@@ -172,20 +171,18 @@ fn integer_marginalize_leaves_no_subsumed_data() {
 }
 
 /// The weighted pipeline frees subsumed levels too, including their
-/// `WeightStore` entries; unit weights confirm the surviving root value.
+/// `Weights` entries; unit weights confirm the surviving root value.
 #[test]
 fn weighted_marginalize_leaves_no_subsumed_data() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(5));
+    let vtree = Arc::new(Vtree::balanced(5).with_weights(Weights::new(
+        RationalWeights::unit(5),
+        Arithmetic::ExactRational,
+    )).unwrap());
     let mut tdd = compile_clauses(&vtree, &nested_region_clauses());
     let mc = BigRational::from(BigInt::from(tdd.model_count().unwrap()));
 
     let targets: Vec<_> = vtree.bottomup_slice().to_vec();
-    tdd.set_weights(WeightStore::new(
-        RationalWeights::unit(5),
-        Arithmetic::ExactRational,
-    ))
-    .unwrap();
     eng.marginalize_levels(&mut tdd, &targets)
         .expect("no wall is installed in a test");
     check_marginal_invariants(&tdd, "weighted_marginalize_leaves_no_subsumed_data");
@@ -213,7 +210,7 @@ fn weighted_marginalize_leaves_no_subsumed_data() {
     for i in nested {
         assert!(
             tdd.levels[i].weight_values().is_none_or(<[_]>::is_empty),
-            "subsumed weighted level {i} still has WeightStore values"
+            "subsumed weighted level {i} still has Weights values"
         );
     }
 }

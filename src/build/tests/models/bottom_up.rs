@@ -51,7 +51,7 @@ pub(super) fn from_models_bottom_up(
     let mut assembly = Assembly::new(eng, vtree)?;
     let output = fill(eng, &mut assembly, vtree, &layout, &sorted, w, m)?;
     // The levels are canonical as built: seat them with nothing to reduce.
-    let (levels, _) = assembly.parts_mut();
+    let levels = assembly.levels_mut();
     Ok(crate::build::seat_canonical(
         eng,
         vtree,

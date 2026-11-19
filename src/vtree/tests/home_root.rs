@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use num_rational::BigRational;
 
-use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
 use crate::vtree::{Home, VarId, Vtree};
 use crate::{Engine, OperationError, Tdd};
 
@@ -43,16 +43,14 @@ fn and_marginalizing_by_targets_refuses_a_home_root() {
 /// it answers as on a root vtree of the same shape.
 #[test]
 fn weighted_and_model_count_on_a_home_root() {
-    let (home, _) = x_and_y();
-    let plain = Arc::new(Vtree::balanced(2));
     let eng = Engine::new();
     let half = || BigRational::new(1.into(), 2.into());
-    let store = WeightStore::new(RationalWeights::from_literals(&vec![LiteralWeights { negative: half(), positive: half() }; 2]), Arithmetic::ExactRational);
+    let weights = Weights::new(RationalWeights::from_literals(&vec![LiteralWeights { negative: half(), positive: half() }; 2]), Arithmetic::ExactRational);
+    let home = Home::weighted(Vtree::balanced(2), weights.clone()).unwrap();
+    let plain = Arc::new(Vtree::balanced(2).with_weights(weights).unwrap());
     let count = |vtree: &Arc<Vtree>| {
-        let mut f = Tdd::cube(vtree, [1, 2]).unwrap();
-        let mut g = Tdd::clause(vtree, [1, -2]).unwrap();
-        f.set_weights(store.clone()).unwrap();
-        g.set_weights(store.clone()).unwrap();
+        let f = Tdd::cube(vtree, [1, 2]).unwrap();
+        let g = Tdd::clause(vtree, [1, -2]).unwrap();
         eng.and_model_count(f, g, &[vtree.root()])
     };
     assert_eq!(count(home.vtree()), count(&plain));

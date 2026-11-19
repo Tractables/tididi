@@ -3,7 +3,7 @@
 
 use super::*;
 
-use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
 
 use crate::query::count::{PinSemantics, Retention};
 use crate::test_helpers::{assert_canonical, rat};
@@ -41,15 +41,15 @@ fn a_count_marginal_output_answers_from_its_count() {
 }
 
 #[test]
-fn a_weight_marginal_output_is_refused_by_name() {
+fn a_weight_marginal_output_is_satisfiable() {
     let eng = &Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
-    let mut f = two_clauses(&vtree);
     let weights: Vec<_> = (0..4).map(|_| LiteralWeights { negative: rat(1, 2), positive: rat(1, 3) }).collect();
-    f.set_weights(WeightStore::new(RationalWeights::from_literals(&weights), Arithmetic::ExactRational)).unwrap();
+    let weights = Weights::new(RationalWeights::from_literals(&weights), Arithmetic::ExactRational);
+    let vtree = Arc::new(Vtree::balanced(4).with_weights(weights).unwrap());
+    let mut f = two_clauses(&vtree);
     eng.marginalize_levels(&mut f, &internal_levels_bottom_up(&vtree)).unwrap();
     assert!(f.levels[f.output.vtree.idx()].is_weight_marginal(), "output level is weight-marginal");
-    assert_eq!(f.is_sat(), Err(crate::OperationError::IncompatibleWeights));
+    assert_eq!(f.is_sat(), Ok(true));
 }
 
 #[test]
@@ -63,19 +63,19 @@ fn the_incremental_count_of_bottom_is_zero() {
 }
 
 #[test]
-fn weighted_leaf_outputs_cannot_decide_structural_satisfiability() {
+fn weighted_leaf_outputs_are_satisfiable_unless_false() {
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(1));
     for weight in [rat(0, 1), rat(1, 2)] {
         for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
+            let weights = Weights::new(RationalWeights::from_literals(&[
+                LiteralWeights { negative: weight.clone(), positive: weight.clone() }
+            ]), arithmetic);
+            let tree = Arc::new(Vtree::balanced(1).with_weights(weights).unwrap());
             let mut f = eng.literal(&tree, 1).unwrap();
             assert_canonical(&f);
-            f.set_weights(WeightStore::new(RationalWeights::from_literals(&[
-                LiteralWeights { negative: weight.clone(), positive: weight.clone() }
-            ]), arithmetic)).unwrap();
             eng.marginalize_levels(&mut f, &[tree.root()]).unwrap();
             assert!(f.level(tree.root()).is_weight_marginal());
-            assert_eq!(f.is_sat(), Err(crate::OperationError::IncompatibleWeights));
+            assert_eq!(f.is_sat(), Ok(true));
             f.output.local = crate::diagram::ZERO;
             assert!(!f.is_sat().unwrap());
         }

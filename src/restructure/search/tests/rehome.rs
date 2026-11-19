@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use num_rational::BigRational;
 
-use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
 use crate::restructure::search::{MinimizePairs, RotationMove, RotationSearchConfig};
 use crate::restructure::TransportError;
 use crate::test_helpers::check::check_all_fast;
@@ -36,17 +36,11 @@ fn diagram(eng: &Engine, vtree: &Arc<Vtree>, rng: &mut Lcg) -> Tdd {
     f
 }
 
-fn store(n: u32, rng: &mut Lcg) -> WeightStore {
+fn store(n: u32, rng: &mut Lcg) -> Weights {
     let weight = |rng: &mut Lcg| BigRational::new((1 + rng.below(5) as i64).into(), 6.into());
     let table: Vec<_> =
         (0..n).map(|_| LiteralWeights { negative: weight(rng), positive: weight(rng) }).collect();
-    WeightStore::new(RationalWeights::from_literals(&table), Arithmetic::ExactRational)
-}
-
-fn unweighted(f: &Tdd) -> Tdd {
-    let mut f = f.clone();
-    f.take_weights().unwrap();
-    f
+    Weights::new(RationalWeights::from_literals(&table), Arithmetic::ExactRational)
 }
 
 fn weighted(eng: &Engine, f: &Tdd) -> Option<BigRational> {
@@ -81,28 +75,33 @@ fn check_end(eng: &Engine, before: &Tdd, after: &Tdd, kept: bool) {
         assert_eq!(again.node(t), after.vtree().node(t));
         assert_eq!(again.home_node(t), after.vtree().home_node(t));
     }
-    let mut expected = unweighted(before);
+    let mut expected = before.clone();
     eng.restructure_to(&mut expected, after.vtree(), usize::MAX).unwrap();
-    assert!(eng.equivalent(&expected, &unweighted(after)).unwrap());
+    assert!(eng.equivalent(&expected, after).unwrap());
 }
 
-/// Random homes up to 64 leaves, random leaf sets and diagrams, half of them
-/// weighted: a rotation search and random `rotate_if` calls, kept and
+/// Random homes up to 64 leaves, half of them weighted, random leaf sets and
+/// diagrams: a rotation search and random `rotate_if` calls, kept and
 /// declined, keep counts, weighted values and the function, and end on a
 /// projection.
 #[test]
 fn a_search_on_a_projection_keeps_its_counts_on_a_lifted_home() {
     let eng = Engine::new();
     let (mut kept_searches, mut kept_turns, mut declined) = (0, 0, 0);
-    for seed in 0..120u64 {
+    for seed in 0..128u64 {
         let mut rng = Lcg::new(seed ^ 0x2545_f491);
         let n = 2 + rng.below(63) as u32;
-        let home = Home::new(Vtree::random(n, seed));
+        // A second generator for the weights, so that `rng` draws the leaf
+        // sets and diagrams it drew when weights came after them: seed 7
+        // otherwise draws a constant on an empty projection, which
+        // `check_all_fast` cannot read.
+        let mut weights_rng = Lcg::new(seed ^ 0x77e1_9475);
+        let home = match weights_rng.coin() {
+            true => Home::weighted(Vtree::random(n, seed), store(n, &mut weights_rng)).unwrap(),
+            false => Home::new(Vtree::random(n, seed)),
+        };
         let own = Vtree::projection(&home, subset(n, &mut rng)).unwrap();
-        let mut f = diagram(&eng, &own, &mut rng);
-        if rng.coin() {
-            f.set_weights(store(n, &mut rng)).unwrap();
-        }
+        let f = diagram(&eng, &own, &mut rng);
 
         let mut searched = f.clone();
         let stats = eng.rotation_search(&mut searched, &mut MinimizePairs, &RotationSearchConfig::default()).unwrap();

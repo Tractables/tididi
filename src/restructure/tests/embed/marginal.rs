@@ -5,7 +5,7 @@ use std::sync::Arc;
 use num_rational::BigRational;
 
 use crate::diagram::{
-    Arithmetic, LiteralWeights, RationalWeights, TddBuildError, WeightStore, WeightValue,
+    Arithmetic, LiteralWeights, RationalWeights, TddBuildError, Weights, WeightValue,
 };
 use crate::limits::LimitConfig;
 use crate::restructure::EmbedError;
@@ -37,12 +37,15 @@ fn summed_pair(
     positive: BigRational,
     negative: BigRational,
 ) -> (Arc<Vtree>, Tdd, Tdd) {
-    let small = Arc::new(Vtree::balanced(4));
-    let mut f = Tdd::clause(&small, [1, 2]).unwrap() & Tdd::clause(&small, [3, 4]).unwrap();
-    f.minimize().unwrap();
-    let structural = f.clone();
-    f.set_weights(WeightStore::new(table(4, positive, negative), arithmetic))
-        .unwrap();
+    let formula = |vtree: &Arc<Vtree>| {
+        let mut f = Tdd::clause(vtree, [1, 2]).unwrap() & Tdd::clause(vtree, [3, 4]).unwrap();
+        f.minimize().unwrap();
+        f
+    };
+    let structural = formula(&Arc::new(Vtree::balanced(4)));
+    let weights = Weights::new(table(4, positive, negative), arithmetic);
+    let small = Arc::new(Vtree::balanced(4).with_weights(weights).unwrap());
+    let mut f = formula(&small);
     let (left, _) = small.children(small.root());
     Engine::new().marginalize_levels(&mut f, &[left]).unwrap();
     assert!(
@@ -64,11 +67,9 @@ fn embed_and_marginalize(
     structural: &Tdd,
     dest: &Arc<Vtree>,
     map: impl Fn(VarId) -> VarId,
-    store: WeightStore,
     target: crate::vtree::VtreeIdx,
 ) -> Tdd {
     let (mut h, _) = engine.embed(structural, dest, map).unwrap();
-    h.set_weights(store).unwrap();
     engine.marginalize_levels(&mut h, &[target]).unwrap();
     h
 }
@@ -77,10 +78,10 @@ fn embed_and_marginalize(
 fn a_summed_out_level_keeps_its_value_scaled_by_the_free_variables_below_it() {
     let (small, f, structural) = summed_pair(Arithmetic::ExactRational, rat(1, 3), rat(1, 2));
     let value = exact(&f);
-    let big = Arc::new(Vtree::balanced(8));
+    let store = Weights::new(table(8, rat(1, 3), rat(1, 2)), Arithmetic::ExactRational);
+    let big = Arc::new(Vtree::balanced(8).with_weights(store).unwrap());
     let engine = Engine::new();
-    let store = || WeightStore::new(table(8, rat(1, 3), rat(1, 2)), Arithmetic::ExactRational);
-    let (g, levels) = engine.embed_over(&f, &big, spread, Some(store())).unwrap();
+    let (g, levels) = engine.embed_over(&f, &big, spread).unwrap();
     assert_canonical(&g);
     let (left, _) = small.children(small.root());
     let image = levels.level_of(left);
@@ -113,7 +114,7 @@ fn a_summed_out_level_keeps_its_value_scaled_by_the_free_variables_below_it() {
     assert_eq!(exact(&g), value * free);
 
     // The same diagram summed out on the destination instead.
-    let h = embed_and_marginalize(&engine, &structural, &big, spread, store(), image);
+    let h = embed_and_marginalize(&engine, &structural, &big, spread, image);
     assert_canonical(&h);
     assert_eq!(exact(&g), exact(&h));
     // Both serve as operands alike.
@@ -129,10 +130,10 @@ fn a_summed_out_level_keeps_its_value_scaled_by_the_free_variables_below_it() {
 fn bounded_values_are_placed_like_exact_ones() {
     for arithmetic in [Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
         let (small, f, structural) = summed_pair(arithmetic, rat(1, 3), rat(1, 2));
-        let big = Arc::new(Vtree::balanced(8));
+        let store = Weights::new(table(8, rat(1, 3), rat(1, 2)), arithmetic);
+        let big = Arc::new(Vtree::balanced(8).with_weights(store).unwrap());
         let engine = Engine::new();
-        let store = || WeightStore::new(table(8, rat(1, 3), rat(1, 2)), arithmetic);
-        let (g, levels) = engine.embed_over(&f, &big, spread, Some(store())).unwrap();
+        let (g, levels) = engine.embed_over(&f, &big, spread).unwrap();
         assert_canonical(&g);
         let (left, _) = small.children(small.root());
         let h = embed_and_marginalize(
@@ -140,7 +141,6 @@ fn bounded_values_are_placed_like_exact_ones() {
             &structural,
             &big,
             spread,
-            store(),
             levels.level_of(left),
         );
         let value = |t: &Tdd| {
@@ -172,12 +172,15 @@ fn bounded_values_are_placed_like_exact_ones() {
 fn a_summed_out_leaf_is_placed_under_a_new_parent() {
     // Equal weights: the leaf's `¬x` slot canonicalizes onto its `x` slot,
     // so the pass-through over it has twins to contract.
-    let small = Arc::new(Vtree::balanced(2));
-    let mut f = Tdd::clause(&small, [1, 2]).unwrap();
-    f.minimize().unwrap();
-    let structural = f.clone();
-    let store = |n| WeightStore::new(table(n, rat(1, 3), rat(1, 3)), Arithmetic::ExactRational);
-    f.set_weights(store(2)).unwrap();
+    let store = |n| Weights::new(table(n, rat(1, 3), rat(1, 3)), Arithmetic::ExactRational);
+    let formula = |vtree: &Arc<Vtree>| {
+        let mut f = Tdd::clause(vtree, [1, 2]).unwrap();
+        f.minimize().unwrap();
+        f
+    };
+    let structural = formula(&Arc::new(Vtree::balanced(2)));
+    let small = Arc::new(Vtree::balanced(2).with_weights(store(2)).unwrap());
+    let mut f = formula(&small);
     let engine = Engine::new();
     let leaf = small.leaf_of(VarId(1)).unwrap();
     engine.marginalize_levels(&mut f, &[leaf]).unwrap();
@@ -186,10 +189,8 @@ fn a_summed_out_leaf_is_placed_under_a_new_parent() {
     let value = exact(&f);
 
     // x1 to 2 and x2 to 4: both land as the mapped side of a pass-through.
-    let big = Arc::new(Vtree::balanced(4));
-    let (g, levels) = engine
-        .embed_over(&f, &big, |v| VarId(2 * v.0), Some(store(4)))
-        .unwrap();
+    let big = Arc::new(Vtree::balanced(4).with_weights(store(4)).unwrap());
+    let (g, levels) = engine.embed_over(&f, &big, |v| VarId(2 * v.0)).unwrap();
     assert_canonical(&g);
     assert!(g.level(levels.level_of(leaf)).is_weight_marginal());
     let free = rat(2, 3) * rat(2, 3);
@@ -200,7 +201,6 @@ fn a_summed_out_leaf_is_placed_under_a_new_parent() {
         &structural,
         &big,
         |v| VarId(2 * v.0),
-        store(4),
         levels.level_of(leaf),
     );
     // The equal values leave the parent's `(·, x)` and `(·, ¬x)` nodes twins.
@@ -218,15 +218,14 @@ fn a_summed_out_leaf_is_placed_under_a_new_parent() {
 }
 
 #[test]
-fn a_structural_diagram_takes_the_store_it_is_given() {
+fn a_structural_diagram_takes_the_destination_weights() {
     let small = Arc::new(Vtree::balanced(2));
     let f = Tdd::clause(&small, [1, 2]).unwrap();
+    let store = Weights::new(table(4, rat(1, 3), rat(1, 2)), Arithmetic::ExactRational);
+    let weighted = Arc::new(Vtree::balanced(4).with_weights(store).unwrap());
     let big = Arc::new(Vtree::balanced(4));
     let engine = Engine::new();
-    let store = WeightStore::new(table(4, rat(1, 3), rat(1, 2)), Arithmetic::ExactRational);
-    let (g, _) = engine
-        .embed_over(&f, &big, |v| VarId(2 * v.0), Some(store))
-        .unwrap();
+    let (g, _) = engine.embed_over(&f, &weighted, |v| VarId(2 * v.0)).unwrap();
     assert_canonical(&g);
     assert!(g.weights().is_some());
     let (plain, _) = engine.embed(&f, &big, |v| VarId(2 * v.0)).unwrap();
@@ -235,9 +234,7 @@ fn a_structural_diagram_takes_the_store_it_is_given() {
         exact(&g),
         plain.evaluate(&table(4, rat(1, 3), rat(1, 2))).unwrap()
     );
-    let (bare, _) = engine
-        .embed_over(&f, &big, |v| VarId(2 * v.0), None)
-        .unwrap();
+    let (bare, _) = engine.embed_over(&f, &big, |v| VarId(2 * v.0)).unwrap();
     assert!(bare.weights().is_none());
 }
 
@@ -247,49 +244,38 @@ fn integer_counts_are_refused() {
     let mut f = Tdd::clause(&small, [1, 2]).unwrap();
     let engine = Engine::new();
     engine.marginalize_levels(&mut f, &[small.root()]).unwrap();
-    let big = Arc::new(Vtree::balanced(4));
-    let store = WeightStore::new(table(4, rat(1, 3), rat(1, 2)), Arithmetic::ExactRational);
-    for weights in [None, Some(store)] {
+    let store = Weights::new(table(4, rat(1, 3), rat(1, 2)), Arithmetic::ExactRational);
+    let weighted = Vtree::balanced(4).with_weights(store).unwrap();
+    for big in [Vtree::balanced(4), weighted] {
         assert_eq!(
-            engine.embed_over(&f, &big, |v| v, weights).unwrap_err(),
+            engine.embed_over(&f, &Arc::new(big), |v| v).unwrap_err(),
             EmbedError::Operation(OperationError::MarginalLevel(small.root())),
         );
     }
 }
 
 #[test]
-fn weighted_values_need_a_destination_store_that_agrees_with_the_source() {
+fn weighted_values_need_destination_weights_that_agree_with_the_source() {
     let (small, f, _) = summed_pair(Arithmetic::ExactRational, rat(1, 3), rat(1, 2));
-    let big = Arc::new(Vtree::balanced(8));
+    let big = |weights| Arc::new(Vtree::balanced(8).with_weights(weights).unwrap());
     let engine = Engine::new();
     let (left, _) = small.children(small.root());
     assert_eq!(
-        engine.embed_over(&f, &big, spread, None).unwrap_err(),
+        engine.embed_over(&f, &Arc::new(Vtree::balanced(8)), spread).unwrap_err(),
         EmbedError::SourceWeights(TddBuildError::WeightedLevelWithoutStore { level: left }),
     );
-    let other = WeightStore::new(table(8, rat(1, 4), rat(1, 2)), Arithmetic::ExactRational);
+    let other = Weights::new(table(8, rat(1, 4), rat(1, 2)), Arithmetic::ExactRational);
     assert_eq!(
-        engine
-            .embed_over(&f, &big, spread, Some(other))
-            .unwrap_err(),
+        engine.embed_over(&f, &big(other), spread).unwrap_err(),
         EmbedError::SourceWeights(TddBuildError::IncompatibleWeights),
     );
     for arithmetic in [Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
-        let bounded = WeightStore::new(table(8, rat(1, 3), rat(1, 2)), arithmetic);
+        let bounded = Weights::new(table(8, rat(1, 3), rat(1, 2)), arithmetic);
         assert_eq!(
-            engine
-                .embed_over(&f, &big, spread, Some(bounded))
-                .unwrap_err(),
+            engine.embed_over(&f, &big(bounded), spread).unwrap_err(),
             EmbedError::SourceWeights(TddBuildError::IncompatibleWeights),
         );
     }
-    let short = WeightStore::new(table(6, rat(1, 3), rat(1, 2)), Arithmetic::ExactRational);
-    assert_eq!(
-        engine
-            .embed_over(&f, &big, spread, Some(short))
-            .unwrap_err(),
-        EmbedError::DestinationWeights(TddBuildError::MissingVariableWeight(VarId(7))),
-    );
 }
 
 #[test]
@@ -297,7 +283,6 @@ fn a_source_the_budget_cannot_copy_refuses_the_embed() {
     let (small, f, _) = summed_pair(Arithmetic::ExactRational, rat(1, 3), rat(1, 2));
     let value = exact(&f);
     let engine = Engine::new();
-    let store = || WeightStore::new(table(4, rat(1, 3), rat(1, 2)), Arithmetic::ExactRational);
     engine.try_clone(&f).unwrap();
     let copy = engine.limits().meters().in_flight_bytes;
     {
@@ -305,15 +290,13 @@ fn a_source_the_budget_cannot_copy_refuses_the_embed() {
             .limits()
             .scope(LimitConfig::none().with_memory_budget_bytes(Some(copy - 1)));
         assert_eq!(
-            engine
-                .embed_over(&f, &small, |v| v, Some(store()))
-                .unwrap_err(),
+            engine.embed_over(&f, &small, |v| v).unwrap_err(),
             EmbedError::Operation(OperationError::OverBudget),
         );
     }
     assert_canonical(&f);
     assert_eq!(exact(&f), value);
-    let (g, _) = engine.embed_over(&f, &small, |v| v, Some(store())).unwrap();
+    let (g, _) = engine.embed_over(&f, &small, |v| v).unwrap();
     assert_canonical(&g);
     assert_eq!(exact(&g), value);
 }

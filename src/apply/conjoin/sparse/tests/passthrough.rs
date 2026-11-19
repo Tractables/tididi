@@ -18,7 +18,7 @@ use num_rational::BigRational;
 use super::inner_index::{block, pack};
 use super::{ForcedThresholds, SparseThresholds};
 use crate::Engine;
-use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Tdd, WeightStore};
+use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Tdd, Weights};
 use crate::limits::{LimitConfig, MemoryHooks};
 use crate::test_helpers::{assert_marginal_canonical, assert_same_shape};
 use crate::vtree::{VarId, Vtree, VtreeIdx};
@@ -93,15 +93,12 @@ fn star(eng: &Engine, bits: u32, keys: u64, b_first: bool, rows: Rows) -> Star {
 }
 
 impl Star {
-    /// The same star with `store` attached to every relation.
-    fn weighted(&self, store: &WeightStore) -> Star {
-        let weigh = |t: &Tdd| {
-            let mut t = t.clone();
-            t.set_weights(store.clone()).unwrap();
-            t
-        };
+    /// The same star on a copy of its vtree weighted by `store`.
+    fn weighted(&self, store: &Weights) -> Star {
+        let vtree = Arc::new(Vtree::clone(&self.vtree).with_weights(store.clone()).unwrap());
+        let weigh = |t: &Tdd| Tdd::from_levels_unchecked(Arc::clone(&vtree), t.levels.to_vec(), t.output);
         Star {
-            vtree: Arc::clone(&self.vtree),
+            vtree: Arc::clone(&vtree),
             blocks: self.blocks.clone(),
             f: weigh(&self.f),
             e: weigh(&self.e),
@@ -185,7 +182,7 @@ fn a_pass_through_level_never_densifies_its_joined_child() {
 }
 
 /// Exact weights in eighths for the variables `1..=n`, no two literals alike.
-fn weights(n: u32) -> WeightStore {
+fn weights(n: u32) -> Weights {
     let eighths = |k: u32| BigRational::new((1 + k % 7).into(), 8.into());
     let literals: Vec<LiteralWeights<BigRational>> = (0..n)
         .map(|i| LiteralWeights {
@@ -193,7 +190,7 @@ fn weights(n: u32) -> WeightStore {
             positive: eighths(3 * i + 2),
         })
         .collect();
-    WeightStore::new(
+    Weights::new(
         RationalWeights::from_literals(&literals),
         Arithmetic::ExactRational,
     )

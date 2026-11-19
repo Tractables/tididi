@@ -7,7 +7,7 @@ use std::sync::Arc;
 use num_rational::BigRational;
 
 use crate::{Engine, Tdd};
-use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, ScaledFloat, WeightStore};
+use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, ScaledFloat, Weights};
 use super::{FloatRows, BLOCKS, FLOAT_ROWS, LANE_BLOCKS};
 use crate::isa::tests::BASE_ISA;
 use crate::test_helpers::{assert_canonical, rand_cnf, rat, vtree_shapes, CnfShape, Lcg};
@@ -38,16 +38,21 @@ fn finished(tree: &Vtree, acc: &Tdd, rest: &[Vec<i32>]) -> Vec<VtreeIdx> {
         .collect()
 }
 
-/// The weighted value of `clauses` over `tree`: conjoined one clause at a
-/// time, each conjunction summing out every subtree the clauses after it do
-/// not touch, nested targets included. Every intermediate result is checked
-/// against its store and, minimized, for canonicity.
-fn walk(eng: &Engine, tree: &Arc<Vtree>, clauses: &[Vec<i32>], store: &WeightStore) -> Tdd {
+/// `tree` with the weights `store`.
+fn weighted(tree: &Vtree, store: &Weights) -> Arc<Vtree> {
+    Arc::new(tree.clone().with_weights(store.clone()).unwrap())
+}
+
+/// The weighted value of `clauses` over `tree` weighted by `store`:
+/// conjoined one clause at a time, each conjunction summing out every
+/// subtree the clauses after it do not touch, nested targets included.
+/// Every intermediate result is checked against the weights and, minimized,
+/// for canonicity.
+fn walk(eng: &Engine, tree: &Vtree, clauses: &[Vec<i32>], store: &Weights) -> Tdd {
+    let tree = &weighted(tree, store);
     let mut acc = eng.one(tree);
-    acc.set_weights(store.empty_like()).unwrap();
     for (k, clause) in clauses.iter().enumerate() {
-        let mut g = eng.clause(tree, clause.iter().copied()).unwrap();
-        g.set_weights(store.empty_like()).unwrap();
+        let g = eng.clause(tree, clause.iter().copied()).unwrap();
         let targets = finished(tree, &acc, &clauses[k + 1..]);
         acc = eng.and_marginalizing(acc, g, &targets).unwrap();
         if acc.is_zero() {
@@ -56,7 +61,7 @@ fn walk(eng: &Engine, tree: &Arc<Vtree>, clauses: &[Vec<i32>], store: &WeightSto
         for &t in &targets {
             assert!(acc.level(t).is_marginal(), "target {t:?} after clause {k}, {:?}", store.arithmetic());
         }
-        acc.weights.as_ref().unwrap().check_levels(&acc.vtree, &acc.levels[..]).unwrap();
+        acc.weights().unwrap().check_levels(&acc.vtree, &acc.levels[..]).unwrap();
         let mut minimized = acc.clone();
         minimized.minimize().unwrap();
         assert_canonical(&minimized);
@@ -70,12 +75,10 @@ fn value(eng: &Engine, d: &Tdd) -> crate::diagram::WeightValue {
     eng.weighted_value(d).unwrap().expect("a weighted diagram has a value")
 }
 
-fn build_weighted_clauses(eng: &Engine, tree: &Arc<Vtree>, store: &WeightStore, clauses: &[Vec<i32>]) -> Tdd {
+fn build_clauses(eng: &Engine, tree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
     let mut d = eng.one(tree);
-    d.set_weights(store.empty_like()).unwrap();
     for clause in clauses {
-        let mut c = eng.clause(tree, clause.iter().copied()).unwrap();
-        c.set_weights(store.empty_like()).unwrap();
+        let c = eng.clause(tree, clause.iter().copied()).unwrap();
         d = eng.and(d, c).unwrap();
     }
     d
@@ -90,8 +93,8 @@ fn assert_scaled_matches_exact(
     zero_tol: f64,
     label: &str,
 ) {
-    let exact = walk(eng, tree, clauses, &WeightStore::new(weights.clone(), Arithmetic::ExactRational));
-    let scaled = walk(eng, tree, clauses, &WeightStore::new(weights, Arithmetic::ScaledFloat));
+    let exact = walk(eng, tree, clauses, &Weights::new(weights.clone(), Arithmetic::ExactRational));
+    let scaled = walk(eng, tree, clauses, &Weights::new(weights, Arithmetic::ScaledFloat));
     let exact: BigRational = value(eng, &exact).into_rational();
     let got = *value(eng, &scaled).as_scaled().expect("a scaled value");
     let want = ScaledFloat::from_rational(&exact);
@@ -163,7 +166,7 @@ fn values_beyond_one_scale_match_the_exact_value() {
 
 /// The value `walk` gives with this thread's streamed float levels summed
 /// the way `rows` says, as its mantissa's bits and its exponent.
-fn walk_bits(eng: &Engine, tree: &Arc<Vtree>, clauses: &[Vec<i32>], store: &WeightStore, rows: FloatRows) -> (u64, i64) {
+fn walk_bits(eng: &Engine, tree: &Arc<Vtree>, clauses: &[Vec<i32>], store: &Weights, rows: FloatRows) -> (u64, i64) {
     FLOAT_ROWS.with(|m| m.set(rows));
     let d = walk(eng, tree, clauses, store);
     FLOAT_ROWS.with(|m| m.set(FloatRows::Sum));
@@ -196,7 +199,7 @@ fn row_sums_match_the_cell_sums_bit_for_bit() {
                             .collect::<Vec<_>>(),
                     )
                 };
-                let store = WeightStore::new(weights, Arithmetic::ScaledFloat);
+                let store = Weights::new(weights, Arithmetic::ScaledFloat);
                 let want = walk_bits(&eng, &tree, &clauses, &store, FloatRows::Cells);
                 for rows in [FloatRows::Sum, FloatRows::Eager] {
                     for base in [false, true] {
@@ -224,7 +227,7 @@ fn small_row_sums_match_the_cell_sums_bit_for_bit() {
         let mut rng = Lcg::new(seed);
         let (name, tree) = vtree_shapes(5).swap_remove(shape);
         let clauses = rand_cnf(&mut rng, 5, CnfShape { clauses: 7, width: 3 });
-        let store = WeightStore::new(draw_weights(&mut rng, 5, false), Arithmetic::ScaledFloat);
+        let store = Weights::new(draw_weights(&mut rng, 5, false), Arithmetic::ScaledFloat);
         let want = walk_bits(&eng, &tree, &clauses, &store, FloatRows::Cells);
         for rows in [FloatRows::Sum, FloatRows::Eager] {
             assert_eq!(walk_bits(&eng, &tree, &clauses, &store, rows), want, "{name}, {rows:?}");
@@ -239,13 +242,13 @@ fn small_row_sums_match_the_cell_sums_bit_for_bit() {
 fn every_refused_reserve_leaves_the_walk_repeatable() {
     let eng = Engine::new();
     let num_vars = 8;
-    let tree = Arc::new(Vtree::balanced(num_vars));
     let mut rng = Lcg::new(17);
     let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 12, width: 3 });
-    let store = WeightStore::new(draw_weights(&mut rng, num_vars, false), Arithmetic::ScaledFloat);
+    let store = Weights::new(draw_weights(&mut rng, num_vars, false), Arithmetic::ScaledFloat);
+    let tree = weighted(&Vtree::balanced(num_vars), &store);
     let half = clauses.len() / 2;
-    let f = build_weighted_clauses(&eng, &tree, &store, &clauses[..half]);
-    let g = build_weighted_clauses(&eng, &tree, &store, &clauses[half..]);
+    let f = build_clauses(&eng, &tree, &clauses[..half]);
+    let g = build_clauses(&eng, &tree, &clauses[half..]);
     let targets: Vec<VtreeIdx> = tree.bottomup().filter(|&t| !tree.node(t).is_leaf()).collect();
     let expected = value(&eng, &eng.and_marginalizing(f.clone(), g.clone(), &targets).unwrap());
     let mut refusals = 0;
@@ -282,12 +285,12 @@ fn full_sum_out_agrees_with_the_signed_log_domain() {
         let weights = draw_weights(&mut rng, num_vars, false);
         let mut values = Vec::new();
         for arithmetic in [Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
-            let store = WeightStore::new(weights.clone(), arithmetic);
+            let tree = weighted(&tree, &Weights::new(weights.clone(), arithmetic));
             let (a, b) = clauses.split_at(clauses.len() / 2);
             let targets: Vec<VtreeIdx> = tree.bottomup().filter(|&t| !tree.node(t).is_leaf()).collect();
             let out = eng.and_marginalizing(
-                build_weighted_clauses(&eng, &tree, &store, a),
-                build_weighted_clauses(&eng, &tree, &store, b),
+                build_clauses(&eng, &tree, a),
+                build_clauses(&eng, &tree, b),
                 &targets,
             ).unwrap();
             let v = value(&eng, &out);

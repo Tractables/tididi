@@ -99,26 +99,23 @@ fn finish_refuses_a_level_that_names_a_leaf_both_ways() {
     assert_eq!(refused, TddBuildError::MixedLeafForm { level: root, leaf: x1 });
 }
 
-/// A clause on a variable the projection lacks is conjoined with the weights
-/// kept, or refused as `and` refuses weighted operands across projections.
+/// A clause on a variable the projection lacks is conjoined under the home's
+/// weights.
 #[test]
 fn and_clause_keeps_the_weights_when_it_adds_a_variable() {
     use num_rational::BigRational;
-    use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
-    let home = Home::new(Vtree::balanced(4));
+    use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
     let weight = |a: i64, b: i64| BigRational::new(a.into(), b.into());
     let literals: Vec<_> = (0..4).map(|i| LiteralWeights { negative: weight(1 + i, 2), positive: weight(2, 1 + i) }).collect();
-    let weights = WeightStore::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational);
-    let mut f = Tdd::clause(&Vtree::projection(&home, [VarId(1)]).unwrap(), [1]).unwrap();
-    let mut on_home = Tdd::clause(home.vtree(), [1]).unwrap();
-    f.set_weights(weights.clone()).unwrap();
-    on_home.set_weights(weights).unwrap();
+    let weights = Weights::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational);
+    let home = Home::weighted(Vtree::balanced(4), weights).unwrap();
+    let f = Tdd::clause(&Vtree::projection(&home, [VarId(1)]).unwrap(), [1]).unwrap();
+    let on_home = Tdd::clause(home.vtree(), [1]).unwrap();
     assert_eq!(format!("{:?}", f.weighted_value()), format!("{:?}", on_home.weighted_value()));
     let expected = on_home.and_clause([3]).unwrap().weighted_value().unwrap();
     assert!(expected.is_some());
-    if let Ok(g) = f.and_clause([3]) {
-        assert_eq!(format!("{:?}", g.weighted_value().unwrap()), format!("{expected:?}"), "weights attached: {}", g.weights().is_some());
-    }
+    let g = f.and_clause([3]).unwrap();
+    assert_eq!(format!("{:?}", g.weighted_value().unwrap()), format!("{expected:?}"));
 }
 
 #[test]
@@ -134,19 +131,17 @@ fn finish_on_no_leaf_answers_or_refuses_an_output() {
 }
 
 #[test]
-fn negate_on_no_leaf_keeps_the_weights() {
+fn negate_on_no_leaf_of_a_weighted_home() {
     use num_rational::BigRational;
-    use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+    use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
     let eng = Engine::new();
-    let home = Home::new(Vtree::balanced(2));
     let one = |a: i64| BigRational::from_integer(a.into());
     let literals: Vec<_> = (0..2).map(|_| LiteralWeights { negative: one(1), positive: one(2) }).collect();
-    let mut f = Tdd::one(&Vtree::empty_projection(&home));
-    f.set_weights(WeightStore::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational)).unwrap();
-    let borrowed = eng.negate(&f).unwrap();
-    assert!(borrowed.weights().is_some(), "negate of a borrowed constant with no leaf drops its weights");
+    let home = Home::weighted(Vtree::balanced(2), Weights::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational)).unwrap();
+    let f = Tdd::one(&Vtree::empty_projection(&home));
+    assert!(eng.negate(&f).unwrap().is_zero());
     let owned = eng.negate(f).unwrap();
-    assert!(owned.weights().is_some(), "negate of an owned constant with no leaf drops its weights");
+    assert!(owned.weights().is_some());
     assert!(owned.is_zero());
 }
 

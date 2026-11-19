@@ -327,28 +327,23 @@ fn projecting_a_path_side_one_ref_at_the_root() {
 }
 
 /// A weighted diagram stays weighted across a projection.
-///
-/// A caller that projects a weighted accumulator and reads its values
-/// afterwards depends on this, and would otherwise have to detach and reattach
-/// the store around every call.
 #[test]
-fn projecting_a_weighted_diagram_keeps_its_weight_store() {
-    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+fn projecting_a_weighted_diagram_keeps_its_weights() {
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
     use num_rational::BigRational;
 
-    let vtree = Arc::new(Vtree::balanced(3));
     let algebra = RationalWeights::from_literals(&[
         LiteralWeights { negative: BigRational::from_integer(1.into()), positive: BigRational::from_integer(2.into()) },
         LiteralWeights { negative: BigRational::from_integer(1.into()), positive: BigRational::from_integer(3.into()) },
         LiteralWeights { negative: BigRational::from_integer(1.into()), positive: BigRational::from_integer(5.into()) },
     ]);
-    let mut tdd = Tdd::clause(&vtree, [1, 2]).unwrap();
-    tdd.set_weights(WeightStore::new(algebra, Arithmetic::ExactRational)).unwrap();
+    let vtree = Arc::new(Vtree::balanced(3).with_weights(Weights::new(algebra, Arithmetic::ExactRational)).unwrap());
+    let tdd = Tdd::clause(&vtree, [1, 2]).unwrap();
 
     let projected = (tdd).clone().exists_var(VarId(1)).unwrap();
     assert!(
         projected.weights().is_some(),
-        "the projection dropped the weight store",
+        "the projection dropped the weights",
     );
 }
 
@@ -530,14 +525,14 @@ fn universal_quantification_validates_before_it_rewrites() {
 }
 
 #[test]
-fn universal_quantification_keeps_the_weight_store() {
-    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+fn universal_quantification_keeps_the_weights() {
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
     use num_rational::BigRational;
 
-    let vtree = Arc::new(Vtree::balanced(2));
     let weight = |positive: i32| LiteralWeights { negative: BigRational::from_integer(1.into()), positive: BigRational::from_integer(positive.into()) };
-    let mut f = Tdd::clause(&vtree, [1, 2]).unwrap();
-    f.set_weights(WeightStore::new(RationalWeights::from_literals(&[weight(2), weight(3)]), Arithmetic::ExactRational)).unwrap();
+    let weights = Weights::new(RationalWeights::from_literals(&[weight(2), weight(3)]), Arithmetic::ExactRational);
+    let vtree = Arc::new(Vtree::balanced(2).with_weights(weights).unwrap());
+    let f = Tdd::clause(&vtree, [1, 2]).unwrap();
     let g = f.forall_vars(&[VarId(1)]).unwrap();
-    assert!(g.weights().is_some(), "universal quantification dropped the weight store");
+    assert!(g.weights().is_some(), "universal quantification dropped the weights");
 }
