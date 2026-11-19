@@ -8,7 +8,7 @@ use std::sync::Arc;
 use super::view::{Slot, View};
 use super::{conjoin_kept, Operands, VtreeMask};
 use crate::diagram::{LevelBuffer, Tdd};
-use crate::execution::pool::{Buffers, PooledScratch, Scratch};
+use crate::execution::pool::{Buffers, PoolGuard, PooledScratch, Scratch};
 use crate::limits::{Limits, OperationError};
 use crate::restructure::embed::{Plan, Target};
 use crate::vtree::{Reading, UnionReader, Vtree, VtreeIdx};
@@ -88,7 +88,7 @@ impl Side {
 
     fn put_back(&mut self, plan: Plan, view: Option<View>) {
         if let Some(view) = view {
-            (self.slots, self.built.levels) = view.release(&plan);
+            (self.slots, self.built.levels) = view.release_kept(&plan);
         }
         (self.targets, self.embedding, self.cone) = plan.into_parts();
     }
@@ -115,10 +115,10 @@ impl Buffers for UnionTables {
 impl PooledScratch for UnionTables {
     fn prepare(&mut self) {}
 
+    /// Each view left its levels empty within [`View::release_kept`]'s room.
     fn retain(&mut self, lim: &Limits) -> usize {
         for side in &mut self.sides {
             side.clear();
-            side.built.retain(lim);
         }
         self.release_oversized(lim)
     }
@@ -134,32 +134,40 @@ pub(super) fn readable(tdd: &Tdd) -> bool {
         && tdd.require_structure().is_ok()
 }
 
-/// What fills [`UnionTables`] from [`Vtree::leaf_sets_reading`].
+/// What fills [`UnionTables`] from [`Vtree::leaf_sets_reading`], checked
+/// out only when the leaf sets are neither equal nor nested.
 pub(super) struct Reader<'t> {
-    lim: &'t Limits,
-    tables: &'t mut UnionTables,
+    eng: &'t Engine,
+    tables: Option<PoolGuard<'t, UnionTables>>,
     /// Each operand's node count and leaf count.
     sizes: [(usize, usize); 2],
 }
 
 impl<'t> Reader<'t> {
-    pub(super) fn new(lim: &'t Limits, tables: &'t mut UnionTables, (f, g): (&Vtree, &Vtree)) -> Self {
+    pub(super) fn new(eng: &'t Engine, (f, g): (&Vtree, &Vtree)) -> Self {
         let size = |v: &Vtree| (v.num_nodes(), v.num_leaves() as usize);
-        Reader { lim, tables, sizes: [size(f), size(g)] }
+        Reader { eng, tables: None, sizes: [size(f), size(g)] }
+    }
+
+    /// The tables, filled, when [`UnionReader::begin`] ran.
+    pub(super) fn into_tables(self) -> Option<PoolGuard<'t, UnionTables>> {
+        self.tables
     }
 }
 
 impl UnionReader for Reader<'_> {
     fn begin(&mut self, k: usize) -> Result<(), OperationError> {
-        for (side, &(own, _)) in self.tables.sides.iter_mut().zip(&self.sizes) {
-            side.prepare(self.lim, 2 * k - 1, own)?;
+        let tables = self.tables.insert(self.eng.scratch.apply.union.checkout_preserving(self.eng));
+        for (side, &(own, _)) in tables.sides.iter_mut().zip(&self.sizes) {
+            side.prepare(self.eng.limits(), 2 * k - 1, own)?;
         }
         Ok(())
     }
 
     #[inline]
     fn read(&mut self, u: VtreeIdx, [rf, rg]: [Reading; 2]) {
-        let [sf, sg] = &mut self.tables.sides;
+        let Some(tables) = self.tables.as_deref_mut() else { unreachable!("begin checks the tables out") };
+        let [sf, sg] = &mut tables.sides;
         sf.read(u, rf, self.sizes[0].1);
         sg.read(u, rg, self.sizes[1].1);
     }

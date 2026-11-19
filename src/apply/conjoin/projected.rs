@@ -35,14 +35,12 @@ pub(super) fn conjoin_projections<'a>(eng: &Engine, mut f: Cow<'a, Tdd>, mut g: 
             Err(operands) => operands,
         };
     }
-    let mut tables = (union::readable(&f) && union::readable(&g)).then(|| eng.scratch.apply.union.checkout_preserving(eng));
-    let sets = match tables.as_deref_mut() {
-        Some(tables) => {
-            let mut reader = union::Reader::new(eng.limits(), tables, (f.vtree(), g.vtree()));
-            Vtree::leaf_sets_reading(f.vtree(), g.vtree(), Some(&mut reader))?
-        }
+    let mut reader = (union::readable(&f) && union::readable(&g)).then(|| union::Reader::new(eng, (f.vtree(), g.vtree())));
+    let sets = match reader.as_mut() {
+        Some(reader) => Vtree::leaf_sets_reading(f.vtree(), g.vtree(), Some(reader))?,
         None => Vtree::leaf_sets(f.vtree(), g.vtree())?,
     };
+    let mut tables = reader.and_then(union::Reader::into_tables);
     if f.has_marginal_level() || g.has_marginal_level() {
         check_summed_leaves(&f, &g)?;
     }

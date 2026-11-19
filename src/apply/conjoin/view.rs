@@ -72,7 +72,7 @@ impl View {
     /// [`Slot::Free`], grown to `into` where shorter, and of which only the
     /// entries of the nodes `plan` gives the operand's variables are written,
     /// building its levels in those of `built`, every one empty;
-    /// [`View::release`] clears both. Refused, both come back cleared.
+    /// [`View::release_kept`] clears both. Refused, both come back cleared.
     pub(crate) fn build_in(
         eng: &Engine,
         tdd: &Tdd,
@@ -96,17 +96,22 @@ impl View {
         };
         match view.fill(eng, tdd, into, plan) {
             Ok(()) => Ok(view),
-            Err(error) => Err((error, view.release(plan))),
+            Err(error) => Err((error, view.release_kept(plan))),
         }
     }
 
-    /// The tables of [`View::build_in`], every entry free and every level
-    /// empty again.
-    pub(crate) fn release(mut self, plan: &Plan) -> ViewTables {
+    /// [`View::release`] with every level empty again, for the next view.
+    pub(crate) fn release_kept(mut self, plan: &Plan) -> ViewTables {
         let mut room = KEPT_ARENA_BYTES;
         for level in &mut self.built[..self.used] {
             crate::diagram::reset_level(level, &mut room);
         }
+        self.release(plan)
+    }
+
+    /// The tables of [`View::build_in`], every entry free; the levels as the
+    /// view left them.
+    pub(crate) fn release(mut self, plan: &Plan) -> ViewTables {
         for &d in &plan.embedding.levels {
             self.at[d.idx()] = Slot::Free;
         }
