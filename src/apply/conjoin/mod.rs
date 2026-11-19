@@ -997,7 +997,7 @@ impl crate::Engine {
             return Err(targets_on_projection());
         }
         f.check_level_indices(targets)?;
-        let [mut f, mut g] = extend::cows(self, [f, g])?;
+        let [mut f, mut g] = extend::on_one(self, [f, g])?;
         prepare_owned_weights(&mut f, &mut g)?;
         // The apply core asks "is level `t` a target?" once per level it emits,
         // so the membership array is derived here, once, at the cost the caller
@@ -1112,7 +1112,7 @@ impl crate::Engine {
         let _op = self.limits().enter()?;
         f.check_level_indices(targets)?;
         let from = Arc::clone(f.vtree());
-        let [mut f, mut g] = extend::owned(self, [f, g])?;
+        let [mut f, mut g] = extend::on_one(self, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
         let translated = extend::nodes_on(self, &from, f.vtree(), targets)?;
         let targets = translated.as_deref().unwrap_or(targets);
         if f.weights.is_some() || g.weights.is_some() {
@@ -1178,7 +1178,7 @@ fn marginalizing_where(eng: &Engine, f: Cow<'_, Tdd>, g: Cow<'_, Tdd>, summable:
             return extend::trimmed(eng, out);
         }
     }
-    let [mut f, mut g] = extend::cows(eng, [f, g])?;
+    let [mut f, mut g] = extend::on_one(eng, [f, g])?;
     if projected {
         projected::check_shared_regions(&f, &g)?;
     }

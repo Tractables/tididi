@@ -55,6 +55,8 @@ mod mark;
 mod rebuild;
 mod pairs;
 
+use std::borrow::Cow;
+
 use crate::Engine;
 use crate::limits::OperationError;
 
@@ -88,7 +90,7 @@ impl RestrictionOutcome {
 /// a copy of `f` placed with `care`, and `f` itself when nothing is removed.
 #[cold]
 fn restrict_across(eng: &Engine, f: Tdd, care: &Tdd) -> Result<RestrictionOutcome, OperationError> {
-    let [placed, care] = crate::apply::extend::borrowed(eng, [&f, care])?;
+    let [placed, care] = crate::apply::extend::on_one(eng, [Cow::Borrowed(&f), Cow::Borrowed(care)])?;
     if f.is_zero() {
         return Ok(RestrictionOutcome::Unchanged(f));
     }

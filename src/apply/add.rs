@@ -32,6 +32,7 @@
 //! disjunction of two functions with no common model: the overlay's
 //! disjunction, refusing a cell of both operands at the root.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use crate::Engine;
@@ -140,7 +141,7 @@ impl Engine {
 
 /// `f + g` of two owned operands on one vtree, minimized.
 fn add_on(eng: &Engine, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
-    let [mut f, mut g] = crate::apply::extend::owned(eng, [f, g])?;
+    let [mut f, mut g] = crate::apply::extend::on_one(eng, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
     crate::apply::prepare_weights(&mut [&mut f, &mut g])?;
     eng.limits().check_stop()?;
     let mut result = match (f.is_zero(), g.is_zero()) {

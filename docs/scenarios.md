@@ -413,7 +413,7 @@ evaluation has its own rational-string interface.
 
 ### Instances
 
-- [Rust API overview](api-guide.md) <!-- reviewed: afc475a47fb28f5c8ba7c88ecd3041a2e79af9e671d9ff5d1ded936352b54ab5 -->
+- [Rust API overview](api-guide.md) <!-- reviewed: 0726463dfbdc45498de077c83bcc30860726f54e50e891b8d74da8a6ba32ced2 -->
 - [Python API reference](../bindings/python/docs/api.rst) <!-- reviewed: 619c8cf6bbe3d4b720da766850817f34b4fdf92c866f3c6cd9828cd555fdcd39 -->
 - [C api](../bindings/c/docs/api.rst) <!-- reviewed: a4cc0ac9db6cd02097704bc1e4d3dd2fed3acb087decd2073142fbaf614ea9cc -->
 
@@ -481,7 +481,7 @@ Do not invent a language counterpart that rebuilds the rule instead of reusing i
 
 ### Instances
 
-- [Rust walkthrough](examples/composition.md) <!-- reviewed: 06cdf683307299c5bba2a0b65ce46b29bb890e077ae92e41762109cf8c3048ad -->
+- [Rust walkthrough](examples/composition.md) <!-- reviewed: 9d75c19a0e79bf612dd6d66a77d3a5f2895c7c2acb8003dda3de93ba0bd84101 -->
 - [Rust program](../examples/composition.rs) <!-- reviewed: ab8256a1de3317d4f53841dec9361268a0ecd155a6a9791e554c4f5bc6a7e91e -->
 
 ## Care sets

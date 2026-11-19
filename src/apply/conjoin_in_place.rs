@@ -59,6 +59,7 @@
 //! nodes; the products no node at the branching level reaches are made too,
 //! and the prune removes them.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
@@ -546,8 +547,8 @@ fn prune_under(
 /// each branching level found bottom-up ([`block_products`]).
 pub(crate) fn and_in_place_on(eng: &Engine, f: Tdd, g: &Tdd, prune: bool) -> Result<Tdd, OperationError> {
     let _op = eng.limits().enter()?;
-    let (f, g) = super::extend::owned_borrowed(eng, f, g)?;
-    super::extend::trimmed(eng, and_in_place_kernel(eng, f, &g, prune)?)
+    let [f, g] = super::extend::on_one(eng, [Cow::Owned(f), Cow::Borrowed(g)])?;
+    super::extend::trimmed(eng, and_in_place_kernel(eng, f.into_owned(), &g, prune)?)
 }
 
 fn and_in_place_kernel(

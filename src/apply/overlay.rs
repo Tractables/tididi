@@ -31,6 +31,7 @@
 //! name it as `⊤`, and `{x, ¬x}` otherwise, a `⊤` reference then standing for
 //! both literals.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -564,7 +565,7 @@ pub(crate) fn overlay_on(
     f: Tdd,
     g: Tdd,
 ) -> Result<Tdd, OperationError> {
-    let [mut f, mut g] = crate::apply::extend::owned(eng, [f, g])?;
+    let [mut f, mut g] = crate::apply::extend::on_one(eng, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
     f.require_structure()?;
     g.require_structure()?;
     crate::apply::prepare_weights(&mut [&mut f, &mut g])?;

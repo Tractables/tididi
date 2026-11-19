@@ -103,7 +103,7 @@ impl Engine {
         let operands = std::iter::once(std::borrow::Cow::Owned(f))
             .chain(replacements.iter().map(|&(_, diagram)| std::borrow::Cow::Borrowed(diagram)))
             .collect();
-        let mut operands = super::extend::mixed(self, operands)?.into_iter();
+        let mut operands = super::extend::on_one::<Vec<_>>(self, operands)?.into_iter();
         let f = operands.next().expect("f").into_owned();
         let placed: Vec<_> = operands.collect();
         let result = self.substitute_with(

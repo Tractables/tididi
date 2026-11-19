@@ -48,7 +48,7 @@ fn leaf_labels_survive_copying_and_moving_through_connectors() {
     for circuit in [Tdd::zero(&source), Tdd::one(&source),
         Tdd::cube(&source, [5]).unwrap(), Tdd::cube(&source, [-5]).unwrap()] {
         assert_canonical(&circuit);
-        let moved = Tdd::graft(vec![circuit.clone()], &[VarId(1), VarId(9)]).unwrap();
+        let moved = Engine::new().graft(vec![circuit.clone()], &[VarId(1), VarId(9)]).unwrap();
         let (copied, _) = circuit.embed(moved.vtree(), |v| v).unwrap();
         assert_canonical(&moved);
         assert_canonical(&copied);
