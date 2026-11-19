@@ -150,3 +150,42 @@ fn negate_on_no_leaf_keeps_the_weights() {
     assert!(owned.weights().is_some(), "negate of an owned constant with no leaf drops its weights");
     assert!(owned.is_zero());
 }
+
+/// A diagram placed on a vtree holding a region it has not summed out is
+/// refused by every entry that builds the copy whole, naming the region;
+/// conjoined with the diagram that summed the region, it answers.
+#[test]
+fn a_placement_onto_a_region_the_diagram_has_not_summed_is_refused() {
+    use num_rational::BigRational;
+    use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+    use tididi::restructure::EmbedError;
+    let eng = Engine::new();
+    let home = Home::new(Vtree::balanced(4));
+    let mut f = Tdd::clause(&Vtree::projection(&home, [1, 2, 3, 4].map(VarId)).unwrap(), [1, 2, 3, 4]).unwrap();
+    let (left, _) = home.vtree().children(home.vtree().root());
+    f.marginalize(&[left]).unwrap();
+    let into = Arc::clone(f.vtree());
+    let region = into.bottomup().find(|&t| into.node(t).is_region()).expect("the diagram has a region");
+    let x3 = Tdd::clause(&Vtree::projection(&home, [VarId(3)]).unwrap(), [3]).unwrap();
+    let one = Tdd::one(&Vtree::projection(&home, [VarId(3)]).unwrap());
+    let literals: Vec<_> = (1..=4).map(|i| LiteralWeights { negative: BigRational::new(1.into(), i.into()), positive: BigRational::new(2.into(), i.into()) }).collect();
+    let weights = WeightStore::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational);
+    let mut weighted = x3.clone();
+    weighted.set_weights(weights.clone()).unwrap();
+    let mut wrong = Vec::new();
+    let mut expect = |name: &str, call: &mut dyn FnMut() -> Result<(), EmbedError>| match catch_unwind(AssertUnwindSafe(call)) {
+        Ok(Err(EmbedError::UnsummedRegion { region: r })) if r == region => {}
+        Ok(outcome) => wrong.push(format!("{name}: {outcome:?}")),
+        Err(_) => wrong.push(format!("{name}: panicked")),
+    };
+    expect("embed_over", &mut || eng.embed_over(&x3, &into, |v| v, None).map(drop));
+    expect("embed_over weighted", &mut || eng.embed_over(&weighted, &into, |v| v, Some(weights.clone())).map(drop));
+    expect("embed_over true", &mut || eng.embed_over(&one, &into, |v| v, None).map(drop));
+    expect("embed", &mut || eng.embed(&x3, &into, |v| v).map(drop));
+    expect("Tdd::embed", &mut || x3.embed(&into, |v| v).map(drop));
+    expect("embed_moving", &mut || eng.embed_moving(x3.clone(), &into, |v| v).map(drop).map_err(|r| r.error));
+    expect("embedding_plan", &mut || eng.embedding_plan(x3.vtree(), &into, |v| v).map(drop));
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    let both = eng.and(&x3, &f).unwrap();
+    assert_eq!(both.model_count().unwrap(), eng.and(&f, &x3).unwrap().model_count().unwrap());
+}

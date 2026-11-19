@@ -137,7 +137,7 @@ fn a_view_reads_as_the_placed_operand() {
         if Arc::ptr_eq(f.vtree(), &u) || f.is_zero() {
             continue;
         }
-        let plan = crate::restructure::embed::Plan::build(&eng, f.vtree(), &u, |v| map[v.0 as usize - 1], false).unwrap();
+        let plan = crate::restructure::embed::Plan::build(&eng, f.vtree(), &u, |v| map[v.0 as usize - 1], false, crate::restructure::embed::Free::Leave).unwrap();
         let view = super::super::view::View::build(&eng, &f, &u, &plan).unwrap();
         let placed = place_by(&eng, Cow::Borrowed(&f), &u, &plan, crate::restructure::embed::Free::Leave).map_err(|e| e.0).unwrap();
         let at = format!("case {case}");

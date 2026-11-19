@@ -206,7 +206,7 @@ fn extend_one<'a>(eng: &Engine, f: Cow<'a, Tdd>, into: &Arc<Vtree>) -> Result<Co
         constant.weights = f.weights.as_ref().map(crate::diagram::WeightStore::empty_like);
         return Ok(Cow::Owned(constant));
     }
-    match place(eng, f, into, |var| var, Free::Build) {
+    match place(eng, f, into, |var| var, Free::Operand) {
         Ok((placed, _)) => Ok(Cow::Owned(placed)),
         Err((error, _)) => Err(operation_error(error)),
     }
