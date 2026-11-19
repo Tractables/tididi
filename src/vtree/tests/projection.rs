@@ -20,7 +20,7 @@ pub(super) fn assert_same(got: &Vtree, want: &Vtree, what: &str) {
     assert!(Arc::ptr_eq(got.context(), want.context()), "{what}");
     let (a, b) = (got.home.as_deref().unwrap(), want.home.as_deref().unwrap());
     assert!(Arc::ptr_eq(a.home.vtree(), b.home.vtree()), "{what}");
-    assert_eq!((&a.ranks, &a.node_of, &a.in_order, &a.regions), (&b.ranks, &b.node_of, &b.in_order, &b.regions), "{what}");
+    assert_eq!((&a.slot, &a.regions), (&b.slot, &b.regions), "{what}");
     assert_eq!(got.validate(), Ok(()), "{what}");
 }
 

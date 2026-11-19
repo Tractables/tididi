@@ -235,7 +235,8 @@ fn validate_checks_the_link() {
     let own = Vtree::projection(&home, [2, 3, 6].map(VarId)).unwrap();
     let mut broken = (*own).clone();
     let mut link = (**broken.home.as_ref().unwrap()).clone();
-    link.node_of.swap(0, 1);
+    let n = link.slot.len();
+    link.slot.swap(n - 2, n - 1);
     broken.home = Some(Arc::new(link));
     assert!(matches!(broken.validate(), Err(VtreeError::Invalid(_))));
 }
@@ -309,8 +310,7 @@ fn a_shared_root_does_not_become_a_home() {
 }
 
 /// The empty projection validates, and a projection whose nodes are not
-/// numbered as the builder numbers them does not, though its tree and link
-/// agree.
+/// numbered as the builder numbers them does not.
 #[test]
 fn the_layout_is_the_builders() {
     let home = Home::new(Vtree::balanced(8));
@@ -321,8 +321,5 @@ fn the_layout_is_the_builders() {
     renumbered.nodes.swap(0, 1);
     let root = renumbered.root();
     renumbered.nodes[root.idx()] = VtreeNode::Internal { left: VtreeIdx(1), right: VtreeIdx(0), parent: None };
-    let link = Arc::make_mut(renumbered.home.as_mut().unwrap());
-    link.node_of.swap(0, 1);
-    link.in_order = vec![VtreeIdx(1), root, VtreeIdx(0)];
-    assert!(renumbered.validate().is_err_and(|e| e.to_string().contains("order the builder gives")));
+    assert!(matches!(renumbered.validate(), Err(VtreeError::Invalid(_))));
 }

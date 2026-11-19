@@ -51,9 +51,9 @@ impl<'a> FreeVars<'a> {
         let link = self.link;
         let (lo, hi) = self.window;
         let skip_anchors = self.extents_free && !link.regions.is_empty();
-        let start = link.ranks.partition_point(|&r| r < lo);
-        let mut own = (start..link.ranks.len())
-            .map(move |i| (i, link.ranks[i]))
+        let start = link.ranks().partition_point(|&r| r < lo);
+        let mut own = (start..link.ranks().len())
+            .map(move |i| (i, link.ranks()[i]))
             .take_while(move |&(_, r)| r < hi)
             .filter(move |&(i, _)| !skip_anchors || link.regions.binary_search_by_key(&(i as u32), |region| region.at).is_err())
             .map(|(_, r)| r);
@@ -134,7 +134,7 @@ impl Vtree {
     pub(crate) fn free_set_under(&self, t: VtreeIdx) -> Option<FreeVars<'_>> {
         let link = self.home.as_deref().filter(|_| self.free_leaves() > 0)?;
         let Range { start: lo, end: hi } = link.home.rank_range(self.home_node(t));
-        let (a, b) = (link.ranks.partition_point(|&r| r < lo), link.ranks.partition_point(|&r| r < hi));
+        let (a, b) = (link.ranks().partition_point(|&r| r < lo), link.ranks().partition_point(|&r| r < hi));
         let anchors = link.regions.partition_point(|region| (region.at as usize) < b)
             - link.regions.partition_point(|region| (region.at as usize) < a);
         let len = hi - lo - (b - a - anchors) as u32;
@@ -147,7 +147,7 @@ impl Vtree {
         let Some(link) = self.home.as_deref() else { return Vec::new() };
         let mut ranks: Vec<u32> = vars
             .filter_map(|var| link.home.rank(var))
-            .filter(|&r| link.ranks.binary_search(&r).is_err() && link.region_over(r, r + 1).is_none())
+            .filter(|&r| link.ranks().binary_search(&r).is_err() && link.region_over(r, r + 1).is_none())
             .collect();
         ranks.sort_unstable();
         ranks.dedup();

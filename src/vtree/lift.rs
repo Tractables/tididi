@@ -23,10 +23,10 @@ impl Vtree {
         let internals = self.internal_bottomup_slice();
         let mut stands = vec![false; old.num_nodes()];
         for &t in internals {
-            stands[link.node_of[t.idx()].idx()] = true;
+            stands[self.home_node(t).idx()] = true;
         }
         let top = |c: VtreeIdx| {
-            let mut h = link.node_of[c.idx()];
+            let mut h = self.home_node(c);
             while let Some(p) = old.node(h).parent().filter(|p| !stands[p.idx()]) {
                 h = p;
             }
@@ -35,7 +35,7 @@ impl Vtree {
         let mut nodes = old.nodes.clone();
         for &t in internals {
             let (left, right) = self.children(t);
-            nodes[link.node_of[t.idx()].idx()] = VtreeNode::Internal { left: top(left), right: top(right), parent: None };
+            nodes[self.home_node(t).idx()] = VtreeNode::Internal { left: top(left), right: top(right), parent: None };
         }
         let (mut lifted, _) =
             Self::from_nodes_with_map(nodes, old.root(), old.num_vars()).expect("chains moved whole form one tree");
