@@ -39,6 +39,10 @@ pub(crate) enum Slot {
     Free,
 }
 
+/// What a view is built in and gives back ([`View::build_in`]): its slot
+/// table and its levels.
+pub(crate) type ViewTables = (Vec<Slot>, Vec<TddLevel>);
+
 /// The operand's levels as the conjunction on `U` reads them; see the
 /// module documentation.
 pub(crate) struct View {
@@ -74,8 +78,8 @@ impl View {
         tdd: &Tdd,
         into: &Arc<Vtree>,
         plan: &Plan,
-        (mut at, built): (Vec<Slot>, Vec<TddLevel>),
-    ) -> Result<View, (OperationError, (Vec<Slot>, Vec<TddLevel>))> {
+        (mut at, built): ViewTables,
+    ) -> Result<View, (OperationError, ViewTables)> {
         if at.len() < into.num_nodes()
             && let Err(error) = eng.limits().try_resize(&mut at, into.num_nodes(), Slot::Free)
         {
@@ -98,7 +102,7 @@ impl View {
 
     /// The tables of [`View::build_in`], every entry free and every level
     /// empty again.
-    pub(crate) fn release(mut self, plan: &Plan) -> (Vec<Slot>, Vec<TddLevel>) {
+    pub(crate) fn release(mut self, plan: &Plan) -> ViewTables {
         let mut room = KEPT_ARENA_BYTES;
         for level in &mut self.built[..self.used] {
             crate::diagram::reset_level(level, &mut room);
