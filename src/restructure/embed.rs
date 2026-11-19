@@ -921,15 +921,19 @@ fn seat_view<'a>(
     copy_weights: bool,
 ) -> Result<Tdd, (OperationError, std::borrow::Cow<'a, Tdd>)> {
     use std::borrow::Cow;
+    let levels = match try_take_levels(eng, into.num_nodes()) {
+        Ok(levels) => levels,
+        Err(e) => return Err((e, tdd)),
+    };
     let mut slots = eng.scratch.apply.cone_slots.checkout_preserving(eng);
-    let view = match View::placing(eng, &tdd, into, plan, std::mem::take(&mut *slots)) {
+    let view = match View::placing(eng, &tdd, into, plan, std::mem::take(&mut *slots), levels) {
         Ok(view) => view,
         Err((e, back)) => {
             *slots = back;
             return Err((e, tdd));
         }
     };
-    let (mut at, mut built, output, tops) = view.into_parts();
+    let (mut at, mut levels, output, tops) = view.into_parts();
     let closed = tdd.levels.is_closed();
     // A moved diagram's worklists are taken, with room made in place.
     let carried = match &mut tdd {
@@ -943,11 +947,12 @@ fn seat_view<'a>(
         Cow::Owned(_) => None,
     };
     let ready = carried.and_then(|carried| {
-        take_placement(eng, borrowed, into, plan, &at, free, copy_weights).map(|taken| (carried, taken))
+        take_placement(eng, borrowed, into, plan, &at, &mut levels, free, copy_weights).map(|weights| (carried, weights))
     });
-    let ((copied, listed), (mut levels, weights)) = match ready {
+    let ((copied, listed), weights) = match ready {
         Ok(ready) => ready,
         Err(e) => {
+            return_levels(eng, levels);
             at.clear();
             *slots = at;
             return Err((e, tdd));
@@ -967,11 +972,6 @@ fn seat_view<'a>(
         Cow::Borrowed(_) => (weights, copied.expect("a borrowed diagram's worklists are copied")),
     };
     let dirty = moved_dirty(carried, listed, tdd.vtree(), into, plan, &tops);
-    for (t, slot) in at.iter().enumerate() {
-        if let Slot::Built(b) = *slot {
-            std::mem::swap(&mut levels[t], &mut built[b as usize]);
-        }
-    }
     if free == Free::Build {
         for &t in into.internal_bottomup_slice() {
             if plan.is_free(t) {
@@ -1008,19 +1008,21 @@ fn seat_view<'a>(
 }
 
 /// What [`seat_view`] can be refused once the view is built, taken before
-/// anything moves: the free levels' work units where they are built, the
-/// result's level array, a borrowed diagram's own levels copied into it,
-/// and its weight store copied when `copy_weights`. `at` is the view's
-/// table, and `borrowed` the diagram when it is copied.
+/// anything moves: the free levels' work units where they are built, a
+/// borrowed diagram's own levels copied into `levels`, the result's level
+/// array, and its weight store copied when `copy_weights`. `at` is the
+/// view's table, and `borrowed` the diagram when it is copied.
+#[expect(clippy::too_many_arguments, reason = "the placement's parts, taken apart by the view")]
 fn take_placement(
     eng: &Engine,
     borrowed: Option<&Tdd>,
     into: &Vtree,
     plan: &Plan,
     at: &[Slot],
+    levels: &mut [TddLevel],
     free: Free,
     copy_weights: bool,
-) -> Result<(Vec<TddLevel>, Option<WeightStore>), OperationError> {
+) -> Result<Option<WeightStore>, OperationError> {
     let lim = eng.limits();
     if free == Free::Build {
         let mut gate = lim.gate();
@@ -1035,18 +1037,14 @@ fn take_placement(
         Some(weights) if copy_weights => Some(weights.try_clone_on(lim)?),
         _ => None,
     };
-    let mut levels = try_take_levels(eng, into.num_nodes())?;
     if let Some(source) = borrowed {
         for (s, &d) in plan.embedding.levels.iter().enumerate() {
-            if matches!(at[d.idx()], Slot::Own(_))
-                && let Err(e) = source.levels[s].try_copy_over(lim, &mut levels[d.idx()])
-            {
-                return_levels(eng, levels);
-                return Err(e);
+            if matches!(at[d.idx()], Slot::Own(_)) {
+                source.levels[s].try_copy_over(lim, &mut levels[d.idx()])?;
             }
         }
     }
-    Ok((levels, weights))
+    Ok(weights)
 }
 
 /// The nearest ancestor of `t` that is the image of a source level, and the

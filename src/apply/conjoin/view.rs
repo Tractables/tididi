@@ -21,6 +21,7 @@ use std::sync::Arc;
 
 use crate::Engine;
 use crate::diagram::{
+    return_levels,
     finish_sides_remap, plan_sides_remap, ChildPair, ChildSide, Dirty, EncodedChildRef, NodeIdx, Sides, Tdd, TddLevel,
     TddNodeId, ValueRef,
 };
@@ -45,7 +46,10 @@ pub(crate) enum Slot {
 pub(crate) struct View {
     vtree: Arc<Vtree>,
     at: Vec<Slot>,
+    /// The levels the view built, at the index their slot names: the node's
+    /// own index where `by_node`, the result's level array of a placement.
     built: Vec<TddLevel>,
+    by_node: bool,
     empty: TddLevel,
     output: TddNodeId,
     dirty: Dirty,
@@ -81,19 +85,23 @@ impl View {
         plan: &Plan,
         at: Vec<Slot>,
     ) -> Result<View, (OperationError, Vec<Slot>)> {
-        Self::build_as(eng, tdd, into, plan, at, true)
+        Self::build_as(eng, tdd, into, plan, at, Vec::new(), true)
     }
 
     /// [`View::build_in`] for a placement, which moves the worklists itself
-    /// ([`reserve_moved`], [`moved_dirty`]): the view's are left empty.
+    /// ([`reserve_moved`], [`moved_dirty`]): the view's are left empty. The
+    /// view builds its levels in place in `levels`, the result's level array,
+    /// of `into`'s length; refused, the array goes back to the pool.
     pub(crate) fn placing(
         eng: &Engine,
         tdd: &Tdd,
         into: &Arc<Vtree>,
         plan: &Plan,
         at: Vec<Slot>,
+        levels: Vec<TddLevel>,
     ) -> Result<View, (OperationError, Vec<Slot>)> {
-        Self::build_as(eng, tdd, into, plan, at, false)
+        debug_assert_eq!(levels.len(), into.num_nodes());
+        Self::build_as(eng, tdd, into, plan, at, levels, false)
     }
 
     fn build_as(
@@ -102,17 +110,21 @@ impl View {
         into: &Arc<Vtree>,
         plan: &Plan,
         mut at: Vec<Slot>,
+        built: Vec<TddLevel>,
         worklists: bool,
     ) -> Result<View, (OperationError, Vec<Slot>)> {
+        let by_node = !built.is_empty();
         if at.len() < into.num_nodes()
             && let Err(error) = eng.limits().try_resize(&mut at, into.num_nodes(), Slot::Free)
         {
+            return_levels(eng, built);
             return Err((error, at));
         }
         let mut view = View {
             vtree: Arc::clone(into),
             at,
-            built: Vec::new(),
+            built,
+            by_node,
             empty: TddLevel::new(),
             output: TddNodeId { vtree: into.root(), local: tdd.output.local },
             dirty: Dirty::default(),
@@ -120,7 +132,13 @@ impl View {
         };
         match view.fill(eng, tdd, into, plan, worklists) {
             Ok(()) => Ok(view),
-            Err(error) => Err((error, view.release(plan))),
+            Err(error) => {
+                let built = std::mem::take(&mut view.built);
+                if view.by_node {
+                    return_levels(eng, built);
+                }
+                Err((error, view.release(plan)))
+            }
         }
     }
 
@@ -150,7 +168,9 @@ impl View {
         for (s, &d) in plan.embedding.levels.iter().enumerate() {
             view.at[d.idx()] = Slot::Own(s as u32);
         }
-        lim.reserve_exact(&mut view.built, plan.pass_throughs)?;
+        if !view.by_node {
+            lim.reserve_exact(&mut view.built, plan.pass_throughs)?;
+        }
         let mut literal_tops = Vec::new();
         let mut gate = lim.gate();
         for &t in plan.pass_throughs(into) {
@@ -158,7 +178,7 @@ impl View {
             let (left, _) = into.children(t);
             let free_side = if plan.is_free(left) { ChildSide::Left } else { ChildSide::Right };
             let through = PassThrough::new(into, t, free_side, |c| view.level(tdd, c.idx()).slot_count());
-            let mut level = TddLevel::new();
+            let mut level = view.take_empty(t);
             if !into.node(through.carries).is_leaf() {
                 if through.width > 0 {
                     through.build(lim, &mut level)?;
@@ -182,8 +202,7 @@ impl View {
             }
             level.close();
             level.close_held_pairs();
-            view.at[t.idx()] = Slot::Built(view.built.len() as u32);
-            view.built.push(level);
+            view.put_built(lim, t, level)?;
         }
         gate.flush()?;
         view.renumber(lim, tdd, plan, &literal_tops)?;
@@ -208,11 +227,44 @@ impl View {
         }
     }
 
-    /// A copy of the level at `t`, with `t`'s sides, as a level of the view.
-    fn copy_level(&self, lim: &Limits, tdd: &Tdd, plan: &Plan, t: VtreeIdx) -> Result<TddLevel, OperationError> {
-        let mut copy = TddLevel::new();
+    /// The level to build at `t`, empty: the result's, taken out of its
+    /// array, in a placement.
+    #[inline]
+    fn take_empty(&mut self, t: VtreeIdx) -> TddLevel {
+        match self.by_node {
+            true => std::mem::take(&mut self.built[t.idx()]),
+            false => TddLevel::new(),
+        }
+    }
+
+    /// Make `level` the view's level at `t`, in place of the one it built
+    /// there before, if any.
+    #[inline]
+    fn put_built(&mut self, lim: &Limits, t: VtreeIdx, level: TddLevel) -> Result<(), OperationError> {
+        let b = match self.at[t.idx()] {
+            Slot::Built(b) => b as usize,
+            _ if self.by_node => t.idx(),
+            _ => {
+                lim.try_push(&mut self.built, level)?;
+                self.at[t.idx()] = Slot::Built(self.built.len() as u32 - 1);
+                return Ok(());
+            }
+        };
+        self.built[b] = level;
+        self.at[t.idx()] = Slot::Built(b as u32);
+        Ok(())
+    }
+
+    /// The level at `t`, with `t`'s sides, for the view to change and put
+    /// back ([`View::put_built`]): taken out where the view built it, else a
+    /// copy of the operand's.
+    fn reader(&mut self, lim: &Limits, tdd: &Tdd, plan: &Plan, t: VtreeIdx) -> Result<TddLevel, OperationError> {
+        if let Slot::Built(b) = self.at[t.idx()] {
+            return Ok(std::mem::take(&mut self.built[b as usize]));
+        }
+        let mut copy = self.take_empty(t);
         self.level(tdd, t.idx()).try_clone_over(lim, 0, 0, &mut copy)?;
-        if matches!(self.at[t.idx()], Slot::Own(_)) && plan.is_mirrored(t) {
+        if plan.is_mirrored(t) {
             copy.swap_sides();
         }
         Ok(copy)
@@ -265,7 +317,7 @@ impl View {
         if inline.is_empty() {
             return Ok(());
         }
-        let mut copy = self.copy_level(lim, tdd, plan, parent)?;
+        let mut copy = self.reader(lim, tdd, plan, parent)?;
         let mut next = through.width as u32;
         crate::diagram::for_each_side_ref_mut(lim, &mut copy, side, |r| {
             if inline_value(EncodedChildRef(*r)) {
@@ -276,9 +328,7 @@ impl View {
         copy.set_has_value_refs(side, false);
         copy.close();
         copy.close_held_pairs();
-        lim.try_push(&mut self.built, copy)?;
-        self.at[parent.idx()] = Slot::Built(self.built.len() as u32 - 1);
-        Ok(())
+        self.put_built(lim, parent, copy)
     }
 
     /// Point the readers of the chain tops `tops` at the chains' nodes 0
@@ -309,14 +359,13 @@ impl View {
                 left: self.level(tdd, left.idx()).child_decoder(),
                 right: self.level(tdd, right.idx()).child_decoder(),
             };
-            let mut copy = self.copy_level(lim, tdd, plan, parent)?;
+            let mut copy = self.reader(lim, tdd, plan, parent)?;
             let planned = plan_sides_remap(lim, &copy, moving, decoders, &REMAP)?;
             finish_sides_remap(&mut copy, planned, moving, decoders, &REMAP);
             copy.forget_held_pairs();
             copy.close();
             copy.settle_held_pairs();
-            lim.try_push(&mut self.built, copy)?;
-            self.at[parent.idx()] = Slot::Built(self.built.len() as u32 - 1);
+            self.put_built(lim, parent, copy)?;
         }
         Ok(())
     }
@@ -341,6 +390,7 @@ impl View {
 
     /// The widest level the view built.
     pub(crate) fn built_width(&self) -> usize {
+        debug_assert!(!self.by_node, "a placement's view is not conjoined");
         self.built.iter().map(TddLevel::slot_count).max().unwrap_or(0)
     }
 
