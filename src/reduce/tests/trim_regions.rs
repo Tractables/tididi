@@ -522,3 +522,46 @@ fn two_equal_nodes_of_a_dropped_level_both_keep_what_they_name() {
     same_pointwise(&untrimmed, &trimmed, 4, false, "trimmed");
     assert_eq!(trimmed.model_count().unwrap(), num_bigint::BigUint::from(4u32));
 }
+
+/// Home `(((1, (2, 3)), 4), 5)` with `(2, 3)` summed out into a region `r`;
+/// `p = (1, r)` holds `x1` and `¬x1`, each with value 1 at `r`. Leaf 4 is
+/// named true at `q = (p, 4)`, whose two nodes name `{x1, ¬x1}` and `{x1}`,
+/// and the root holds `¬x5` to the one and `x5` to the other. The end node
+/// `x1` is named by both nodes of the dropped level, and each keeps it.
+#[test]
+fn an_end_node_two_dropped_nodes_name_beside_a_region_stays_in_both() {
+    use crate::diagram::{NodeIdx, TddNodeId, NEG_LEAF_IDX};
+    let home = Home::new(join(&join(&join(&leaf(1), &join(&leaf(2), &leaf(3))), &leaf(4)), &leaf(5)));
+    let mut g = Tdd::clause(&Vtree::projection(&home, [1, 2, 3, 4, 5].map(VarId)).unwrap(), [1, 2, 3, 4, 5]).unwrap();
+    g.marginalize(|v| [2, 3].contains(&v.0)).unwrap();
+    let v = Arc::clone(g.vtree());
+    let root = v.root();
+    let (q, _) = v.children(root);
+    let (p, _) = v.children(q);
+    let (_, r) = v.children(p);
+    assert!(v.node(r).is_region());
+    let eng = Engine::new();
+    let mut levels = g.clone().levels.into_vec();
+    let mut node = |at: VtreeIdx, nodes: &[&[ChildPair]]| {
+        levels[at.idx()] = TddLevel::new();
+        for pairs in nodes {
+            levels[at.idx()].push_node(eng.limits(), pairs).unwrap();
+        }
+    };
+    let one = EncodedChildRef::from_raw(ValueRef::inline_raw(1).unwrap());
+    node(p, &[&[ChildPair::new(POS_LEAF_IDX, one)], &[ChildPair::new(NEG_LEAF_IDX, one)]]);
+    node(q, &[&[ChildPair::new(NodeIdx(0), ONE_LEAF_IDX), ChildPair::new(NodeIdx(1), ONE_LEAF_IDX)], &[ChildPair::new(NodeIdx(0), ONE_LEAF_IDX)]]);
+    node(root, &[&[ChildPair::new(NodeIdx(0), NEG_LEAF_IDX), ChildPair::new(NodeIdx(1), POS_LEAF_IDX)]]);
+    let mut region = TddLevel::new();
+    region.become_marginal(Vec::new(), None);
+    levels[r.idx()] = region;
+    let out = TddNodeId { vtree: root, local: NodeIdx(0) };
+    let b = TddBuilder::from_levels(v, levels, None);
+    b.check(out).unwrap();
+    let untrimmed = unsafe { b.finish_unchecked(out) };
+    let mut trimmed = untrimmed.clone();
+    assert_eq!(eng.trim(&mut trimmed, &home), Ok(true));
+    check_trimmed(&trimmed, false).unwrap();
+    assert!(trimmed.vtree().leaf_of(VarId(4)).is_none());
+    same_pointwise(&untrimmed, &trimmed, 5, false, "trimmed");
+}
