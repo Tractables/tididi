@@ -337,8 +337,8 @@ comparison remains in the Rust and Python lessons.
 
 ### Instances
 
-- [Rust walkthrough](examples/optimization.md) <!-- reviewed: 0aa667efcc20539352af4e2615f37b1b68d27e077188051583e3569c1bea3d5c -->
-- [Rust program](../examples/optimization.rs) <!-- reviewed: 9997b1b1bc408a5523373cd7fbf832ad7ce7282bf1aa259689fcfe586360b6a8 -->
+- [Rust walkthrough](examples/optimization.md) <!-- reviewed: aadeab394dbf5902daccf1e5cfe44db5d039f0bdf42e8705ddfbd4585a8c6acd -->
+- [Rust program](../examples/optimization.rs) <!-- reviewed: 11e3f5c6029fb54cfa1fd0fdf397a2c1df1e6589fbb9d18de7ff39f8d43929f0 -->
 - [Python walkthrough and program](../bindings/python/examples/08_minimum_cost.py) <!-- reviewed: 79dce3065ddab786f40085239b1e037fa83dbb734744bb7f262e6184f5e49638 -->
 - [C minimum cost](../bindings/c/docs/minimum_cost.rst) <!-- reviewed: 31066073b902872f8b5ee0ed058b91001fe74c245575b5ce7462e0ebf4d99a05 -->
 - [C program minimum_cost](../bindings/c/examples/minimum_cost.c) <!-- reviewed: d376304fe91f8dfee13b0efe4d45afcc69743b2d0082fdccafae3ef828303b8b -->
@@ -392,7 +392,7 @@ owns the circuit until finish; unlike Python, freeing the handle ends all checks
 
 ### Instances
 
-- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: fd9c07c9820c079fdb746cdae2854ec217b0b588bb3c92b0504757e2eda1ca91 -->
+- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: a7db60d2f409e6846c40b4c52ddf87963c749f0d4fdda9f9fd17ded0bf8e186b -->
 - [Python ownership guide](../bindings/python/docs/ownership.rst) <!-- reviewed: 685e0b6279a4115660efab3cb519c70bfca9eac7320a8c905dd5f720637b2723 -->
 - [C ownership](../bindings/c/docs/ownership.rst) <!-- reviewed: 39ab8a8f865680890f676f3022da9389bf6a3c18cdac1c388f3333b4df0757b9 -->
 
@@ -460,7 +460,7 @@ there is no separate Python implementation to describe.
 
 ### Instances
 
-- [Rust architecture reference](architecture.md) <!-- reviewed: 3a8b82e933b28110d5602deaa578979deb2a14c36a207152d9297d3ccb120726 -->
+- [Rust architecture reference](architecture.md) <!-- reviewed: cba1e36e4a26cd7af20e5a77a280cb83e7c8ae3a07ae004bd9d195ea3601b51a -->
 
 ## Reusable components
 
