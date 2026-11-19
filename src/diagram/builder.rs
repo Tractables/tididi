@@ -7,7 +7,7 @@ use rustc_hash::{FxHashMap, FxHasher};
 
 use crate::Engine;
 use crate::limits::{Limits, OperationError};
-use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
+use crate::vtree::{Vtree, VtreeIdx};
 
 use super::build_error::TddBuildError;
 use super::level::TddLevel;
@@ -432,8 +432,12 @@ impl TddBuilder {
         Ok(self.seat(output, dirty, None))
     }
 
-    /// [`finish`](Self::finish) without the repeated-pair check, for a
-    /// reader that trusts its levels.
+    /// [`finish`](Self::finish) without the repeated-pair check, for levels
+    /// the library wrote or derived from a valid diagram.
+    // Out of line: inlined into the binary reader, its one caller there, it
+    // pulled the decode functions in with it, and a query reading its
+    // diagrams from binary files cost about 1.5% more.
+    #[inline(never)]
     pub(crate) fn finish_trusting_pairs(self, output: TddNodeId) -> Result<Tdd, TddBuildError> {
         self.check(output)?;
         let dirty = self.seed_worklists(Default::default(), None, None).expect("untracked worklists cannot be refused");
@@ -556,7 +560,6 @@ fn debug_assert_pairs(vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx, pairs: &[
 /// # Errors
 ///
 /// The first violation found.
-#[inline]
 pub(crate) fn check_levels(
     vtree: &Arc<Vtree>,
     levels: &[TddLevel],
@@ -571,8 +574,6 @@ pub(crate) fn check_levels(
 /// Given the children's determinism, distinct pairs are disjoint, so this is
 /// determinism over the level's stored nodes. Above a marginal level a
 /// repeated pair is a multiplicity the content-twin merge leaves, and legal.
-// Inlined, as is `check_structural_level`: out of line, the storage loop
-// costs a query that reads its diagrams from binary files about 1% more.
 #[inline(always)]
 fn check_storage<const PAIRS: bool>(
     vtree: &Arc<Vtree>,
@@ -589,24 +590,23 @@ fn check_storage<const PAIRS: bool>(
     }
     if let Some(ws) = weights {
         ws.check_levels(vtree, levels)?;
+    } else if let Some(t) = vtree.bottomup().find(|t| levels[t.idx()].is_weight_marginal()) {
+        return Err(TddBuildError::WeightedLevelWithoutStore { level: t });
+    }
+    for (leaf, _var) in vtree.leaf_bottomup() {
+        check_leaf_level(&levels[leaf.idx()], leaf)?;
+    }
+    if vtree.num_nodes().div_ceil(2) != vtree.num_leaves() as usize {
+        check_region_levels(vtree, levels)?;
     }
     let mut scan = PairScan::default();
-    for t in vtree.bottomup() {
-        let lvl = &levels[t.idx()];
-        if weights.is_none() && lvl.is_weight_marginal() {
-            return Err(TddBuildError::WeightedLevelWithoutStore { level: t });
-        }
-        match vtree.node(t) {
-            node @ VtreeNode::Leaf { .. } if node.is_region() => {
-                if !lvl.is_marginal() {
-                    return Err(TddBuildError::StructuralRegion { level: t });
-                }
-            }
-            VtreeNode::Leaf { .. } => check_leaf_level(lvl, t)?,
-            VtreeNode::Internal { .. } if lvl.is_marginal() => check_marginal_level(vtree, levels, t)?,
-            &VtreeNode::Internal { left, right, .. } => {
-                check_structural_level::<PAIRS>(vtree, levels, t, left, right, &mut scan)?;
-            }
+    for (t, left, right) in vtree.internal_bottomup() {
+        if levels[t.idx()].is_marginal() {
+            check_marginal_level(vtree, levels, t)?;
+        } else if PAIRS && scan.enter(levels.len(), t, [left, right], levels[left.idx()].is_marginal() || levels[right.idx()].is_marginal()) {
+            check_scanned_level(vtree, levels, t, left, right, &mut scan)?;
+        } else {
+            check_structural_level(vtree, levels, t, left, right)?;
         }
     }
     check_output(vtree, levels, output)
@@ -651,6 +651,16 @@ fn check_leaf_level(lvl: &TddLevel, leaf: VtreeIdx) -> Result<(), TddBuildError>
     Ok(())
 }
 
+/// A region stands for variables summed out, so its level holds values.
+#[cold]
+#[inline(never)]
+fn check_region_levels(vtree: &Vtree, levels: &[TddLevel]) -> Result<(), TddBuildError> {
+    match vtree.bottomup().find(|&t| vtree.node(t).is_region() && !levels[t.idx()].is_marginal()) {
+        Some(level) => Err(TddBuildError::StructuralRegion { level }),
+        None => Ok(()),
+    }
+}
+
 /// A marginal level's children are leaves or marginal themselves, and every
 /// overflowed count has its exact value behind it.
 fn check_marginal_level(vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx) -> Result<(), TddBuildError> {
@@ -670,76 +680,43 @@ fn check_marginal_level(vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx) -> Resu
 }
 
 /// Every node of a structural level has a pair, and every pair side names
-/// an entry of its child level without the reserved bit; with `PAIRS`, no
-/// pair occurs twice when `scan` says the level is checked for that.
+/// an entry of its child level without the reserved bit.
+// Inlined: out of line, a query reading its diagrams from binary files costs
+// about 3% more.
 #[inline(always)]
-fn check_structural_level<const PAIRS: bool>(
-    vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx, left: VtreeIdx, right: VtreeIdx, scan: &mut PairScan,
+fn check_structural_level(
+    vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx, left: VtreeIdx, right: VtreeIdx,
 ) -> Result<(), TddBuildError> {
     let lvl = &levels[t.idx()];
     let (lm, rm) = (levels[left.idx()].child_decoder(), levels[right.idx()].child_decoder());
     let (lb, rb) = (bound(vtree, levels, left), bound(vtree, levels, right));
-    let scanned = PAIRS && scan.enter(levels.len(), t, [left, right], lm.is_marginal() || rm.is_marginal());
     // Over structural children a side is a node index, and one below
     // `MAX_LIVE` has bit 31 clear, so one comparison a side checks both
     // rules. The loop below names the first violation where this pass finds
-    // one; a scanned level always takes this pass, as its children are
-    // structural, and the loop always finds one, as no level holds more than
-    // `MAX_LIVE` nodes.
+    // one.
     if !lm.is_marginal() && !rm.is_marginal() {
         let (lb, rb) = (lb.min(NodeIdx::MAX_LIVE), rb.min(NodeIdx::MAX_LIVE));
         let fits = |pair: &ChildPair| (pair.left.raw() as usize) < lb && (pair.right.raw() as usize) < rb;
-        if !scanned {
-            // Gathering leaf forms in the same pass costs about as much as the
-            // pass, so a level over two internal children, which has none, skips it.
-            if !vtree.node(left).is_leaf() && !vtree.node(right).is_leaf() {
-                if all_pairs_fit(lvl, fits) {
-                    return Ok(());
-                }
-            } else {
-                // Bit k of a side's mask: some pair names entry k (mod 32) there,
-                // which `fits` keeps below `LEAF_WIDTH` on a leaf.
-                let (mut lmask, mut rmask) = (0u32, 0u32);
-                let all_fit = all_pairs_fit(lvl, |pair| {
-                    lmask |= 1u32.wrapping_shl(pair.left.raw());
-                    rmask |= 1u32.wrapping_shl(pair.right.raw());
-                    fits(pair)
-                });
-                if all_fit {
-                    let one = 1u32 << ONE_LEAF_IDX.0;
-                    let form = |m: u32| u8::from(m & !one != 0) | u8::from(m & one != 0) << 1;
-                    return mixed_leaf_form(vtree, t, [(left, form(lmask)), (right, form(rmask))]);
-                }
+        // Gathering leaf forms in the same pass costs about as much as the
+        // pass, so a level over two internal children, which has none, skips it.
+        if !vtree.node(left).is_leaf() && !vtree.node(right).is_leaf() {
+            if all_pairs_fit(lvl, fits) {
+                return Ok(());
             }
-        } else if lb <= 8 && rb <= 8 {
-            // Every pair a bit of one word, `8 * left + right`: no buffer for
-            // the narrow levels most finishes consist of. The stride is a
-            // constant so that the index is one address computation. The
-            // loop only learns whether some pair repeats; carrying the pair
-            // through it spills registers and more than doubles its cost.
-            let (mut grid, mut repeated) = (0u64, 0u64);
+        } else {
+            // Bit k of a side's mask: some pair names entry k (mod 32) there,
+            // which `fits` keeps below `LEAF_WIDTH` on a leaf.
+            let (mut lmask, mut rmask) = (0u32, 0u32);
             let all_fit = all_pairs_fit(lvl, |pair| {
-                fits(pair) && {
-                    let at = 8 * pair.left.raw() + pair.right.raw();
-                    repeated |= grid >> at;
-                    grid |= 1 << at;
-                    true
-                }
+                lmask |= 1u32.wrapping_shl(pair.left.raw());
+                rmask |= 1u32.wrapping_shl(pair.right.raw());
+                fits(pair)
             });
             if all_fit {
-                if repeated & 1 != 0 {
-                    return scan.name_repeat(lvl, t, lb, rb);
-                }
-                // The leaf forms are read off the grid: row 0 holds the pairs
-                // whose left side is `One`, column 0 those whose right side is.
-                const _: () = assert!(ONE_LEAF_IDX.0 == 0);
-                const COLUMN: u64 = 0x0101_0101_0101_0101;
-                let form = |one: u64| u8::from(grid & !one != 0) | u8::from(grid & one != 0) << 1;
-                return mixed_leaf_form(vtree, t, [(left, form(0xff)), (right, form(COLUMN))]);
+                let one = 1u32 << ONE_LEAF_IDX.0;
+                let form = |m: u32| u8::from(m & !one != 0) | u8::from(m & one != 0) << 1;
+                return mixed_leaf_form(vtree, t, [(left, form(lmask)), (right, form(rmask))]);
             }
-        } else if let Some(checked) = scan.check_wide(lvl, t, lb, rb) {
-            checked?;
-            return check_leaf_form(vtree, levels, t, left, right);
         }
     }
     for (i, node) in lvl.nodes().iter().enumerate() {
@@ -759,8 +736,52 @@ fn check_structural_level<const PAIRS: bool>(
             }
         }
     }
-    debug_assert!(!scanned, "a scanned level failed the fast pass with no violation");
     check_leaf_form(vtree, levels, t, left, right)
+}
+
+/// [`check_structural_level`] for a level over two structural children,
+/// and no pair occurring twice, found in the same pass over the pairs.
+fn check_scanned_level(
+    vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx, left: VtreeIdx, right: VtreeIdx, scan: &mut PairScan,
+) -> Result<(), TddBuildError> {
+    let lvl = &levels[t.idx()];
+    let lb = bound(vtree, levels, left).min(NodeIdx::MAX_LIVE);
+    let rb = bound(vtree, levels, right).min(NodeIdx::MAX_LIVE);
+    let fits = |pair: &ChildPair| (pair.left.raw() as usize) < lb && (pair.right.raw() as usize) < rb;
+    if lb <= 8 && rb <= 8 {
+        // Every pair a bit of one word, `8 * left + right`: no buffer for
+        // the narrow levels most finishes consist of. The stride is a
+        // constant so that the index is one address computation. The
+        // loop only learns whether some pair repeats; carrying the pair
+        // through it spills registers and more than doubles its cost.
+        let (mut grid, mut repeated) = (0u64, 0u64);
+        let all_fit = all_pairs_fit(lvl, |pair| {
+            fits(pair) && {
+                let at = 8 * pair.left.raw() + pair.right.raw();
+                repeated |= grid >> at;
+                grid |= 1 << at;
+                true
+            }
+        });
+        if all_fit {
+            if repeated & 1 != 0 {
+                return scan.name_repeat(lvl, t, lb, rb);
+            }
+            // The leaf forms are read off the grid: row 0 holds the pairs
+            // whose left side is `One`, column 0 those whose right side is.
+            const _: () = assert!(ONE_LEAF_IDX.0 == 0);
+            const COLUMN: u64 = 0x0101_0101_0101_0101;
+            let form = |one: u64| u8::from(grid & !one != 0) | u8::from(grid & one != 0) << 1;
+            return mixed_leaf_form(vtree, t, [(left, form(0xff)), (right, form(COLUMN))]);
+        }
+    } else if let Some(checked) = scan.check_wide(lvl, t, lb, rb) {
+        checked?;
+        return check_leaf_form(vtree, levels, t, left, right);
+    }
+    // Some side is out of range, which the plain check names.
+    let found = check_structural_level(vtree, levels, t, left, right);
+    debug_assert!(found.is_err(), "a scanned level failed the fast pass with no violation");
+    found
 }
 
 /// Whether every node of `lvl` has a pair and `fits` holds for every pair.
