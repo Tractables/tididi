@@ -22,6 +22,7 @@ pub(super) struct ClauseTables<'a> {
     /// allocates no arena per level.
     pub(super) spare_nodes: &'a mut Vec<EncodedNode>,
     pub(super) spare_pairs: &'a mut Vec<ChildPair>,
+    pub(super) named: &'a mut [Vec<bool>; 2],
 }
 
 /// The child-map offsets and worst-case output pairs per input pair for a
@@ -63,6 +64,10 @@ pub(super) fn conjoin_node_with_clause<const LEFT: bool, const RIGHT: bool, cons
         build_single_rel_pairs::<LEFT, DT>(eng, inputs, ctx, level, tables)?;
     }
     let written = level.pairs.stored_len() - ct_start + if DT { tables.dt_pairs.len() } else { 0 };
+    mark_named(tables.named, &level.pairs.stored_mut()[ct_start..]);
+    if DT {
+        mark_named(tables.named, tables.dt_pairs);
+    }
     let ct = emit_from(eng, level, ct_start)?;
     // The parent's both-relevant pass requires the c_t index below d_t. The
     // d_t pairs fit the reservation above: at most one per input pair, which
@@ -78,6 +83,21 @@ pub(super) fn conjoin_node_with_clause<const LEFT: bool, const RIGHT: bool, cons
     Ok(written)
 }
 
+#[inline(always)]
+fn mark_named(named: &mut [Vec<bool>; 2], pairs: &[ChildPair]) {
+    let [left, right] = named;
+    if !left.is_empty() {
+        for pair in pairs {
+            left[pair.left.0 as usize] = true;
+        }
+    }
+    if !right.is_empty() {
+        for pair in pairs {
+            right[pair.right.0 as usize] = true;
+        }
+    }
+}
+
 /// Whether a spare arena of `capacity` serves a reserve of `need`: it holds
 /// at most twice what a fresh reserve allocates, which is at least four
 /// entries (`Vec`'s smallest allocation of 8-byte elements), so a level keeps
@@ -87,17 +107,27 @@ fn fits_reserve(capacity: usize, need: usize) -> bool {
 }
 
 /// Rebuild one spine level as the conjunction of the accumulator's level with
-/// the clause, filling this level's `cd_map` block.
+/// the clause, filling this level's `cd_map` block. With `loose`, push each
+/// structural internal child left with a node no rebuilt pair names.
 pub(super) fn rebuild_spine_level(
     eng: &Engine,
     t: VtreeIdx,
     vtree: &Vtree,
     levels: &mut [TddLevel],
     tables: &mut ClauseTables<'_>,
+    loose: Option<&mut Vec<u32>>,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     let t_idx = t.idx();
     let (left, right) = vtree.children(t);
+    let tracked = |c: VtreeIdx| !vtree.node(c).is_leaf() && !levels[c.idx()].is_marginal();
+    if loose.is_some() {
+        for (named, c) in tables.named.iter_mut().zip([left, right]) {
+            if tracked(c) {
+                lim.try_resize(named, levels[c.idx()].slot_count(), false)?;
+            }
+        }
+    }
     let left_idx = left.idx();
     let right_idx = right.idx();
     let base = tables.level_base[t_idx];
@@ -188,6 +218,14 @@ pub(super) fn rebuild_spine_level(
     // marginal clause leaf, `plan_cd_map_bases` a marginal spine level), so
     // the input level's markers carry over exactly.
     level.value_ref_sides = old_value_ref_sides;
+    if let Some(loose) = loose {
+        for (named, c) in tables.named.iter_mut().zip([left, right]) {
+            if named.contains(&false) {
+                lim.try_push(loose, c.0)?;
+            }
+            named.clear();
+        }
+    }
     Ok(())
 }
 

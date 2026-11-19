@@ -608,7 +608,6 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, dropped: Option<&[Vtr
 
     if m == 1 {
         f.dirty = Default::default();
-        f.dirty.set_loose(Some(Vec::new()));
     } else {
         f.dirty.remap_keeping(&map, |t| shape.kind[t] == Kind::Both);
         f.dirty.dedup_above(m);
@@ -621,6 +620,9 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, dropped: Option<&[Vtr
     }
     for &u in &owes {
         f.invalidate(u);
+    }
+    if m == 1 {
+        f.dirty.set_loose(Some(Vec::new()));
     }
     f.close_marked_levels(closed);
     if canonical && !built && !shape.merged {

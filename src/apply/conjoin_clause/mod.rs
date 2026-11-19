@@ -52,6 +52,9 @@ pub(crate) struct ClauseWork {
     /// The both-relevant type-3 pairs of the node being rebuilt, held back
     /// until its left index changes so the pair list stays sorted.
     t3_buf: Vec<ChildPair>,
+    /// Per child of the spine level being rebuilt, which of its nodes an
+    /// emitted pair names; empty for a child that is not tracked.
+    named: [Vec<bool>; 2],
 }
 
 impl Buffers for ClauseWork {
@@ -63,6 +66,9 @@ impl Buffers for ClauseWork {
         visit(&mut self.spine_internal);
         visit(&mut self.dt_pairs);
         visit(&mut self.t3_buf);
+        for named in &mut self.named {
+            visit(named);
+        }
     }
 }
 
@@ -75,6 +81,7 @@ impl PooledScratch for ClauseWork {
         self.spine_internal.clear();
         self.dt_pairs.clear();
         self.t3_buf.clear();
+        self.named.iter_mut().for_each(Vec::clear);
     }
 
     /// The marks are cleared on every exit, an error's too, so the parked
@@ -337,9 +344,16 @@ fn rebuild_along_spine(
         dt_pairs: &mut work.dt_pairs,
         spare_nodes: &mut Vec::new(),
         spare_pairs: &mut Vec::new(),
+        named: &mut work.named,
     };
+    // The accumulator's loose levels stand where the parent level is off the
+    // spine; the rebuild lists the children of the spine levels itself.
+    let mut loose = f.dirty.take_loose();
+    if let Some(loose) = &mut loose {
+        loose.retain(|&c| !vtree.node(VtreeIdx(c)).parent().is_some_and(|p| work.on_spine[p.idx()]));
+    }
     for &t in work.spine_internal.iter() {
-        rebuild_spine_level(eng, t, vtree, &mut levels, &mut tables)?;
+        rebuild_spine_level(eng, t, vtree, &mut levels, &mut tables, loose.as_mut())?;
         out_nodes += levels[t.idx()].slot_count() as u64;
         lim.level_done(out_nodes)?;
     }
@@ -364,7 +378,7 @@ fn rebuild_along_spine(
     let vtree = Arc::clone(vtree);
     let mut carried = f.take_worklists();
     let fused = carried.take_fused();
-    let mut out = diagram::Assembly::from_levels(eng, vtree, levels, f_weights).finish_with(
+    let mut out = diagram::Assembly::from_levels(eng, Arc::clone(&vtree), levels, f_weights).finish_with(
         TddNodeId {
             vtree: out_vtree,
             local: out_local,
@@ -374,6 +388,8 @@ fn rebuild_along_spine(
         Some(&work.spine_internal[..]),
     )?;
     out.dirty.restore_fused(fused, &work.spine_internal);
+    out.dirty.set_loose(loose);
+    out.dirty.dedup_above(vtree.num_nodes());
     #[cfg(debug_assertions)]
     {
         let recorded: Vec<VtreeIdx> = (0..out.vtree.num_nodes() as u32)
