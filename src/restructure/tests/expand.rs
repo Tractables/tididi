@@ -183,6 +183,34 @@ fn the_result_vtree_is_the_expanded_leaves_grafted_with_constants_and_free_varia
     assert_eq!(g.vtree().to_text(), expected.to_text());
 }
 
+/// A diagram on a home lives on the projection of the variables it uses, so
+/// a class may belong to a home variable that projection lacks.
+#[test]
+fn a_class_of_a_home_variable_off_the_projection_only_agrees() {
+    let eng = Engine::new();
+    let home = crate::vtree::Home::new(eng.bind_vtree(Vtree::balanced(3)));
+    let f = eng.clause(home.vtree(), [1, -3]).unwrap();
+    assert!(f.vtree().leaf_of(VarId(2)).is_none());
+    let truth: Vec<bool> = (0..8u64).map(|mask| mask & 1 == 1 || mask & 4 == 0).collect();
+    for (class, free) in [(vec![pos(2), neg(4)], vec![VarId(5)]), (vec![neg(2)], vec![VarId(4), VarId(5)]), (vec![pos(2)], vec![VarId(5), VarId(4)])] {
+        let expansion = VariableExpansion {
+            classes: vec![vec![pos(1)], class.clone(), vec![pos(3)]],
+            free,
+            num_vars: 5,
+            ..VariableExpansion::default()
+        };
+        let g = eng.expand_variables(&f, &expansion).unwrap();
+        assert_canonical(&g);
+        assert_eq!(models(&g, 5), expected_models(&truth, &expansion), "{class:?}");
+    }
+    let off_home = VariableExpansion {
+        classes: vec![vec![pos(1)], vec![pos(2)], vec![pos(3)], vec![pos(4)]],
+        num_vars: 4,
+        ..VariableExpansion::default()
+    };
+    assert_eq!(eng.expand_variables(&f, &off_home).unwrap_err(), ExpandError::ClassWithoutLeaf { variable: VarId(4) });
+}
+
 #[test]
 fn an_identity_expansion_keeps_the_function() {
     let eng = Engine::new();
@@ -347,4 +375,23 @@ fn every_refused_reserve_of_an_expansion_leaves_the_operand() {
         }
     }
     assert!(refused > 0, "no expansion refused");
+}
+
+/// A constant on a home lives on the home's empty projection.
+#[test]
+fn a_constant_on_a_home_expands_over_the_classes() {
+    let eng = Engine::new();
+    let home = crate::vtree::Home::new(eng.bind_vtree(Vtree::balanced(2)));
+    let expansion = VariableExpansion {
+        classes: vec![vec![pos(1), neg(3)], vec![neg(2)]],
+        constants: vec![pos(4)],
+        free: vec![VarId(5)],
+        num_vars: 5,
+    };
+    for (f, value) in [(eng.one(home.vtree()), true), (eng.zero(home.vtree()), false)] {
+        assert_eq!(f.vtree().num_leaves(), 0);
+        let g = eng.expand_variables(&f, &expansion).unwrap();
+        assert_canonical(&g);
+        assert_eq!(models(&g, 5), expected_models(&[value; 4], &expansion), "{value}");
+    }
 }
