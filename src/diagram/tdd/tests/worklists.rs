@@ -12,7 +12,7 @@ impl Dirty {
     /// Drop every fusion record, for a test that runs each pair fusion a
     /// record would skip.
     pub(crate) fn forget_all_fused(&mut self) {
-        self.fused.clear();
+        self.fused.fill(0);
     }
 }
 

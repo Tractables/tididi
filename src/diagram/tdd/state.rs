@@ -426,7 +426,10 @@ pub(crate) struct Dirty {
     /// A bit for each level at which a pair fusion ran to the end and that
     /// no push has named since: no node there holds two pairs that pair
     /// fusion would fuse. Unknown, as every diagram starts, is no bit set.
-    fused: Vec<u64>,
+    /// A boxed slice, not a `Vec`: `Tdd` holds this struct and is moved by
+    /// value on every operation, and a capacity word would grow each move
+    /// (with `loose_exact`'s padding, by a word).
+    fused: Box<[u64]>,
 }
 
 impl Dirty {
@@ -546,7 +549,7 @@ impl Dirty {
         carried.loose_exact = false;
         // The levels below and above were edited apart; neither side's
         // fusions are known to hold of the levels the two leave together.
-        carried.fused.clear();
+        carried.fused.fill(0);
         *self = carried;
     }
 
@@ -603,7 +606,9 @@ impl Dirty {
             out.loose = Some(to);
             out.loose_exact = self.loose_exact;
         }
-        copy_slice(eng, &mut out.fused, &self.fused)?;
+        let mut fused = Vec::new();
+        copy_slice(eng, &mut fused, &self.fused)?;
+        out.fused = fused.into_boxed_slice();
         Ok(out)
     }
 
@@ -623,6 +628,7 @@ impl Dirty {
             }
         }
         let fused = std::mem::take(&mut self.fused);
+        let mut moved = Vec::new();
         for (w, &word) in fused.iter().enumerate() {
             let mut bits = word;
             while bits != 0 {
@@ -630,13 +636,14 @@ impl Dirty {
                 bits &= bits - 1;
                 if t < map.len() && keeps(t) {
                     let to = map[t].idx();
-                    if to / 64 >= self.fused.len() {
-                        self.fused.resize(to / 64 + 1, 0);
+                    if to / 64 >= moved.len() {
+                        moved.resize(to / 64 + 1, 0);
                     }
-                    self.fused[to / 64] |= 1 << (to % 64);
+                    moved[to / 64] |= 1 << (to % 64);
                 }
             }
         }
+        self.fused = moved.into_boxed_slice();
     }
 
     /// Bound every list: entries are level indices, so a list longer than `n`
@@ -715,14 +722,14 @@ impl Dirty {
 
     /// The fusion records, taken: for an assembly to hand back to the
     /// levels it carries as they were ([`restore_fused`](Self::restore_fused)).
-    pub(crate) fn take_fused(&mut self) -> Vec<u64> {
+    pub(crate) fn take_fused(&mut self) -> Box<[u64]> {
         std::mem::take(&mut self.fused)
     }
 
     /// Add the records `fused` taken from the diagram this one was assembled
     /// from ([`take_fused`](Self::take_fused)) but at `rebuilt`: every other
     /// level is that diagram's as it left it.
-    pub(crate) fn restore_fused(&mut self, mut fused: Vec<u64>, rebuilt: &[VtreeIdx]) {
+    pub(crate) fn restore_fused(&mut self, mut fused: Box<[u64]>, rebuilt: &[VtreeIdx]) {
         for t in rebuilt {
             Self::clear_fused_bit(&mut fused, t.0);
         }
@@ -740,8 +747,13 @@ impl Dirty {
     /// granted: what is not recorded is fused again, never wrongly skipped.
     pub(crate) fn set_fused(&mut self, eng: &crate::Engine, level: u32) {
         let word = level as usize / 64;
-        if word >= self.fused.len() && eng.limits().try_resize(&mut self.fused, word + 1, 0).is_err() {
-            return;
+        if word >= self.fused.len() {
+            let mut grown = std::mem::take(&mut self.fused).into_vec();
+            let granted = eng.limits().try_resize(&mut grown, word + 1, 0).is_ok();
+            self.fused = grown.into_boxed_slice();
+            if !granted {
+                return;
+            }
         }
         self.fused[word] |= 1 << (level % 64);
     }
@@ -785,7 +797,7 @@ impl Dirty {
         // except on a vtree with no level below the root.
         self.loose = (vtree.num_nodes() <= 1).then(Vec::new);
         self.loose_exact = false;
-        self.fused.clear();
+        self.fused.fill(0);
         self.seed_rebuilt(rebuilt, eng)?;
         self.dedup_above(vtree.num_nodes());
         Ok(self)
