@@ -810,7 +810,7 @@ impl crate::Engine {
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn and<'f, 'g>(&self, f: impl Into<Cow<'f, Tdd>>, g: impl Into<Cow<'g, Tdd>>) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        crate::apply::exit::result(self, conjoin_either(self, f.into(), g.into())?)
+        crate::apply::exit::outcome(self, conjoin_either(self, f.into(), g.into()))
     }
 
     /// Run [`Engine::and`], giving both operands back unchanged when it is

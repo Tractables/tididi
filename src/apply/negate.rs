@@ -78,7 +78,7 @@ impl Engine {
     /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn negate<'f>(&self, f: impl Into<Cow<'f, Tdd>>) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        crate::apply::exit::result(self, negate_closed(self, f.into())?)
+        crate::apply::exit::outcome(self, negate_closed(self, f.into()))
     }
 }
 

@@ -486,7 +486,7 @@ impl crate::Engine {
         f: Tdd,
         clause: &[L],
     ) -> Result<Tdd, OperationError> {
-        crate::apply::exit::result(self, conjoin_clause_on(self, f, clause)?)
+        crate::apply::exit::outcome(self, conjoin_clause_on(self, f, clause))
     }
 }
 
