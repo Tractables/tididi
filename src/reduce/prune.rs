@@ -1476,8 +1476,7 @@ fn mark_children_of_level(
 /// The bytes cost a clear and a pack a slot, which pay where the marks a
 /// slot are about one or more ([`STAGE_SLOTS_PER_NODE`]).
 ///
-/// A stored level counts the pairs of its marked nodes as it reads them,
-/// unless every node is marked and its live pairs are known.
+/// A stored level counts the pairs of its marked nodes as it reads them.
 fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     lim: &Limits,
     tdd: &Tdd,
@@ -1503,7 +1502,6 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     }
     // The sides staged as bytes: their slots, rounded up to whole words.
     let marked = count(&marks[base..base + words(width)]);
-    let known = tdd.levels.known_live_pairs(t.idx()).filter(|_| marked == width);
     let staged = |on: bool, c: VtreeIdx| {
         let slots = tdd.reference_slot_count(c);
         (on && slots <= marked.saturating_mul(STAGE_SLOTS_PER_NODE))
@@ -1525,7 +1523,6 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
                 [ln, rn],
                 marks,
                 bytes,
-                known,
             )
             .map(Some),
             (Some(_), None) => mark_staged::<LEFT, RIGHT, true, false>(
@@ -1536,7 +1533,6 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
                 [ln, rn],
                 marks,
                 bytes,
-                known,
             )
             .map(Some),
             (None, Some(_)) => mark_staged::<LEFT, RIGHT, false, true>(
@@ -1547,7 +1543,6 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
                 [ln, rn],
                 marks,
                 bytes,
-                known,
             )
             .map(Some),
             (None, None) => unreachable!(),
@@ -1555,7 +1550,10 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     }
     let stored = level.stored().expect("a level is stored or implicit");
     let (mut left_marks, mut right_marks) = (Marker::new(left_base), Marker::new(right_base));
-    let mut on_node = |marks: &mut [u64], pairs: &[ChildPair]| {
+    let mut read = 0;
+    for_each_marked_beside(width, base, marks, |marks, i| {
+        let pairs = stored.of_idx(i);
+        read += pairs.len();
         for &pair in pairs {
             if LEFT {
                 left_marks.mark(marks, left_base, pair.left.raw() as usize);
@@ -1564,22 +1562,7 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
                 right_marks.mark(marks, right_base, pair.right.raw() as usize);
             }
         }
-    };
-    let read = match known {
-        Some(n) => {
-            for_each_marked_beside(width, base, marks, |marks, i| on_node(marks, stored.of_idx(i)));
-            n
-        }
-        None => {
-            let mut read = 0;
-            for_each_marked_beside(width, base, marks, |marks, i| {
-                let pairs = stored.of_idx(i);
-                read += pairs.len();
-                on_node(marks, pairs);
-            });
-            read
-        }
-    };
+    });
     left_marks.finish(marks);
     right_marks.finish(marks);
     Ok(Some(read))
@@ -1614,9 +1597,8 @@ fn note_sides_marked(_bytes: u64, _bits: u64) {}
 /// `LB` and `RB` stage marked as bytes, `n` of them a side, its slots
 /// rounded up to whole words, and packed into its block of `marks` at
 /// `child_base`; a side not staged marked as bits. Returns the pairs of the
-/// marked nodes: `known` where every node is marked, counted otherwise.
+/// marked nodes.
 #[inline(always)]
-#[expect(clippy::too_many_arguments, reason = "the walk's scratch and the level's known count")]
 fn mark_staged<const LEFT: bool, const RIGHT: bool, const LB: bool, const RB: bool>(
     lim: &Limits,
     tdd: &Tdd,
@@ -1625,7 +1607,6 @@ fn mark_staged<const LEFT: bool, const RIGHT: bool, const LB: bool, const RB: bo
     n: [usize; 2],
     marks: &mut [u64],
     bytes: &mut Vec<u8>,
-    known: Option<usize>,
 ) -> Result<usize, OperationError> {
     let level = &tdd.levels[t.idx()];
     let stored = level.stored().expect("a staged level is stored");
@@ -1638,7 +1619,10 @@ fn mark_staged<const LEFT: bool, const RIGHT: bool, const LB: bool, const RB: bo
     let (lb, rb) = bytes[..used].split_at_mut(n[0]);
     let (mut left_marks, mut right_marks) =
         (Marker::new(child_base[0]), Marker::new(child_base[1]));
-    let mut on_node = |marks: &mut [u64], pairs: &[ChildPair]| {
+    let mut read = 0;
+    for_each_marked_beside(width, base, marks, |marks, i| {
+        let pairs = stored.of_idx(i);
+        read += pairs.len();
         for &pair in pairs {
             let (l, r) = (pair.left.raw() as usize, pair.right.raw() as usize);
             if LEFT {
@@ -1656,22 +1640,7 @@ fn mark_staged<const LEFT: bool, const RIGHT: bool, const LB: bool, const RB: bo
                 }
             }
         }
-    };
-    let read = match known {
-        Some(n) => {
-            for_each_marked_beside(width, base, marks, |marks, i| on_node(marks, stored.of_idx(i)));
-            n
-        }
-        None => {
-            let mut read = 0;
-            for_each_marked_beside(width, base, marks, |marks, i| {
-                let pairs = stored.of_idx(i);
-                read += pairs.len();
-                on_node(marks, pairs);
-            });
-            read
-        }
-    };
+    });
     left_marks.finish(marks);
     right_marks.finish(marks);
     if LB {
