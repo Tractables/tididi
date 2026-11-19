@@ -279,12 +279,29 @@ pub(super) fn build_reach_columns(eng: &Engine, reach: &[u128], columns: &mut Ve
 /// by pairs ([`fill_pair_columns`]) has.
 pub(super) const ROW_COLUMNS_MAX_WIDTH: usize = 63;
 
+/// The [`PairTable`] of the apply's levels read by pairs, allocated at the
+/// first: the workspace is moved whole between applies.
+#[derive(Debug, Default)]
+pub(crate) struct PairColumns(Vec<PairTable>);
+
+impl PairColumns {
+    pub(super) fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::execution::pool::Scratch)) {
+        visit(&mut self.0);
+    }
+
+    /// The table of the level [`fill_pair_columns`] last admitted.
+    #[inline(always)]
+    pub(super) fn table(&self) -> &PairTable {
+        &self.0[0]
+    }
+}
+
 /// The g pairs of a level read by pairs ([`fill_pair_columns`]), decoded
 /// as the level's views read them, in column order, and their columns:
 /// the one read of g's pairs that both sides' row columns and the row
 /// loop take.
 #[derive(Debug)]
-pub(crate) struct PairColumns {
+pub(crate) struct PairTable {
     pairs: [ChildPair; ROW_COLUMNS_MAX_WIDTH],
     len: usize,
     /// Each pair's column.
@@ -301,7 +318,7 @@ pub(crate) struct PairColumns {
     pub(super) inner: u64,
 }
 
-impl Default for PairColumns {
+impl Default for PairTable {
     fn default() -> Self {
         let none = EncodedChildRef::from_raw(0);
         Self {
@@ -317,7 +334,7 @@ impl Default for PairColumns {
     }
 }
 
-impl PairColumns {
+impl PairTable {
     /// g's pairs, in column order.
     #[inline(always)]
     pub(super) fn pairs(&self) -> &[ChildPair] {
@@ -333,6 +350,7 @@ impl PairColumns {
 /// bit-exact, which the words reproduce, and a `complete` side's child
 /// having columns, which the loop reads whole.
 pub(super) fn fill_pair_columns(
+    lim: &crate::limits::Limits,
     level: &TddLevel,
     g_width: usize,
     (child_g_widths, complete): (Sides<usize>, Sides<bool>),
@@ -347,6 +365,13 @@ pub(super) fn fill_pair_columns(
     {
         return false;
     }
+    if out.0.is_empty() {
+        if lim.reserve_exact(&mut out.0, 1).is_err() {
+            return false;
+        }
+        out.0.push(PairTable::default());
+    }
+    let out = &mut out.0[0];
     let decode = views.left.is_marginal() || views.right.is_marginal();
     let (mut n, mut one, mut tops, mut inner) = (0, true, 0u64, 0u64);
     let fits = level.try_for_each_node(0..g_width, |j, pairs| {

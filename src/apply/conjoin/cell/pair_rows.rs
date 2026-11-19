@@ -1,6 +1,6 @@
 //! The row loop of a masked level read by pairs.
 
-use super::super::liveness::{PairColumns, ROW_COLUMNS_MAX_WIDTH, ROW_LIVE};
+use super::super::liveness::{PairTable, ROW_COLUMNS_MAX_WIDTH, ROW_LIVE};
 use super::*;
 use crate::diagram::{NodeKind, StoredPairs};
 use crate::limits::{PollGate, Transient};
@@ -47,7 +47,7 @@ pub(crate) fn run_level_rows_pairs(
     eng: &Engine,
     rows: RowLoop<'_>,
     scratch: RowScratch<'_>,
-    table: &PairColumns,
+    table: &PairTable,
     level: &mut TddLevel,
     lookups: PlainLookups,
 ) -> Result<(), OperationError> {
@@ -80,7 +80,7 @@ fn pair_rows<L, R, S>(
     eng: &Engine,
     rows: RowLoop<'_>,
     scratch: RowScratch<'_>,
-    table: &PairColumns,
+    table: &PairTable,
     left: &L,
     right: &R,
     sink: &mut S,
@@ -193,7 +193,7 @@ struct PairRows<'a> {
     f_level: &'a TddLevel,
     ctx: &'a CellCtx<'a>,
     f_width: usize,
-    table: &'a PairColumns,
+    table: &'a PairTable,
     /// The number of pairs of each set of columns, on a level that tables
     /// them.
     charge_of: Option<&'a [u8; 1 << CHARGE_TABLE_COLUMNS]>,
@@ -203,7 +203,7 @@ struct PairRows<'a> {
 /// on a level of `W` columns, or of any number for `W = 0`.
 ///
 /// With `TOPS`, a set of columns is the mask of their last pairs
-/// ([`PairColumns::tops`]), in place of a bit a column.
+/// ([`PairTable::tops`]), in place of a bit a column.
 ///
 /// With `W` columns, all of one pair, a row's cells are found and then
 /// written once, a node index or `NO_PRODUCT` each, in place of the reset

@@ -413,7 +413,7 @@ pub(super) fn open_level_arenas(
 /// a description ([`run_level_rows_single`]).
 fn run_row_loop(
     eng: &Engine,
-    (route, lookups, single_pair, pairs, relay): (Route, PlainLookups, bool, Option<&liveness::PairColumns>, bool),
+    (route, lookups, single_pair, pairs, relay): (Route, PlainLookups, bool, Option<&liveness::PairTable>, bool),
     words: Option<(&mut WordScratch, Sides<usize>)>,
     (rows, scratch): (RowLoop<'_>, RowScratch<'_>),
     level: &mut TddLevel,
@@ -556,7 +556,7 @@ fn build_level_prefilter_masks(
             g_width: gw.left,
             base: bases.left.idx(),
         },
-        (matches!(lookups, PlainLookups::CompleteLeft { .. }), pairs.then_some(&*run.pair_cols)),
+        (matches!(lookups, PlainLookups::CompleteLeft { .. }), pairs.then(|| run.pair_cols.table())),
         run.products.arena.slab(),
         &mut run.prefilter_masks.left,
     )?;
@@ -569,7 +569,7 @@ fn build_level_prefilter_masks(
             g_width: gw.right,
             base: bases.right.idx(),
         },
-        (matches!(lookups, PlainLookups::CompleteRight { .. }), pairs.then_some(&*run.pair_cols)),
+        (matches!(lookups, PlainLookups::CompleteRight { .. }), pairs.then(|| run.pair_cols.table())),
         run.products.arena.slab(),
         &mut run.prefilter_masks.right,
     )
@@ -879,6 +879,7 @@ pub(super) fn build_level_dense(
         && route == Route::Dense
         && !super::super::pair_rows_forced_off()
         && liveness::fill_pair_columns(
+            lim,
             g_t,
             gw.here,
             (
@@ -1184,7 +1185,7 @@ pub(super) fn build_level_dense(
         let relay = stream_state.is_none();
         run_row_loop(
             eng,
-            (route, lookups, single_pair, pairs.then_some(&*run.pair_cols), relay),
+            (route, lookups, single_pair, pairs.then(|| run.pair_cols.table()), relay),
             words.then_some((&mut *run.words, f_rows)),
             (
                 rows,

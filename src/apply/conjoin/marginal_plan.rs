@@ -7,7 +7,7 @@ use crate::apply::conjoin::held::Here;
 use crate::diagram::{ChildDecoder, ChildSide, Sides, TddLevel};
 use super::OperationError;
 use crate::Engine;
-use super::liveness::{bucket_shift, build_live_cols_bitmask, build_pair_row_columns, build_reach_columns, build_reach_masks, build_row_columns, one_sided_masks_pay, PairColumns, PrefilterSideMasks, ROW_COLUMNS_MAX_WIDTH};
+use super::liveness::{bucket_shift, build_live_cols_bitmask, build_pair_row_columns, build_reach_columns, build_reach_masks, build_row_columns, one_sided_masks_pay, PairTable, PrefilterSideMasks, ROW_COLUMNS_MAX_WIDTH};
 use super::setup::{ApplyRun, LevelShape, Operands};
 use super::route::LevelMarg;
 
@@ -287,7 +287,7 @@ pub(super) fn build_side_masks<const RIGHT: bool>(
     eng: &Engine,
     (right_level, g_width): (&TddLevel, usize),
     child: ChildGrid,
-    (complete, pairs): (bool, Option<&PairColumns>),
+    (complete, pairs): (bool, Option<&PairTable>),
     node_idx: &[u32],
     out: &mut PrefilterSideMasks,
 ) -> Result<(), OperationError> {

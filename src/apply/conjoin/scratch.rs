@@ -99,6 +99,7 @@ impl Buffers for ApplyWorkspace {
         self.products.buffers(visit);
         self.stream_cache.buffers(visit);
         self.prefilter_masks.buffers(visit);
+        self.pair_cols.buffers(visit);
         self.words.buffers(visit);
         self.cone.buffers(visit);
         self.lists.buffers(visit);
