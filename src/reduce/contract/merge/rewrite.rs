@@ -72,26 +72,9 @@ pub(super) fn rewrite_parent(
     // constant of each slide's loop.
     debug_assert!(!ordered || parent_level.ranges_in_node_order(), "a parent known in node order is so");
     if ordered || parent_level.ranges_in_node_order() {
-        let final_remap = &remap.final_remap;
-        #[cfg(all(target_arch = "x86_64", not(miri)))]
-        if let Some(avx2) = Avx2::detect() {
-            // Safety: an `Avx2` exists only where the processor has the
-            // features `remap_avx2` enables.
-            let live = match t1_side {
-                ChildSide::Left => parent_level.slide_pairs(|seg, from| match seg.len() - from < 4 {
-                    true => remap_pairs::<true>(seg, from, 0, final_remap),
-                    false => unsafe { remap_avx2::<true>(avx2, seg, from, final_remap) },
-                }),
-                ChildSide::Right => parent_level.slide_pairs(|seg, from| match seg.len() - from < 4 {
-                    true => remap_pairs::<false>(seg, from, 0, final_remap),
-                    false => unsafe { remap_avx2::<false>(avx2, seg, from, final_remap) },
-                }),
-            };
-            return (true, live);
-        }
         let live = match t1_side {
-            ChildSide::Left => parent_level.slide_pairs(|seg, from| remap_pairs::<true>(seg, from, 0, final_remap)),
-            ChildSide::Right => parent_level.slide_pairs(|seg, from| remap_pairs::<false>(seg, from, 0, final_remap)),
+            ChildSide::Left => slide_remapped::<true>(parent_level, &remap.final_remap),
+            ChildSide::Right => slide_remapped::<false>(parent_level, &remap.final_remap),
         };
         return (true, live);
     }
@@ -111,6 +94,32 @@ pub(super) fn rewrite_parent(
     }
     parent_level.note_dead_pairs(dead_acc);
     (false, live)
+}
+
+/// Nodes with fewer pairs than this are rewritten one pair at a time even
+/// with AVX2: below it the call and the scalar tail cost more than the
+/// vector loop saves.
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+const AVX2_PAIRS: usize = 4;
+
+/// [`rewrite_parent`]'s slide of a parent whose ranges are in node order.
+#[inline(always)]
+fn slide_remapped<const LEFT: bool>(level: &mut TddLevel, final_remap: &[NodeIdx]) -> usize {
+    let one = |pair| {
+        let (pair, kept) = canonical_pair::<LEFT>(pair, final_remap);
+        debug_assert!(kept, "an inline node's pair is never dropped");
+        pair
+    };
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    if let Some(avx2) = Avx2::detect() {
+        return level.slide_pairs(one, |seg, from| match seg.len() - from < AVX2_PAIRS {
+            true => remap_pairs::<LEFT>(seg, from, 0, final_remap),
+            // Safety: an `Avx2` exists only where the processor has the
+            // features `remap_avx2` enables.
+            false => unsafe { remap_avx2::<LEFT>(avx2, seg, from, final_remap) },
+        });
+    }
+    level.slide_pairs(one, |seg, from| remap_pairs::<LEFT>(seg, from, 0, final_remap))
 }
 
 /// Point an inline node's single pair at the survivor of its T1-side twin

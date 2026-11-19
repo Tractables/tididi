@@ -211,13 +211,18 @@ impl TddLevel {
     /// re-encoded as the moved range (two pairs or more), its sole kept pair
     /// inline, or the empty placeholder, as
     /// [`reencode_shrunk`](Self::reencode_shrunk) leaves them. An inline
-    /// node's pair is rewritten in its word and must be kept. The arena is
-    /// left with the kept pairs only and no dead pairs; a node in the ranged
-    /// encoding keeps its `ranges` entry. Allocates nothing. Returns the
-    /// level's live pairs: the moved pairs, and one for each node inline
-    /// before or after, counted in the arms that leave a node inline.
+    /// node's pair is rewritten in its word by `one`, and must be kept. The
+    /// arena is left with the kept pairs only and no dead pairs; a node in
+    /// the ranged encoding keeps its `ranges` entry. Allocates nothing.
+    /// Returns the level's live pairs: the moved pairs, and one for each
+    /// node inline before or after, counted in the arms that leave a node
+    /// inline.
     #[inline]
-    pub(crate) fn slide_pairs(&mut self, mut f: impl FnMut(&mut [ChildPair], usize) -> usize) -> usize {
+    pub(crate) fn slide_pairs(
+        &mut self,
+        mut one: impl FnMut(ChildPair) -> ChildPair,
+        mut f: impl FnMut(&mut [ChildPair], usize) -> usize,
+    ) -> usize {
         debug_assert!(self.ranges_in_node_order(), "a slide reads the ranges in node order");
         let TddLevel { nodes, pairs, ranges, dead_pairs, .. } = self;
         let pairs = pairs.stored_mut();
@@ -226,10 +231,7 @@ impl TddLevel {
         for node in nodes.iter_mut() {
             let (start, len, ranged) = match node.kind() {
                 NodeKind::Inline(pair) => {
-                    let mut one = [pair];
-                    let kept = f(&mut one, 0);
-                    debug_assert_eq!(kept, 1, "an inline node's pair is never dropped");
-                    *node = EncodedNode::inline(one[0]);
+                    *node = EncodedNode::inline(one(pair));
                     inline += 1;
                     continue;
                 }
