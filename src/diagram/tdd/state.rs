@@ -418,6 +418,11 @@ pub(crate) struct Dirty {
     /// edit hands the levels back ([`take_loose`](Self::take_loose)). A
     /// prune leaves none, and it walks only as much as these levels need.
     loose: Option<Vec<u32>>,
+    /// Whether every level `loose` lists holds such a node, so that a settle
+    /// ([`settle_loose`](crate::reduce::prune::settle_loose)) would keep the
+    /// list as it is. Every write of `loose` but
+    /// [`set_loose_exact`](Self::set_loose_exact) clears it.
+    loose_exact: bool,
     /// A bit for each level at which a pair fusion ran to the end and that
     /// no push has named since: no node there holds two pairs that pair
     /// fusion would fuse. Unknown, as every diagram starts, is no bit set.
@@ -440,6 +445,7 @@ impl Dirty {
         eng: Option<&crate::Engine>,
     ) -> Result<(), crate::OperationError> {
         self.loose = None;
+        self.loose_exact = false;
         self.forget_fused(level);
         for pass in Pass::ALL {
             match eng {
@@ -537,6 +543,7 @@ impl Dirty {
             }
             _ => None,
         };
+        carried.loose_exact = false;
         // The levels below and above were edited apart; neither side's
         // fusions are known to hold of the levels the two leave together.
         carried.fused.clear();
@@ -594,6 +601,7 @@ impl Dirty {
             let mut to = Vec::new();
             copy_slice(eng, &mut to, from)?;
             out.loose = Some(to);
+            out.loose_exact = self.loose_exact;
         }
         copy_slice(eng, &mut out.fused, &self.fused)?;
         Ok(out)
@@ -608,6 +616,7 @@ impl Dirty {
     /// [`remap`](Self::remap), moving the fusion record of each level
     /// `keeps` names to its new index; every other record is dropped.
     pub(crate) fn remap_keeping(&mut self, map: &[VtreeIdx], keeps: impl Fn(usize) -> bool) {
+        self.loose_exact = false;
         for list in self.lists.iter_mut().chain(self.loose.as_mut()) {
             for entry in list.iter_mut() {
                 *entry = map[*entry as usize].0;
@@ -658,6 +667,22 @@ impl Dirty {
     #[inline]
     pub(crate) fn set_loose(&mut self, levels: Option<Vec<u32>>) {
         self.loose = levels;
+        self.loose_exact = false;
+    }
+
+    /// [`set_loose`](Self::set_loose) for `levels` each of which holds a node
+    /// its parent level does not name.
+    #[inline]
+    pub(crate) fn set_loose_exact(&mut self, levels: Vec<u32>) {
+        self.loose = Some(levels);
+        self.loose_exact = true;
+    }
+
+    /// Whether the loose levels are known and each holds a node its parent
+    /// level does not name.
+    #[inline]
+    pub(crate) fn loose_is_exact(&self) -> bool {
+        self.loose.as_ref().is_some_and(|loose| self.loose_exact || loose.is_empty())
     }
 
     /// Take the loose levels, leaving them unknown: for an edit that knows
@@ -665,6 +690,7 @@ impl Dirty {
     /// [`set_loose`](Self::set_loose) after its invalidations.
     #[inline]
     pub(crate) fn take_loose(&mut self) -> Option<Vec<u32>> {
+        self.loose_exact = false;
         self.loose.take()
     }
 
@@ -676,6 +702,7 @@ impl Dirty {
             && !loose.contains(&level)
         {
             loose.push(level);
+            self.loose_exact = false;
         }
     }
 
@@ -757,6 +784,7 @@ impl Dirty {
         // Which levels an assembly left loose is its own to say (`set_loose`),
         // except on a vtree with no level below the root.
         self.loose = (vtree.num_nodes() <= 1).then(Vec::new);
+        self.loose_exact = false;
         self.fused.clear();
         self.seed_rebuilt(rebuilt, eng)?;
         self.dedup_above(vtree.num_nodes());

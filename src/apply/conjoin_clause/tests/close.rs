@@ -132,8 +132,8 @@ fn clause_results_list_exactly_their_loose_levels() {
             results.push(("and_clause", f.clone()));
         }
         for (what, got) in results {
-            if got.dirty.loose().is_none() {
-                failed.push(format!("seed {seed}, {what}: loose levels not known"));
+            if !got.dirty.loose_is_exact() {
+                failed.push(format!("seed {seed}, {what}: loose levels not known exact"));
             }
             if let Some(c) = listed_but_named(&got) {
                 failed.push(format!("seed {seed}, {what}: level {c} listed loose with every node named"));

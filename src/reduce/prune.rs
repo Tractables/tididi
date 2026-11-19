@@ -376,8 +376,12 @@ pub(crate) fn prune_unreachable(
     let below_root = matches!(scope, PruneScope::BelowRoot) && below_root_walk_applies(tdd);
     let seeded = match tdd.dirty.loose() {
         Some(loose) if !below_root && below_root_walk_applies(tdd) && !tdd.has_marginal_level() => {
-            let loose = settle_loose(eng, tdd, loose)?;
-            Some(Seeds::of(eng, tdd, &loose)?)
+            if tdd.dirty.loose_is_exact() {
+                debug_assert_eq!(settle_loose(eng, tdd, loose).ok().as_deref(), Some(loose), "an exact list settles to itself");
+                Some(Seeds::of(eng, tdd, loose)?)
+            } else {
+                Some(Seeds::of(eng, tdd, &settle_loose(eng, tdd, loose)?)?)
+            }
         }
         _ => None,
     };

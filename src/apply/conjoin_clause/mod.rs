@@ -344,6 +344,7 @@ fn rebuild_along_spine(
     // The accumulator's loose levels stand where the parent level is off the
     // spine, and at an off-spine child of a spine level, whose nodes the
     // rebuild only drops names of. The rebuild lists a spine child itself.
+    let exact = f.dirty.loose_is_exact();
     let mut loose = f.dirty.take_loose();
     if let Some(list) = &mut loose {
         work.listed.cover(lim, num_nodes)?;
@@ -407,7 +408,10 @@ fn rebuild_along_spine(
         Some(&work.spine_internal[..]),
     )?;
     out.dirty.restore_fused(fused, &work.spine_internal);
-    out.dirty.set_loose(loose);
+    match loose {
+        Some(loose) if exact => out.dirty.set_loose_exact(loose),
+        loose => out.dirty.set_loose(loose),
+    }
     out.dirty.dedup_above(vtree.num_nodes());
     #[cfg(debug_assertions)]
     {
