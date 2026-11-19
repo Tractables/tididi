@@ -630,6 +630,15 @@ impl Dirty {
         }
     }
 
+    /// Drop the leaves from the pass lists, where a remap that sends a
+    /// dropped level to the leaf at its chain's end put them: a pass reads an
+    /// internal level's children.
+    pub(crate) fn drop_leaves(&mut self, vtree: &crate::vtree::Vtree) {
+        for list in &mut self.lists {
+            list.retain(|&t| !vtree.node(crate::vtree::VtreeIdx(t)).is_leaf());
+        }
+    }
+
     /// Bound every list: entries are level indices, so a list longer than `n`
     /// holds duplicates, and a chain of applies or in-place edits that never
     /// drains one would otherwise grow it without bound. Dedup keeps the set

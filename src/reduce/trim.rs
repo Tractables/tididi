@@ -799,6 +799,9 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, dropped: Option<&[Vtr
         f.dirty = Default::default();
     } else {
         f.dirty.remap_keeping(&map, |t| shape.kind[t] == Kind::Both);
+        if summed {
+            f.dirty.drop_leaves(&own);
+        }
         f.dirty.dedup_above(m);
     }
     f.vtree = own;
