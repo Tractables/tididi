@@ -1550,6 +1550,17 @@ fn parts(
         gate.poll(n as u64)?;
         s.low.extend(parent.data.iter().map(|&v| v & mask));
         s.high.extend(parent.data.iter().map(|&v| v >> low_width));
+    } else if parent.words == 2 && lw == 1 && rw == 1 {
+        // Both parts fit a word: cut each value as one 128-bit number.
+        lim.reserve_exact(&mut s.low, n)?;
+        lim.reserve_exact(&mut s.high, n)?;
+        let mask = tail_mask(low_width);
+        gate.poll(2 * n as u64)?;
+        let value = |v: &[u64]| u128::from(v[1]) << 64 | u128::from(v[0]);
+        s.low
+            .extend(parent.data.chunks_exact(2).map(|v| value(v) as u64 & mask));
+        s.high
+            .extend(parent.data.chunks_exact(2).map(|v| (value(v) >> low_width) as u64));
     } else {
         lim.try_resize(&mut s.low, n * lw, 0)?;
         lim.try_resize(&mut s.high, n * rw, 0)?;
