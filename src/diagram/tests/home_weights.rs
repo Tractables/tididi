@@ -120,3 +120,47 @@ fn a_rotation_search_keeps_the_weights_of_the_home() {
     eng.marginalize(&mut f, |v| v.0 % 2 == 0).unwrap();
     assert_eq!(value_of(&f), before);
 }
+
+/// A root that is not a home, with weights: its diagrams carry none, and
+/// the level sum-outs, placement and projection compute what weights on
+/// each diagram compute.
+#[test]
+fn a_weighted_root_computes_what_weights_on_each_diagram_compute() {
+    assert_eq!(Vtree::balanced(4).with_weights(table(3)).unwrap_err(), TddBuildError::MissingVariableWeight(VarId(4)));
+    let home = Home::new(Vtree::balanced(4));
+    assert!(Vtree::clone(home.vtree()).with_weights(table(4)).is_ok());
+    let own = Vtree::projection(&home, [VarId(1), VarId(3)]).unwrap();
+    assert_eq!(Vtree::clone(&own).with_weights(table(4)).unwrap_err(), TddBuildError::IncompatibleWeights);
+    let again = Vtree::balanced(4).with_weights(table(4)).unwrap();
+    assert_eq!(again.clone().with_weights(table(5)).unwrap_err(), TddBuildError::IncompatibleWeights);
+    assert_eq!(again.with_weights(table(4)).unwrap().weights(), Some(&table(4)));
+
+    let eng = Engine::new();
+    let weighted = Arc::new(Vtree::balanced(6).with_weights(table(6)).unwrap());
+    let bare = Arc::new(Vtree::balanced(6));
+    let build = |vtree: &Arc<Vtree>| {
+        let f = eng.and_clause(eng.clause(vtree, [1, -2, 4]).unwrap(), &[2, 3, -6]).unwrap();
+        let g = eng.and_clause(eng.clause(vtree, [-1, 5]).unwrap(), &[3, -4, 6]).unwrap();
+        (f, g)
+    };
+    let (f, g) = build(&weighted);
+    let (mut fb, gb) = build(&bare);
+    assert_eq!(f.weights(), Some(&table(6)));
+    assert_eq!(value_of(&f), {
+        fb.set_weights(table(6)).unwrap();
+        value_of(&fb)
+    });
+    let mut f = f;
+    assert_eq!(f.set_weights(table(6)).unwrap_err(), TddBuildError::IncompatibleWeights);
+    let (left, _) = weighted.children(weighted.root());
+    let h = eng.and_marginalizing(&f, &g, &[left]).unwrap();
+    let hb = eng.and_marginalizing(&fb, &gb, &[left]).unwrap();
+    assert!(h.level(left).is_weight_marginal() && h.weights.is_none());
+    assert_eq!(value_of(&h), value_of(&hb));
+
+    let into = Arc::new(Vtree::balanced(6).with_weights(table(6)).unwrap());
+    let (placed, _) = eng.embed_over(&h, &into, |v| v, None).unwrap();
+    assert!(placed.weights.is_none());
+    assert_eq!(value_of(&placed), value_of(&hb));
+    assert!(eng.embed_over(&h, &into, |v| v, Some(table(6))).is_err());
+}
