@@ -103,6 +103,7 @@ impl Maintenance<'_> {
             if self.path[t.idx()] != FRESH { continue; }
             eng.limits().check_stop()?;
             self.tdd.try_invalidate(eng, t)?;
+            self.tdd.levels.mark_changed(t);
             let pair = self.path_pair(t);
             let index = self.index.as_mut().expect("`editable` refreshed the index");
             index.reserve_edit(eng, t, t != root)?;
@@ -142,6 +143,7 @@ impl Maintenance<'_> {
 
         let pair = self.path_pair(root);
         self.tdd.try_invalidate(eng, root)?;
+        self.tdd.levels.mark_changed(root);
         if self.tdd.levels[root.idx()].remove_pair_from_node(eng.limits(), owner as usize, pair)? {
             self.index.as_mut().expect("`editable` refreshed the index").note_removed_pair(root, pair);
         } else {

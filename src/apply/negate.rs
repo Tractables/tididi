@@ -434,8 +434,19 @@ fn complement_full_at_root(
             return Ok((crate::build::constant_on(eng, vtree, false)?, None));
         }
 
-        let pairs = level_pairs(target.read(root_idx), closed) as usize;
-        let root_level = target.write(eng, root_idx, Some(neg_pairs.len()))?;
+        let mut old = out_local;
+        let (pairs, root_level) = if target.read(root_idx).slot_count() == 1 {
+            let pairs = level_pairs(target.read(root_idx), closed) as usize;
+            (pairs, target.write(eng, root_idx, Some(neg_pairs.len()))?)
+        } else {
+            // The root's other nodes are disjoint from the output, so they
+            // would overlap its complement.
+            let lone = TddLevel::lone_node(eng.limits(), target.read(root_idx), out_local)?;
+            old = NodeIdx(0);
+            let pairs = lone.live_pairs();
+            target.levels[root_idx] = lone;
+            (pairs, &mut target.levels[root_idx])
+        };
         let neg_idx = root_level.push_node(eng.limits(), &neg_pairs)?;
         root_level.leave_live_pairs(pairs + neg_pairs.len());
 
@@ -460,7 +471,7 @@ fn complement_full_at_root(
             }
             None => assembly.finish(output)?,
         };
-        Ok((result, Some(out_local)))
+        Ok((result, Some(old)))
     }
 }
 
