@@ -872,6 +872,10 @@ impl TddLevel {
     /// forgets any other.
     #[inline]
     pub(crate) fn close_held_pairs(&mut self) {
+        debug_assert!(
+            !matches!(&self.state, LevelState::Structural(held) if held.left().is_some_and(|n| n as usize != self.live_pairs())),
+            "a level closed keeping a count other than its live pairs"
+        );
         if let LevelState::Structural(held) = &mut self.state {
             held.close();
         }
