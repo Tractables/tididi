@@ -770,6 +770,11 @@ impl Dirty {
         eng: Option<&crate::Engine>,
     ) -> Result<(), crate::OperationError> {
         let Some(eng) = eng else {
+            // Exactly: the doubled room the tracked path takes costs the
+            // allocations after an untracked finish more than it saves.
+            for pass in SEEDED {
+                self.list(pass).reserve_exact(rebuilt.size_hint().0);
+            }
             for t in rebuilt {
                 for pass in SEEDED {
                     self.list(pass).push(t.0);
