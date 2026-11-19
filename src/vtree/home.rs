@@ -261,8 +261,6 @@ impl Home {
     /// [`Home::new`] with `weights` for its variables: every diagram on the
     /// home is weighted, and a sum-out on it stores weight values computed
     /// under `weights` ([`Tdd::weighted_value`](crate::Tdd::weighted_value)).
-    /// A diagram on a weighted home carries no weights of its own
-    /// ([`Tdd::set_weights`](crate::Tdd::set_weights) refuses it).
     ///
     /// ```
     /// use tididi::{Tdd, Vtree};

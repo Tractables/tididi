@@ -46,10 +46,8 @@ impl Engine {
     /// diagram with a region takes no rotation path.
     ///
     /// [`TransportStats`] counts the rotations and mirrors of the tree, so it
-    /// says which path ran, not which levels were rewritten. Weights `f`
-    /// carries ([`Tdd::set_weights`]) move with it onto a home made by
-    /// [`Home::new`], read by the renamed variables' ids; onto a weighted home
-    /// ([`Home::weighted`]) the result reads that home's. A constant
+    /// says which path ran, not which levels were rewritten. The result is
+    /// read under `home`'s weights ([`Home::weighted`]), if any. A constant
     /// on no leaf, false, and true named `One` at a one-leaf root become that
     /// constant on [`Vtree::empty_projection`] of `home`.
     ///
@@ -89,10 +87,7 @@ impl Engine {
     /// for a summed-out level that is not a region; [`TransportError::Variable`]
     /// for an image, of a leaf or of an extent, that is not a leaf of `home`;
     /// [`TransportError::Overlap`] for two variables with one image;
-    /// [`TransportError::Weights`] when weights `f` carries onto a home made
-    /// by [`Home::new`] do not cover the images of its leaves or, under a
-    /// renaming, do not give an image both weights of the variable it
-    /// renames, and for a summed-out region whose values `home` would read
+    /// [`TransportError::Weights`] for a summed-out region whose values `home` would read
     /// under other weights: [`TddBuildError::CountLevelWithWeights`] for
     /// counts onto a weighted home, [`TddBuildError::WeightedLevelWithoutStore`]
     /// for weight values of `f`'s home onto an unweighted one, and
@@ -138,9 +133,6 @@ impl Engine {
             },
         };
         route.seat(self, &mut moved);
-        if home.weights().is_some() {
-            moved.weights = None;
-        }
         Ok((moved, stats))
     }
 
@@ -205,13 +197,8 @@ impl Engine {
             Ok(copy) => copy,
             Err(e) => return Err(TransportRefused { error: e.into(), tdd: f }),
         };
-        // `checked` let only a table through: no level holds a value of it.
-        let weights = copy.weights.take();
         match self.rotate_copy(&mut copy, home, ranked, bound) {
-            Ok(stats) => {
-                copy.weights = weights.filter(|_| home.weights().is_none());
-                Ok((copy, stats))
-            }
+            Ok(stats) => Ok((copy, stats)),
             Err(error) => Err(TransportRefused { error, tdd: f }),
         }
     }
@@ -277,16 +264,6 @@ fn checked(lim: &Limits, f: &Tdd, home: &Home, map: impl Fn(VarId) -> VarId) -> 
         }
     }
     let ranked = Ranked::find(lim, f.vtree(), home, &map)?;
-    if let Some(store) = &f.weights
-        && home.weights().is_none()
-        && !ranked.order.is_empty()
-    {
-        let leaves = || f.vtree().leaf_bottomup().map(|(_, var)| (var, map(var)));
-        store.check_variables(leaves().map(|(_, image)| image)).map_err(TransportError::Weights)?;
-        if !store.compatible_after_rename(store, leaves().filter(|(var, image)| var != image)) {
-            return Err(TransportError::Weights(TddBuildError::IncompatibleWeights));
-        }
-    }
     if f.vtree().has_regions() {
         check_summed_weights(f, home, &map).map_err(TransportError::Weights)?;
     }
@@ -305,7 +282,6 @@ fn check_summed_weights(f: &Tdd, home: &Home, map: &impl Fn(VarId) -> VarId) -> 
     match (f.weight_table(), home.weights()) {
         (None, None) => Ok(()),
         (None, Some(_)) => Err(TddBuildError::CountLevelWithWeights { level }),
-        (Some(_), None) if f.weights.is_some() => Ok(()),
         (Some(_), None) => Err(TddBuildError::WeightedLevelWithoutStore { level }),
         (Some(from), Some(to)) => {
             let vars: Vec<VarId> = std::iter::once(level).chain(summed).flat_map(|t| vtree.region_vars(t).1).collect();
@@ -535,10 +511,8 @@ impl Route {
     fn seat(self, eng: &Engine, f: &mut Tdd) {
         let Self { into, to, mirrored, mut levels, mut columns } = self;
         if into.num_nodes() == 0 {
-            let (weights, one) = (f.weights.take(), !f.is_zero());
-            let old = std::mem::replace(f, constant_without_leaf(&into, one));
+            let old = std::mem::replace(f, constant_without_leaf(&into, !f.is_zero()));
             return_levels(eng, old.levels.into_vec());
-            f.weights = weights;
             return;
         }
         let canonical = f.levels.is_canonical(f.output);

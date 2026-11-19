@@ -31,7 +31,7 @@
 //!   products.
 //! - A **marginal level** has dropped its structure: it stores no nodes and
 //!   [`TddLevel::marginal_counts`] holds one model count per node. In weighted
-//!   mode ([`Tdd::set_weights`]) the level is weight-marginal instead
+//!   mode (a weighted vtree, [`Vtree::with_weights`](crate::Vtree::with_weights)) the level is weight-marginal instead
 //!   ([`TddLevel::is_weight_marginal`]): `marginal_counts` is `None` and the
 //!   values are [`TddLevel::weight_values`]. A
 //!   pair whose child level is marginal does not hold a plain index on that
@@ -206,7 +206,7 @@ pub(crate) use marginal_ref::{
 // semiring
 pub use semiring::{ColumnAlgebra, EvalAlgebra, LiteralWeights, RationalWeights, ScaledFloat, SignedLog, SlotPairs, WeightValue};
 pub(crate) use semiring::{bounded_key, weight_key, InlineSlots, ScaledSum, WeightKey};
-pub use weights::{Arithmetic, WeightStore, Weights};
+pub use weights::{Arithmetic, Weights};
 
 // level
 pub use level::{described, redescribed, stored_moved, CountOverflow, Digit, ImplicitLevel, Nodes, NodesIter, Pairs, StoredPairs, TddLevel, FLOOR};

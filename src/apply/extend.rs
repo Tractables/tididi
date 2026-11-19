@@ -120,9 +120,6 @@ fn extend<'a>(eng: &Engine, operands: Vec<Cow<'a, Tdd>>) -> Result<Vec<Cow<'a, T
         let (_, var) = home.vtree().leaf_bottomup().next().expect("a home has a leaf");
         into = Vtree::projection(home, [var]).expect("a variable of the home");
     }
-    if operands.iter().any(|f| moves(f, &into)) {
-        crate::apply::shared_weights(operands.iter().map(|f| &**f)).map_err(|_| OperationError::WeightsAcrossProjections)?;
-    }
     operands.into_iter().map(|f| extend_one(eng, f, &into)).collect()
 }
 
@@ -147,9 +144,7 @@ fn extend_one<'a>(eng: &Engine, f: Cow<'a, Tdd>, into: &Arc<Vtree>) -> Result<Co
         return Ok(Cow::Owned(f));
     }
     if f.vtree.num_nodes() == 0 {
-        let mut constant = crate::build::constant_padded_on(eng, into, f.is_one())?;
-        constant.weights = f.weights.as_ref().map(crate::diagram::WeightStore::empty_like);
-        return Ok(Cow::Owned(constant));
+        return Ok(Cow::Owned(crate::build::constant_padded_on(eng, into, f.is_one())?));
     }
     match place(eng, f, into, |var| var, Free::Operand) {
         Ok((placed, _)) => Ok(Cow::Owned(placed)),

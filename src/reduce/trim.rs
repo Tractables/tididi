@@ -927,10 +927,7 @@ fn own_counts(
     Ok(out)
 }
 
-fn replace(eng: &Engine, f: &mut Tdd, mut by: Tdd) {
-    if by.weights.is_none() {
-        by.weights = f.weights.take();
-    }
+fn replace(eng: &Engine, f: &mut Tdd, by: Tdd) {
     let old = std::mem::replace(f, by);
     crate::diagram::return_levels(eng, old.levels.into_vec());
 }

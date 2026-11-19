@@ -57,7 +57,7 @@ struct PlanEntry<V> {
 /// hold the same pair twice; pair lists are multisets, so each occurrence
 /// keeps its own contribution.
 ///
-/// Weighted mode sums through the `WeightStore`, in the exact domain only (the
+/// Weighted mode sums through the `Weights`, in the exact domain only (the
 /// `Log` domain is skipped); at a weight-marginal leaf a group folds only onto
 /// a value the pinned column already holds, and is otherwise left alone.
 ///

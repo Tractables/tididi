@@ -73,9 +73,9 @@ fn push_num<N: itoa::Integer>(buf: &mut Vec<u8>, n: N) {
 /// a level that stores per-node values instead of nodes. Nothing is written to
 /// `w` in that case. [`IoError::Io`] if a write to `w` fails.
 ///
-/// A diagram carrying a weight store and no marginal level is written; the
-/// file drops the store, so it reads back in integer mode and the caller
-/// attaches weights again with [`Tdd::set_weights`](crate::Tdd::set_weights).
+/// A diagram on a weighted vtree with no marginal level is written; the
+/// file drops the weights, so it reads back in integer mode on the vtree
+/// it is read onto.
 ///
 /// Save the vtree and diagram together, then restore them:
 ///

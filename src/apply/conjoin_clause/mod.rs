@@ -262,9 +262,7 @@ fn names_both_ways<L: crate::LiteralInput>(lim: &Limits, vtree: &Vtree, lits: &[
 /// `f` placed on `into`, a projection of its home holding its leaves.
 fn place_on(eng: &Engine, f: Tdd, into: &Arc<Vtree>) -> Result<Tdd, OperationError> {
     if f.vtree.num_nodes() == 0 {
-        let mut constant = crate::build::constant_padded_on(eng, into, f.is_one())?;
-        constant.weights = f.weights;
-        return Ok(constant);
+        return crate::build::constant_padded_on(eng, into, f.is_one());
     }
     match crate::restructure::embed::place_moving(eng, f, into, |var| var, crate::restructure::embed::Free::Build) {
         Ok((extended, _)) => Ok(extended),
@@ -308,8 +306,6 @@ fn rebuild_along_spine(
     // The accumulator's marginal values move to the output along with its levels:
     // a clause carries none of its own, and the output is nothing but the
     // accumulator, one clause further on.
-    let f_weights = f.weights.take();
-
     // Per-level base offsets into `cd_map`: only spine levels get storage, so
     // the map is `O(Σ spine widths)` rather than `O(|f|)`; off-spine levels
     // are read through raw pair indices. See `plan_cd_map_bases`.
@@ -364,7 +360,7 @@ fn rebuild_along_spine(
     let vtree = Arc::clone(vtree);
     let mut carried = f.take_worklists();
     let fused = carried.take_fused();
-    let mut out = diagram::Assembly::from_levels(eng, vtree, levels, f_weights).finish_with(
+    let mut out = diagram::Assembly::from_levels(eng, vtree, levels).finish_with(
         TddNodeId {
             vtree: out_vtree,
             local: out_local,

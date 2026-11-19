@@ -3,7 +3,7 @@
 use crate::diagram::WeightValue;
 use crate::diagram::{EncodedChildRef, for_each_side_ref_mut, ChildSide, LeafLabel, ChildDecoder, ValueRef, Tdd, TddLevel};
 use crate::diagram::{leaf_canon_map, leaf_column_vals, leaf_count};
-use crate::diagram::WeightStore;
+use crate::diagram::Weights;
 use crate::limits::{Limits, OperationError};
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
@@ -131,7 +131,7 @@ fn canonicalize_leaf_refs_at_parent(
 ///
 /// A weighted value has no inline encoding, so the leaf level gets a three-slot
 /// weighted store in [`LeafLabel::from_idx`] order (0 = One, 1 = Pos, 2 = Neg),
-/// filled from [`WeightStore::leaf_val`]. A parent's leaf-side refs are bare
+/// filled from [`Weights::leaf_val`]. A parent's leaf-side refs are bare
 /// leaf-label indices, which are valid slot indices into that column, so no
 /// parent-ref rewrite is needed. A Zero leaf-side ref carries bit 31 and every
 /// weighted reader tests that bit before decoding a slot.
@@ -161,7 +161,7 @@ pub(crate) fn marginalize_leaf_weighted(
     tdd: &mut Tdd,
     leaf: VtreeIdx,
     vtree: &Vtree,
-    ws: &WeightStore,
+    ws: &Weights,
 ) -> Result<(), OperationError> {
     debug_assert!(vtree.node(leaf).is_leaf());
     if tdd.levels[leaf.idx()].is_marginal() {
@@ -212,7 +212,7 @@ pub(crate) fn canonicalize_weighted_leaf_refs(
     canon_leaves: &[usize],
     vtree: &Vtree,
     levels: &mut [TddLevel],
-    ws: Option<&WeightStore>,
+    ws: Option<&Weights>,
 ) -> Result<(), OperationError> {
     // Exact domain only: a bounded domain's key equality is `f64` bit
     // equality, not value equality.

@@ -66,7 +66,7 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Result<Vec<u32>,
             continue;
         }
         // Invariant 11: a weight-marginal leaf's column is the label-ordered
-        // cache of `WeightStore::leaf_val`, and readers decode a leaf-side
+        // cache of `Weights::leaf_val`, and readers decode a leaf-side
         // reference as a label, so its slots never move.
         if tdd.vtree.node(v).is_var_leaf() && tdd.levels[v.idx()].is_weight_marginal() {
             continue;

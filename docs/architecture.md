@@ -139,7 +139,7 @@ keep both contracts.
 
 [`Tdd::marginalize_levels`] replaces the structure of a subtree by one value
 per node: a model count, or a weighted value when the diagram has a
-[`WeightStore`]. Nodes of a marginal level point to *value slots*, and nodes
+[`Weights`]. Nodes of a marginal level point to *value slots*, and nodes
 with equal values share a slot. A reference from a structural parent into a
 marginal child may carry its value inline instead of a slot index; the
 `diagram` module owns that encoding and every other module decodes through
@@ -245,7 +245,7 @@ prove that an arbitrary circuit's nodes are disjoint (row 1).
 | 8 | Pair-fusion saturation: no eligible same-structural-child group remains (exact arithmetic; weighted leaf sums must fit the pinned column). | [`marginalize_levels`]'s fusion sweep | a later twin merge | `test_helpers::check::marginal::check_marginal_canonical_form` |
 | 9 | Twin canonicality, marginal diagrams: no two nodes at one level have equal pair multisets. | twin contraction | pair fusion | `test_helpers::check::marginal::check_marginal_canonical_form` |
 | 10 | Value-slot uniqueness: at a marginal level all stored values are pairwise distinct. | mint-time dedup, then the slot prune | apply's emit | `test_helpers::check::marginal::check_slot_count_uniqueness` |
-| 11 | Weighted leaf column pin: a weight-marginal leaf's three slots are an immutable, label-ordered cache of `WeightStore::leaf_val`. No pass compacts, erases, reorders or appends to the column, and every reader re-derives it through `diagram::leaf_column_vals`. | `marginal::marginalize_leaf_weighted` | — | `test_helpers::check::marginal::check_leaf_columns_pinned` |
+| 11 | Weighted leaf column pin: a weight-marginal leaf's three slots are an immutable, label-ordered cache of `Weights::leaf_val`. No pass compacts, erases, reorders or appends to the column, and every reader re-derives it through `diagram::leaf_column_vals`. | `marginal::marginalize_leaf_weighted` | — | `test_helpers::check::marginal::check_leaf_columns_pinned` |
 | 12 | Slot reachability: at a boundary marginal level other than the output's, every value slot is referenced from the structural parent. | [`reduce`]'s slot prune | pair fusion and twin contraction, until the prune runs | `test_helpers::check::marginal::check_no_orphan_slots` |
 
 Rows 3, 4, 8, 9, 10 and 12 hold after a pass rather than throughout. Canonical
@@ -330,7 +330,7 @@ release build, as described under [Testing](#testing).
 [`Tdd::marginalize_levels`]: crate::Tdd::marginalize_levels
 [`TddLevel`]: crate::diagram::TddLevel
 [`Vtree::bottomup`]: crate::Vtree::bottomup
-[`WeightStore`]: crate::diagram::WeightStore
+[`Weights`]: crate::diagram::Weights
 [`apply`]: crate::apply
 [`cnf`]: crate::cnf
 [`diagram`]: crate::diagram

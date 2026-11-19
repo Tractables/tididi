@@ -29,7 +29,7 @@ use crate::Engine;
 use crate::apply::conjoin_clause::{Normalized, extend_to};
 use crate::diagram::{
     Assembly, ChildPair, EncodedChildRef, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, PairsIter,
-    Tdd, TddLevel, TddNodeId, WeightStore,
+    Tdd, TddLevel, TddNodeId,
 };
 use crate::limits::{Limits, OperationError};
 use crate::vtree::VtreeIdx;
@@ -319,8 +319,7 @@ fn overlay_cube(eng: &Engine, f: &mut Tdd, label: &[u32]) -> Result<Tdd, Operati
             level.clear();
             let out = level.push_node(lim, pairs)?;
             lim.level_done(out_nodes + 1)?;
-            let weights = f.weights.take();
-            return Assembly::from_levels(eng, Arc::clone(&vtree), levels, weights)
+            return Assembly::from_levels(eng, Arc::clone(&vtree), levels)
                 .finish(TddNodeId { vtree: root, local: out });
         }
         let mut s = spare.pop().unwrap_or_default();
@@ -371,9 +370,7 @@ fn disjoin_cube<L: crate::LiteralInput>(eng: &Engine, f: Tdd, lits: &[L]) -> Res
     // The empty cube is true, and `⊥ ∨ M` is the cube itself: both are the
     // cube built on its own, with the accumulator's marginal values.
     if cube.is_empty() || f.is_zero() {
-        let mut out = eng.cube(&vtree, literals())?;
-        out.weights = f.weights.as_ref().map(WeightStore::empty_like);
-        return Ok(out);
+        return eng.cube(&vtree, literals());
     }
     let root = vtree.root();
     if f.output.vtree != root || vtree.node(root).is_leaf() {

@@ -4,7 +4,7 @@ use std::{ops::DerefMut, sync::Arc};
 
 use crate::{Engine, OperationError};
 use crate::vtree::{Vtree, VtreeIdx};
-use super::{Dirty, Tdd, TddBuilder, TddLevel, TddNodeId, WeightStore};
+use super::{Dirty, Tdd, TddBuilder, TddLevel, TddNodeId};
 
 /// An operation's output, returned to the level pool if construction fails.
 ///
@@ -26,15 +26,15 @@ impl<'a> Assembly<'a> {
     /// Take ownership of arenas already allocated or moved from an operand.
     #[inline]
     pub(crate) fn from_levels(
-        engine: &'a Engine, vtree: Arc<Vtree>, levels: Vec<TddLevel>, weights: Option<WeightStore>,
+        engine: &'a Engine, vtree: Arc<Vtree>, levels: Vec<TddLevel>,
     ) -> Self {
-        Self { engine, builder: Some(TddBuilder::from_levels(vtree, levels, weights)) }
+        Self { engine, builder: Some(TddBuilder::from_levels(vtree, levels)) }
     }
 
-    /// Disjoint access to arenas and weighted columns during a kernel sweep.
+    /// The arenas, during a kernel sweep.
     #[inline]
-    pub(crate) fn parts_mut(&mut self) -> (&mut Vec<TddLevel>, &mut Option<WeightStore>) {
-        self.deref_mut().parts_mut()
+    pub(crate) fn levels_mut(&mut self) -> &mut Vec<TddLevel> {
+        self.deref_mut().levels_mut()
     }
 
     /// [`finish_changed`](Self::finish_changed) storage whose construction
@@ -145,7 +145,7 @@ impl std::ops::DerefMut for Assembly<'_> {
 impl Drop for Assembly<'_> {
     fn drop(&mut self) {
         let Some(builder) = self.builder.as_mut() else { return };
-        let (levels, _) = builder.parts_mut();
+        let levels = builder.levels_mut();
         if !levels.is_empty() && !std::thread::panicking() {
             super::return_levels(self.engine, std::mem::take(levels));
         }

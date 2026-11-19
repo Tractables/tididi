@@ -21,9 +21,8 @@ mod tests;
 use std::sync::Arc;
 
 use crate::vtree::{SameLayout, Vtree, VtreeIdx};
-use crate::diagram::{WeightStore, Weights};
+use crate::diagram::Weights;
 
-use super::build_error::TddBuildError;
 use super::level::TddLevel;
 use super::primitives::{LEAF_WIDTH, ONE_LEAF_IDX, TddNodeId, TRUE, ZERO};
 
@@ -110,13 +109,6 @@ pub struct Tdd {
     /// Which levels the reduction passes still have to revisit (not part of
     /// the function denoted).
     pub(crate) dirty: Dirty,
-    /// The weights this diagram carries on a vtree that is not a weighted
-    /// home ([`set_weights`]); always `None` on a weighted home, whose
-    /// weights every diagram on it reads ([`weight_table`]).
-    ///
-    /// [`set_weights`]: Self::set_weights
-    /// [`weight_table`]: Self::weight_table
-    pub(crate) weights: Option<WeightStore>,
 }
 
 /// An owned operand of a conjunction that takes each operand owned or
@@ -246,7 +238,6 @@ impl Tdd {
             levels,
             output: self.output,
             dirty: self.dirty.clone(),
-            weights: self.weights.clone(),
         })
     }
 }
@@ -368,109 +359,30 @@ impl Tdd {
     /// to the engine's pool when seating is refused.
     #[cfg(any(test, debug_assertions, feature = "testing"))]
     pub(crate) fn from_levels_unchecked(vtree: Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId) -> Self {
-        let builder = super::TddBuilder::from_levels(vtree, levels, None);
+        let builder = super::TddBuilder::from_levels(vtree, levels);
         let dirty = builder.seed_worklists(Dirty::default(), None, None).expect("untracked worklists cannot be refused");
         builder.seat(output, dirty, None)
     }
 
-    /// Put the diagram in weighted mode: a level it sums out holds weight
-    /// values under `ws` instead of model counts. On a vtree with many
-    /// weighted diagrams, give the weights to the home instead
-    /// ([`Home::weighted`](crate::vtree::Home::weighted)).
-    ///
-    /// Attach the weights before the first operation that marginalizes a level:
-    /// a level summed out without them holds counts, and nothing converts them.
-    /// Weights equal to the attached ones may be attached again at any time;
-    /// other weights only while no level is summed out.
-    /// Conjunction ([`and`](crate::and), [`Tdd::and_clause`]), projection,
-    /// conditioning, negation, disjunction and care restriction preserve weights.
-    /// [`Tdd::graft_over`] accepts destination weights for renamed parts.
-    ///
-    /// Keep a weighted value while releasing structure:
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Tdd, Vtree};
-    /// use tididi::diagram::{Arithmetic, RationalWeights, WeightStore};
-    ///
-    /// let vtree = Arc::new(Vtree::balanced(2));
-    /// let mut f = Tdd::clause(&vtree, [1, 2])?;
-    /// f.set_weights(WeightStore::new(RationalWeights::unit(2), Arithmetic::ExactRational))?;
-    /// let before = f.weighted_value()?.expect("weights are attached").into_rational();
-    /// # tididi::test_helpers::assert_canonical(&f);
-    /// f.marginalize_levels(&[vtree.root()])?;
-    /// assert!(f.has_marginal_level());
-    /// assert_eq!(f.weighted_value()?.expect("weights are attached").into_rational(), before);
-    /// # tididi::test_helpers::assert_canonical(&f);
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// [`TddBuildError::IncompatibleWeights`] on a weighted home, whose
-    /// diagrams read the home's weights, and for weights other than the
-    /// attached ones once a level is summed out; [`TddBuildError`] for
-    /// missing variable weights or summed values that are not weight values
-    /// of `ws`'s arithmetic. Validation completes before the weights are
-    /// replaced; an error leaves the diagram unchanged.
-    pub fn set_weights(&mut self, ws: WeightStore) -> Result<(), TddBuildError> {
-        if self.vtree.weights().is_some() {
-            return Err(TddBuildError::IncompatibleWeights);
-        }
-        ws.install(&self.vtree, &self.levels, &mut self.weights)
-    }
-
-    /// The weights the diagram is computed under: its home's on a weighted
-    /// home, else those attached by [`set_weights`](Self::set_weights);
-    /// `None` in integer mode.
-    pub fn weights(&self) -> Option<&WeightStore> {
+    /// The weights the diagram is computed under: those of its vtree
+    /// ([`Home::weighted`](crate::vtree::Home::weighted),
+    /// [`Vtree::with_weights`]); `None` in integer mode.
+    pub fn weights(&self) -> Option<&Weights> {
         self.weight_table()
     }
 
-    /// Detach the weights [`set_weights`](Self::set_weights) attached,
-    /// leaving the diagram in integer mode. On a weighted home, whose weights
-    /// are not the diagram's, `Ok(None)`.
-    ///
-    /// # Errors
-    ///
-    /// [`TddBuildError::WeightedLevelWithoutStore`] naming the first
-    /// weight-marginal level, whose values the weights interpret. The diagram
-    /// is untouched and still carries its weights.
-    pub fn take_weights(&mut self) -> Result<Option<WeightStore>, TddBuildError> {
-        if self.weights.is_none() {
-            return Ok(None);
-        }
-        if let Some(level) = self.levels.iter().position(TddLevel::is_weight_marginal) {
-            return Err(TddBuildError::WeightedLevelWithoutStore {
-                level: VtreeIdx(level as u32),
-            });
-        }
-        Ok(self.detach_weights())
-    }
-
-    /// [`take_weights`](Self::take_weights) without the level scan, for a
-    /// restructuring that moves the store onto the diagram replacing this one.
-    pub(crate) fn detach_weights(&mut self) -> Option<WeightStore> {
-        self.weights.take()
-    }
-
-    /// The one read of the weights a diagram is computed under: the home's
-    /// on a weighted home, else the diagram's own. A sum-out stores weight
-    /// values exactly when this is `Some`.
+    /// The one read of the weights a diagram is computed under. A sum-out
+    /// stores weight values exactly when this is `Some`.
     #[inline]
     pub(crate) fn weight_table(&self) -> Option<&Weights> {
-        match &self.weights {
-            Some(own) => Some(own),
-            None => self.vtree.weights(),
-        }
+        self.vtree.weights()
     }
 
-    /// Whether the diagram holds weight values or may come to: it carries
-    /// weights of its own, or it has a summed-out level on a weighted home.
-    /// A structural diagram on a weighted home is an ordinary diagram.
+    /// Whether the diagram holds weight values: a summed-out level on a
+    /// weighted vtree.
     #[inline]
     pub(crate) fn holds_weights(&self) -> bool {
-        self.weights.is_some() || (self.vtree.weights().is_some() && self.has_marginal_level())
+        self.vtree.weights().is_some() && self.has_marginal_level()
     }
 
     /// The weights of a weighted diagram.

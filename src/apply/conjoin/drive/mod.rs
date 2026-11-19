@@ -54,7 +54,7 @@ pub(super) struct Sweep<'a> {
     pub(super) vtree: &'a crate::vtree::Vtree,
     /// The levels summed out as they are built.
     pub(super) targets: VtreeMask<'a>,
-    pub(super) ws: Option<&'a crate::diagram::WeightStore>,
+    pub(super) ws: Option<&'a crate::diagram::Weights>,
     /// Whether the output is wanted only for its count: then a root level
     /// the sparse route builds as one product is counted instead, into
     /// `counted`, and left empty.
@@ -309,9 +309,7 @@ pub(crate) fn apply_and_restoring(
     free: Operands<VtreeMask<'_>>,
 ) -> Result<Tdd, OperationError> {
     debug_assert!(
-        f.tdd().weights.is_none()
-            && g.tdd().weights.is_none()
-            && !f.tdd().has_marginal_level()
+        !f.tdd().has_marginal_level()
             && !g.tdd().has_marginal_level()
     );
     apply_and_held(
@@ -429,33 +427,25 @@ fn apply_and_held(
 
     let _op = lim.begin_operation();
 
-    let take_weights = |op: &mut Held<'_>| match op.owned() {
-        Some(op) => op.weights.take(),
-        None => op.tdd().weights.clone(),
-    };
-    let (fw, gw) = (take_weights(f), take_weights(g));
-    let ws = fw.or(gw);
     let vtree = Arc::clone(f.vtree());
-    // On a weighted home the operands carry no store: the sweep reads the
-    // home's weights when a level holds or comes to hold values, and
-    // otherwise runs as an unweighted conjunction.
-    let home_table = vtree
+    // The sweep reads the vtree's weights when a level holds or comes to
+    // hold values, and otherwise runs as an unweighted conjunction.
+    let ws = vtree
         .weights()
         .filter(|_| !targets.is_empty() || f.tdd().has_marginal_level() || g.tdd().has_marginal_level());
     debug_assert!(
         ws.is_some()
-            || home_table.is_some()
             || !f
                 .tdd()
                 .levels
                 .iter()
                 .chain(g.tdd().levels.iter())
                 .any(|l| l.is_weight_marginal()),
-        "an operand has weight-marginal levels but neither carries a weight store"
+        "an operand has weight-marginal levels on a vtree without weights"
     );
     // Nothing but pairs changes hands: no weights, no summed-out level,
     // and, as the setup finds, no marginal level.
-    let unmarked = ws.is_none() && home_table.is_none() && targets.is_empty();
+    let unmarked = ws.is_none() && targets.is_empty();
     // A built conjunction, restoring or not, that sums no level and
     // carries no weights takes the subtrees at which
     // both operands are constant true whole from `f`, as the identity fast
@@ -473,7 +463,7 @@ fn apply_and_held(
     if f.tdd().is_zero() || g.tdd().is_zero() {
         lim.check_stop()?;
         let levels = diagram::try_take_levels(eng, num_nodes)?;
-        return diagram::Assembly::from_levels(eng, vtree, levels, ws)
+        return diagram::Assembly::from_levels(eng, vtree, levels)
             .finish(TddNodeId {
                 vtree: f.output().vtree,
                 local: ZERO,
@@ -511,9 +501,8 @@ fn apply_and_held(
         }
         false => diagram::try_take_levels(eng, num_nodes)?,
     };
-    let mut assembly = diagram::Assembly::from_levels(eng, Arc::clone(&vtree), levels, ws);
-    let (levels, ws) = assembly.parts_mut();
-    let ws = ws.as_ref().or(home_table);
+    let mut assembly = diagram::Assembly::from_levels(eng, Arc::clone(&vtree), levels);
+    let levels = assembly.levels_mut();
     let kind = crate::apply::conjoin::streaming_marginal::stream_kind(ws);
     let mut run = apply_and_setup(
         eng,
@@ -667,7 +656,7 @@ fn apply_and_held(
         true => {
             let f = f.owned().expect("an adopting conjunction owns f");
             let mut own = std::mem::take(&mut f.levels).into_vec();
-            let levels = assembly.parts_mut().0;
+            let levels = assembly.levels_mut();
             for t in cone.nodes() {
                 std::mem::swap(&mut levels[t], &mut own[t]);
             }
@@ -726,7 +715,7 @@ fn apply_and_held(
                 lists.built.push(parent);
             }
         }
-        let levels = assembly.parts_mut().0;
+        let levels = assembly.levels_mut();
         let rewrote = |t: VtreeIdx| {
             if !lists.seat_closes(t.idx(), closed) {
                 lists.built.push(t);
@@ -748,9 +737,9 @@ fn apply_and_held(
                 // A level the relabelling route moved goes back keeping the
                 // count its carrier kept, which is the count left on it.
                 for &t in &lists.relabel_moved {
-                    assembly.parts_mut().0[t].settle_held_pairs();
+                    assembly.levels_mut()[t].settle_held_pairs();
                 }
-                give_back(assembly.parts_mut().0, f, g, lists, cone);
+                give_back(assembly.levels_mut(), f, g, lists, cone);
             }
             return Err(e);
         }

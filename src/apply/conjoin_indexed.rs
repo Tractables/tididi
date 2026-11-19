@@ -587,17 +587,10 @@ fn check_operands(
     f: &Tdd,
     g: &Tdd,
     index: &PairIndex,
-    what: &'static str,
 ) -> Result<(), OperationError> {
     super::check_vtree(f, g)?;
     f.require_structure()?;
     g.require_structure()?;
-    if f.weights.is_some() || g.weights.is_some() {
-        return Err(OperationError::InertOption {
-            option: what,
-            needs: "unweighted operands",
-        });
-    }
     index.check(g)
 }
 
@@ -621,7 +614,7 @@ fn and_indexed_on(
     index: &PairIndex,
 ) -> Result<(Tdd, IndexedWork), OperationError> {
     let lim = eng.limits();
-    check_operands(f, g, index, "and_indexed")?;
+    check_operands(f, g, index)?;
     if f.is_zero() || g.is_zero() {
         return Ok((
             crate::build::constant_like(eng, f, false)?,
@@ -703,7 +696,7 @@ pub(crate) fn sum_indexed_counted<A: ColumnAlgebra>(
     let _op = lim.enter()?;
     let f = super::extend::onto(eng, f, g.vtree())?;
     let f = &*f;
-    check_operands(f, g, index, "sum_indexed")?;
+    check_operands(f, g, index)?;
     let vtree = Arc::clone(f.vtree());
     if at.idx() >= vtree.num_nodes() {
         return Err(OperationError::LevelNotInVtree(at));

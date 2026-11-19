@@ -92,8 +92,9 @@ one level's nodes. An algebra that values counts
 ([`EvalAlgebra::count`](crate::diagram::EvalAlgebra::count)) also evaluates
 diagrams with summed-out levels, such as
 [`Engine::and_marginalizing`](crate::Engine::and_marginalizing)'s result.
-[`Tdd::set_weights`](crate::Tdd::set_weights) attaches weights to a diagram and
-[`Tdd::weighted_value`](crate::Tdd::weighted_value) reads its value.
+A weighted vtree ([`Vtree::with_weights`](crate::Vtree::with_weights),
+[`Home::weighted`](crate::vtree::Home::weighted)) weighs every diagram on it,
+and [`Tdd::weighted_value`](crate::Tdd::weighted_value) reads a diagram's value.
 
 ## Save and inspect circuits
 

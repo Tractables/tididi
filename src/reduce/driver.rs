@@ -1,7 +1,7 @@
 //! Reduction order and the follow-up work required by each rewrite.
 
 use crate::{Engine, Tdd, OperationError};
-use crate::diagram::{NodeIdx, Pass, WeightStore};
+use crate::diagram::{NodeIdx, Pass, Weights};
 use crate::vtree::{Vtree, VtreeIdx};
 use super::{Close, ReductionPlan, ContentTwinPolicy, ContentTwinSchedule};
 use super::prune::{PruneScope, below_root_walk_applies, prune_complement, prune_unreachable};
@@ -351,7 +351,7 @@ mod oracle {
 /// cannot sum exactly.
 pub(crate) fn restore_marginal_invariants(eng: &Engine, tdd: &mut Tdd, levels: &[VtreeIdx], vtree: &Vtree) -> Result<(), OperationError> {
     let closed = tdd.levels.is_closed();
-    if !tdd.weights().is_some_and(WeightStore::is_bounded) {
+    if !tdd.weights().is_some_and(Weights::is_bounded) {
         let mut parents: Vec<_> = levels.iter().filter_map(|&level| vtree.node(level).parent()).collect();
         parents.sort_unstable();
         parents.dedup();

@@ -784,15 +784,14 @@ impl Tdd {
     /// when its weighted value is zero.
     /// Use [`satisfying_assignment`](Self::satisfying_assignment) to obtain a model.
     ///
-    /// Summed-out variables are satisfiable whatever their counts: a
+    /// Summed-out variables are satisfiable whatever their counts or weights: a
     /// [marginalized](Self::marginalize_levels) diagram is satisfiable when the
     /// function over its remaining variables is. Answers from the output node
     /// in constant time.
     ///
     /// # Errors
     ///
-    /// Returns [`OperationError::IncompatibleWeights`] when the output level
-    /// holds weighted values, and [`OperationError::Stopped`] on cancellation.
+    /// [`OperationError::Stopped`] on cancellation.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -1070,11 +1069,11 @@ impl Tdd {
         self.context_arc().run(|eng| eng.evaluate_columns_at(self, at, algebra))
     }
 
-    /// Evaluate this diagram using its attached weight store, if present.
+    /// Evaluate this diagram under its vtree's weights, if it has any.
     ///
     /// Structural levels are folded from literal weights; weighted marginal levels
-    /// contribute their stored values. The returned [`WeightValue`] uses the store's
-    /// arithmetic. Returns `Ok(None)` without a weight store. The borrowed diagram
+    /// contribute their stored values. The returned [`WeightValue`] uses the weights'
+    /// arithmetic. Returns `Ok(None)` on a vtree without weights. The borrowed diagram
     /// is unchanged. A zero value may come from zero or cancelling weights and does
     /// not establish Boolean unsatisfiability. [`evaluate`](Self::evaluate) takes
     /// the weights as an argument instead, so they can change between calls.
@@ -1086,15 +1085,14 @@ impl Tdd {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(2));
     /// use num_rational::BigRational;
-    /// use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
-    /// let mut f = Tdd::clause(&vtree, [1, 2])?;
+    /// use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
     /// let half = BigRational::new(1.into(), 2.into());
     /// let weights = RationalWeights::from_literals(&vec![
     ///     LiteralWeights { negative: half.clone(), positive: half }; 2
     /// ]);
-    /// f.set_weights(WeightStore::new(weights, Arithmetic::ExactRational))?;
+    /// let vtree = Arc::new(Vtree::balanced(2).with_weights(Weights::new(weights, Arithmetic::ExactRational))?);
+    /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// assert_eq!(f.weighted_value()?.unwrap().into_rational(),
     ///            BigRational::new(3.into(), 4.into()));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -1245,12 +1243,12 @@ impl Tdd {
     ///
     /// Targets are vtree node indices, not variable ids. An internal target also
     /// marginalizes its descendants; already marginal levels are skipped and a
-    /// false diagram stays false. Without attached weights, the values are exact
-    /// model counts. With a [`WeightStore`](crate::diagram::WeightStore) attached
-    /// through [`set_weights`](Self::set_weights), they use that store's arithmetic
-    /// and remain readable through [`weighted_value`](Self::weighted_value).
-    /// Attach weights before marginalizing: counts cannot later be converted to
-    /// arbitrary weights.
+    /// false diagram stays false. On a vtree without weights, the values are
+    /// exact model counts. On a weighted vtree ([`Vtree::with_weights`],
+    /// [`Home::weighted`](crate::vtree::Home::weighted)), they use its
+    /// [`Weights`](crate::diagram::Weights)' arithmetic and remain readable
+    /// through [`weighted_value`](Self::weighted_value). Counts cannot later be
+    /// converted to weights.
     ///
     /// The discarded structure cannot be recovered. Later operations cannot
     /// constrain its variables or recover their assignments; structural serialization

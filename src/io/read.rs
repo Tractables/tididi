@@ -442,7 +442,7 @@ fn build_diagram(
         vtree: vtree.root(),
         local: h.out_local.map_or(crate::diagram::ZERO, NodeIdx),
     };
-    crate::diagram::TddBuilder::from_levels(Arc::clone(vtree), levels, None)
+    crate::diagram::TddBuilder::from_levels(Arc::clone(vtree), levels)
         .finish(output)
         .map_err(|e| super::build_error(e, |e| malformed(h.line, format!("the records do not form a diagram: {e}"))))
 }

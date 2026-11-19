@@ -83,10 +83,6 @@ impl Tdd {
         self.dirty.merge_under(other.take_worklists());
         self.dirty.restore_fused(fused, &[]);
         return_levels(eng, std::mem::take(&mut other.levels).into_vec());
-
-        if self.weights.is_none() {
-            self.weights = other.detach_weights();
-        }
     }
 }
 

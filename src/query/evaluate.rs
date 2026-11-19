@@ -4,7 +4,7 @@ use num_bigint::BigUint;
 use num_traits::Zero;
 
 use crate::value::{walk_bottom_up, CountRead, Retention, FoldInput, ValueDomain, WeightFold};
-use crate::diagram::{ChildDecoder, ChildRef, ColumnAlgebra, EncodedChildRef, EvalAlgebra, InlineSlots, LeafLabel, NodeIdx, PairsIter, SlotPairs, Tdd, TddLevel, ValueRef, WeightStore, WeightValue, LEAF_WIDTH};
+use crate::diagram::{ChildDecoder, ChildRef, ColumnAlgebra, EncodedChildRef, EvalAlgebra, InlineSlots, LeafLabel, NodeIdx, PairsIter, SlotPairs, Tdd, TddLevel, ValueRef, Weights, WeightValue, LEAF_WIDTH};
 use crate::Engine;
 use crate::vtree::{FreeVars, VarId, Vtree, VtreeIdx, VtreeNode};
 
@@ -493,7 +493,7 @@ fn fold_columns<A: ColumnAlgebra>(
 
 /// The weighted value of `tdd`'s output node under `ws`; `tdd` must have been
 /// weighted with `ws`.
-fn weighted_output_value(eng: &Engine, tdd: &Tdd, ws: &WeightStore, gate: &mut PollGate) -> Result<WeightValue, OperationError> {
+fn weighted_output_value(eng: &Engine, tdd: &Tdd, ws: &Weights, gate: &mut PollGate) -> Result<WeightValue, OperationError> {
     let vtree = &tdd.vtree;
     // UNSAT / constant-false output: the `ZERO` sentinel carries no level slot
     // (`output.local` is the `ZERO` idx, out of range for any real level), so the
@@ -515,7 +515,7 @@ fn weighted_output_value(eng: &Engine, tdd: &Tdd, ws: &WeightStore, gate: &mut P
     eng.limits().try_resize(&mut computed, vtree.num_nodes(), None)?;
     // Only the root value is read, so child columns are released as their
     // parent completes (`Retention::Frontier`). The "already stored" test
-    // is this diagram's own marginality rather than `WeightStore::is_set`: the
+    // is this diagram's own marginality rather than `Weights::is_set`: the
     // store is shared, so a column at this index may belong to another live
     // `Tdd` while this diagram's level is still structural.
     let marginal = |i: usize| tdd.levels[i].is_marginal();

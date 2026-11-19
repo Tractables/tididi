@@ -18,7 +18,7 @@ use super::{
 
 use crate::Engine;
 use crate::diagram::{
-    ChildSide, LeafLabel, NEG_LEAF_IDX, NodeIdx, ONE_LEAF_IDX, POS_LEAF_IDX, Tdd, WeightStore,
+    ChildSide, LeafLabel, NEG_LEAF_IDX, NodeIdx, ONE_LEAF_IDX, POS_LEAF_IDX, Tdd, Weights,
     WeightValue, return_levels,
 };
 use crate::limits::OperationError;
@@ -346,17 +346,18 @@ impl Engine {
     }
 
     /// [`Tdd::embed`] for a diagram whose levels may hold weighted marginal
-    /// values, with `weights` as the result's store.
+    /// values, read under `into`'s weights.
     ///
-    /// A weight-marginal level ([`Tdd::marginalize_levels`] under a
-    /// [`WeightStore`]) is placed with its values, at the level `map` sends
-    /// it to. The result sums over the same assignments as the source and
-    /// over every free variable of `into`, so a variable `into` adds below
-    /// the image of a marginal level multiplies that level's values by the
-    /// variable's total weight (the sum of its two literal weights), and a level `into` adds below it holds no
-    /// values of its own. A structural diagram is placed as by
-    /// [`Tdd::embed`] and takes `weights` as its store when one is given;
-    /// a diagram with a marginal level needs one, whose table must give
+    /// A weight-marginal level ([`Tdd::marginalize_levels`] on a weighted
+    /// vtree, [`Vtree::with_weights`] or
+    /// [`Home::weighted`](crate::vtree::Home::weighted)) is placed with its
+    /// values, at the level `map` sends it to. The result sums over the same
+    /// assignments as the source and over every free variable of `into`, so
+    /// a variable `into` adds below the image of a marginal level multiplies
+    /// that level's values by the variable's total weight (the sum of its two
+    /// literal weights), and a level `into` adds below it holds no values of
+    /// its own. A structural diagram is placed as by [`Tdd::embed`]. A
+    /// diagram with a marginal level needs `into` weighted, its table giving
     /// each renamed variable the weights the source's gives the original,
     /// and needs `into` to hold its vtree's shape with every node's children
     /// in their order, as no level of it is mirrored.
@@ -370,25 +371,23 @@ impl Engine {
     /// ```
     /// use std::sync::Arc;
     /// use num_rational::BigRational;
-    /// use tididi::{Engine, Tdd, Vtree};
-    /// use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+    /// use tididi::{Engine, Vtree};
+    /// use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
     /// use tididi::vtree::VarId;
     ///
     /// let third = || BigRational::new(1.into(), 3.into());
-    /// let table = |n| RationalWeights::from_literals(&vec![
+    /// let weights = |n| Weights::new(RationalWeights::from_literals(&vec![
     ///     LiteralWeights { negative: third(), positive: third() }; n
-    /// ]);
+    /// ]), Arithmetic::ExactRational);
     /// let engine = Engine::new();
-    /// let small = Arc::new(Vtree::balanced(2));
+    /// let small = Arc::new(Vtree::balanced(2).with_weights(weights(2))?);
     /// let mut f = engine.clause(&small, [1, 2])?;
-    /// f.set_weights(WeightStore::new(table(2), Arithmetic::ExactRational))?;
     /// engine.marginalize_levels(&mut f, &[small.root()])?;
     /// let value = f.weighted_value()?.expect("weighted").into_rational();
     ///
     /// // On a larger vtree the free variables 2 and 4 each weigh 2/3.
-    /// let big = Arc::new(Vtree::linear(4));
-    /// let store = WeightStore::new(table(4), Arithmetic::ExactRational);
-    /// let (g, _) = engine.embed_over(&f, &big, |v| VarId(2 * v.0 - 1), Some(store))?;
+    /// let big = Arc::new(Vtree::linear(4).with_weights(weights(4))?);
+    /// let (g, _) = engine.embed_over(&f, &big, |v| VarId(2 * v.0 - 1))?;
     /// let free = BigRational::new(4.into(), 9.into());
     /// assert_eq!(g.weighted_value()?.expect("weighted").into_rational(), value * free);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -398,20 +397,16 @@ impl Engine {
     ///
     /// Those of [`Tdd::embed`], with [`OperationError::MarginalLevel`] naming
     /// a level that holds integer counts rather than weighted values;
-    /// [`EmbedError::SourceWeights`] for a weight-marginal level without
-    /// `weights` or a table that disagrees with the source's under the
-    /// renaming; [`EmbedError::DestinationWeights`] for a table that does
-    /// not cover `into`'s variables; [`OperationError::OverBudget`] where
-    /// the copy is refused.
+    /// [`EmbedError::SourceWeights`] for a weight-marginal level when `into`
+    /// has no weights or weights that disagree with the source's under the
+    /// renaming; [`OperationError::OverBudget`] where the copy is refused.
     pub fn embed_over(
         &self,
         tdd: &Tdd,
         into: &Arc<Vtree>,
         map: impl Fn(VarId) -> VarId,
-        weights: Option<WeightStore>,
     ) -> Result<(Tdd, Embedding), EmbedError> {
         let _op = self.limits().enter()?;
-        let (weights, on_weighted_home) = destination_weights(into, weights)?;
         let plan = Plan::build(self, tdd.vtree(), into, &map, !tdd.has_marginal_level(), Free::Build)?;
         // Integer counts reach a parent through inline references, which
         // do not survive a new parent; only weighted values are placed.
@@ -422,38 +417,12 @@ impl Engine {
         {
             return Err(OperationError::MarginalLevel(t).into());
         }
-        if let Some(store) = &weights {
-            store
-                .check_variables(into.leaf_bottomup().map(|(_, var)| var))
-                .map_err(EmbedError::DestinationWeights)?;
-        }
-        check_part_weights(tdd, weights.as_ref(), &map).map_err(EmbedError::SourceWeights)?;
-        let result = if tdd.has_marginal_level() {
-            let store = weights.expect("a marginal level was checked to have a destination store");
-            assemble_marginal(self, tdd, into, &plan, store)?
-        } else {
-            let mut result = assemble(self, tdd, into, &plan)?;
-            if let Some(store) = weights.filter(|_| !on_weighted_home) {
-                result.set_weights(store).map_err(OperationError::from)?;
-            }
-            result
+        check_part_weights(tdd, into.weights(), &map).map_err(EmbedError::SourceWeights)?;
+        let result = match into.weights() {
+            Some(weights) if tdd.has_marginal_level() => assemble_marginal(self, tdd, into, &plan, weights)?,
+            _ => assemble(self, tdd, into, &plan)?,
         };
-        let mut result = result;
-        if on_weighted_home {
-            result.weights = None;
-        }
         Ok((result, plan.embedding))
-    }
-}
-
-/// The weights a diagram placed on `into` is read under: those given, or
-/// on a weighted home the home's, which the result does not carry; and
-/// whether `into` is on a weighted home.
-pub(super) fn destination_weights(into: &Vtree, weights: Option<WeightStore>) -> Result<(Option<WeightStore>, bool), EmbedError> {
-    match (into.weights(), weights) {
-        (None, weights) => Ok((weights, false)),
-        (Some(home), None) => Ok((Some(home.clone()), true)),
-        (Some(_), Some(_)) => Err(EmbedError::DestinationWeights(crate::diagram::TddBuildError::IncompatibleWeights)),
     }
 }
 
@@ -748,24 +717,21 @@ pub(crate) fn place_by<'a>(
 ) -> Result<Tdd, (EmbedError, std::borrow::Cow<'a, Tdd>)> {
     if tdd.is_zero() || tdd.is_one() {
         return match crate::build::constant_padded_on(eng, into, tdd.is_one()) {
-            Ok(mut constant) => {
-                constant.weights = tdd.weights.as_ref().map(WeightStore::empty_like);
-                Ok(constant)
-            }
+            Ok(constant) => Ok(constant),
             Err(e) => Err((e.into(), tdd)),
         };
     }
-    assemble_moving(eng, tdd, into, plan, free, true).map_err(|(e, tdd)| (e.into(), tdd))
+    assemble_moving(eng, tdd, into, plan, free).map_err(|(e, tdd)| (e.into(), tdd))
 }
 
 /// Copy a structural diagram's levels onto the destination through
-/// [`assemble_moving`], without its weights, and drop the pass-through nodes
+/// [`assemble_moving`] and drop the pass-through nodes
 /// over a leaf that no level names.
 fn assemble(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<Tdd, EmbedError> {
     if tdd.is_zero() || tdd.is_one() {
         return Ok(crate::build::constant_padded_on(eng, into, tdd.is_one())?);
     }
-    let mut result = assemble_moving(eng, std::borrow::Cow::Borrowed(tdd), into, plan, Free::Build, false)
+    let mut result = assemble_moving(eng, std::borrow::Cow::Borrowed(tdd), into, plan, Free::Build)
         .map_err(|(e, _)| e)?;
     // One unit per internal node and one per slot of its level, less the
     // units `assemble_moving` polled: a large diagram's copy, charged a unit
@@ -796,9 +762,8 @@ fn assemble(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<T
 /// what it adds; the diagram comes back, levels and worklists in place, when
 /// the result's storage is refused. A borrowed diagram has its levels copied
 /// into the destination's instead, and a refusal drops the copies. The
-/// result takes a moved diagram's worklists and weight store, and copies of
-/// a borrowed one's (its store only when `copy_weights`), once nothing is
-/// left to refuse.
+/// result takes a moved diagram's worklists, and copies of a borrowed
+/// one's, once nothing is left to refuse.
 #[expect(
     clippy::result_large_err,
     reason = "the refusal hands back what it was given"
@@ -809,7 +774,6 @@ fn assemble_moving<'a>(
     into: &Arc<Vtree>,
     plan: &Plan,
     free: Free,
-    copy_weights: bool,
 ) -> Result<Tdd, (OperationError, std::borrow::Cow<'a, Tdd>)> {
     use std::borrow::Cow;
     // Room for the inner pass's share of the leaf pass's worklist (below),
@@ -819,7 +783,7 @@ fn assemble_moving<'a>(
     {
         return Err((e, tdd));
     }
-    let mut placement = match MovePlacement::new(eng, into, None) {
+    let mut placement = match MovePlacement::new(eng, into) {
         Ok(placement) => placement,
         Err(e) => return Err((e, tdd)),
     };
@@ -908,9 +872,6 @@ fn assemble_moving<'a>(
         (Cow::Owned(moved), _) => moved.take_worklists(),
         (Cow::Borrowed(_), copied) => copied.expect("a borrowed diagram's worklists are copied"),
     };
-    if tdd.weights.is_some() && (copy_weights || matches!(tdd, Cow::Owned(_))) {
-        result.weights = Some(placed_weights(&mut tdd));
-    }
     // Every level of a moved `tdd` is now one the placement took from the
     // pool, empty: they go back for the takes that follow.
     if let Cow::Owned(moved) = &mut tdd {
@@ -959,16 +920,6 @@ fn inline_root_region(eng: &Engine, tdd: &Tdd, into: &Vtree, result: &mut Tdd) -
     }
     crate::diagram::inline_small_marginal_refs(eng.limits(), result, None)
         .and_then(|()| crate::reduce::slot_prune::prune_value_slots(eng, result).map(drop))
-}
-
-/// The weight store of [`assemble_moving`]'s result: a moved diagram's own,
-/// a borrowed one's copied.
-#[cold]
-fn placed_weights(tdd: &mut std::borrow::Cow<'_, Tdd>) -> WeightStore {
-    match tdd {
-        std::borrow::Cow::Owned(moved) => moved.weights.take().expect("a weighted diagram"),
-        std::borrow::Cow::Borrowed(source) => source.weights.clone().expect("a weighted diagram"),
-    }
 }
 
 /// Give a moved diagram back the levels a seated `result` took from it, as
@@ -1219,17 +1170,15 @@ fn assemble_marginal(
     tdd: &Tdd,
     into: &Arc<Vtree>,
     plan: &Plan,
-    weights: WeightStore,
+    weights: &Weights,
 ) -> Result<Tdd, EmbedError> {
     if tdd.is_zero() {
-        let mut result = crate::build::constant_zero_padded(eng, into);
-        result.weights = Some(weights.empty_like());
-        return Ok(result);
+        return Ok(crate::build::constant_zero_padded(eng, into));
     }
     // The levels move out of a copy, reserved through the limits so a
     // source too large to copy refuses the embed instead of aborting.
     let mut source = tdd.try_clone_on(eng)?;
-    let mut placement = MovePlacement::new(eng, into, Some(weights.empty_like()))?;
+    let mut placement = MovePlacement::new(eng, into)?;
     placement.move_part(&mut source, &plan.embedding.levels);
     let (inside, boundaries) = marginal_boundaries(tdd, into, plan);
     let mut gate = eng.limits().gate();
@@ -1260,7 +1209,7 @@ fn assemble_marginal(
         }
     }
     gate.flush()?;
-    scale_marginal_boundaries(&mut placement, into, plan, &weights, &boundaries);
+    scale_marginal_boundaries(&mut placement, into, plan, weights, &boundaries);
     placement
         .check_weights()
         .map_err(EmbedError::DestinationWeights)?;
@@ -1293,7 +1242,7 @@ fn scale_marginal_boundaries(
     placement: &mut MovePlacement<'_>,
     into: &Vtree,
     plan: &Plan,
-    weights: &WeightStore,
+    weights: &Weights,
     boundaries: &[VtreeIdx],
 ) {
     let mut stack = Vec::new();

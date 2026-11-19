@@ -8,7 +8,7 @@ use super::{CountVec, FloatCol};
 /// are still explicit, indexed by vtree node.
 ///
 /// The value kind is fixed for the whole apply by the
-/// [`WeightStore`](crate::diagram::WeightStore) in play, if any, so this is
+/// [`Weights`](crate::diagram::Weights) in play, if any, so this is
 /// one enum rather than parallel caches: an apply is integer, weighted,
 /// scaled-float, or does no streaming at all.
 ///

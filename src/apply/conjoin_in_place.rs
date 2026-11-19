@@ -560,12 +560,6 @@ fn and_in_place_kernel(
     let lim = eng.limits();
     f.require_structure()?;
     g.require_structure()?;
-    if f.weights.is_some() || g.weights.is_some() {
-        return Err(OperationError::InertOption {
-            option: "and_in_place",
-            needs: "unweighted operands",
-        });
-    }
     if g.is_zero() || f.is_zero() {
         return crate::build::constant_like(eng, &f, false);
     }

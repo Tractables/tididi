@@ -3,7 +3,7 @@
 
 use crate::apply::conjoin::held::Held;
 use crate::{Engine, OperationError};
-use crate::diagram::{TddLevel, WeightStore, LEAF_WIDTH};
+use crate::diagram::{TddLevel, Weights, LEAF_WIDTH};
 use crate::vtree::VtreeIdx;
 use super::setup::Operands;
 use super::setup::ApplyRun;
@@ -73,7 +73,7 @@ pub(crate) fn seed_output_leaves(
     leaves: &[VtreeIdx],
     levels: &mut [TddLevel],
     identity: Operands<&[bool]>,
-    ws: Option<&WeightStore>,
+    ws: Option<&Weights>,
 ) -> Vec<usize> {
     let Operands { f: f_identity, g: g_identity } = identity;
     // The bottom-up loop never visits a leaf as `t`, so a marginal leaf's output

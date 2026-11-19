@@ -166,8 +166,7 @@ impl Engine {
                             } else {
                                 match replacement {
                                     Replacement::Diagram(diagram) => {
-                                        let mut value = diagram.try_clone_on(self)?;
-                                        value.weights = None;
+                                        let value = diagram.try_clone_on(self)?;
                                         if slot == 2 {
                                             self.negate(value)?
                                         } else {
@@ -214,8 +213,6 @@ impl Engine {
         }
         gate.flush()?;
         let mut result = columns[f.output().vtree.idx()][f.output().local.idx()].take(self)?;
-        // The destination universe is unchanged; weights stay bound to its variables.
-        result.weights = f.weights.take().map(|weights| weights.empty_like());
         // A leaf output can be a cloned replacement, which need not be minimized.
         self.minimize(&mut result)?;
         Ok(result)

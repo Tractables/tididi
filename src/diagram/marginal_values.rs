@@ -3,7 +3,7 @@
 //! Passes use this boundary to move, install or compact a level's values
 //! without separately maintaining its slot count.
 
-use super::{TddLevel, WeightStore, WeightValue};
+use super::{TddLevel, Weights, WeightValue};
 use crate::value::{CountRead, CountRef};
 use crate::limits::{Limits, OperationError};
 use crate::value::slots::{key_map, move_count_slots, move_slots, plan_count_slots, plan_slots, plan_slots_apart, release_key_map, truncate_with_slack};
@@ -89,7 +89,7 @@ impl<'a> MarginalStorage<'a> {
     /// # Errors
     ///
     /// `OverBudget` where `lim` refuses the map that finds equal values.
-    pub(crate) fn plan_compact(&self, lim: &Limits, weights: Option<&WeightStore>, referenced: &[u32], remap: &mut [u32], merge: bool) -> Result<Compaction, OperationError> {
+    pub(crate) fn plan_compact(&self, lim: &Limits, weights: Option<&Weights>, referenced: &[u32], remap: &mut [u32], merge: bool) -> Result<Compaction, OperationError> {
         let kept = referenced.iter().map(|&i| i as usize);
         if let Some(counts) = self.level.marginal_counts() {
             if counts.is_empty() { return Ok(Compaction::Unchanged); }

@@ -14,7 +14,7 @@ use super::level::TddLevel;
 use super::pool::{return_levels, try_take_levels};
 use super::primitives::{ChildPair, EncodedChildRef, NodeIdx, TddNodeId};
 use super::tdd::Tdd;
-use super::weights::WeightStore;
+use super::weights::Weights;
 use super::{ChildDecoder, ChildRef, ValueRef, LEAF_WIDTH, ONE_LEAF_IDX};
 
 /// Hash-cons tables for one level.
@@ -93,7 +93,7 @@ impl InternTable {
 #[derive(Clone, Copy, Debug)]
 pub struct LevelView<'a> {
     level: &'a TddLevel,
-    weights: Option<&'a WeightStore>,
+    weights: Option<&'a Weights>,
 }
 
 impl<'a> LevelView<'a> {
@@ -152,8 +152,6 @@ pub struct TddBuilder {
     levels: Vec<TddLevel>,
     /// Per-level hash-cons tables, allocated on the first intern call.
     interned: Vec<Option<InternTable>>,
-    /// The store a weighted build carries; none in integer mode.
-    weights: Option<WeightStore>,
 }
 
 impl std::fmt::Debug for TddBuilder {
@@ -163,7 +161,7 @@ impl std::fmt::Debug for TddBuilder {
         f.debug_struct("TddBuilder")
             .field("vtree_nodes", &self.vtree.num_nodes())
             .field("levels_filled", &self.levels.iter().filter(|l| l.slot_count() > 0).count())
-            .field("weights", &self.weights.is_some())
+            .field("weights", &self.vtree.weights().is_some())
             .finish()
     }
 }
@@ -182,28 +180,26 @@ impl Tdd {
     ///
     /// [`OperationError::OverBudget`] if the level buffers are refused.
     pub fn builder(eng: &Engine, vtree: &Arc<Vtree>) -> Result<TddBuilder, OperationError> {
-        Ok(TddBuilder::from_levels(Arc::clone(vtree), try_take_levels(eng, vtree.num_nodes())?, None))
+        Ok(TddBuilder::from_levels(Arc::clone(vtree), try_take_levels(eng, vtree.num_nodes())?))
     }
 }
 
 impl TddBuilder {
     /// Shared storage initialization for public and operation-local construction.
-    pub(crate) fn from_levels(vtree: Arc<Vtree>, levels: Vec<TddLevel>, weights: Option<WeightStore>) -> Self {
-        Self { vtree, levels, weights, interned: Vec::new() }
+    pub(crate) fn from_levels(vtree: Arc<Vtree>, levels: Vec<TddLevel>) -> Self {
+        Self { vtree, levels, interned: Vec::new() }
     }
 
-    pub(super) fn parts_mut(&mut self) -> (&mut Vec<TddLevel>, &mut Option<WeightStore>) {
-        (&mut self.levels, &mut self.weights)
+    pub(super) fn levels_mut(&mut self) -> &mut Vec<TddLevel> {
+        &mut self.levels
     }
 
     pub(crate) fn check(&self, output: TddNodeId) -> Result<(), TddBuildError> {
         check_levels(&self.vtree, &self.levels, output, self.table())
     }
 
-    /// The weights the levels are read under: the vtree's home's on a
-    /// weighted home, else the build's own.
-    fn table(&self) -> Option<&WeightStore> {
-        self.weights.as_ref().or_else(|| self.vtree.weights())
+    fn table(&self) -> Option<&Weights> {
+        self.vtree.weights()
     }
 
     /// The level of vtree node `t` as built so far.
@@ -329,30 +325,15 @@ impl TddBuilder {
         Ok(())
     }
 
-    /// Attach literal weights, preserving the configuration of any copied weighted levels.
-    ///
-    /// # Errors
-    ///
-    /// Refuses weights inconsistent with the levels already copied in, and
-    /// any on a weighted home ([`TddBuildError::IncompatibleWeights`]), whose
-    /// diagrams read the home's.
-    pub fn set_weights(&mut self, ws: WeightStore) -> Result<(), TddBuildError> {
-        if self.vtree.weights().is_some() {
-            return Err(TddBuildError::IncompatibleWeights);
-        }
-        ws.install(&self.vtree, &self.levels, &mut self.weights)
-    }
-
     /// Replace level `t` and its weighted column together, discarding its
     /// intern table. The copy is charged to the engine.
     ///
-    /// Copying any level from a weighted source attaches its weight configuration.
     /// Build bottom-up so that the copied references have matching child levels.
     ///
     /// # Errors
     ///
-    /// [`OperationError::InvalidDiagram`] for an incompatible weight
-    /// configuration or a count column in a weighted build, and
+    /// [`OperationError::InvalidDiagram`] for a weight column the vtree's
+    /// weights do not interpret or a count column in a weighted build, and
     /// [`OperationError::OverBudget`] if the copy is refused.
     pub fn replace_level(
         &mut self,
@@ -361,26 +342,19 @@ impl TddBuilder {
         from: LevelView<'_>,
     ) -> Result<(), OperationError> {
         let lim = eng.limits();
-        if let Some(source) = from.weights {
-            if self.table().is_some_and(|ws| !ws.compatible(source)) {
-                return Err(TddBuildError::IncompatibleWeights.into());
-            }
-            if self.table().is_none()
-                && let Some(i) = self.levels.iter().position(|level| level.is_marginal() && !level.is_weight_marginal()) {
-                    return Err(TddBuildError::CountLevelWithWeights { level: VtreeIdx(i as u32) }.into());
-                }
-        }
         if from.level.is_marginal() && !from.level.is_weight_marginal() && self.table().is_some() {
             return Err(TddBuildError::CountLevelWithWeights { level: t }.into());
         }
         if from.level.is_weight_marginal() {
-            from.weights.ok_or(TddBuildError::WeightedLevelWithoutStore { level: t })?;
+            let source = from.weights.ok_or(TddBuildError::WeightedLevelWithoutStore { level: t })?;
+            if !self.table().is_some_and(|ws| ws.compatible(source)) {
+                return Err(TddBuildError::IncompatibleWeights.into());
+            }
             if from.level.weight_values().unwrap_or(&[]).len() != from.level.slot_count() {
                 return Err(TddBuildError::InvalidWeightColumn { level: t, reason: "does not match the level's slot count" }.into());
             }
         }
         from.level.try_clone_over(lim, 0, 0, &mut self.levels[t.idx()])?;
-        if self.table().is_none() { self.weights = from.weights.map(WeightStore::empty_like); }
         if let Some(table) = self.interned.get_mut(t.idx()) { *table = None; }
         Ok(())
     }
@@ -510,7 +484,7 @@ impl TddBuilder {
     /// so that the diagram is built where its caller returns it.
     #[inline(always)]
     pub(super) fn seat(self, output: TddNodeId, dirty: super::Dirty, changed: Option<&[VtreeIdx]>) -> Tdd {
-        let mut tdd = Tdd { vtree: self.vtree, levels: self.levels.into(), weights: self.weights, output, dirty };
+        let mut tdd = Tdd { vtree: self.vtree, levels: self.levels.into(), output, dirty };
         match changed {
             Some(changed) => tdd.close_changed_levels(changed),
             None => tdd.close_levels(),
@@ -528,13 +502,13 @@ impl TddBuilder {
 /// The checks of [`TddBuilder::finish`] on a diagram without weights,
 /// seated without the repeated-pair check.
 // The weights are `None` here, not read from the diagram: a second call of
-// `WeightStore::check_levels` takes it out of line in `finish_trusting_pairs`,
+// `Weights::check_levels` takes it out of line in `finish_trusting_pairs`,
 // whose storage loop then costs a query that reads its diagrams from binary
 // files 0.4 to 0.8% more.
 #[cold]
 #[inline(never)]
 pub(crate) fn check_seated_pairs(tdd: &Tdd) -> Result<(), TddBuildError> {
-    debug_assert!(tdd.weights.is_none(), "a diagram read from a file has no weights");
+    debug_assert!(tdd.weights().is_none(), "a diagram read from a file has no weights");
     check_storage::<true>(&tdd.vtree, &tdd.levels, tdd.output, None)
 }
 
@@ -621,7 +595,7 @@ pub(crate) fn check_levels(
     vtree: &Arc<Vtree>,
     levels: &[TddLevel],
     output: TddNodeId,
-    weights: Option<&WeightStore>,
+    weights: Option<&Weights>,
 ) -> Result<(), TddBuildError> {
     check_storage::<false>(vtree, levels, output, weights)
 }
@@ -638,7 +612,7 @@ fn check_storage<const PAIRS: bool>(
     vtree: &Arc<Vtree>,
     levels: &[TddLevel],
     output: TddNodeId,
-    weights: Option<&WeightStore>,
+    weights: Option<&Weights>,
 ) -> Result<(), TddBuildError> {
     let n = vtree.num_nodes();
     if levels.len() != n {

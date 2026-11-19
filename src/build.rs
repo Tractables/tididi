@@ -80,7 +80,6 @@ pub(crate) fn constant_without_leaf(vtree: &Arc<Vtree>, value: bool) -> Tdd {
         levels: Vec::new().into(),
         output: TddNodeId { vtree: vtree.root(), local },
         dirty: Default::default(),
-        weights: None,
     }
 }
 
@@ -88,9 +87,7 @@ pub(crate) fn constant_without_leaf(vtree: &Arc<Vtree>, value: bool) -> Tdd {
 /// configuration, without its computed columns, built under the engine's
 /// limits.
 pub(crate) fn constant_like(eng: &Engine, source: &Tdd, value: bool) -> Result<Tdd, OperationError> {
-    let mut result = constant_on(eng, &source.vtree, value)?;
-    result.weights = source.weights.as_ref().map(WeightStore::empty_like);
-    Ok(result)
+    constant_on(eng, &source.vtree, value)
 }
 
 /// The levels of a cube: one node per internal vtree node, whose pair names
@@ -138,7 +135,7 @@ fn cube_levels(
 /// conjunction of two built diagrams then knows its own loose levels, and the
 /// prune after it walks only down to them.
 pub(crate) fn seat_canonical(eng: &Engine, vtree: &Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId) -> Tdd {
-    let mut tdd = Assembly::from_levels(eng, Arc::clone(vtree), levels, None)
+    let mut tdd = Assembly::from_levels(eng, Arc::clone(vtree), levels)
         .finish_with(output, Dirty::default(), &[], None)
         .expect("seeding no worklist cannot be refused");
     tdd.levels.certify(output);

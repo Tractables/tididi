@@ -32,14 +32,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Both servers remote, using the original: {}", original_counter.model_count()?);
 
     use num_rational::BigRational;
-    use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+    use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
 
     let half = BigRational::new(1.into(), 2.into());
     let weights = RationalWeights::from_literals(&vec![
         LiteralWeights { negative: half.clone(), positive: half }; 4
     ]);
-    let mut weighted = rules.clone();
-    weighted.set_weights(WeightStore::new(weights, Arithmetic::ExactRational))?;
+    let weighted_vtree = Arc::new(Vtree::balanced(4).with_weights(Weights::new(weights, Arithmetic::ExactRational))?);
+    let (mut weighted, _) = rules.embed(&weighted_vtree, |v| v)?;
     println!("Probability before: {}", weighted.weighted_value()?.unwrap().into_rational());
     weighted.marginalize_levels(&[server_a])?;
     println!("Probability after: {}", weighted.weighted_value()?.unwrap().into_rational());

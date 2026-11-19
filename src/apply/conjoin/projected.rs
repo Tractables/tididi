@@ -7,7 +7,7 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use super::{conjoin_cow, conjoin_onto, prepare_owned_weights, VtreeMask};
+use super::{conjoin_cow, conjoin_onto, VtreeMask};
 use crate::diagram::{return_levels, try_take_levels, Assembly, ChildPair, Dirty, Tdd, TddNodeId};
 use crate::limits::OperationError;
 use crate::apply::extend;
@@ -27,7 +27,6 @@ pub(super) fn conjoin_projections<'a>(eng: &Engine, mut f: Cow<'a, Tdd>, mut g: 
     let into = match sets {
         LeafSets::Equal(same) => {
             reseat_either(eng, &mut f, &mut g, &same)?;
-            prepare_owned_weights(&mut f, &mut g)?;
             let mut out = conjoin_cow(eng, f, g, VtreeMask::default())?;
             crate::reduce::close_constant(eng, &mut out);
             return Ok(out);
@@ -39,7 +38,6 @@ pub(super) fn conjoin_projections<'a>(eng: &Engine, mut f: Cow<'a, Tdd>, mut g: 
                 && joinable(&f)
                 && joinable(&g)
             {
-                crate::apply::shared_weights([&*f, &*g].into_iter())?;
                 return join_at_root(eng, f, &f_map, g, &g_map, f_left, &into);
             }
             into
@@ -98,17 +96,10 @@ pub(super) fn conjoin_constant(eng: &Engine, f: Cow<'_, Tdd>, g: Cow<'_, Tdd>) -
         0 => (f, g),
         _ => (g, f),
     };
-    let weights = crate::apply::shared_weights([&*constant, &*other].into_iter())?;
     if constant.is_zero() || other.is_zero() {
-        let mut zero = constant_without_leaf(&Vtree::empty_projection(constant.vtree().link_home().expect("a vtree with no node is a projection")), false);
-        zero.weights = weights;
-        return Ok(zero);
+        return Ok(constant_without_leaf(&Vtree::empty_projection(constant.vtree().link_home().expect("a vtree with no node is a projection")), false));
     }
-    let mut out = extend::into_owned(eng, other)?;
-    if out.weights.is_none() {
-        out.weights = weights;
-    }
-    Ok(out)
+    extend::into_owned(eng, other)
 }
 
 /// Put one operand on the other's vtree, of the same layout: an owned one is
@@ -151,12 +142,11 @@ fn join_at_root(
         true => ChildPair::new(f.output.local, g.output.local),
         false => ChildPair::new(g.output.local, f.output.local),
     };
-    let mut assembly = Assembly::from_levels(eng, Arc::clone(into), try_take_levels(eng, into.num_nodes())?, None);
-    let (levels, weights) = assembly.parts_mut();
+    let mut assembly = Assembly::from_levels(eng, Arc::clone(into), try_take_levels(eng, into.num_nodes())?);
+    let levels = assembly.levels_mut();
     // A moved level owes the reductions it owed in its operand, at its image.
     let mut carried = Dirty::default();
     for (operand, map) in [(f, f_map), (g, g_map)] {
-        if weights.is_none() { *weights = operand.weights.clone(); }
         let mut owed = match operand {
             Cow::Owned(mut moved) => {
                 let source = &mut moved.levels[..];

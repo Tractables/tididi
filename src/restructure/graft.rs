@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use crate::vtree::{GraftLayout, VarId, Vtree, VtreeIdx};
 
-use crate::diagram::{NodeIdx, Tdd, TddBuildError, WeightStore, ONE_LEAF_IDX};
+use crate::diagram::{NodeIdx, Tdd, TddBuildError, Weights, ONE_LEAF_IDX};
 
 impl Tdd {
     /// The conjunction of `parts`, diagrams compiled in their own local
@@ -30,16 +30,12 @@ impl Tdd {
     /// [`GraftLayout`] comes back so a caller holding per-part side tables keyed
     /// by vtree index can relocate them.
     ///
-    /// `into` is the merged diagram's weight store: each weighted part's
-    /// per-level values move into it under the level's grafted index, so the
-    /// result retains their interpretation. The destination table must cover
-    /// every renamed and free variable; a marginalized part must use the same
-    /// arithmetic and literal weights under its rename. Structural parts can
-    /// be reweighted. Existing destination columns are discarded.
-    ///
-    /// Pass `None` for an unweighted graft, which discards a structural part's
-    /// weights. Stored integer counts cannot be reweighted, and stored weights
-    /// cannot be discarded.
+    /// `into` weighs the grafted vtree ([`Vtree::with_weights`]): each
+    /// weighted part's per-level values move with it under the level's
+    /// grafted index. The table must cover every renamed and free variable;
+    /// a marginalized part must use the same arithmetic and literal weights
+    /// under its rename. Pass `None` for an unweighted graft. Stored integer
+    /// counts cannot be reweighted, and stored weights cannot be discarded.
     /// `parts` is consumed; `eng` supplies level storage. Attaching a marginal
     /// root below a new parent runs a prune under the engine's limits. The
     /// assembly charges its level storage to the limits and a refusal comes
@@ -59,7 +55,7 @@ impl Tdd {
         parts: Vec<(Tdd, Vec<VarId>)>,
         free_vars: &[VarId],
         num_vars: u32,
-        into: Option<WeightStore>,
+        into: Option<Weights>,
     ) -> Result<(Tdd, GraftLayout), GraftError> {
         let _op = eng.limits().enter()?;
         for (part, (tdd, map)) in parts.iter().enumerate() {
@@ -75,8 +71,8 @@ impl Tdd {
 }
 
 impl Engine {
-    /// [`Tdd::graft_over`] of parts already over disjoint variables, with no
-    /// weight store, on [`Vtree::graft`] of their vtrees.
+    /// [`Tdd::graft_over`] of parts already over disjoint variables, without
+    /// weights, on [`Vtree::graft`] of their vtrees.
     pub(crate) fn graft(&self, parts: Vec<Tdd>, spine_vars: &[VarId]) -> Result<Tdd, GraftError> {
         let num_vars = crate::vtree::graft::graft_id_space(parts.iter().map(|t| &*t.vtree), spine_vars);
         graft_impl(self, parts, |_, v| v, spine_vars, num_vars, None)
@@ -93,7 +89,7 @@ fn graft_impl(
     rename: impl Fn(usize, VarId) -> VarId,
     spine_vars: &[VarId],
     num_vars: u32,
-    into: Option<WeightStore>,
+    into: Option<Weights>,
 ) -> Result<(Tdd, GraftLayout), GraftError> {
     let _op = eng.limits().enter()?;
     let n_parts = parts.len();
@@ -108,27 +104,23 @@ fn graft_impl(
     }
     let vtrees: Vec<&Vtree> = parts.iter().map(|t| &*t.vtree).collect();
     let (grafted_vtree, layout) = Vtree::graft_over(&vtrees, rename, spine_vars, num_vars)?;
+    let grafted_vtree = match into {
+        Some(weights) => grafted_vtree.with_weights(weights).map_err(GraftError::DestinationWeights)?,
+        None => grafted_vtree,
+    };
     let grafted_arc: Arc<Vtree> = Arc::new(grafted_vtree);
-
-    if let Some(destination) = &into {
-        destination.check_variables(grafted_arc.leaf_bottomup().map(|(_, var)| var))
-            .map_err(GraftError::DestinationWeights)?;
-    }
     for (part, tdd) in parts.iter().enumerate() {
-        check_part_weights(tdd, into.as_ref(), |local| rename(part, local))
+        check_part_weights(tdd, grafted_arc.weights(), |local| rename(part, local))
             .map_err(|source| GraftError::PartWeights { part, source })?;
     }
-    let into = into.map(|store| store.empty_like());
 
     // A ⊥ part makes the conjunction ⊥; the chain below would name the `ZERO`
     // sentinel as a child.
     if parts.iter().any(Tdd::is_zero) {
-        let mut result = crate::build::constant_zero_padded(eng, &grafted_arc);
-        result.weights = into;
-        return Ok((result, layout));
+        return Ok((crate::build::constant_zero_padded(eng, &grafted_arc), layout));
     }
 
-    let mut placement = MovePlacement::new(eng, &grafted_arc, into)?;
+    let mut placement = MovePlacement::new(eng, &grafted_arc)?;
     for (k, part) in parts.iter_mut().enumerate() {
         placement.move_part(part, layout.part(k).as_slice());
     }
@@ -164,7 +156,7 @@ fn graft_impl(
 }
 
 /// Require a destination interpretation for every marginal value that a part will carry across.
-pub(super) fn check_part_weights(part: &Tdd, destination: Option<&WeightStore>, rename: impl Fn(VarId) -> VarId) -> Result<(), TddBuildError> {
+pub(super) fn check_part_weights(part: &Tdd, destination: Option<&Weights>, rename: impl Fn(VarId) -> VarId) -> Result<(), TddBuildError> {
     for (index, level) in part.levels.iter().enumerate() {
         let level_index = VtreeIdx(index as u32);
         if destination.is_none() && level.is_weight_marginal() {

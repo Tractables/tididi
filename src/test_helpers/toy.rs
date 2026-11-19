@@ -71,7 +71,7 @@ pub fn toy(counts: Vec<u128>, node_pair_lists: &[&[(u32, u32)]]) -> Tdd {
 }
 
 /// Weighted analogue of `toy`: the right child is a weight-marginal level
-/// whose per-slot `BigRational` values live in the `WeightStore` attached to the
+/// whose per-slot `BigRational` values live in the `Weights` attached to the
 /// returned [`Tdd`] (not `marginal_counts`). The caller supplies the store; this
 /// helper writes the values into it via `set_level` and attaches it. Parent pair
 /// refs use the same bare-is-slot polarity as `toy`.
@@ -82,7 +82,7 @@ pub fn toy(counts: Vec<u128>, node_pair_lists: &[&[(u32, u32)]]) -> Tdd {
 /// (`marginalize_leaf_weighted`), so a leaf could not model an
 /// arbitrary-width, compactable marginal store.
 pub fn toy_weighted(
-    mut ws: crate::diagram::WeightStore,
+    mut ws: crate::diagram::Weights,
     values: Vec<num_rational::BigRational>,
     node_pair_lists: &[&[(u32, u32)]],
 ) -> Tdd {
@@ -93,9 +93,9 @@ pub fn toy_weighted(
                 crate::diagram::LiteralWeights { negative: ws.algebra().neg_weight(var).clone(), positive: ws.algebra().pos_weight(var).clone() }
             } else { crate::diagram::LiteralWeights { negative: super::rat(1, 1), positive: super::rat(1, 1) } }
         }).collect();
-        ws = crate::diagram::WeightStore::new(crate::diagram::RationalWeights::from_literals(&weights), ws.arithmetic());
+        ws = crate::diagram::Weights::new(crate::diagram::RationalWeights::from_literals(&weights), ws.arithmetic());
     }
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Arc::new(Vtree::balanced(3).with_weights(ws).unwrap());
     let root = vtree.root();
     let right = match vtree.node(root) {
         VtreeNode::Internal { right, .. } => *right,
@@ -118,9 +118,7 @@ pub fn toy_weighted(
         values.into_iter().map(crate::diagram::WeightValue::exact).collect();
     levels[right.idx()].become_marginal_weighted(wvals);
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
-    let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
-    tdd.set_weights(ws).unwrap();
-    tdd
+    Tdd::from_levels_unchecked(vtree, levels, output)
 }
 
 

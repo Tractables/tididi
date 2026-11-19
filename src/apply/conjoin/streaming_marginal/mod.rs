@@ -6,7 +6,7 @@
 //! [`ValueDomain`]. The output is still a slice of levels, so column
 //! installation does not require a finished `Tdd`.
 
-use crate::diagram::{Arithmetic, WeightStore, WeightValue};
+use crate::diagram::{Arithmetic, Weights, WeightValue};
 use crate::Engine;
 use super::{OperationError, TddLevel, Sides};
 
@@ -41,7 +41,7 @@ pub(crate) struct StreamState<'a, F: ValueDomain> {
 /// not pin `levels`.
 pub(crate) enum StreamLevelState {
     Int(CountVec),
-    /// Weighted: semiring values carried into the external `WeightStore`.
+    /// Weighted: semiring values carried into the external `Weights`.
     Weighted(Vec<WeightValue>),
     /// Scaled floats, kept by the apply until the level's parent has read
     /// them or the sweep ends.
@@ -50,8 +50,8 @@ pub(crate) enum StreamLevelState {
 
 /// The value kind an apply streams in: integer without a weight store, bare
 /// scaled floats under [`Arithmetic::ScaledFloat`], weight values otherwise.
-pub(crate) fn stream_kind(ws: Option<&WeightStore>) -> StreamKind {
-    match ws.map(WeightStore::arithmetic) {
+pub(crate) fn stream_kind(ws: Option<&Weights>) -> StreamKind {
+    match ws.map(Weights::arithmetic) {
         None => StreamKind::Int,
         Some(Arithmetic::ScaledFloat) => StreamKind::Float,
         Some(_) => StreamKind::Weighted,

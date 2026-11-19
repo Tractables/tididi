@@ -130,9 +130,7 @@ impl Engine {
         let _op = lim.enter()?;
         let [l, r] = crate::apply::extend::on_one(self, [Cow::Borrowed(l), Cow::Borrowed(r)])?;
         let (l, r) = (&*l, &*r);
-        if l.weights.is_some()
-            || r.weights.is_some()
-            || l.levels
+        if l.levels
                 .iter()
                 .chain(r.levels.iter())
                 .any(TddLevel::is_weight_marginal)

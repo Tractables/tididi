@@ -151,11 +151,6 @@ pub enum OperationError {
         /// The variables listed.
         vars: usize,
     },
-    /// The operands are on different projections of one home vtree, and one
-    /// that would move to the projection holding all their variables carries
-    /// weights or a summed-out level, which move with it only between
-    /// diagrams of one vtree.
-    WeightsAcrossProjections,
 }
 
 impl std::fmt::Display for OperationError {
@@ -199,9 +194,6 @@ impl std::fmt::Display for OperationError {
             OperationError::RowOutOfRange { row, rows } => write!(f, "row {row} is past the {rows} rows the columns hold"),
             OperationError::TableTooWide { vars } => {
                 write!(f, "a count table over {vars} variables is past the {} it may list", crate::query::MAX_COUNT_TABLE_VARS)
-            }
-            OperationError::WeightsAcrossProjections => {
-                f.write_str("an operand with weights or a summed-out level cannot move to a larger projection of its home")
             }
         }
     }

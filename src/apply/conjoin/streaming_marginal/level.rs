@@ -13,7 +13,7 @@ pub(crate) struct StreamEnv<'a> {
     pub(crate) right_idx: usize,
     pub(crate) vtree: &'a crate::vtree::Vtree,
     pub(crate) cache: &'a StreamCache,
-    pub(crate) ws: Option<&'a WeightStore>,
+    pub(crate) ws: Option<&'a Weights>,
 }
 
 /// Prepare the children and open the [`StreamLevelState`] output column when
@@ -126,7 +126,7 @@ pub(crate) fn commit_stream_state(
     vtree: &crate::vtree::Vtree,
     levels: &mut [TddLevel],
     cache: &mut StreamCache,
-    ws: Option<&WeightStore>,
+    ws: Option<&Weights>,
 ) {
     let t = InternalLevel::new(vtree, t).expect("a streaming target is an internal level");
     match st {
