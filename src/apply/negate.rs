@@ -55,8 +55,8 @@ impl Engine {
     /// same diagram for the same work.
     ///
     /// The complement of a certified operand ([`Tdd::is_canonical`]) is
-    /// certified. Of any other operand it is not minimized: it may hold twins
-    /// and the nodes only the old output reached; [`minimize`](Self::minimize),
+    /// certified. Of any other operand it is pruned but not contracted: it
+    /// may hold twins; [`minimize`](Self::minimize),
     /// or an engine with [`canonical_results`](crate::limits::LimitConfig::with_canonical_results),
     /// certifies it.
     ///
@@ -96,15 +96,20 @@ pub(crate) fn negate_closed(eng: &Engine, f: Cow<'_, Tdd>) -> Result<Tdd, Operat
     // it orphans is the old output's, which the prune reads alone; keeping the
     // certificate here costs a fraction of the complement.
     if canonical {
-        eng.certify_complement(&mut result, true, old)?;
+        eng.certify_complement(&mut result, false, old)?;
         if result.is_zero() {
             crate::reduce::prune::clear_false(&mut result);
         }
     } else {
-        // The dropped root cells may orphan nodes below the root, which no
-        // prune removes here.
-        result.dirty.set_loose(None);
-        eng.close(&mut result, &[])?;
+        // The dropped root cells may orphan nodes below the root. Pruning them
+        // here walks from the output alone; left in place, the loose levels
+        // are unknown and every later prune walks the whole diagram.
+        eng.reduce_scoped(
+            &mut result,
+            crate::reduce::ReductionPlan::Prune,
+            crate::reduce::prune::PruneScope::BelowRoot,
+            crate::reduce::Close::Settle(&[]),
+        )?;
     }
     Ok(result)
 }
