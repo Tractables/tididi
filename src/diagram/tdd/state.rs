@@ -109,6 +109,13 @@ impl LevelStorage {
         (i < self.levels.len()).then_some(VtreeIdx(i as u32))
     }
 
+    /// Record that no level is marginal, which the caller knows from how it
+    /// built them, so [`first_marginal`](Self::first_marginal) reads no level.
+    pub(crate) fn know_no_marginal(&mut self) {
+        debug_assert!(!self.levels.iter().any(TddLevel::is_marginal));
+        *self.summary.marginal.0.get_mut() = self.levels.len();
+    }
+
     pub(crate) fn node_count(&self) -> usize {
         self.summary.nodes.read(|| self.levels.iter().map(TddLevel::slot_count).sum())
     }

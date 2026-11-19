@@ -453,6 +453,7 @@ pub(crate) struct Plan {
     /// For a plan [`Plan::cone`] built, every internal destination node with
     /// a source variable under it, children before parents; empty otherwise.
     cone: Vec<VtreeIdx>,
+    chain_from: usize,
 }
 
 /// What a destination node's level is under a [`Plan`].
@@ -517,6 +518,13 @@ impl Plan {
         &self.cone
     }
 
+    /// For a plan [`Plan::cone`] built, the index in
+    /// [`cone_nodes`](Self::cone_nodes) of the parent of the source root's
+    /// image: the chain to the root starts there.
+    pub(crate) fn chain_from(&self) -> usize {
+        self.chain_from
+    }
+
     /// The plan that embeds `source` in `into`, a projection of the same home
     /// on a superset of its variables, with `leaves` the image of each leaf
     /// of `source`: the nodes of `into` with a variable of `source` under
@@ -536,7 +544,7 @@ impl Plan {
         leaves: &[(VtreeIdx, VtreeIdx)],
         mut targets: Vec<Target>,
     ) -> Result<Plan, (OperationError, Vec<Target>)> {
-        let mut plan = Plan { targets: Vec::new(), embedding: Embedding { levels: Vec::new() }, mirrors: false, pass_throughs: 0, cone: Vec::new() };
+        let mut plan = Plan { targets: Vec::new(), embedding: Embedding { levels: Vec::new() }, mirrors: false, pass_throughs: 0, cone: Vec::new(), chain_from: 0 };
         if let Err(error) = lim.try_resize(&mut plan.embedding.levels, source.num_nodes(), into.root()) {
             return Err((error, targets));
         }
@@ -583,6 +591,7 @@ impl Plan {
             found(self, image, Target::Image { source: s, mirrored: false })?;
         }
         let top = source.root();
+        self.chain_from = self.cone.len();
         let mut u = self.embedding.levels[top.idx()];
         while let Some(parent) = into.node(u).parent() {
             found(self, parent, Target::PassThrough(top))?;
@@ -700,6 +709,7 @@ impl Plan {
             mirrors,
             pass_throughs,
             cone: Vec::new(),
+            chain_from: 0,
         })
     }
 }
