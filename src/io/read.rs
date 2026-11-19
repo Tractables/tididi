@@ -444,5 +444,5 @@ fn build_diagram(
     };
     crate::diagram::TddBuilder::from_levels(Arc::clone(vtree), levels, None)
         .finish(output)
-        .map_err(|e| malformed(h.line, format!("the records do not form a diagram: {e}")))
+        .map_err(|e| super::build_error(e, |e| malformed(h.line, format!("the records do not form a diagram: {e}"))))
 }

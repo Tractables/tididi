@@ -166,6 +166,12 @@ pub enum IoError {
     /// file whose header or checksum is wrong is refused here before any of
     /// it is parsed.
     Format(String),
+    /// Reading onto a projection of a home: the allocator refused memory
+    /// to trim the diagram read onto the projection of the leaves it uses.
+    /// The trim runs with no memory budget installed, so no
+    /// [`LimitConfig`](crate::limits::LimitConfig) avoids this; the data is
+    /// valid.
+    OverBudget,
 }
 
 impl std::fmt::Display for IoError {
@@ -173,6 +179,10 @@ impl std::fmt::Display for IoError {
         match self {
             IoError::Io(e) => write!(f, "{e}"),
             IoError::Format(m) => f.write_str(m),
+            IoError::OverBudget => f.write_str(
+                "the allocator refused memory to trim the diagram read onto the leaves it uses \
+                 (no memory budget applies to a reader)",
+            ),
         }
     }
 }
@@ -181,7 +191,7 @@ impl std::error::Error for IoError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             IoError::Io(e) => Some(e),
-            IoError::Format(_) => None,
+            IoError::Format(_) | IoError::OverBudget => None,
         }
     }
 }
@@ -202,6 +212,16 @@ const TDD_FORMAT_VERSION: u32 = 1;
 
 /// What a reader answers for a vtree with a region, which no file describes.
 const REGION_REFUSED: &str = "the vtree read against has a summed-out region, which no file describes";
+
+/// [`IoError::OverBudget`] for the refused trim on a home, else `format`'s
+/// error.
+#[cold]
+fn build_error(e: crate::diagram::TddBuildError, format: impl FnOnce(crate::diagram::TddBuildError) -> IoError) -> IoError {
+    match e {
+        crate::diagram::TddBuildError::OverBudget => IoError::OverBudget,
+        e => format(e),
+    }
+}
 
 /// Reject marginal values that structural serialization and rendering cannot represent.
 fn reject_marginal_levels(tdd: &Tdd, what: &str) -> Result<(), IoError> {

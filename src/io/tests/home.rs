@@ -237,3 +237,17 @@ fn a_vtree_with_a_region_is_refused() {
         assert!(matches!(back, Err(IoError::Format(_))), "{:?}", back.map(|_| ()));
     }
 }
+
+/// A trim refused on a home is reported as the refusal it is, not as a
+/// format error; every other build error stays a format error. The trim runs
+/// on a context engine whose limits are reset, so only the allocator can
+/// refuse it, and no test can arm that end to end.
+#[test]
+fn a_refused_trim_is_an_allocation_refusal() {
+    use crate::diagram::TddBuildError;
+    let refused = crate::io::build_error(TddBuildError::OverBudget, |_| unreachable!("a refusal is no format error"));
+    assert!(matches!(refused, IoError::OverBudget), "{refused:?}");
+    assert!(refused.to_string().contains("allocator refused"), "{refused}");
+    let format = crate::io::build_error(TddBuildError::IncompatibleWeights, |e| IoError::Format(e.to_string()));
+    assert!(matches!(format, IoError::Format(_)), "{format:?}");
+}
