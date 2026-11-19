@@ -195,6 +195,20 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for EmitLoneColumns<'_, '_
         }
     }
 
+    /// The level's rows of one or two f pairs written through one arena
+    /// row and one gate count ([`lone_rows`]).
+    #[inline(always)]
+    fn whole_rows(
+        &mut self,
+        _eng: &Engine,
+        rows: WholeRows<'_, '_, L, R>,
+    ) -> Result<usize, OperationError> {
+        if self.lone.len() == 1 {
+            return Ok(0);
+        }
+        lone_rows(&mut self.sink, self.lone, rows)
+    }
+
     #[inline(always)]
     fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
         cell_pairs::<_, _, _>(
@@ -242,59 +256,273 @@ fn lone_row<const K: usize, L: ChildLookup, R: ChildLookup>(
         return Ok(0);
     };
     super::super::note_whole_row();
-    let (l0, r0) = (left.row(f[0].left.0), right.row(f[0].right.0));
-    let (l1, r1) = (left.row(f[K - 1].left.0), right.row(f[K - 1].right.0));
+    let rows = lone_child_rows((left, right), f);
     // The row's write position held in registers across its cells.
     let mut cursor = out.cursor();
     let units = K as u64;
-    let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
     // The row's cells, tested once here rather than at each store.
     assert!(row_base <= node_idx.len() && width <= node_idx.len() - row_base);
-    let mut start = 0;
-    while start < width {
-        // Cell `start` charged to the gate, which polls if it comes due,
-        // then the cells after it that leave it short of due, charged
-        // together: their loop holds no gate count.
-        super::rows_stream::charge(gate, &mut due_at, &mut due, units)?;
-        let short = (due.saturating_sub(1) / units).min((width - start - 1) as u64);
-        due -= short * units;
-        let end = start + 1 + short as usize;
-        for (j, q) in (start..end).zip(&lone[start..end]) {
-            let (c, d) = (q.left.0, q.right.0);
-            // An f pair's product with the column's pair: `None` where a side
-            // has none.
-            let product = |node_idx: &[u32], l: L::Row, r: R::Row| {
-                let lc = left.get_in_view(node_idx, l, c);
-                if left.kills() && lc == NO_PRODUCT {
-                    return None;
-                }
-                let rc = right.get_in_view(node_idx, r, d);
-                (!right.kills() || rc != NO_PRODUCT).then_some((lc, rc))
+    let row_units = width as u64 * units;
+    let (mut due_at, mut due) = (gate.due_in(), gate.due_in());
+    if row_units < due {
+        // No cell of the row brings the gate due.
+        // Safety: the row was opened for its cells, which `node_idx` holds.
+        unsafe { lone_cells::<K, _, _>(&mut cursor, (left, right), rows, (node_idx, row_base), 0, lone) };
+        due -= row_units;
+    } else {
+        let mut start = 0;
+        while start < width {
+            // Cell `start` charged to the gate, which polls if it comes due,
+            // then the cells after it that leave it short of due, charged
+            // together: their loop holds no gate count.
+            super::rows_stream::charge(gate, &mut due_at, &mut due, units)?;
+            let short = (due.saturating_sub(1) / units).min((width - start - 1) as u64);
+            due -= short * units;
+            let end = start + 1 + short as usize;
+            // Safety: as above, for cells `start..end`.
+            unsafe {
+                lone_cells::<K, _, _>(
+                    &mut cursor,
+                    (left, right),
+                    rows,
+                    (node_idx, row_base),
+                    start,
+                    &lone[start..end],
+                )
             };
-            let first = product(node_idx, l0, r0);
-            // Safety: the row was opened for a node a column and, with two f
-            // pairs, for two pairs a column.
-            let node = unsafe {
-                if K == 1 {
-                    first.map(|(lc, rc)| cursor.single_node(lc, rc))
-                } else {
-                    match (first, product(node_idx, l1, r1)) {
-                        (Some((a, b)), Some((c, d))) => Some(cursor.pair_node(a, b, c, d)),
-                        (Some((a, b)), None) | (None, Some((a, b))) => {
-                            Some(cursor.single_node(a, b))
-                        }
-                        (None, None) => None,
-                    }
-                }
-            };
-            if let Some(node) = node {
-                // Safety: `j` is below `width`, which the row's cells fit.
-                unsafe { *node_idx.get_unchecked_mut(row_base + j) = node };
-            }
+            start = end;
         }
-        start = end;
     }
     out.set_cursor(cursor);
     gate.add_short(due_at - due);
     Ok(width)
+}
+
+/// The child rows of a lone row's first and last f pair.
+type LoneRows<L, R> = (
+    (<L as ChildLookup>::Row, <R as ChildLookup>::Row),
+    (<L as ChildLookup>::Row, <R as ChildLookup>::Row),
+);
+
+/// [`LoneRows`] of the f pairs `f`, one or two.
+#[inline(always)]
+fn lone_child_rows<L: ChildLookup, R: ChildLookup>(
+    (left, right): (&L, &R),
+    f: &[ChildPair],
+) -> LoneRows<L, R> {
+    let (first, last) = (f[0], f[f.len() - 1]);
+    (
+        (left.row(first.left.0), right.row(first.right.0)),
+        (left.row(last.left.0), right.row(last.right.0)),
+    )
+}
+
+/// The cells from column `start` of a lone row of `K` f pairs whose child
+/// rows are `rows`, one a pair of `cells`, each written through `cursor`
+/// and its node stored at `row_base` plus its column of `node_idx`.
+///
+/// # Safety
+///
+/// The cursor has room for a node a cell and, with two f pairs, two pairs
+/// a cell, and `node_idx` holds `row_base + start + cells.len()` cells.
+#[inline(always)]
+unsafe fn lone_cells<const K: usize, L: ChildLookup, R: ChildLookup>(
+    cursor: &mut RowCursor,
+    (left, right): (&L, &R),
+    ((l0, r0), (l1, r1)): LoneRows<L, R>,
+    (node_idx, row_base): (&mut [u32], usize),
+    start: usize,
+    cells: &[ChildPair],
+) {
+    // The cursor in a local: read and written through `cursor`, its node
+    // count is stored back at every cell, as the arena writes might alias
+    // it.
+    let held = cursor;
+    let mut local = *held;
+    let cursor = &mut local;
+    // A bounded range: zipped with a slice it keeps one count, where an
+    // open one keeps two.
+    for (j, q) in (start..start + cells.len()).zip(cells) {
+        let (c, d) = (q.left.0, q.right.0);
+        // An f pair's product with the column's pair: `None` where a side
+        // has none.
+        let product = |node_idx: &[u32], l: L::Row, r: R::Row| {
+            let lc = left.get_in_row(node_idx, l, c);
+            if left.kills() && lc == NO_PRODUCT {
+                return None;
+            }
+            let rc = right.get_in_row(node_idx, r, d);
+            (!right.kills() || rc != NO_PRODUCT).then_some((lc, rc))
+        };
+        let first = product(node_idx, l0, r0);
+        // Safety: as the caller's.
+        let node = unsafe {
+            if K == 1 {
+                first.map(|(lc, rc)| cursor.single_node(lc, rc))
+            } else {
+                match (first, product(node_idx, l1, r1)) {
+                    (Some((a, b)), Some((c, d))) => Some(cursor.pair_node(a, b, c, d)),
+                    (Some((a, b)), None) | (None, Some((a, b))) => Some(cursor.single_node(a, b)),
+                    (None, None) => None,
+                }
+            }
+        };
+        if let Some(node) = node {
+            // Safety: as the caller's.
+            unsafe { *node_idx.get_unchecked_mut(row_base + j) = node };
+        }
+    }
+    *held = local;
+}
+
+/// Rows of fewer cells than this are written by [`lone_rows`] in its own
+/// loop; wider ones through [`lone_cells_apart`]. Inline in the row loop
+/// the cell loop's cursor and slab pointers live on the stack, one load a
+/// cell and four more a cell written; a call costs less than that only on
+/// rows of at least this many cells.
+const INLINE_LONE_CELLS: usize = 8;
+
+/// [`lone_cells`] from column 0 in a function of its own, so its loop has
+/// the registers to itself.
+///
+/// # Safety
+///
+/// As [`lone_cells`].
+#[inline(never)]
+unsafe fn lone_cells_apart<const K: usize, L: ChildLookup, R: ChildLookup>(
+    cursor: &mut RowCursor,
+    sides: (&L, &R),
+    rows: LoneRows<L, R>,
+    row: (&mut [u32], usize),
+    cells: &[ChildPair],
+) {
+    // Safety: as the caller's.
+    unsafe { lone_cells::<K, L, R>(cursor, sides, rows, row, 0, cells) }
+}
+
+/// How a run of [`lone_rows`] ended.
+enum LoneRun {
+    /// Every row of the level is written.
+    Level,
+    /// The row at the run's end is left to the row loop: it holds more
+    /// than two f pairs or the arenas have no room for it.
+    Declined,
+    /// The row at the run's end, of this many f pairs, brings the gate due.
+    Due(usize),
+}
+
+/// [`EmitLoneColumns`] on a level's rows from the first, each as
+/// [`lone_row`] and the row loop's poll after it would write and charge it:
+/// the rows that bring the gate due nowhere through one [`RowCursor`],
+/// their units counted down from one `due_in`, and a row that brings it due
+/// through [`lone_row`]. The first row of more than two f pairs, or that the
+/// arenas have no room for, is left to the row loop with the rows after it.
+#[inline(always)]
+fn lone_rows<L: ChildLookup, R: ChildLookup>(
+    sink: &mut EmitSink<'_>,
+    lone: &[ChildPair],
+    rows: WholeRows<'_, '_, L, R>,
+) -> Result<usize, OperationError> {
+    let WholeRows {
+        f_level,
+        f_width,
+        f_described,
+        f_pairs_scratch,
+        views,
+        dense,
+        ctx,
+        g_level,
+        g_pairs_scratch,
+        node_idx,
+        whole_grid,
+        left,
+        right,
+        gate,
+    } = rows;
+    let width = lone.len();
+    let base = ctx.output_grid_base;
+    // An open grid's cells, tested once here rather than at each store; a
+    // row of a grid opened a row at a time is in the slab once opened.
+    assert!(
+        !whole_grid
+            || base <= node_idx.len()
+                && f_width.checked_mul(width).is_some_and(|n| n <= node_idx.len() - base)
+    );
+    let width_cap = gate.limits().level_width_cap();
+    let mut i = 0;
+    loop {
+        let Some(mut out) = sink.open_row(0, 0, width_cap) else {
+            return Ok(i);
+        };
+        let mut cursor = out.cursor();
+        let due_at = gate.due_in();
+        let mut due = due_at;
+        let end = loop {
+            if i == f_width {
+                break LoneRun::Level;
+            }
+            let row_base = base + i * width;
+            if !whole_grid && !extend_slab(node_idx, row_base, row_base + width) {
+                mark_dead(&mut node_idx[row_base..row_base + width]);
+            }
+            let f = f_row(f_level, f_described, f_pairs_scratch, i, views);
+            if f.is_empty() || (!dense && row_alive_masks(ctx, f).is_none()) {
+                i += 1;
+                continue;
+            }
+            let k = f.len();
+            let pairs = if k == 1 { 0 } else { 2 * width };
+            if k > 2 || cursor.node_room() < width || cursor.pair_room() < pairs {
+                break LoneRun::Declined;
+            }
+            // The row's cells, `k` units each, and the row loop's unit a cell.
+            let units = (width * (k + 1)) as u64;
+            if units >= due {
+                break LoneRun::Due(k);
+            }
+            due -= units;
+            super::super::note_whole_row();
+            let rows = lone_child_rows((left, right), f);
+            let row = (&mut node_idx[..], row_base);
+            // Safety: the room was tested above, and the row's cells are in
+            // the slab.
+            unsafe {
+                let (c, sides) = (&mut cursor, (left, right));
+                match (k == 1, width < INLINE_LONE_CELLS) {
+                    (true, true) => lone_cells::<1, _, _>(c, sides, rows, row, 0, lone),
+                    (false, true) => lone_cells::<2, _, _>(c, sides, rows, row, 0, lone),
+                    (true, false) => lone_cells_apart::<1, _, _>(c, sides, rows, row, lone),
+                    (false, false) => lone_cells_apart::<2, _, _>(c, sides, rows, row, lone),
+                }
+            }
+            i += 1;
+        };
+        out.set_cursor(cursor);
+        gate.add_short(due_at - due);
+        drop(out);
+        let LoneRun::Due(k) = end else {
+            return Ok(if matches!(end, LoneRun::Level) { f_width } else { i });
+        };
+        let row = WholeRow {
+            row_base: base + i * width,
+            f_pairs: f_row(f_level, f_described, f_pairs_scratch, i, views),
+            ctx,
+            g_level,
+            g_pairs_scratch: &mut *g_pairs_scratch,
+            node_idx: &mut node_idx[..],
+            left,
+            right,
+            gate: &mut *gate,
+        };
+        let written = if k == 1 {
+            lone_row::<1, L, R>(sink, lone, row)?
+        } else {
+            lone_row::<2, L, R>(sink, lone, row)?
+        };
+        if written != width {
+            return Ok(i);
+        }
+        gate.poll(width as u64)?;
+        i += 1;
+    }
 }
