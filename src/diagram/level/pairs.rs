@@ -796,6 +796,17 @@ impl TddLevel {
         }
     }
 
+    /// At least the pairs the level's nodes hold, in constant time: a stored
+    /// level's arena and one pair a node, which may hold its pair in its
+    /// words; an implicit level's off its description.
+    #[inline]
+    pub(crate) fn pairs_bound(&self) -> usize {
+        match self.implicit() {
+            Some(d) => d.pairs(),
+            None => self.pairs.stored_vec_len() + self.nodes().len(),
+        }
+    }
+
     /// [`live_pairs`](Self::live_pairs) on a level of a closed diagram: a
     /// stored structural level's off the count kept once read
     /// ([`HeldPairs`](super::HeldPairs)), read and kept here otherwise.

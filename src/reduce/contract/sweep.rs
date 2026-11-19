@@ -25,7 +25,7 @@ use crate::diagram::{ChildSide, Pass, Tdd};
 
 use crate::vtree::VtreeIdx;
 
-use crate::limits::OperationError;
+use crate::limits::{OperationError, TIME_TEST_PAIRS};
 
 use super::fingerprint::{
     find_listed_twin_groups, find_twin_groups, list_members, named_by, pair_mass,
@@ -187,7 +187,19 @@ fn contract_child(
     if lists || fused_but {
         reserve_survivors(eng, t1, scratch)?;
     }
+    // A search and a merge are charged by the child's nodes and read or
+    // rewrite the parent's pairs, which can be seconds of work: under a time
+    // rule the merge, which cannot stop part way, starts only before the
+    // deadline, and the next poll reads the clock.
+    let lim = eng.limits();
+    let long = tdd.levels[parent.idx()].pairs_bound() >= TIME_TEST_PAIRS && lim.timed();
+    if long {
+        lim.check_time()?;
+    }
     let merged = contract_twins(eng, tdd, t1, parent, t1_side, scratch)?;
+    if long {
+        lim.forget_reading();
+    }
     if merged == 0 {
         // Every found group was overlap-filtered: the level is unchanged, and
         // reporting progress would spin the sibling-pair loop.

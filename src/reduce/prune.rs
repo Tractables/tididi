@@ -27,7 +27,7 @@ use crate::diagram::{
 use crate::Engine;
 
 use crate::execution::pool::{Buffers, PooledScratch, Scratch};
-use crate::limits::{Limits, OperationError, PollGate, Transient};
+use crate::limits::{Limits, OperationError, PollGate, TIME_TEST_PAIRS, Transient};
 use crate::vtree::{Vtree, VtreeIdx};
 
 /// The new index of a slot that did not survive, in the remap a parent
@@ -1881,11 +1881,11 @@ pub(super) fn prune_walk(
         tdd.output.local = NodeIdx(rank(&marks[base..], tdd.output.local.idx()));
     }
 
-    // Both passes cross every slot the walk is charged for, and neither can
-    // stop partway: the compaction rewrites levels in place, so a diagram
+    // Both passes cross every slot the walk is charged for. The compaction
+    // cannot stop partway: it rewrites levels in place, so a diagram
     // abandoned mid-pass has some levels compacted and others still naming
-    // their old indices. The cancellation test belongs to the callers,
-    // between prunes.
+    // their old indices. The marking tests the time between levels; the
+    // work-unit test belongs to the callers, between prunes.
     eng.limits().charge_work(2 * walk.slots as u64);
     Ok(())
 }
@@ -1962,6 +1962,10 @@ fn mark_walk(
     // block: its marks would never be read. Such a child is charged its slots
     // when it is wider than every one met before it, and nothing otherwise.
     let mut unmarked = 0usize;
+    // Pairs marked since the last time test. The walk is charged at its end,
+    // and changes nothing the compaction after it reads, so it can stop
+    // between levels.
+    let (timed, mut read) = (lim.timed(), 0usize);
 
     // Marking, top-down. A level has one parent, so a level's marks are
     // complete as soon as that parent has been walked, and a queue is a valid
@@ -1993,6 +1997,13 @@ fn mark_walk(
         let (lb, rb) = (block(left, lw)?, block(right, rw)?);
 
         visits[i].kept = mark_children_of_level(lim, tdd, t, visits[i].base, [lb, rb], marks, bytes)?;
+        if timed {
+            read += tdd.levels[t.idx()].pairs_bound();
+            if read >= TIME_TEST_PAIRS {
+                read = 0;
+                lim.check_time()?;
+            }
+        }
 
         let (lc, rc) = (Child::read(marks, lb, lw), Child::read(marks, rb, rw));
         visits[i].left = lc;
