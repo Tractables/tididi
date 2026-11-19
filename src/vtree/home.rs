@@ -619,6 +619,31 @@ impl Vtree {
         }
     }
 
+    /// Whether `inner`, a projection with no region, has its leaves among
+    /// fewer than all of this vtree's, which has no region and is on the same
+    /// home or is it; if so, each leaf of `inner` and the leaf of this vtree
+    /// with its variable are pushed to `leaves`, in rank order. The ranks are
+    /// found as [`Vtree::leaf_sets`] finds them.
+    pub(crate) fn nested_leaves(&self, inner: &Vtree, leaves: &mut Vec<(VtreeIdx, VtreeIdx)>) -> bool {
+        let Some(li) = inner.home.as_deref().filter(|li| li.regions.is_empty()) else { return false };
+        let own = |j: usize| li.in_order[2 * j];
+        match self.home.as_deref() {
+            None if std::ptr::eq(self, &**li.home.vtree()) => {
+                let index = li.home.index();
+                leaves.extend(li.ranks.iter().enumerate().map(|(j, &r)| (own(j), index.leaf_at[r as usize])));
+                true
+            }
+            Some(ls) if ls.regions.is_empty() && Arc::ptr_eq(ls.home.vtree(), li.home.vtree()) && li.ranks.len() < ls.ranks.len() => {
+                let mut j = 0;
+                ranks_within(&li.ranks, &ls.ranks, |i| {
+                    leaves.push((own(j), ls.in_order[2 * i]));
+                    j += 1;
+                })
+            }
+            _ => false,
+        }
+    }
+
     /// How the leaf sets of `a` and `b` compare, regions counted as leaves.
     ///
     /// # Errors

@@ -318,3 +318,78 @@ fn summed_out_internal_levels_do_not_move() {
 }
 
 
+
+/// A random diagram on the projection of `home` on `vars`, not trimmed, so
+/// that it may name a leaf of a variable it does not depend on as true.
+fn untrimmed(eng: &Engine, home: &Home, vars: &[VarId], rng: &mut Lcg) -> Tdd {
+    let mut f = Tdd::one(&Vtree::projection(home, vars.iter().copied()).unwrap());
+    for _ in 0..rng.below(4) {
+        let clause: Vec<i32> = (0..1 + rng.below(3))
+            .map(|_| {
+                let var = vars[rng.below(vars.len() as u64) as usize].0 as i32;
+                if rng.coin() { var } else { -var }
+            })
+            .collect();
+        f = eng.and_clause(f, &clause).unwrap();
+    }
+    f
+}
+
+#[test]
+fn a_conjunction_with_one_leaf_set_inside_the_other_is_the_conjunction_on_the_home() {
+    let eng = Engine::new();
+    let mut nested = 0;
+    for seed in 0..300u64 {
+        let hm = Home::new(rotated_home(2 + (seed % 11) as u32, seed));
+        let home = Arc::clone(hm.vtree());
+        let mut rng = Lcg::new(seed ^ 0x2545_f491);
+        let all = leaf_vars(&home).collect::<Vec<_>>();
+        let outer = match part(&all, &mut rng) {
+            vars if vars.len() >= 2 => vars,
+            _ => all.clone(),
+        };
+        let inner: Vec<VarId> = match outer.iter().copied().filter(|_| rng.coin()).collect::<Vec<_>>() {
+            vars if !vars.is_empty() && vars.len() < outer.len() => vars,
+            _ => outer[..1].to_vec(),
+        };
+        let f = untrimmed(&eng, &hm, &outer, &mut rng);
+        let g = untrimmed(&eng, &hm, &inner, &mut rng);
+        let case = Case { eng: &eng, home: &home, what: format!("seed {seed} f {outer:?} g {inner:?}") };
+        let (f_vars, g_vars) = (leaf_vars(f.vtree()).collect::<Vec<_>>(), leaf_vars(g.vtree()).collect::<Vec<_>>());
+        if g_vars.len() >= f_vars.len() || g_vars.iter().any(|v| !f_vars.contains(v)) {
+            continue;
+        }
+        nested += 1;
+        let expected = eng.and(on_home(&eng, &f, &home), on_home(&eng, &g, &home)).unwrap();
+        for out in [eng.and(f.clone(), &g), eng.and(&g, f.clone()), eng.and(f.clone(), g.clone())] {
+            let out = out.unwrap();
+            assert!(Arc::ptr_eq(out.vtree(), f.vtree()) || out.vtree().num_nodes() == 0, "{}", case.what);
+            assert!(eng.equivalent(&on_home(&eng, &out, &home), &expected).unwrap(), "{}", case.what);
+        }
+    }
+    assert!(nested >= 100, "{nested} of 300 seeds nested");
+}
+
+#[test]
+fn a_conjunction_with_a_literal_inside_an_equivalence_keeps_its_cone() {
+    let eng = Engine::new();
+    for seed in 0..12u64 {
+        let hm = Home::new(rotated_home(2 + seed as u32 % 6, seed));
+        let home = Arc::clone(hm.vtree());
+        let vars = leaf_vars(&home).collect::<Vec<_>>();
+        let (x, y) = (vars[0].0 as i32, vars[vars.len() - 1].0 as i32);
+        let own = Vtree::projection(&hm, vars.iter().copied()).unwrap();
+        let mut f = Tdd::one(&own);
+        for clause in [[x, -y], [-x, y]] {
+            f = eng.and_clause(f, &clause).unwrap();
+        }
+        for lit in [x, -x, y, -y] {
+            let g = Tdd::clause(&Vtree::projection(&hm, [VarId(lit.unsigned_abs())]).unwrap(), [lit]).unwrap();
+            let expected = eng.and(on_home(&eng, &f, &home), on_home(&eng, &g, &home)).unwrap();
+            let out = eng.and(f.clone(), &g).unwrap();
+            assert!(Arc::ptr_eq(out.vtree(), f.vtree()), "seed {seed} literal {lit}");
+            assert!(eng.equivalent(&on_home(&eng, &out, &home), &expected).unwrap(), "seed {seed} literal {lit}");
+            assert_eq!(eng.model_count(&out).unwrap(), num_bigint::BigUint::from(1u32) << (vars.len() - 2), "seed {seed} literal {lit}");
+        }
+    }
+}

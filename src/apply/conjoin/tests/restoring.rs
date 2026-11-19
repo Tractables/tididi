@@ -138,8 +138,10 @@ fn one_projection(eng: &Engine) -> (Tdd, Tdd) {
     operands(eng, &projection(&home, 1..=12))
 }
 
+type Layout = fn(&Engine) -> (Tdd, Tdd);
+
 /// Each layout of operands the restoring conjunction takes owned.
-const LAYOUTS: [fn(&Engine) -> (Tdd, Tdd); 4] = [on_one_vtree, nested, equal_layouts, one_projection];
+const LAYOUTS: [Layout; 4] = [on_one_vtree, nested, equal_layouts, one_projection];
 
 #[test]
 fn every_refused_reserve_gives_the_operands_back() {

@@ -58,7 +58,9 @@ pub(super) fn take_regions(
         let stack = &mut run.lists.stack;
         let width = if carried_from_f(cone, at) {
             run.g_identity[at] = true;
-            run.f_identity[at] = cone.constant || constant_true(vtree, f, cone, true, t, stack);
+            // An adopting conjunction walks no region: a top it does not find
+            // constant true costs a dense level at most.
+            run.f_identity[at] = cone.constant || (!run.adopted && constant_true(vtree, f, cone, true, t, stack));
             run.f_widths[at]
         } else {
             run.f_identity[at] = true;

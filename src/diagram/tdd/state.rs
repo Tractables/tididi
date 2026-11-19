@@ -575,6 +575,21 @@ impl Dirty {
         out
     }
 
+    /// [`stacked`](Self::stacked) reusing the lists of an `over` the caller
+    /// gives up, `under`'s appended: a list denotes a set, so its order is
+    /// immaterial.
+    pub(crate) fn stacked_onto(mut over: Dirty, under: &Dirty, rebuilt: usize) -> Dirty {
+        let mut out = Dirty::default();
+        for pass in Pass::ALL {
+            let mut list = std::mem::take(over.list(pass));
+            let under = &under.lists[pass as usize];
+            list.reserve(under.len() + room(pass, rebuilt));
+            list.extend_from_slice(under);
+            *out.list(pass) = list;
+        }
+        out
+    }
+
     /// Copy pending work under the operation's allocation budget.
     pub(crate) fn clone_on(&self, eng: &crate::Engine) -> Result<Self, crate::OperationError> {
         fn copy_slice<T: Copy>(

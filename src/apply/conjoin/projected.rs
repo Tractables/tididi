@@ -7,7 +7,11 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use super::{conjoin_cow, conjoin_kept, conjoin_onto, prepare_owned_weights, AndRefused, Operands, VtreeMask};
+use super::drive;
+use super::held::Held;
+use super::view::View;
+use super::{conjoin_cow, conjoin_kept, conjoin_onto, prepare_owned_weights, recycle, AndRefused, Operands, VtreeMask};
+use crate::restructure::embed::Plan;
 use crate::diagram::{return_levels, try_take_levels, Assembly, ChildPair, Dirty, Tdd, TddNodeId};
 use crate::limits::OperationError;
 use crate::apply::extend;
@@ -19,6 +23,16 @@ use crate::Engine;
 pub(super) fn conjoin_projections<'a>(eng: &Engine, mut f: Cow<'a, Tdd>, mut g: Cow<'a, Tdd>) -> Result<Tdd, OperationError> {
     if f.vtree().num_nodes() == 0 || g.vtree().num_nodes() == 0 {
         return conjoin_constant(eng, f, g);
+    }
+    let g_larger = g.vtree().num_leaves() > f.vtree().num_leaves();
+    if matches!(g, Cow::Owned(_)) && (g_larger || !matches!(f, Cow::Owned(_))) {
+        std::mem::swap(&mut f, &mut g);
+    }
+    if let Cow::Owned(owned) = f {
+        (f, g) = match conjoin_nested(eng, owned, g)? {
+            Ok(out) => return Ok(out),
+            Err(operands) => operands,
+        };
     }
     let sets = Vtree::leaf_sets(f.vtree(), g.vtree())?;
     if f.has_marginal_level() || g.has_marginal_level() {
@@ -48,6 +62,57 @@ pub(super) fn conjoin_projections<'a>(eng: &Engine, mut f: Cow<'a, Tdd>, mut g: 
     let mut out = conjoin_onto(eng, f, |v| v, g, |v| v, &into).map_err(|refused| extend::operation_error(refused.error))?;
     crate::reduce::close_constant(eng, &mut out);
     Ok(out)
+}
+
+/// Operands [`conjoin_nested`] does not take, as given.
+type NotNested<'a> = (Cow<'a, Tdd>, Cow<'a, Tdd>);
+
+/// `f ∧ g` where `f` is owned, both are plain (no weight store, no summed
+/// level, no region, not false) and the leaves of `g` are among fewer than
+/// all of `f`'s: the sweep reads `g` through a view of the nodes of `f`'s
+/// vtree with a leaf of `g` under them, found from `g`'s leaves upward, and
+/// the result takes `f`'s level array, every other level left as `f` has
+/// it. Other operands come back, as given.
+fn conjoin_nested<'a>(eng: &Engine, f: Tdd, g: Cow<'a, Tdd>) -> Result<Result<Tdd, NotNested<'a>>, OperationError> {
+    let plain = |t: &Tdd| t.weights.is_none() && !t.is_zero() && !t.vtree().has_regions() && !t.has_marginal_level();
+    let lim = eng.limits();
+    let mut leaves = eng.scratch.apply.cone_leaves.checkout(eng);
+    if !plain(&f) || !plain(&g) || !f.vtree().nested_leaves(g.vtree(), &mut leaves) {
+        return Ok(Err((Cow::Owned(f), g)));
+    }
+    let into = Arc::clone(f.vtree());
+    let mut targets = eng.scratch.apply.cone_targets.checkout_preserving(eng);
+    let plan = match Plan::cone(lim, g.vtree(), &into, &leaves, std::mem::take(&mut *targets)) {
+        Ok(plan) => plan,
+        Err((error, back)) => {
+            *targets = back;
+            return Err(error);
+        }
+    };
+    let mut slots = eng.scratch.apply.cone_slots.checkout_preserving(eng);
+    let mut view = match View::build_in(eng, &g, &into, &plan, std::mem::take(&mut *slots)) {
+        Ok(view) => view,
+        Err((error, back)) => {
+            *slots = back;
+            *targets = plan.release();
+            return Err(error);
+        }
+    };
+    let (mut f, mut g) = (Cow::Owned(f), g);
+    let out = drive::apply_and_adopting(
+        eng,
+        &mut Held::of(&mut f, None),
+        &mut Held::of(&mut g, Some(&mut view)),
+        VtreeMask::free_of(&plan),
+        plan.cone_nodes(),
+    );
+    recycle(eng, f);
+    recycle(eng, g);
+    *slots = view.release(&plan);
+    *targets = plan.release();
+    let mut out = out?;
+    crate::reduce::close_constant(eng, &mut out);
+    Ok(Ok(out))
 }
 
 /// [`Engine::and_restoring`] of operands not on one vtree allocation, or on
