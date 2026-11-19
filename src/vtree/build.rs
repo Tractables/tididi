@@ -664,13 +664,25 @@ impl<const LINK: bool> InOrderBuilder<LINK> {
     /// put there for gap `i`.
     #[inline]
     pub(super) fn finish(self, gap: impl FnMut(&[u32], usize) -> u64) -> (Vec<VtreeNode>, VtreeIdx, Vec<u32>) {
-        self.finish_closing(gap, |_| {})
+        self.finish_as::<false>(gap, |_| {})
     }
 
     /// [`finish`](Self::finish), giving `closed` each internal node as it
     /// closes, children before parents.
     #[inline]
     pub(super) fn finish_closing(
+        self,
+        gap: impl FnMut(&[u32], usize) -> u64,
+        closed: impl FnMut(Closed),
+    ) -> (Vec<VtreeNode>, VtreeIdx, Vec<u32>) {
+        self.finish_as::<true>(gap, closed)
+    }
+
+    /// [`finish_closing`](Self::finish_closing); without `CLOSING`, `closed`
+    /// is never called, and the first positions it would be given are not
+    /// kept.
+    #[inline(always)]
+    fn finish_as<const CLOSING: bool>(
         self,
         mut gap: impl FnMut(&[u32], usize) -> u64,
         mut closed: impl FnMut(Closed),
@@ -687,10 +699,12 @@ impl<const LINK: bool> InOrderBuilder<LINK> {
             false => childless_among_regions(&regions, k, i),
         };
         // The nodes whose right side is still open, depths ascending from the
-        // bottom: depth, gap position, left side, its first position. Until
-        // its node closes, the home gap of gap position `i` waits in the slot
-        // of its node.
-        let mut open: Vec<(u32, u32, VtreeIdx, u32)> = Vec::with_capacity(k - 1);
+        // bottom: depth, gap position, left side; with `CLOSING`, the first
+        // position of each in `firsts`. Until its node closes, the home gap
+        // of gap position `i` waits in the slot of its node.
+        let mut open: Vec<(u32, u32, VtreeIdx)> = Vec::with_capacity(k - 1);
+        let mut firsts: Vec<u32> = if CLOSING { Vec::with_capacity(k - 1) } else { Vec::new() };
+        let first = |firsts: &mut Vec<u32>| if CLOSING { firsts.pop().unwrap_or(0) } else { 0 };
         let (mut last, mut last_lo) = (childless(0), 0);
         let mut close = |nodes: &mut Vec<VtreeNode>, slot: &mut [u32], (at, left, lo): (u32, VtreeIdx, u32), right: VtreeIdx, hi: u32| {
             let t = VtreeIdx(nodes.len() as u32);
@@ -708,19 +722,24 @@ impl<const LINK: bool> InOrderBuilder<LINK> {
         for i in 0..k - 1 {
             let word = gap(&slot, i);
             let depth = (word >> 32) as u32;
-            while let Some(&(top, at, left, lo)) = open.last()
+            while let Some(&(top, at, left)) = open.last()
                 && top > depth
             {
                 open.pop();
+                let lo = first(&mut firsts);
                 (last, last_lo) = (close(&mut nodes, &mut slot, (at, left, lo), last, i as u32), lo);
             }
             if LINK {
                 slot[k + i] = word as u32;
             }
-            open.push((depth, i as u32, last, last_lo));
+            open.push((depth, i as u32, last));
+            if CLOSING {
+                firsts.push(last_lo);
+            }
             (last, last_lo) = (childless(i + 1), i as u32 + 1);
         }
-        while let Some((_, at, left, lo)) = open.pop() {
+        while let Some((_, at, left)) = open.pop() {
+            let lo = first(&mut firsts);
             last = close(&mut nodes, &mut slot, (at, left, lo), last, k as u32 - 1);
         }
         (nodes, last, slot)
