@@ -266,7 +266,8 @@ fn expand_classes(eng: &Engine, tdd: &Tdd, class_vtree: &Arc<Vtree>, classes: &[
         Some(map) if output.local != ZERO => map[output.local.idx()].expect("the output's class node is built"),
         _ => output.local,
     };
-    Ok(out.finish(TddNodeId { vtree: idx_map[reduced.root().idx()], local })?)
+    // Distinct pairs stay distinct: each class leaf's nodes map to distinct nodes.
+    Ok(out.finish_trusting_pairs(TddNodeId { vtree: idx_map[reduced.root().idx()], local })?)
 }
 
 /// Map each node of `reduced` to the node at the same position of
