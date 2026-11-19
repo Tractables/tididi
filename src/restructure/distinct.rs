@@ -331,10 +331,12 @@ fn threshold(
         };
         let assembly = Assembly::new(eng, into)?;
         gate.flush()?;
-        return Ok(assembly.finish(TddNodeId {
+        let mut literal = assembly.finish(TddNodeId {
             vtree: into.root(),
             local,
-        })?);
+        })?;
+        literal.certify_built();
+        return Ok(literal);
     }
 
     // One node holding the pairs of every chosen node, over the levels

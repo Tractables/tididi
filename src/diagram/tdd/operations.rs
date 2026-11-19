@@ -56,8 +56,9 @@ impl Tdd {
     /// unreachable storage without establishing canonical form. It can avoid
     /// redundant work when a later step minimizes the result, but the larger
     /// intermediate diagram may make that step more expensive. The complement
-    /// of a diagram minimized and unchanged since is minimized once pruned, so
-    /// for such an operand both plans return the minimized result.
+    /// of a diagram certified canonical ([`is_canonical`](Self::is_canonical))
+    /// is minimized and certified once pruned, so for such an operand every
+    /// plan returns the minimized result.
     ///
     /// # Errors
     ///

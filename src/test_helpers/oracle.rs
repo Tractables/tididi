@@ -293,6 +293,7 @@ pub fn assert_canonical(tdd: &Tdd) {
     if tdd.vtree().num_nodes() == 0 {
         return;
     }
+    crate::test_helpers::check::check_certified(tdd).unwrap_or_else(|e| panic!("assert_canonical: {e}"));
     if !tdd.has_marginal_level() {
         check_all_fast(tdd, "assert_canonical");
         return;

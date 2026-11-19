@@ -406,7 +406,8 @@ pub(crate) fn conjoin_clause_on<L: crate::LiteralInput>(
 }
 
 impl Tdd {
-    /// Build a canonical disjunction of literals over the shared vtree.
+    /// Build a disjunction of literals over the shared vtree. The result is
+    /// not certified canonical ([`is_canonical`](Self::is_canonical)).
     ///
     /// Integers are signed and one-based; typed [`Literal`] values also work.
     /// Repeated literals are ignored. Both polarities of a variable make the

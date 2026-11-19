@@ -68,10 +68,17 @@ impl<'a> Reduction<'a> {
 
     fn run_passes(&mut self, plan: ReductionPlan<'_>, scope: PruneScope) -> Result<(), OperationError> {
         let _op = self.eng.limits().enter()?;
-        let whole = matches!(scope, PruneScope::Whole);
         // The passes mark the levels they change; on levels closed before
         // they ran, those are all the end has to close.
         let closed = self.tdd.levels.is_closed();
+        // A certified diagram with nothing owed is at the fixpoint of every
+        // pass below, so there is nothing to run.
+        if self.tdd.levels.is_canonical(self.tdd.output)
+            && self.tdd.dirty.is_empty()
+            && self.seed.is_none_or(<[VtreeIdx]>::is_empty)
+        {
+            return Ok(());
+        }
         let policy = match plan {
             ReductionPlan::Contract => {
                 contract_all_twins(self.eng, self.tdd)?;
@@ -84,19 +91,7 @@ impl<'a> Reduction<'a> {
                 self.tdd.close_marked_levels(closed);
                 return self.settle();
             }
-            ReductionPlan::Full(policy) => {
-                // A certified diagram with nothing owed is at the fixpoint of
-                // every pass below, so there is nothing to run. Its certificate
-                // does not say that no pair names a leaf true: a diagram an
-                // embedding padded is certified and keeps its padding.
-                if self.tdd.levels.is_canonical(self.tdd.output)
-                    && self.tdd.dirty.is_empty()
-                    && self.seed.is_none_or(<[VtreeIdx]>::is_empty)
-                {
-                    return Ok(());
-                }
-                policy
-            }
+            ReductionPlan::Full(policy) => policy,
         };
         #[cfg(debug_assertions)]
         let marginal_before: Vec<_> = self.tdd.levels.iter().map(|l| l.is_marginal()).collect();
@@ -126,16 +121,15 @@ impl<'a> Reduction<'a> {
         // for. What the lists still hold is what the passes' own rewrites
         // pushed after the sweep had taken its list, plus content-twin
         // entries that only the scan reads.
-        self.finish(closed, structural, whole)
+        self.finish(closed, structural)
     }
 
     /// Close the levels the passes marked (`closed` saying they were closed
-    /// before), settle a closing reduction, and on a `structural` diagram
-    /// list no level loose: the prune left every node reachable, and a
-    /// contraction only merges twins, whose children are the same. At the
-    /// `fixpoint` of every pass, clear the worklists and certify a structural
-    /// diagram.
-    fn finish(&mut self, closed: bool, structural: bool, fixpoint: bool) -> Result<(), OperationError> {
+    /// before), settle a closing reduction, clear the worklists, and on a
+    /// `structural` diagram list no level loose and certify it: the prune
+    /// left every node reachable, and a contraction only merges twins, whose
+    /// children are the same.
+    fn finish(&mut self, closed: bool, structural: bool) -> Result<(), OperationError> {
         self.tdd.close_marked_levels(closed);
         self.settle()?;
         if self.tdd.vtree.num_nodes() == 0 {
@@ -146,15 +140,13 @@ impl<'a> Reduction<'a> {
             super::prune::debug_assert_all_reached(self.tdd);
             self.tdd.dirty.set_loose(Some(Vec::new()));
         }
-        if fixpoint {
-            for pass in [Pass::Contract, Pass::LeafContract, Pass::ContentTwin] {
-                self.tdd.dirty.clear(pass);
-            }
-            if structural {
-                self.tdd.levels.certify(self.tdd.output);
-                #[cfg(debug_assertions)]
-                super::contract::contract_leaf::assert_no_full_twin_side(self.tdd);
-            }
+        for pass in [Pass::Contract, Pass::LeafContract, Pass::ContentTwin] {
+            self.tdd.dirty.clear(pass);
+        }
+        if structural {
+            self.tdd.levels.certify(self.tdd.output);
+            #[cfg(debug_assertions)]
+            super::contract::contract_leaf::assert_no_full_twin_side(self.tdd);
         }
         Ok(())
     }
@@ -202,7 +194,7 @@ impl<'a> Reduction<'a> {
                 level.shrink_arrays();
             }
         }
-        self.finish(closed, true, true)
+        self.finish(closed, true)
     }
 
     /// A closing reduction on a home with no summed-out level records the

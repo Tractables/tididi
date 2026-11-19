@@ -64,8 +64,9 @@ fn an_uncertified_operand_is_still_reduced_in_full() {
     eng.minimize(&mut minimized).unwrap();
     let expected = eng.negate(minimized).unwrap();
     assert_same_shape(&negated, &expected, "uncertified operand");
+    assert!(negated.is_canonical(), "a full plan left an uncertified operand's complement uncertified");
     let pruned = eng.negate_with(expected.clone(), ReductionPlan::Contract).unwrap();
-    assert!(!pruned.levels.is_canonical(pruned.output), "a contraction-only plan certified an unpruned complement");
+    assert_certified_minimal(eng, &pruned, "a contraction-only plan on a certified operand");
 }
 
 #[test]

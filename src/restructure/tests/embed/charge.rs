@@ -73,7 +73,8 @@ fn a_copied_embedding_charges_its_levels_slots_and_contraction_queue() {
                 let slots: u64 = internal.iter().map(|&t| g.level(t).slot_count() as u64).sum();
                 let what = format!("{label} {clauses:?} wrap {wrap:x} left {left:x}");
                 assert_eq!(work, 2 * internal.len() as u64 + slots, "{what}: work");
-                let queued = Dirty::default().seeded(&into, internal.iter().copied(), None).unwrap();
+                let mut queued = Dirty::default().seeded(&into, internal.iter().copied(), None).unwrap();
+                queued.set_loose(Some(Vec::new()));
                 assert_eq!(format!("{:?}", g.dirty), format!("{queued:?}"), "{what}: contraction queue");
             }
         }

@@ -141,10 +141,7 @@ pub(crate) fn seat_canonical(eng: &Engine, vtree: &Arc<Vtree>, levels: Vec<TddLe
     let mut tdd = Assembly::from_levels(eng, Arc::clone(vtree), levels, None)
         .finish_with(output, Dirty::default(), &[], None)
         .expect("seeding no worklist cannot be refused");
-    tdd.levels.certify(output);
-    tdd.dirty.set_loose(Some(Vec::new()));
-    #[cfg(debug_assertions)]
-    crate::reduce::prune::debug_assert_all_reached(&tdd);
+    tdd.certify_built();
     tdd
 }
 

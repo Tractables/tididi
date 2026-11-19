@@ -103,8 +103,8 @@ impl Engine {
         // nodes the complement can have orphaned are below the root cells it
         // dropped.
         // The complement of a canonical operand has no twins to contract.
-        let full = matches!(plan, crate::reduce::ReductionPlan::Full(_));
-        if canonical && (full || matches!(plan, crate::reduce::ReductionPlan::Prune)) {
+        if canonical {
+            let full = matches!(plan, crate::reduce::ReductionPlan::Full(_));
             self.certify_complement(&mut result, full, old)?;
         } else {
             self.reduce_scoped(

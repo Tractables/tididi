@@ -21,7 +21,8 @@ impl Tdd {
     /// [`Vtree::graft`]`(part vtrees, spine_vars)`.
     ///
     /// Built structurally in `O(total nodes)`: no apply runs, and the result
-    /// is canonical when every part is. `spine_vars` are variables no part
+    /// is certified canonical ([`is_canonical`](Self::is_canonical)) when every
+    /// part is and none has a summed-out level. `spine_vars` are variables no part
     /// mentions; the result is unconstrained in them, so each doubles the
     /// model count (the count ranges over every variable the vtree carries).
     /// The parts' vtrees are copied into the grafted vtree and the parts'
@@ -51,6 +52,7 @@ impl Tdd {
     /// let g = Tdd::clause(&b, [3, -4])?;  // x3 ∨ ¬x4: 3 models
     /// let fg = Tdd::graft(vec![f, g], &[VarId(5)]).unwrap();
     /// assert_eq!(fg.model_count()?, 18u32.into()); // 3 · 3 · 2 (x5 is free)
+    /// # tididi::test_helpers::assert_canonical(&fg);
     ///
     /// // A spine variable one of the parts already carries is refused.
     /// let h = Tdd::clause(&a, [1, 2])?;
@@ -175,6 +177,7 @@ fn graft_impl(
         return Ok((result, layout));
     }
 
+    let canonical = parts.iter().all(Tdd::is_canonical);
     let mut placement = MovePlacement::new(eng, &grafted_arc, into)?;
     for (k, part) in parts.iter_mut().enumerate() {
         placement.move_part(part, layout.part(k).as_slice());
@@ -207,7 +210,11 @@ fn graft_impl(
         NodeIdx(0)
     };
     placement.check_weights().map_err(GraftError::DestinationWeights)?;
-    Ok((placement.finish(output_local, &[])?, layout))
+    let mut result = placement.finish(output_local, &[])?;
+    if canonical && !result.has_marginal_level() {
+        result.certify_built();
+    }
+    Ok((result, layout))
 }
 
 /// Require a destination interpretation for every marginal value that a part will carry across.
