@@ -104,6 +104,9 @@ impl EvalAlgebra for Counting {
     fn zero(&self) -> BigUint {
         BigUint::ZERO
     }
+    fn one(&self) -> BigUint {
+        BigUint::from(1u32)
+    }
     fn leaf(&self, _: VarId, label: LeafLabel) -> BigUint {
         BigUint::from(if label == LeafLabel::One { 2u32 } else { 1 })
     }

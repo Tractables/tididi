@@ -71,6 +71,7 @@ struct Tracked {
 impl EvalAlgebra for Tracked {
     type Value = u64;
     fn zero(&self) -> u64 { 0 }
+    fn one(&self) -> u64 { 1 }
     fn leaf(&self, _: VarId, label: LeafLabel) -> u64 {
         assert!(!self.panic.replace(false), "algebra interrupted");
         self.calls.set(self.calls.get() + 1);

@@ -781,7 +781,7 @@ pub(crate) fn sum_indexed_counted<A: ColumnAlgebra>(
     }
     gate.flush()?;
     let mut col = std::mem::take(&mut cols[at.idx()]);
-    crate::query::free_factor(algebra, at, &vtree.free_vars_under(at), &mut col)?;
+    crate::query::free_factor(algebra, at, vtree.free_set_under(at), &mut col)?;
     Ok((col, work))
 }
 

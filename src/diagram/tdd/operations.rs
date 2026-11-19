@@ -989,6 +989,7 @@ impl Tdd {
     /// impl EvalAlgebra for Count {
     ///     type Value = u64;
     ///     fn zero(&self) -> u64 { 0 }
+    ///     fn one(&self) -> u64 { 1 }
     ///     fn leaf(&self, _: VarId, label: LeafLabel) -> u64 { if label == LeafLabel::One { 2 } else { 1 } }
     ///     fn add_assign(&self, acc: &mut u64, other: &u64) { *acc += other; }
     ///     fn mul(&self, a: &u64, b: &u64) -> u64 { a * b }

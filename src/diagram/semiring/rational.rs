@@ -172,6 +172,8 @@ impl EvalAlgebra for RationalWeights {
 
     fn zero(&self) -> BigRational { BigRational::zero() }
 
+    fn one(&self) -> BigRational { BigRational::one() }
+
     fn leaf(&self, v: VarId, label: LeafLabel) -> BigRational {
         let i = v.idx();
         match label {

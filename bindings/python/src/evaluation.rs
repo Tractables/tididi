@@ -66,6 +66,8 @@ impl<'py> PythonAlgebra<'py> {
 impl<'py> EvalAlgebra for PythonAlgebra<'py> {
     type Value = Bound<'py, PyAny>;
     fn zero(&self) -> Self::Value { self.call(|| self.object.call_method0("zero")) }
+    // Reached only through a `free` that answers `None`, and the default never does.
+    fn one(&self) -> Self::Value { unreachable!("the default free answers every nonempty set") }
     fn leaf(&self, var: VarId, label: LeafLabel) -> Self::Value {
         let sign = match label {
             LeafLabel::Pos => Some(true),

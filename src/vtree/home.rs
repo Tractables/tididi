@@ -27,6 +27,7 @@ pub(crate) struct HomeIndex {
     /// By node: a leaf's rank, an internal node's gap.
     pub(super) slot: Vec<u32>,
     pub(super) leaf_at: Vec<VtreeIdx>,
+    pub(super) var_at: Vec<VarId>,
     pub(super) gap_node: Vec<VtreeIdx>,
     /// By gap: `depth << 32 | gap`, so that the least word of a range of gaps
     /// is its shallowest gap's.
@@ -51,14 +52,15 @@ impl HomeIndex {
         let n = home.num_leaves() as usize;
         let gaps = n.saturating_sub(1);
         let mut slot = vec![0; home.num_nodes()];
-        let (mut leaf_at, mut gap_node, mut gap_depth) =
-            (Vec::with_capacity(n), Vec::with_capacity(gaps), Vec::<u32>::with_capacity(gaps));
+        let (mut leaf_at, mut var_at, mut gap_node, mut gap_depth) =
+            (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(gaps), Vec::<u32>::with_capacity(gaps));
         let mut stack = vec![(home.root(), 0u32, false)];
         while let Some((t, depth, left_done)) = stack.pop() {
             match *home.node(t) {
-                VtreeNode::Leaf { .. } => {
+                VtreeNode::Leaf { var, .. } => {
                     slot[t.idx()] = leaf_at.len() as u32;
                     leaf_at.push(t);
+                    var_at.push(var);
                 }
                 VtreeNode::Internal { .. } if left_done => {
                     slot[t.idx()] = gap_node.len() as u32;
@@ -99,7 +101,7 @@ impl HomeIndex {
                 in_block[b * GAP_BLOCK + t] = mask;
             }
         }
-        HomeIndex { slot, leaf_at, gap_node, gap_word, in_block, block_least, blocks }
+        HomeIndex { slot, leaf_at, var_at, gap_node, gap_word, in_block, block_least, blocks }
     }
 
     /// The least word of gaps `lo..=last`, which lie in one block.
@@ -337,7 +339,7 @@ impl HomeLink {
     }
 
     /// The region whose extent holds every rank of `lo..hi`.
-    fn region_over(&self, lo: u32, hi: u32) -> Option<&Region> {
+    pub(super) fn region_over(&self, lo: u32, hi: u32) -> Option<&Region> {
         self.regions.iter().find(|region| region.covers(lo, hi))
     }
 
@@ -500,37 +502,6 @@ impl Vtree {
     /// extent; 0 on a root.
     pub(crate) fn free_leaves(&self) -> u32 {
         self.home.as_deref().map_or(0, |link| link.home.vtree().num_leaves() - self.leaf_count - link.in_extents())
-    }
-
-    /// The variables of the home leaves this vtree has neither as a leaf nor
-    /// in an extent, left to right; none on a root.
-    pub(crate) fn free_vars(&self) -> Vec<VarId> {
-        let Some(link) = self.home.as_deref() else { return Vec::new() };
-        let mut own = link.ranks.iter().copied().peekable();
-        let mut extents: Vec<(u32, u32)> = link.regions.iter().flat_map(|region| region.extent.iter().copied()).collect();
-        extents.sort_unstable();
-        let mut extents = extents.into_iter().peekable();
-        let mut free = Vec::with_capacity(self.free_leaves() as usize);
-        for (rank, &leaf) in link.home.index().leaf_at.iter().enumerate() {
-            let rank = rank as u32;
-            while extents.next_if(|&(_, end)| end <= rank).is_some() {}
-            let in_extent = extents.peek().is_some_and(|&(start, _)| start <= rank);
-            if own.next_if_eq(&rank).is_none() && !in_extent {
-                free.push(link.home.vtree().leaf_var(leaf));
-            }
-        }
-        free
-    }
-
-    /// The variables of the home leaves under own node `t`'s home node that
-    /// this vtree does not have; none on a root.
-    pub(crate) fn free_vars_under(&self, t: VtreeIdx) -> Vec<VarId> {
-        let Some(home) = self.home().map(Home::vtree).filter(|_| self.free_leaves() > 0) else { return Vec::new() };
-        home.subtree(self.home_node(t))
-            .filter(|&h| home.node(h).is_leaf())
-            .map(|h| home.leaf_var(h))
-            .filter(|&var| self.leaf_of(var).is_none())
-            .collect()
     }
 
     /// The home this vtree is a projection of; `None` on a root vtree, a

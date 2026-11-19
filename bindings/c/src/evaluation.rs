@@ -62,6 +62,8 @@ pub struct TididiAlgebra {
 impl EvalAlgebra for TididiAlgebra {
     type Value = f64;
     fn zero(&self) -> f64 { unsafe { self.zero.unwrap()(self.userdata) } }
+    // Reached only through a `free` that answers `None`, and the default never does.
+    fn one(&self) -> f64 { unreachable!("the default free answers every nonempty set") }
     fn leaf(&self, var: tididi::vtree::VarId, label: LeafLabel) -> f64 {
         let sign = match label { LeafLabel::Pos => 1, LeafLabel::Neg => 0, LeafLabel::One => -1, LeafLabel::Zero => return self.zero() };
         unsafe { self.leaf.unwrap()(self.userdata, var.0, sign) }

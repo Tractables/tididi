@@ -29,6 +29,7 @@
 
 mod build;
 mod expand;
+mod free;
 pub(crate) mod graft;
 mod home;
 mod layout;
@@ -42,6 +43,7 @@ mod topo;
 mod validate;
 
 pub(crate) use build::check_var_space;
+pub use free::FreeVars;
 pub use home::Home;
 pub(crate) use home::{coalesce, LeafSets, RootIndex};
 pub(crate) use layout::SameLayout;

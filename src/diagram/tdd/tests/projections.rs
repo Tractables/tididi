@@ -17,7 +17,7 @@ use crate::test_helpers::check::check_trimmed;
 use crate::test_helpers::{and2, exact_weight, rand_conj};
 use crate::value::Retention;
 use crate::vtree::rng::Lcg;
-use crate::vtree::{Home, VarId, VtreeIdx};
+use crate::vtree::{FreeVars, Home, VarId, VtreeIdx};
 use crate::{Engine, Literal, OperationError};
 
 use super::*;
@@ -46,7 +46,7 @@ impl ColumnAlgebra for Counts {
     fn read(&self, _: VtreeIdx, col: Vec<BigUint>, slot: usize) -> BigUint {
         col[slot].clone()
     }
-    fn free(&self, _: VtreeIdx, vars: &[VarId], col: &mut Vec<BigUint>) -> bool {
+    fn free(&self, _: VtreeIdx, vars: &FreeVars<'_>, col: &mut Vec<BigUint>) -> bool {
         col.iter_mut().for_each(|v| *v <<= vars.len());
         self.free
     }
@@ -305,7 +305,7 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
     if g.vtree().free_leaves() > 0 && !g.is_zero() {
         let refused = g.evaluate_columns(&Counts { free: false });
         // The constant true values its first free variable as a leaf.
-        let named = g.vtree().free_vars()[usize::from(g.is_one())];
+        let named = g.vtree().free_set().unwrap().vars().nth(usize::from(g.is_one())).unwrap();
         a.check("evaluate_columns without free", || Ok::<_, OperationError>(refused), || Ok(Err(OperationError::VariableNotInVtree(named))), PartialEq::eq);
     }
     a.check(
@@ -539,7 +539,7 @@ fn x1_not_x3(eng: &Engine) -> (Arc<Vtree>, Tdd, Tdd) {
     let f = crate::test_helpers::padded(eng.cube(&home, [lit(1, true), lit(3, false)]).unwrap(), &home);
     let mut g = f.clone();
     assert!(g.trim(&Home::new(Arc::clone(&home))).unwrap());
-    assert_eq!(g.vtree().free_vars(), [VarId(2), VarId(4)]);
+    assert_eq!(g.vtree().free_set().unwrap().vars().collect::<Vec<_>>(), [VarId(2), VarId(4)]);
     (home, f, g)
 }
 
@@ -557,7 +557,7 @@ fn column_evaluation_values_the_free_variables_or_refuses() {
     assert_eq!(g.evaluate_columns_at(root, &counts).unwrap(), f.evaluate_columns_at(home_root, &counts).unwrap());
     let sum = |t: &Tdd, at| eng.sum_indexed(t, t, &PairIndex::new(t).unwrap(), at, &counts).unwrap();
     assert_eq!(sum(&g, root), sum(&f, home_root));
-    assert_eq!(eng.sum_indexed(&g, &g, &PairIndex::new(&g).unwrap(), root, &Counts { free: false }), Err(OperationError::VariableNotInVtree(VarId(4))));
+    assert_eq!(eng.sum_indexed(&g, &g, &PairIndex::new(&g).unwrap(), root, &Counts { free: false }), Err(OperationError::VariableNotInVtree(VarId(2))));
 
     let hm = g.vtree().home().unwrap();
     let mut one = Tdd::one(&home);

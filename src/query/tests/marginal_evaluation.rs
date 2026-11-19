@@ -66,6 +66,7 @@ impl Weighted {
 impl EvalAlgebra for Weighted {
     type Value = u64;
     fn zero(&self) -> u64 { 0 }
+    fn one(&self) -> u64 { 1 }
     fn leaf(&self, var: VarId, label: LeafLabel) -> u64 { self.weight(var, label) }
     fn add_assign(&self, a: &mut u64, b: &u64) { *a = add(*a, *b); }
     fn mul(&self, a: &u64, b: &u64) -> u64 { mul(*a, *b) }
@@ -331,6 +332,7 @@ fn an_algebra_without_counts_is_refused_a_marginal_level() {
     impl EvalAlgebra for Plain {
         type Value = u64;
         fn zero(&self) -> u64 { 0 }
+        fn one(&self) -> u64 { 1 }
         fn leaf(&self, _: VarId, label: LeafLabel) -> u64 { u64::from(label != LeafLabel::Zero) }
         fn add_assign(&self, a: &mut u64, b: &u64) { *a += b; }
         fn mul(&self, a: &u64, b: &u64) -> u64 { a * b }

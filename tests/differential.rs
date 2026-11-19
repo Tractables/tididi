@@ -1063,6 +1063,9 @@ impl EvalAlgebra for Count {
     fn zero(&self) -> u128 {
         0
     }
+    fn one(&self) -> u128 {
+        1
+    }
     fn leaf(&self, _: VarId, label: LeafLabel) -> u128 {
         if label == LeafLabel::One { 2 } else { 1 }
     }
