@@ -17,11 +17,7 @@ use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 /// The same diagram, level for level with the same numbering, not just the
 /// same function: what an operation that gives its input back must return.
 pub(crate) fn same_storage(a: &Tdd, b: &Tdd) -> bool {
-    a.output == b.output
-        && a.levels.len() == b.levels.len()
-        && a.levels.iter().zip(b.levels.iter()).all(|(x, y)| {
-            x.nodes == y.nodes && x.pairs == y.pairs && x.ranges == y.ranges
-        })
+    a.same_levels(b)
 }
 
 /// What is known of `t` besides its levels: whether it is certified

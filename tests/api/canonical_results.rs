@@ -42,9 +42,11 @@ fn conjoining_an_ite_chain_is_minimal_on_minimized_operands_and_under_the_flag()
 
     let plain = Engine::new();
     let compared = comparator(&plain, &vtree);
+    assert_eq!(compared.pair_count(), 80);
+    assert_eq!(minimized(&plain, &compared).pair_count(), 80);
     let got = plain.and(&compared, &codes).unwrap();
     let fewest = minimized(&plain, &got).pair_count();
-    assert!(got.pair_count() >= fewest);
+    assert_eq!((got.pair_count(), fewest), (80, 80));
     let of_minimized = plain.and(minimized(&plain, &compared), minimized(&plain, &codes)).unwrap();
     assert_eq!(of_minimized.pair_count(), fewest);
     assert!(of_minimized.equivalent(&got).unwrap());

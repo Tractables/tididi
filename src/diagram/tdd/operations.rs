@@ -544,6 +544,18 @@ impl Tdd {
         self.context_arc().run(|eng| eng.equivalent(self, other))
     }
 
+    /// Whether `other` holds the same levels word for word, with the same
+    /// output: the same function when both are on one vtree. Equivalent
+    /// diagrams numbered differently, or holding different dead slots, compare
+    /// unequal.
+    pub(crate) fn same_levels(&self, other: &Tdd) -> bool {
+        self.output == other.output
+            && self.levels.len() == other.levels.len()
+            && self.levels.iter().zip(other.levels.iter()).all(|(x, y)| {
+                x.nodes == y.nodes && x.pairs == y.pairs && x.ranges == y.ranges
+            })
+    }
+
     /// Whether every model of this structural function satisfies `other`.
     ///
     /// Both diagrams are borrowed and unchanged. They must be on one vtree or

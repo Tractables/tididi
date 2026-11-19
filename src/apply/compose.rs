@@ -75,6 +75,8 @@ pub fn xor(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
 /// an unweighted operand inherits the agreed weights. The result is not
 /// minimized; [`Engine::minimize`], or an engine with
 /// [`canonical_results`](crate::limits::LimitConfig::with_canonical_results), certifies it.
+/// Branches that hold the same levels, as a clone does, are the exception:
+/// the result is `then_branch` minimized, and no product is built.
 ///
 /// Operands are consumed on success or error. Composition copies the condition
 /// and builds intermediate diagrams using the shared vtree context; temporary
@@ -206,6 +208,10 @@ impl Engine {
             f.require_structure()?;
         }
         super::prepare_weights(&mut [&mut condition, &mut then_branch, &mut else_branch])?;
+        if then_branch.same_levels(&else_branch) {
+            let minimized = self.minimize(&mut then_branch).map(|()| then_branch);
+            return super::exit::outcome(self, minimized.and_then(|f| super::extend::trimmed(self, f)));
+        }
         let mut condition = SharedCircuit::new(condition, 2);
         let yes = super::conjoin::conjoin_either(self, condition.take(self)?.into(), then_branch.into())?;
         let no = overlay_reduced(self, Overlay::AndNot, else_branch, condition.take(self)?)?;
