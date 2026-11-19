@@ -100,8 +100,11 @@ pub(crate) fn marginalize_levels(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx])
     // The folds mark the structural levels they change; what they leave
     // unmarked became marginal or was cleared, which a close leaves as it is.
     f.levels.hold_counts(f.levels.is_closed());
-    evaluate_levels(eng, f, levels, &vtree)?;
-    restore_marginal_invariants(eng, f, levels, &vtree)
+    let done = evaluate_levels(eng, f, levels, &vtree).and_then(|()| restore_marginal_invariants(eng, f, levels, &vtree));
+    if done.is_err() {
+        f.levels.forget_left_pairs();
+    }
+    done
 }
 
 /// The one integer-vs-weighted dispatch of the pass: a weighted diagram's
@@ -215,10 +218,12 @@ fn sum_out(eng: &Engine, f: &mut Tdd, home: &crate::vtree::Home, levels: Vec<(Vt
     let mut collapse: Vec<_> =
         levels.into_iter().filter(|&(t, _)| !vtree.node(t).is_leaf() && f.levels[t.idx()].is_marginal()).collect();
     collapse.sort_unstable();
-    if !collapse.is_empty() {
-        trim(eng, f, home, &collapse)?;
+    let trimmed = if collapse.is_empty() { Ok(()) } else { trim(eng, f, home, &collapse).map(drop) };
+    let done = trimmed.and(folded).and(restored);
+    if done.is_err() {
+        f.levels.forget_left_pairs();
     }
-    folded.and(restored)
+    done
 }
 
 #[cfg(test)]
