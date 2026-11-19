@@ -53,6 +53,7 @@ pub(super) fn apply_leaf_levels(
 }
 
 /// [`apply_leaf_levels`] at the leaf `t`.
+#[inline(always)]
 pub(super) fn leaf_grid(eng: &Engine, products: &mut Products, t: usize) -> Result<(), OperationError> {
     let base = products.arena.alloc(eng, t, LEAF_GRID.len())?;
     products.arena.set_dense(t, base);

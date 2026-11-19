@@ -179,7 +179,6 @@ fn reach(
     let s = if left == c { right } else { left };
     let leaf = vtree.node(s).is_leaf();
     g.pass_through(lim, t)?;
-    lim.try_push(&mut run.lists.chain, t)?;
     let (at, side) = (t.idx(), s.idx());
     run.f_widths[at] = f.level(at).slot_count();
     run.g_widths[at] = g.level(at).slot_count();
@@ -263,7 +262,7 @@ fn build_level(
     let taken = take_level_fast_path(eng, run, f, g, shape)?
         || take_relabel_level(eng, run, f, g, shape, sweep)?;
     debug_assert!(
-        taken || !run.cone.free_at(t.idx()) || run.lists.chain.last() == Some(&t),
+        taken || !run.cone.free_at(t.idx()) || g.reached().last() == Some(&t),
         "a free level at {} takes the other operand's level",
         t.idx(),
     );
@@ -792,11 +791,11 @@ fn apply_and_held(
         // contraction's worklists.
         run.lists.as_operand.sort_unstable();
         run.lists.outer_held.sort_unstable();
-        let loose = operand_loose.map(|ops| owed::loose_levels(&vtree, &mut run, ops));
-        owed::split_built(&vtree, &mut run);
+        let loose = operand_loose.map(|ops| owed::loose_levels(&vtree, &mut run, g.reached(), ops));
+        owed::split_built(&vtree, &mut run, g.reached());
         loose
     } else {
-        run.lists.collect_built(cone.built);
+        run.lists.collect_built(cone.built, g.reached());
         run.lists.keep_seat_closes(closed);
         None
     };
@@ -811,11 +810,11 @@ fn apply_and_held(
             taken_dirty = Some(std::mem::take(&mut f.dirty));
             let mut own = std::mem::take(&mut f.levels).into_vec();
             let levels = assembly.parts_mut().0;
-            for t in visited(&vtree, cone, &lists.chain) {
+            for t in visited(&vtree, cone, g.reached()) {
                 std::mem::swap(&mut levels[t], &mut own[t]);
             }
             std::mem::swap(levels, &mut own);
-            for t in visited(&vtree, cone, &lists.chain) {
+            for t in visited(&vtree, cone, g.reached()) {
                 own[t] = TddLevel::new();
             }
             Some(own)

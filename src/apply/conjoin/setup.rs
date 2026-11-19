@@ -227,9 +227,6 @@ pub(super) struct SweepLists {
     pub(super) twin_free: Vec<VtreeIdx>,
     /// The stack of a walk down a region (`region::constant_true`).
     pub(super) stack: Vec<VtreeIdx>,
-    /// The levels of the chain above [`Cone::built`] the sweep built
-    /// ([`Cone::chain`]), bottom-up.
-    pub(super) chain: Vec<VtreeIdx>,
     /// `drive::owed::loose_levels`' flags by level, all zero between
     /// conjunctions, and the levels it set them at.
     pub(super) loose_in: Vec<u8>,
@@ -266,17 +263,16 @@ impl SweepLists {
         identity_carrier(self.moved[t])
     }
 
-    /// List in `built` the levels of `cone` and of `chain` no identity fast
+    /// List in `built` the levels of `cone` and of `chain`, the levels of
+    /// the chain above it the sweep built ([`Cone::chain`]), no identity fast
     /// path moved: the levels a plain conjunction built, the relabelled ones
     /// included.
-    pub(super) fn collect_built(&mut self, cone: &[VtreeIdx]) {
-        let Self { moved, built, chain, .. } = self;
-        built.extend(
-            cone.iter()
-                .chain(chain.iter())
-                .copied()
-                .filter(|t| identity_carrier(moved[t.idx()]) == 0),
-        );
+    #[inline(always)]
+    pub(super) fn collect_built(&mut self, cone: &[VtreeIdx], chain: &[VtreeIdx]) {
+        let Self { moved, built, .. } = self;
+        for levels in [cone, chain] {
+            built.extend(levels.iter().copied().filter(|t| identity_carrier(moved[t.idx()]) == 0));
+        }
     }
 
     /// Whether the seat closes level `t`, given whether `f` and `g` were
@@ -311,7 +307,6 @@ impl SweepLists {
         self.owed_twins.clear();
         self.twin_free.clear();
         self.stack.clear();
-        self.chain.clear();
     }
 
     /// Ready the lists for a conjunction over `num_nodes` levels.
@@ -345,7 +340,6 @@ impl SweepLists {
         visit(&mut self.owed_twins);
         visit(&mut self.twin_free);
         visit(&mut self.stack);
-        visit(&mut self.chain);
         visit(&mut self.loose_in);
         visit(&mut self.loose_touched);
     }
@@ -641,6 +635,9 @@ struct Snapshot {
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] when a list cannot grow.
+// Out of line, as is `survey_listed`: inlined, the code of its loop moved
+// with unrelated edits to `apply_and_setup`.
+#[inline(never)]
 fn survey<'r, L: Levels + ?Sized>(
     eng: &Engine,
     vtree: &'r Vtree,
@@ -817,6 +814,7 @@ fn survey<'r, L: Levels + ?Sized>(
 /// cap counts the levels outside them by `f`'s node count, read only where
 /// a cap is set.
 #[expect(clippy::too_many_arguments, reason = "the survey's inputs and outputs")]
+#[inline(never)]
 fn survey_listed<'r>(
     eng: &Engine,
     vtree: &'r Vtree,

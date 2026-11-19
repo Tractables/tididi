@@ -218,6 +218,11 @@ impl Held<'_> {
         view.as_deref_mut().expect("a pass-through is built by a view").pass_through(lim, tdd, t)
     }
 
+    /// The levels [`Held::pass_through`] built, bottom-up.
+    pub(super) fn reached(&self) -> &[VtreeIdx] {
+        self.view.as_deref().map_or(&[], View::reached)
+    }
+
     /// Make the operand's level at the free node `t` the level it stands
     /// for, where an owned operand on its own vtree holds it empty; a view
     /// builds it when it is carried.

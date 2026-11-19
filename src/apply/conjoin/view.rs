@@ -276,6 +276,11 @@ impl View {
         Ok(())
     }
 
+    /// The levels [`View::pass_through`] built, bottom-up.
+    pub(crate) fn reached(&self) -> &[VtreeIdx] {
+        &self.reached
+    }
+
     /// The side of the level the view gives at `t` that reads `t`'s child
     /// on `side`: the other one where `t` mirrors its source node and the
     /// view reads the operand's own level, whose sides are the source's.
