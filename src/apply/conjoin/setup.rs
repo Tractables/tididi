@@ -633,7 +633,7 @@ struct Snapshot {
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] when a list cannot grow.
-fn survey<'r, L: Levels + ?Sized>(
+fn survey<'r, L: Levels + ?Sized, const PASSING: bool>(
     eng: &Engine,
     vtree: &'r Vtree,
     ops: Operands<&L>,
@@ -652,7 +652,6 @@ fn survey<'r, L: Levels + ?Sized>(
         g: g_marginal,
     } = marginal;
     let internal = vtree.internal_bottomup_slice();
-    let (f_passes, g_passes) = (f.passes_any(), g.passes_any());
     let leaf_cells = (LEAF_WIDTH * LEAF_WIDTH) as u64;
     // The cells are summed saturating, which no order of the terms changes.
     let mut total_cells = match leaf_cells <= min_grid as u64 {
@@ -687,8 +686,8 @@ fn survey<'r, L: Levels + ?Sized>(
         let (w1, w2) = match vtree.node(t).is_leaf() {
             true => (LEAF_WIDTH, LEAF_WIDTH),
             false => (
-                if f_passes { f.width_at(t.idx()) } else { fl.slot_count() },
-                if g_passes { g.width_at(t.idx()) } else { gl.slot_count() },
+                if PASSING { f.width_at(t.idx()) } else { fl.slot_count() },
+                if PASSING { g.width_at(t.idx()) } else { gl.slot_count() },
             ),
         };
         f_widths[t.idx()] = w1;
@@ -756,8 +755,9 @@ fn survey<'r, L: Levels + ?Sized>(
                 !f.level_at(at).is_marginal() && !g.level_at(at).is_marginal(),
                 "an operand with a free level has a marginal level at {at}",
             );
-            let w1 = if free_f { 1 } else { f.width_at(at) };
-            let w2 = if free_g { 1 } else { g.width_at(at) };
+            let width = |l: &L| if PASSING { l.width_at(at) } else { l.level_at(at).slot_count() };
+            let w1 = if free_f { 1 } else { width(f) };
+            let w2 = if free_g { 1 } else { width(g) };
             f_widths[at] = w1;
             g_widths[at] = w2;
             free_nodes = free_nodes.saturating_add(cells(w1, w2, 0));
@@ -1044,8 +1044,9 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
         cone,
     ) = match (listed, ops.f.own_levels(), ops.g.own_levels()) {
         (Some(listed), ..) => survey_listed(eng, vtree, ops, free, listed, min_grid, out.0, cone)?,
-        (None, Some(f), Some(g)) => survey(eng, vtree, Operands { f, g }, free, min_grid, out, cone)?,
-        (None, ..) => survey(eng, vtree, ops, free, min_grid, out, cone)?,
+        (None, Some(f), Some(g)) => survey::<_, false>(eng, vtree, Operands { f, g }, free, min_grid, out, cone)?,
+        (None, ..) if ops.f.passes_any() || ops.g.passes_any() => survey::<_, true>(eng, vtree, ops, free, min_grid, out, cone)?,
+        (None, ..) => survey::<_, false>(eng, vtree, ops, free, min_grid, out, cone)?,
     };
     let cone = Cone {
         constant: found_free,

@@ -45,10 +45,6 @@ pub(crate) enum Slot {
 /// table and its levels.
 pub(crate) type ViewTables = (Vec<Slot>, Vec<TddLevel>);
 
-/// What [`View::passing`] is built in and gives back: its slot table and
-/// which nodes it passes through.
-pub(crate) type PassingTables = (Vec<Slot>, Vec<bool>);
-
 /// The arena capacity the levels a view built keep for the next view.
 const KEPT_ARENA_BYTES: u64 = 1 << 20;
 
@@ -68,10 +64,6 @@ pub(crate) struct View {
     dirty: Dirty,
     /// The tops of the chains over a leaf read as `Pos` and `Neg`, sorted.
     tops: Vec<VtreeIdx>,
-    /// Empty, or by node of `U`: whether the operand passes through it, read
-    /// as the identity over the child it passes to, whose level its slot
-    /// names ([`View::passing`]).
-    passes: Vec<bool>,
 }
 impl View {
     /// The view of `tdd`, a diagram that is not constant, on `into`, as
@@ -149,7 +141,6 @@ impl View {
             output: TddNodeId { vtree: into.root(), local: tdd.output.local },
             dirty: Dirty::default(),
             tops: Vec::new(),
-            passes: Vec::new(),
         };
         match view.fill(eng, tdd, into, plan, !by_node) {
             Ok(()) => Ok(view),
@@ -162,17 +153,19 @@ impl View {
     }
 
     /// The view of `tdd` on `into` for a sweep that builds the levels at its
-    /// pass-throughs itself ([`View::passes`]): `at` holds the slot of each
-    /// node `plan` gives the operand's variables, a pass-through's naming the
-    /// level of the node its chain carries, and `passes` marks the
-    /// pass-throughs. No level is built. Refused, both come back cleared.
+    /// pass-throughs itself: `at` holds the slot of each node `plan` gives
+    /// the operand's variables, a pass-through's naming the level of the
+    /// node its chain carries, and `passes` marks the pass-throughs
+    /// ([`Held::passes`](super::held::Held::passes)). No level is built.
+    /// Refused, `at` comes back cleared.
     pub(crate) fn passing(
         eng: &Engine,
         tdd: &Tdd,
         into: &Arc<Vtree>,
         plan: &Plan,
-        (at, passes): PassingTables,
-    ) -> Result<View, (OperationError, PassingTables)> {
+        at: Vec<Slot>,
+        passes: &[bool],
+    ) -> Result<View, (OperationError, Vec<Slot>)> {
         let mut view = View {
             vtree: Arc::clone(into),
             at,
@@ -183,9 +176,8 @@ impl View {
             output: TddNodeId { vtree: into.root(), local: tdd.output.local },
             dirty: Dirty::default(),
             tops: Vec::new(),
-            passes,
         };
-        if view.passes(into.root().idx()) {
+        if passes[into.root().idx()] {
             view.output.local = crate::diagram::NodeIdx(0);
         }
         // The tops of the chains over a leaf read as `Pos` and `Neg`, whose
@@ -193,11 +185,12 @@ impl View {
         let mut tops = Vec::new();
         let one = 1 << crate::diagram::ONE_LEAF_IDX.0;
         for &t in plan.cone_nodes() {
-            if view.literals(tdd, t.idx()).is_some_and(|rows| rows & one == 0)
-                && into.node(t).parent().is_none_or(|p| !view.passes(p.idx()))
+            if passes[t.idx()]
+                && view.literals(tdd, t.idx()).is_some_and(|rows| rows & one == 0)
+                && into.node(t).parent().is_none_or(|p| !passes[p.idx()])
                 && let Err(error) = eng.limits().try_push(&mut tops, t)
             {
-                return Err((error, view.release_passing(plan)));
+                return Err((error, view.release(plan).0));
             }
         }
         tops.sort_unstable();
@@ -206,42 +199,15 @@ impl View {
                 view.dirty = dirty;
                 Ok(view)
             }
-            Err(error) => Err((error, view.release_passing(plan))),
+            Err(error) => Err((error, view.release(plan).0)),
         }
     }
 
-    /// The tables of [`View::passing`], every entry free.
-    pub(crate) fn release_passing(mut self, plan: &Plan) -> PassingTables {
-        let mut passes = std::mem::take(&mut self.passes);
-        for &t in plan.cone_nodes() {
-            passes[t.idx()] = false;
-        }
-        (self.release(plan).0, passes)
-    }
-
-    /// Whether the operand passes through `t`: its leaves are under one
-    /// child of `t` and the other child has some, and `t` reads it as the
-    /// identity over that child. [`View::level`] gives the level of the node
-    /// the chain carries, which has the width of the identity but not its
-    /// pairs.
+    /// The width of the operand at `t`, a node it passes through: one above
+    /// its top, where it is read as its output only, a leaf's labels where
+    /// `t` passes over a leaf.
     #[inline(always)]
-    pub(crate) fn passes(&self, t: usize) -> bool {
-        self.passes.get(t).copied().unwrap_or(false)
-    }
-
-    /// Whether the view reads pass-throughs as the identity ([`View::passing`]).
-    #[inline]
-    pub(crate) fn passes_any(&self) -> bool {
-        !self.passes.is_empty()
-    }
-
-    /// The width of the operand at `t`: one above its top, where it is read
-    /// as its output only, a leaf's labels where `t` passes over a leaf.
-    #[inline(always)]
-    pub(crate) fn width(&self, tdd: &Tdd, t: usize) -> usize {
-        if !self.passes(t) {
-            return self.level(tdd, t).slot_count();
-        }
+    pub(crate) fn pass_width(&self, tdd: &Tdd, t: usize) -> usize {
         match self.at[t] {
             Slot::Own(s) => match s as usize {
                 s if s == tdd.vtree().root().idx() => 1,
@@ -252,23 +218,23 @@ impl View {
         }
     }
 
-    /// The operand's output, where `t` passes to `c` and `c` is the
-    /// operand's top: `t` reads the output as its one node.
+    /// The operand's output, where `t` passes to the operand's top: `t`
+    /// reads the output as its one node.
     #[inline]
-    pub(crate) fn pinned(&self, tdd: &Tdd, t: usize, c: usize) -> Option<u32> {
+    pub(crate) fn top_output(&self, tdd: &Tdd, t: usize) -> Option<u32> {
         let top = tdd.vtree().root().idx() as u32;
-        (matches!(self.at[t], Slot::Own(s) if s == top) && !self.passes(c)).then_some(tdd.output.local.0)
+        matches!(self.at[t], Slot::Own(s) if s == top).then_some(tdd.output.local.0)
     }
 
-    /// Where `t` passes over a leaf below the operand's top, the labels of
-    /// the leaf that reach a node, one bit each: those the level that reads
-    /// the leaf names, the two literals or the One label alone, as a
-    /// placement's chain holds them.
+    /// Where `t`, a node the operand passes through, passes over a leaf
+    /// below the operand's top, the labels of the leaf that reach a node,
+    /// one bit each: those the level that reads the leaf names, the two
+    /// literals or the One label alone, as a placement's chain holds them.
     pub(crate) fn literals(&self, tdd: &Tdd, t: usize) -> Option<u8> {
         let source = tdd.vtree();
         let Slot::Own(x) = self.at[t] else { return None };
         let x = VtreeIdx(x);
-        if !self.passes(t) || x.idx() >= source.num_leaf_nodes() || x == source.root() {
+        if x.idx() >= source.num_leaf_nodes() || x == source.root() {
             return None;
         }
         let reader = source.node(x).parent().expect("a leaf below the top has a parent");

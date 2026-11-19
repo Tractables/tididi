@@ -99,9 +99,18 @@ impl Side {
         Plan::from_parts(parts.0, parts.1, parts.2, self.pass_throughs)
     }
 
+    /// The nodes the operand's view passes through, none if it reads only
+    /// the operand's own levels.
+    fn passing(&self) -> &[bool] {
+        match self.pass_throughs {
+            0 => &[],
+            _ => &self.passes,
+        }
+    }
+
     fn put_back(&mut self, plan: Plan, view: Option<View>) {
         if let Some(view) = view {
-            (self.slots, self.passes) = view.release_passing(&plan);
+            self.slots = view.release(&plan).0;
         }
         (self.targets, self.embedding, self.cone) = plan.into_parts();
     }
@@ -199,9 +208,8 @@ pub(super) fn conjoin_union<'a>(
     let [sf, sg] = &mut tables.sides;
     lim.gate().poll_each((sf.cone.len() + sg.cone.len()) as u64)?;
     let (fp, gp) = (sf.plan(), sg.plan());
-    let tables = |side: &mut Side| (std::mem::take(&mut side.slots), std::mem::take(&mut side.passes));
-    let fv = View::passing(eng, &f, into, &fp, tables(sf));
-    let gv = View::passing(eng, &g, into, &gp, tables(sg));
+    let fv = View::passing(eng, &f, into, &fp, std::mem::take(&mut sf.slots), &sf.passes);
+    let gv = View::passing(eng, &g, into, &gp, std::mem::take(&mut sg.slots), &sg.passes);
     let (mut fv, mut gv) = match (fv, gv) {
         (Ok(fv), Ok(gv)) => (fv, gv),
         (fv, gv) => {
@@ -209,8 +217,8 @@ pub(super) fn conjoin_union<'a>(
             for (side, plan, view) in [(&mut *sf, fp, fv), (&mut *sg, gp, gv)] {
                 match view {
                     Ok(view) => side.put_back(plan, Some(view)),
-                    Err((e, (slots, passes))) => {
-                        (side.slots, side.passes) = (slots, passes);
+                    Err((e, slots)) => {
+                        side.slots = slots;
                         side.put_back(plan, None);
                         error = Some(e);
                     }
@@ -226,6 +234,7 @@ pub(super) fn conjoin_union<'a>(
         Operands { f: VtreeMask::free_of(&fp), g: VtreeMask::free_of(&gp) },
         Operands { f: Some(&mut fv), g: Some(&mut gv) },
         Operands { f: Some(&fp), g: Some(&gp) },
+        Operands { f: sf.passing(), g: sg.passing() },
     )
     .map_err(|refused| refused.error);
     sf.put_back(fp, Some(fv));

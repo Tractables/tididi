@@ -66,7 +66,7 @@ fn the_cone_is_the_levels_no_free_level_is_over() {
             let (mut f_widths, mut g_widths) = (vec![0; n], vec![0; n]);
             let (mut f_marginal, mut g_marginal) = (vec![false; n], vec![false; n]);
 
-            let (_, cone) = survey(
+            let (_, cone) = survey::<_, false>(
                 &eng,
                 &into,
                 Operands { f: &crate::apply::conjoin::held::Held::reading(&f), g: &crate::apply::conjoin::held::Held::reading(&g) },
@@ -100,7 +100,7 @@ fn the_cone_is_the_levels_no_free_level_is_over() {
                 f: VtreeMask::free_of(&f_plan),
                 g: VtreeMask::free_of(&g_plan),
             };
-            let (_, cone) = survey(
+            let (_, cone) = survey::<_, false>(
                 &eng,
                 &into,
                 Operands { f: &crate::apply::conjoin::held::Held::reading(&f), g: &crate::apply::conjoin::held::Held::reading(&g) },

@@ -121,6 +121,16 @@ fn split_lists(product_lists: &mut [Vec<ProductEntry>], left: usize, right: usiz
     ProductLists { left, right, out }
 }
 
+/// Where a level's products are read: the cell `(i, j)` itself, at
+/// `i * g_width + j`, on a complete level or one an operand is constant
+/// true over; the level's grid; or its product list.
+#[derive(Clone, Copy)]
+pub(super) enum Grid<'a> {
+    Cells,
+    Slab(&'a [u32]),
+    Lists,
+}
+
 #[derive(Default)]
 pub(super) struct Products {
     pub(super) arena: GridArena,
@@ -392,6 +402,111 @@ impl Products {
             panic!("product level {c} has neither stored products nor an identity operand");
         }
         Ok(true)
+    }
+
+    /// How child level `c`'s products are read in place
+    /// ([`Grid`]), on operands of `f_width` and `g_width` nodes there.
+    pub(super) fn grid(&self, c: usize, (f_width, g_width): (usize, usize), identity: Operands<bool>) -> Grid<'_> {
+        if self.complete[c] || identity.f || identity.g {
+            Grid::Cells
+        } else if let Some(base) = self.arena.materialized(c) {
+            Grid::Slab(&self.arena.slab()[base.idx()..base.idx() + f_width * g_width])
+        } else if self.has_pl[c] {
+            Grid::Lists
+        } else {
+            panic!("product level {c} has neither stored products nor an identity operand");
+        }
+    }
+
+    /// Child level `c`'s products listed by `f`'s node there, `f` of
+    /// `width` nodes: those of node `x` are `entries[2 * k]`, the `g` node or
+    /// 0 for a `pinned` one, and `entries[2 * k + 1]`, the product, for `k`
+    /// from `offsets[x]` to `offsets[x + 1]`, in list order; only those of
+    /// the first `rows` `g` nodes, or of the pinned one. False, with neither
+    /// written, where over a quarter of those cells have a product: there
+    /// reading each cell costs less than gathering and sorting products.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::OverBudget`] when the tables' growth is refused.
+    pub(super) fn invert_columns(
+        &self,
+        eng: &Engine,
+        c: usize,
+        (pinned, rows): (Option<u32>, usize),
+        width: usize,
+        offsets: &mut Vec<u32>,
+        entries: &mut Vec<u32>,
+    ) -> Result<bool, OperationError> {
+        let lim = eng.limits();
+        let row = |g: u32| match pinned {
+            Some(p) => (g == p).then_some(0),
+            None => ((g as usize) < rows).then_some(g),
+        };
+        let list = &self.product_lists[c];
+        offsets.clear();
+        lim.try_resize(offsets, width + 1, 0)?;
+        for e in list {
+            if row(e.g_idx.0).is_some() {
+                offsets[e.f_idx.idx() + 1] += 1;
+            }
+        }
+        for x in 0..width {
+            offsets[x + 1] += offsets[x];
+        }
+        let cells = width * if pinned.is_some() { 1 } else { rows };
+        if 4 * offsets[width] as usize > cells {
+            return Ok(false);
+        }
+        entries.clear();
+        lim.try_resize(entries, 2 * offsets[width] as usize, 0)?;
+        // Each node's offset runs to its end as its entries are written, and
+        // is then the next node's start.
+        for e in list {
+            if let Some(r) = row(e.g_idx.0) {
+                let at = &mut offsets[e.f_idx.idx()];
+                entries[2 * *at as usize] = r;
+                entries[2 * *at as usize + 1] = e.prod_idx.0;
+                *at += 1;
+            }
+        }
+        offsets.copy_within(0..width, 1);
+        offsets[0] = 0;
+        Ok(true)
+    }
+
+    /// Child level `c`'s products along each of `rows` nodes of the narrow
+    /// operand, one row of `width`, the carrier's nodes there, in `out`:
+    /// with `carrier_f`, row `r` holds cell `(k, r)` at `k`, else `(r, k)`,
+    /// and `NO_PRODUCT` where the product is false. A `pinned` node is read
+    /// in place of row 0's, and there is one row.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::OverBudget`] when the rows' growth is refused.
+    pub(super) fn scatter_columns(
+        &self,
+        eng: &Engine,
+        c: usize,
+        carrier_f: bool,
+        (pinned, rows): (Option<u32>, usize),
+        width: usize,
+        out: &mut Vec<u32>,
+    ) -> Result<(), OperationError> {
+        out.clear();
+        eng.limits().try_resize(out, rows * width, super::NO_PRODUCT)?;
+        for e in &self.product_lists[c] {
+            let (k, other) = if carrier_f { (e.f_idx.idx(), e.g_idx.0) } else { (e.g_idx.idx(), e.f_idx.0) };
+            let row = match pinned {
+                Some(p) if other == p => 0,
+                Some(_) => continue,
+                None => other as usize,
+            };
+            if row < rows {
+                out[row * width + k] = e.prod_idx.0;
+            }
+        }
+        Ok(())
     }
 
     /// Publish a level built by relabelling the carrier's nodes: `map` holds
