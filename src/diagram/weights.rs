@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use crate::diagram::{EvalAlgebra, RationalWeights, ScaledFloat, SignedLog, WeightValue};
 use crate::diagram::LeafLabel;
-use crate::vtree::VarId;
+use crate::vtree::{FreeVars, VarId};
 
 /// The numeric representation a weighted marginalization's values use: exact
 /// `BigRational`, or one of two bounded-precision forms whose every operation
@@ -28,6 +28,26 @@ pub enum Arithmetic {
     /// Bounded-precision `f64` mantissa with a binary exponent of its own;
     /// [`ScaledFloat`] states its error bounds.
     ScaledFloat,
+}
+
+/// What [`Tdd::weighted_value`](crate::Tdd::weighted_value) multiplies in for
+/// a free variable of a diagram on a projection: a home variable the diagram
+/// neither has as a leaf nor holds in a region's extent. Set it with
+/// [`Weights::with_free`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FreeWeight {
+    /// The sum of the variable's two weights, so the value ranges over the
+    /// whole home.
+    #[default]
+    Total,
+    /// One. The value then ranges over the diagram's own variables and its
+    /// regions' extents. [`minimize`](crate::Tdd::minimize) can free a
+    /// variable the function does not depend on, and the value then changes
+    /// by that variable's total unless the total is one: the caller that
+    /// declares `One` holds that every variable its diagrams can lack has
+    /// total one.
+    One,
 }
 
 /// The literal weights and arithmetic that every summed-out level of a
@@ -50,12 +70,14 @@ pub enum Arithmetic {
 pub struct Weights {
     pub(super) table: Arc<RationalWeights>,
     arithmetic: Arithmetic,
+    free: FreeWeight,
 }
 
 impl std::fmt::Debug for Weights {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Weights")
             .field("arithmetic", &self.arithmetic)
+            .field("free", &self.free)
             .finish()
     }
 }
@@ -79,7 +101,7 @@ impl Weights {
 
     /// Compare arithmetic and literal weights under a rename whose variables both tables cover.
     pub(crate) fn compatible_after_rename(&self, other: &Self, variables: impl IntoIterator<Item = (crate::vtree::VarId, crate::vtree::VarId)>) -> bool {
-        self.arithmetic() == other.arithmetic() && variables.into_iter().all(|(local, global)| {
+        self.arithmetic() == other.arithmetic() && self.free() == other.free() && variables.into_iter().all(|(local, global)| {
             self.algebra().pos_weight(local) == other.algebra().pos_weight(global)
                 && self.algebra().neg_weight(local) == other.algebra().neg_weight(global)
         })
@@ -122,7 +144,45 @@ impl Weights {
 
     /// A store over `algebra` with no level marginal yet.
     pub fn new(algebra: RationalWeights, arithmetic: Arithmetic) -> Self {
-        Self { table: Arc::new(algebra), arithmetic }
+        Self { table: Arc::new(algebra), arithmetic, free: FreeWeight::Total }
+    }
+
+    /// These weights with free variables weighed by `free`. Weights that
+    /// differ in it are incompatible, as weights that differ in arithmetic are.
+    #[must_use]
+    pub fn with_free(mut self, free: FreeWeight) -> Self {
+        self.free = free;
+        self
+    }
+
+    /// What a free variable weighs, [`FreeWeight::Total`] unless set by
+    /// [`with_free`](Self::with_free).
+    #[inline]
+    pub fn free(&self) -> FreeWeight {
+        self.free
+    }
+
+    /// Multiply into `value`, one variable at a time in rank order, the
+    /// weight of each of `free`; `value` unchanged under [`FreeWeight::One`]
+    /// or when every variable's total is one.
+    pub(crate) fn times_free(
+        &self,
+        mut value: Option<WeightValue>,
+        free: Option<FreeVars<'_>>,
+        gate: &mut crate::limits::PollGate<'_>,
+    ) -> Result<Option<WeightValue>, crate::OperationError> {
+        let Some(free) = free.filter(|_| self.free == FreeWeight::Total && !self.algebra().totals_one()) else {
+            return Ok(value);
+        };
+        for var in free.vars() {
+            gate.poll(1)?;
+            let one = self.leaf_val(var, LeafLabel::One);
+            value = Some(match value {
+                Some(v) => v.mul(&one),
+                None => one,
+            });
+        }
+        Ok(value)
     }
 
     /// A clone, for another diagram of the same weighted build. The table is
@@ -162,12 +222,22 @@ impl Weights {
         }
     }
 
+    /// The multiplicative identity in the active mode.
+    #[cold]
+    pub(crate) fn wone(&self) -> WeightValue {
+        self.convert(num_rational::BigRational::from_integer(1.into()))
+    }
+
     /// Leaf base value for `(var, label)` in the active mode. The exact parsed
     /// weight from [`RationalWeights`] is authoritative; in a bounded mode it
     /// is converted exactly once here (per leaf read).
     #[inline]
     pub(crate) fn leaf_val(&self, var: VarId, label: LeafLabel) -> WeightValue {
-        let r = self.table.leaf(var, label);
+        self.convert(self.table.leaf(var, label))
+    }
+
+    #[inline]
+    fn convert(&self, r: num_rational::BigRational) -> WeightValue {
         match self.arithmetic {
             Arithmetic::SignedLog => WeightValue::Log(SignedLog::from_rational(&r)),
             Arithmetic::ScaledFloat => WeightValue::Scaled(ScaledFloat::from_rational(&r)),
