@@ -338,7 +338,8 @@ pub(crate) enum PruneScope {
 /// from — an output below the root, a leaf or marginal root level — walks the
 /// whole diagram instead. A `Whole` scope on a structural diagram that knows
 /// its loose levels ([`Dirty::loose`](crate::diagram::Dirty::loose)) walks
-/// down through the levels above them, as [`settle_loose`] leaves them, and
+/// down through the levels above them, settled first where that pays
+/// ([`settle_loose`], [`settle_pays`]), and
 /// the levels that lose a node, starting below the levels it knows are all
 /// reached ([`Seeds`]): where the output is the root level's only node, the
 /// levels with no loose level on their path from the root. A level the walk
@@ -379,8 +380,10 @@ pub(crate) fn prune_unreachable(
             if tdd.dirty.loose_is_exact() {
                 debug_assert_eq!(settle_loose(eng, tdd, loose).ok().as_deref(), Some(loose), "an exact list settles to itself");
                 Some(Seeds::of(eng, tdd, loose)?)
-            } else {
+            } else if settle_pays(tdd, loose) {
                 Some(Seeds::of(eng, tdd, &settle_loose(eng, tdd, loose)?)?)
+            } else {
+                Some(Seeds::of(eng, tdd, loose)?)
             }
         }
         _ => None,
@@ -402,8 +405,40 @@ pub(crate) fn prune_unreachable(
     Ok(())
 }
 
-/// A level the walk must enter whatever it finds: a parent of a loose
-/// level, as [`settle_loose`] leaves them, or a level above one.
+/// Whether a prune settles `loose` ([`settle_loose`]) before its walk: when
+/// the parent levels the settle would read hold at most half of the
+/// diagram's slots and arena pairs. A settle that reads more costs about
+/// what it can save the walk, which enters the parents of listed levels
+/// anyway; the half is an arbitrary cut between those regimes. Listed
+/// siblings next to each other count their parent once.
+fn settle_pays(tdd: &Tdd, loose: &[u32]) -> bool {
+    let vtree = &tdd.vtree;
+    let size = |t: VtreeIdx| {
+        let level = &tdd.levels[t.idx()];
+        level.slot_count() + level.pairs.len()
+    };
+    let (mut read, mut last) = (0usize, None);
+    for &c in loose {
+        let p = vtree.node(VtreeIdx(c)).parent();
+        if p != last && p.is_some_and(|p| p != vtree.root() && tdd.is_structural_internal(p)) {
+            read += size(p.unwrap());
+        }
+        last = p;
+    }
+    let mut all = 0usize;
+    for t in (0..vtree.num_nodes()).map(|t| VtreeIdx(t as u32)) {
+        if tdd.is_structural_internal(t) {
+            all += size(t);
+            if all >= 2 * read {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// A level the walk must enter whatever it finds: a parent of a listed
+/// loose level, or a level above one.
 const FORCED: u8 = 1;
 /// A level every node of which the output reaches, known without a walk:
 /// the root, when the output is its only node, and a level that is not
@@ -440,8 +475,8 @@ pub(super) struct Seeds<'l> {
 }
 
 impl<'l> Seeds<'l> {
-    /// The seeds of `tdd`, whose loose levels are `loose`, as [`settle_loose`]
-    /// leaves them. The output is the root, as the walk below the root
+    /// The seeds of `tdd`, whose loose levels are `loose`, settled
+    /// ([`settle_loose`]) or not. The output is the root, as the walk below the root
     /// needs ([`below_root_walk_applies`]).
     pub(super) fn of(
         eng: &'l Engine,
