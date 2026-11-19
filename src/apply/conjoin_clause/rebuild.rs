@@ -288,8 +288,10 @@ fn list_unnamed_children(
     let lim = eng.limits();
     let dt = tables.need_dt[t.idx()];
     let base = tables.level_base[t.idx()];
-    tables.gaps[t.idx()] = tables.cd_map[base..base + k].iter().fold(0, |gaps, &[c, d]| {
-        gaps | u8::from(c == NO_PRODUCT) * NO_CT | u8::from(c == NO_PRODUCT && d == NO_PRODUCT) * NO_PRODUCTS
+    tables.gaps[t.idx()] = tables.cd_map[base..base + k].iter().fold(0, |gaps, &[c, d]| match (c, d) {
+        (NO_PRODUCT, NO_PRODUCT) => gaps | NO_CT | NO_PRODUCTS,
+        (NO_PRODUCT, _) => gaps | NO_CT,
+        _ => gaps,
     });
     let gap = |s: VtreeIdx| match vtree.node(s).is_leaf() {
         true => !dt,
