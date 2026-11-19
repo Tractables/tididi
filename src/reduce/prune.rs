@@ -26,7 +26,7 @@ use crate::diagram::{
 
 use crate::Engine;
 
-use crate::execution::pool::{Buffers, PooledScratch, Scratch};
+use crate::execution::pool::{Buffers, PoolGuard, PooledScratch, Scratch};
 use crate::limits::{Limits, OperationError, PollGate, Transient};
 use crate::vtree::{Vtree, VtreeIdx};
 
@@ -385,10 +385,10 @@ pub(crate) fn prune_unreachable(
         prune_walk(eng, tdd, None, Start::Output)?;
     } else if let Some(seeds) = &seeded {
         let start = match seeds.root_clean {
-            true => Start::Seeds(&seeds.seeds[..], &seeds.state[..], &seeds.top[..]),
+            true => Start::Seeds(&seeds.buf.seeds, &seeds.buf.state, &seeds.buf.top),
             false => Start::Output,
         };
-        prune_walk(eng, tdd, Some(&seeds.state[..]), start)?;
+        prune_walk(eng, tdd, Some(seeds.state()), start)?;
         #[cfg(debug_assertions)]
         debug_assert_all_reached(tdd);
     } else {
@@ -457,18 +457,47 @@ const CLEAN: u8 = 2;
 /// clean levels, which lose no node and whose references into a clean
 /// child need no rewrite.
 pub(super) struct Seeds<'l> {
-    /// Per level, [`FORCED`], and [`CLEAN`] on the clean levels that are
-    /// forced or a seed's children: the walk reads it on a seed's children.
-    pub(super) state: Transient<'l, Vec<u8>>,
-    /// The structural internal clean levels with a structural internal
-    /// child that is not clean, top-down.
-    seeds: Transient<'l, Vec<VtreeIdx>>,
-    /// The structural internal clean levels above a loose one, which a walk
-    /// from the output enters ([`slots_from_output`]).
-    top: Transient<'l, Vec<VtreeIdx>>,
+    buf: PoolGuard<'l, SeedScratch>,
     /// Whether the root is clean: otherwise nothing is, and the walk starts
     /// at the output.
     root_clean: bool,
+}
+
+/// [`Seeds`]' buffers, checked out together.
+#[derive(Default)]
+pub(crate) struct SeedScratch {
+    /// Per level, [`FORCED`], and [`CLEAN`] on the clean levels that are
+    /// forced or a seed's children: the walk reads it on a seed's children.
+    state: Vec<u8>,
+    /// The structural internal clean levels with a structural internal
+    /// child that is not clean, top-down.
+    seeds: Vec<VtreeIdx>,
+    /// The structural internal clean levels above a loose one, which a walk
+    /// from the output enters ([`slots_from_output`]).
+    top: Vec<VtreeIdx>,
+    /// The levels above a loose one.
+    forced: Vec<VtreeIdx>,
+    /// A forced level's path up to the first level settled.
+    path: Vec<VtreeIdx>,
+}
+
+impl Buffers for SeedScratch {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
+        visit(&mut self.state);
+        visit(&mut self.seeds);
+        visit(&mut self.top);
+        visit(&mut self.forced);
+        visit(&mut self.path);
+    }
+}
+
+impl PooledScratch for SeedScratch {
+    fn prepare(&mut self) {
+        self.state.clear();
+        self.seeds.clear();
+        self.top.clear();
+        self.forced.clear();
+    }
 }
 
 impl<'l> Seeds<'l> {
@@ -482,14 +511,14 @@ impl<'l> Seeds<'l> {
     ) -> Result<Seeds<'l>, OperationError> {
         let lim = eng.limits();
         let vtree = &tdd.vtree;
-        let mut state: Transient<'_, Vec<u8>> = Transient::new(lim, Vec::new());
-        lim.try_resize(&mut state, vtree.num_nodes(), 0)?;
+        let mut buf = eng.scratch.reduce.seeds.checkout(eng);
+        let SeedScratch { state, seeds, top, forced, path } = &mut *buf;
+        lim.try_resize(state, vtree.num_nodes(), 0)?;
         // The loose levels, and every level above one forced, listed.
         const LOOSE: u8 = 4;
         // Whether the level is clean is settled.
         const SETTLED: u8 = 8;
         const SEED: u8 = 16;
-        let mut forced: Transient<'_, Vec<VtreeIdx>> = Transient::new(lim, Vec::new());
         for &level in loose {
             state[level as usize] |= LOOSE;
             let mut up = vtree.node(VtreeIdx(level)).parent();
@@ -498,14 +527,12 @@ impl<'l> Seeds<'l> {
                     break;
                 }
                 state[p.idx()] |= FORCED;
-                lim.try_push(&mut forced, p)?;
+                lim.try_push(forced, p)?;
                 up = vtree.node(p).parent();
             }
         }
         let root = vtree.root();
         let root_clean = tdd.levels[root.idx()].slot_count() == 1;
-        let mut seeds: Transient<'_, Vec<VtreeIdx>> = Transient::new(lim, Vec::new());
-        let mut top: Transient<'_, Vec<VtreeIdx>> = Transient::new(lim, Vec::new());
         if root_clean {
             // Whether each forced level is clean, settled from the root down
             // its path: the root is, and a level is when its parent is and
@@ -513,7 +540,6 @@ impl<'l> Seeds<'l> {
             // under it, so the clean levels with a child that is not are
             // forced, and the walk reads whether a level is clean only on a
             // seed's children, below.
-            let mut path: Transient<'_, Vec<VtreeIdx>> = Transient::new(lim, Vec::new());
             for &f in forced.iter() {
                 path.clear();
                 let mut t = f;
@@ -521,7 +547,7 @@ impl<'l> Seeds<'l> {
                     if state[t.idx()] & SETTLED != 0 {
                         break state[t.idx()] & CLEAN != 0;
                     }
-                    lim.try_push(&mut path, t)?;
+                    lim.try_push(path, t)?;
                     match vtree.node(t).parent() {
                         Some(p) => t = p,
                         None => break true,
@@ -544,7 +570,7 @@ impl<'l> Seeds<'l> {
                     && tdd.is_structural_internal(level)
                 {
                     state[p.idx()] |= SEED;
-                    lim.try_push(&mut seeds, p)?;
+                    lim.try_push(seeds, p)?;
                 }
             }
             seeds.sort_unstable_by_key(|&t| std::cmp::Reverse(vtree.topo_pos(t)));
@@ -558,16 +584,16 @@ impl<'l> Seeds<'l> {
             }
             for &t in forced.iter() {
                 if state[t.idx()] & CLEAN != 0 && tdd.is_structural_internal(t) {
-                    lim.try_push(&mut top, t)?;
+                    lim.try_push(top, t)?;
                 }
             }
         }
-        Ok(Seeds {
-            state,
-            seeds,
-            top,
-            root_clean,
-        })
+        Ok(Seeds { buf, root_clean })
+    }
+
+    /// Per level, the state [`SeedScratch::state`] describes.
+    pub(super) fn state(&self) -> &[u8] {
+        &self.buf.state
     }
 }
 
