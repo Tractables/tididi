@@ -6,7 +6,7 @@
 //! (`take_level_fast_path`).
 
 use super::OperationError;
-use super::held::Held;
+use super::held::{Held, Levels};
 use super::products::Products;
 use super::setup::{ApplyRun, LevelShape};
 use crate::Engine;
@@ -37,10 +37,11 @@ pub(crate) fn init_leaf_identity(
     tdd: &Tdd,
 ) -> Result<(), OperationError> {
     let vtree = &tdd.vtree;
-    init_leaf_identity_over(
+    identity_over(
         eng,
         buf,
-        &Held::reading(tdd),
+        vtree,
+        &tdd.levels[..],
         vtree.internal_bottomup_slice(),
         &[],
         vtree.leaf_bottomup_slice(),
@@ -60,8 +61,22 @@ pub(super) fn init_leaf_identity_over(
     unscanned: &[VtreeIdx],
     leaves: &[VtreeIdx],
 ) -> Result<(), OperationError> {
+    match tdd.own_levels() {
+        Some(levels) => identity_over(eng, buf, tdd.vtree(), levels, scanned, unscanned, leaves),
+        None => identity_over(eng, buf, tdd.vtree(), tdd, scanned, unscanned, leaves),
+    }
+}
+
+fn identity_over<L: Levels + ?Sized>(
+    eng: &Engine,
+    buf: &mut Vec<bool>,
+    vtree: &crate::vtree::Vtree,
+    tdd: &L,
+    scanned: &[VtreeIdx],
+    unscanned: &[VtreeIdx],
+    leaves: &[VtreeIdx],
+) -> Result<(), OperationError> {
     let lim = eng.limits();
-    let vtree = tdd.vtree();
     let num_nodes = vtree.num_nodes();
     lim.try_resize(buf, num_nodes, false)?;
     // Every leaf is assumed identity until proven otherwise; internal levels
@@ -78,7 +93,7 @@ pub(super) fn init_leaf_identity_over(
     let mut has_any_marginal = false;
     for &t in scanned {
         let (left, right) = vtree.children(t);
-        if tdd.level(t.idx()).is_marginal() {
+        if tdd.level_at(t.idx()).is_marginal() {
             has_any_marginal = true;
         }
         let left_leaf = left.idx() < leaves;
@@ -93,7 +108,7 @@ pub(super) fn init_leaf_identity_over(
         if !want[0] && !want[1] {
             continue;
         }
-        let level = &tdd.level(t.idx());
+        let level = &tdd.level_at(t.idx());
         // Marginal levels have no structural pairs to scan — they're handled by
         // the `has_any_marginal` block below using per-node counts (integer) or
         // the marginal-forest walk. For integer-marginal levels `nodes` is also
@@ -139,7 +154,7 @@ pub(super) fn init_leaf_identity_over(
         let mut stack = eng.scratch.apply.marginal_stack.checkout(eng);
         stack.clear();
         for (t, _, _) in vtree.internal_bottomup() {
-            let level = &tdd.level(t.idx());
+            let level = &tdd.level_at(t.idx());
             if !level.is_marginal() {
                 continue;
             }
@@ -147,7 +162,7 @@ pub(super) fn init_leaf_identity_over(
             // the level has no parent). Children of a marginal level reach
             // their leaves through the top-down recursion below.
             if let Some(p) = vtree.node(t).parent()
-                && tdd.level(p.idx()).is_marginal()
+                && tdd.level_at(p.idx()).is_marginal()
             {
                 continue;
             }
@@ -165,7 +180,7 @@ pub(super) fn init_leaf_identity_over(
                         // invariant — but a child may itself be CT, in which
                         // case its leaf descendants stay identity.
                         for &child in [left, right] {
-                            let child_lvl = &tdd.level(child.idx());
+                            let child_lvl = &tdd.level_at(child.idx());
                             if !(child_lvl.is_marginal()
                                 && level_marginal_is_constant_true(child_lvl, subvars[child.idx()]))
                             {
