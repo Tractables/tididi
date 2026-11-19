@@ -295,6 +295,10 @@ pub(crate) struct PairColumns {
     pub(super) col_pairs: [u8; ROW_COLUMNS_MAX_WIDTH],
     /// Whether every column holds one pair: pair `q` is then column `q`'s.
     pub(super) one: bool,
+    /// The last pair of each column, as a mask.
+    pub(super) tops: u64,
+    /// The other pairs of each column, as a mask.
+    pub(super) inner: u64,
 }
 
 impl Default for PairColumns {
@@ -307,6 +311,8 @@ impl Default for PairColumns {
             cols: [0; ROW_COLUMNS_MAX_WIDTH],
             col_pairs: [0; ROW_COLUMNS_MAX_WIDTH],
             one: false,
+            tops: 0,
+            inner: 0,
         }
     }
 }
@@ -342,7 +348,7 @@ pub(super) fn fill_pair_columns(
         return false;
     }
     let decode = views.left.is_marginal() || views.right.is_marginal();
-    let (mut n, mut one) = (0, true);
+    let (mut n, mut one, mut tops, mut inner) = (0, true, 0u64, 0u64);
     let fits = level.try_for_each_node(0..g_width, |j, pairs| {
         let end = n + pairs.len();
         if end > ROW_COLUMNS_MAX_WIDTH {
@@ -354,12 +360,18 @@ pub(super) fn fill_pair_columns(
         }
         out.cols[j] = ((1u64 << end) - 1) & !((1u64 << n) - 1);
         out.col_pairs[j] = pairs.len() as u8;
+        if end > n {
+            tops |= 1 << (end - 1);
+            inner |= ((1u64 << (end - 1)) - 1) & !((1u64 << n) - 1);
+        }
         one &= pairs.len() == 1;
         n = end;
         Ok(())
     });
     out.len = n;
     out.one = one;
+    out.tops = tops;
+    out.inner = inner;
     fits.is_ok()
 }
 
