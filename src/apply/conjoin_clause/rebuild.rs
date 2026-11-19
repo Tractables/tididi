@@ -120,11 +120,21 @@ pub(super) fn rebuild_spine_level(
     let lim = eng.limits();
     let t_idx = t.idx();
     let (left, right) = vtree.children(t);
-    let tracked = |c: VtreeIdx| !vtree.node(c).is_leaf() && !levels[c.idx()].is_marginal();
-    if loose.is_some() {
+    let mut loose = loose;
+    if let Some(loose) = loose.as_deref_mut() {
+        // A child with more nodes than the rebuilt pairs can name is loose
+        // without marks, which would cost its width on every clause.
+        let k = levels[t_idx].slot_count();
+        let names = (levels[t_idx].pairs.len() + k).saturating_mul(if tables.need_dt[t_idx] { 4 } else { 3 });
         for (named, c) in tables.named.iter_mut().zip([left, right]) {
-            if tracked(c) {
-                lim.try_resize(named, levels[c.idx()].slot_count(), false)?;
+            if vtree.node(c).is_leaf() || levels[c.idx()].is_marginal() {
+                continue;
+            }
+            let width = levels[c.idx()].slot_count();
+            if width > names {
+                lim.try_push(loose, c.0)?;
+            } else {
+                lim.try_resize(named, width, false)?;
             }
         }
     }
