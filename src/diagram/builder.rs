@@ -110,7 +110,9 @@ impl<'a> LevelView<'a> {
 /// A diagram under construction: one level per vtree node, filled bottom-up.
 ///
 /// Start with [`Tdd::builder`], add nodes, then call [`finish`](Self::finish)
-/// with the output node. The result shares the vtree supplied to the builder.
+/// with the output node. The result shares the vtree supplied to the builder,
+/// except on a home, where [`finish`](Self::finish) moves it to the
+/// projection on the leaves it uses.
 ///
 /// Level buffers come from the engine's recycling pool. On success they belong
 /// to the returned diagram; [`abandon`](Self::abandon) returns them to the pool,
@@ -393,6 +395,12 @@ impl TddBuilder {
     /// level with no marginal level under it. The rest of semantic determinism
     /// remains the caller's responsibility, as described on [`TddBuilder`].
     ///
+    /// On a vtree on a home (its root or a projection), a diagram with no
+    /// marginal level is then [trimmed](crate::Tdd::trim): it is returned on
+    /// the projection of the home on the leaves its pairs do not name `One`,
+    /// and false is the constant on the empty projection. A diagram with a
+    /// marginal level is returned on the builder's vtree.
+    ///
     /// # Errors
     ///
     /// The first invariant violated — [`TddBuildError::BadOutput`] when
@@ -400,6 +408,8 @@ impl TddBuilder {
     /// vtree with no node, the true one); [`TddBuildError::MixedLeafForm`]
     /// when a level names a leaf child both as `One` and as a literal; other
     /// variants identify invalid references, marginal columns or leaf storage.
+    /// [`TddBuildError::OverBudget`] when the trim on a home is refused an
+    /// allocation.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -425,6 +435,16 @@ impl TddBuilder {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn finish(self, output: TddNodeId) -> Result<Tdd, TddBuildError> {
+        let mut tdd = self.finish_untrimmed(output)?;
+        if tdd.vtree.on_home() {
+            trim_on_home(&mut tdd)?;
+        }
+        Ok(tdd)
+    }
+
+    /// [`finish`](Self::finish) without the trim on a home, for a reader that
+    /// attaches level counts first.
+    pub(crate) fn finish_untrimmed(self, output: TddNodeId) -> Result<Tdd, TddBuildError> {
         check_storage::<true>(&self.vtree, &self.levels, output, self.weights.as_ref())?;
         let dirty = self.seed_worklists(Default::default(), None, None).expect("untracked worklists cannot be refused");
         Ok(self.seat(output, dirty, None))
@@ -459,6 +479,10 @@ impl TddBuilder {
     /// weighted columns match their store, and `output` names a live root node
     /// or the false sentinel. The diagram must also be deterministic.
     /// Invalid references can cause out-of-bounds reads in later operations.
+    ///
+    /// This seat does not trim. On a vtree on a home the caller names no leaf
+    /// `One`, or accepts a diagram that names one, which no reduction then
+    /// moves to the projection on the leaves it uses.
     ///
     /// # Panics
     ///
@@ -504,6 +528,25 @@ impl TddBuilder {
         return_levels(eng, std::mem::take(&mut self.levels));
     }
 
+}
+
+/// [`Tdd::trim`] of a diagram just seated on a home, unless it has a marginal
+/// level.
+#[cold]
+#[inline(never)]
+pub(crate) fn trim_on_home(tdd: &mut Tdd) -> Result<(), TddBuildError> {
+    if tdd.has_marginal_level() {
+        return Ok(());
+    }
+    let home = tdd.vtree.home().expect("a vtree on a home");
+    let context = Arc::clone(tdd.vtree.context());
+    match context.run(|eng| eng.trim(tdd, &home)) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            debug_assert_eq!(e, OperationError::OverBudget, "a trim without limits is refused only an allocation");
+            Err(TddBuildError::OverBudget)
+        }
+    }
 }
 
 /// The index bound a pair side pointing at level `t` is checked against: the

@@ -58,6 +58,17 @@ Breaking changes:
   `from_models`, `from_columns` and `from_cubes` leave out a variable every
   model leaves free. `rename_vars` accepts a target variable of the home
   that the diagram's vtree does not hold.
+- On a vtree on a home, `TddBuilder::finish`, `read_tdd`, `load_tdd`,
+  `read_tdd_binary` and `load_tdd_binary` return a diagram on the
+  projection of the home on the leaves its pairs use, and false on the
+  empty projection; a diagram with a marginal level keeps the builder's
+  vtree. The readers take the supplied vtree as naming the home only and
+  accept a file over any projection of it; another tree, or a vtree with
+  a summed-out region, is `IoError::Format`. On a home the binary reader
+  refuses a pair repeated in a level, as the text reader does everywhere.
+  `finish` reports a refused allocation in that trim as the new
+  `TddBuildError::OverBudget`. `TddBuilder::finish_unchecked` does not
+  trim. Diagrams on root vtrees are unchanged.
 
 Added:
 

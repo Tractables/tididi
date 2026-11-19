@@ -7,7 +7,8 @@ use std::sync::Arc;
 use crate::diagram::{LevelCounts, Tdd};
 use crate::io::binary::{encode_levels, postorder, xxh64};
 use crate::value::{CountRead, CountVec};
-use crate::io::{read_tdd, read_tdd_binary, write_tdd, write_tdd_binary, IoError};
+use crate::io::{write_tdd, write_tdd_binary, IoError};
+use super::{read_tdd, read_tdd_binary};
 use crate::test_helpers::{assert_canonical, compile_clauses, rand_cnf, test_cases, vtree_shapes, CnfShape, Lcg};
 use crate::vtree::{VarId, Vtree};
 

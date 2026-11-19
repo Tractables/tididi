@@ -148,7 +148,8 @@ fn writing_a_diagram_and_reading_it_back_returns_the_same_diagram() {
 /// the diagrams read back.
 fn read_back() -> Vec<Tdd> {
     use crate::build::constant_one;
-    use crate::io::{read_tdd, write_tdd};
+    use crate::io::write_tdd;
+    use super::read_tdd;
 
     use crate::test_helpers::normalized_levels;
 
@@ -200,7 +201,8 @@ fn read_back() -> Vec<Tdd> {
 #[test]
 fn the_reader_refuses_what_is_not_this_diagram() {
     use crate::build::constant_one;
-    use crate::io::{read_tdd, write_tdd, IoError};
+    use crate::io::{write_tdd, IoError};
+    use super::read_tdd;
 
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
@@ -235,7 +237,8 @@ fn the_reader_refuses_what_is_not_this_diagram() {
 /// A missing version must be diagnosed before interpreting the remaining fields.
 #[test]
 fn a_problem_line_without_a_version_is_refused_as_predating_the_version() {
-    use crate::io::{read_tdd, IoError};
+    use crate::io::IoError;
+    use super::read_tdd;
 
     let vtree = Arc::new(Vtree::balanced(3));
     let unversioned = "p tdd 3 5 4 0\n";
@@ -253,7 +256,8 @@ fn a_problem_line_without_a_version_is_refused_as_predating_the_version() {
 /// version is half of why the file will not load.
 #[test]
 fn a_file_from_a_later_version_is_refused_naming_both_versions() {
-    use crate::io::{read_tdd, IoError};
+    use crate::io::IoError;
+    use super::read_tdd;
 
     let vtree = Arc::new(Vtree::balanced(3));
     let newer = "p tdd 2 3 5 4 0\n";
@@ -278,7 +282,8 @@ fn write_tdd_string(tdd: &Tdd) -> String {
 /// version rather than pass unnoticed.
 #[test]
 fn an_unknown_comment_is_ignored_and_an_unknown_record_is_refused() {
-    use crate::io::{read_tdd, IoError};
+    use crate::io::IoError;
+    use super::read_tdd;
 
     let vtree = Arc::new(Vtree::balanced(3));
     let f = crate::test_helpers::compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3]]);

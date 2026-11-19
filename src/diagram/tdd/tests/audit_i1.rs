@@ -340,7 +340,8 @@ fn built(eng: &Engine, vtree: &Arc<Vtree>, nodes: &[(VtreeIdx, Vec<(u32, u32)>)]
         let pairs: Vec<ChildPair> = pairs.iter().map(|&(l, r)| ChildPair::new(NodeIdx(l), NodeIdx(r))).collect();
         last = b.push(eng, *t, &pairs).unwrap();
     }
-    b.finish(TddNodeId { vtree: nodes.last().unwrap().0, local: last }).unwrap()
+    // Seated unchecked: `finish` on a home would trim a padded operand.
+    unsafe { b.finish_unchecked(TddNodeId { vtree: nodes.last().unwrap().0, local: last }) }
 }
 
 const POS: u32 = LeafLabel::Pos as u32;

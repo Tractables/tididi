@@ -108,6 +108,8 @@ pub enum TddBuildError {
         /// The repeated pair.
         pair: ChildPair,
     },
+    /// The trim of a diagram finished on a home was refused an allocation.
+    OverBudget,
 }
 
 impl std::fmt::Display for TddBuildError {
@@ -182,6 +184,7 @@ impl std::fmt::Display for TddBuildError {
                 leaf.idx()
             ),
             Self::StructuralRegion { level } => write!(f, "region {} holds no summed-out values", level.idx()),
+            Self::OverBudget => write!(f, "the trim onto the projection on the leaves used was refused an allocation"),
         }
     }
 }
