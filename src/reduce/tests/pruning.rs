@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use crate::reduce::prune::{PruneScope, Seeds, Select, Start, below_root_walk_applies, few_dropped, keep_marked, FEW_DROPPED, new_indices, prune_walk, prune_complement, prune_unreachable, settle_loose, UNREACHED};
+use crate::reduce::prune::{PruneScope, Seeds, Select, Start, below_root_walk_applies, few_dropped, keep_marked, FEW_DROPPED, new_indices, prune_walk, prune_complement, prune_unreachable, settle_loose, settle_pays, UNREACHED};
 
 use crate::test_helpers::{compile_clauses, unnamed_levels};
 use crate::vtree::Vtree;
@@ -15,7 +15,10 @@ use crate::vtree::Vtree;
 fn prune_loose_from_output(eng: &crate::Engine, tdd: &mut crate::Tdd) -> Result<(), crate::OperationError> {
     debug_assert!(below_root_walk_applies(tdd) && !tdd.has_marginal_level());
     let loose = tdd.dirty.loose().expect("the diagram knows its loose levels").to_vec();
-    let loose = settle_loose(eng, tdd, &loose)?;
+    let loose = match tdd.dirty.loose_is_exact() || !settle_pays(tdd, &loose) {
+        true => loose,
+        false => settle_loose(eng, tdd, &loose)?,
+    };
     let seeds = Seeds::of(eng, tdd, &loose)?;
     prune_walk(eng, tdd, Some(&seeds.state[..]), Start::Output)?;
     tdd.dirty.set_loose(Some(Vec::new()));

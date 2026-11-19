@@ -411,7 +411,7 @@ pub(crate) fn prune_unreachable(
 /// what it can save the walk, which enters the parents of listed levels
 /// anyway; the half is an arbitrary cut between those regimes. Listed
 /// siblings next to each other count their parent once.
-fn settle_pays(tdd: &Tdd, loose: &[u32]) -> bool {
+pub(super) fn settle_pays(tdd: &Tdd, loose: &[u32]) -> bool {
     let vtree = &tdd.vtree;
     let size = |t: VtreeIdx| {
         let level = &tdd.levels[t.idx()];
