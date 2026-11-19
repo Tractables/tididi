@@ -237,13 +237,17 @@ impl TddLevel {
                 }
             };
             debug_assert!(cursor <= start, "the write cursor stays behind the reads");
-            let mut write = cursor;
-            for read in start..start + len {
-                let (pair, kept) = f(pairs[read]);
-                pairs[write] = pair;
-                write += usize::from(kept);
+            let seg = &mut pairs[cursor..start + len];
+            let mut kept_here = 0usize;
+            for read in start - cursor..seg.len() {
+                let (pair, kept) = f(seg[read]);
+                // SAFETY: `kept_here` counts kept pairs among those read
+                // since `start - cursor`, so it is at most `read`.
+                unsafe { *seg.get_unchecked_mut(kept_here) = pair };
+                kept_here += usize::from(kept);
             }
-            *node = match write - cursor {
+            let write = cursor + kept_here;
+            *node = match kept_here {
                 0 => EncodedNode::multi_pair(0, 0),
                 1 => {
                     // A node left one pair holds it inline, past the cursor.
