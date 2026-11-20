@@ -528,7 +528,7 @@ where
                 while cells != 0 {
                     let j = col_at(cells.trailing_zeros() as usize);
                     cells &= cells - 1;
-                    let col = cols[j];
+                    let col = if ONE { 1 << j } else { cols[j] };
                     let _: Result<(), std::convert::Infallible> =
                         try_for_each_cell_candidate::<ONE, _, _, _>(
                             (f_pairs, ands),
@@ -556,7 +556,7 @@ where
             while cells != 0 {
                 let j = col_at(cells.trailing_zeros() as usize);
                 cells &= cells - 1;
-                let col = cols[j];
+                let col = if ONE { 1 << j } else { cols[j] };
                 let grid_pos = row_base + j;
                 if n1 == 1 && (ONE || col & (col - 1) == 0) {
                     let (p, q) = (&f_pairs[0], &g_flat[col.trailing_zeros() as usize]);
