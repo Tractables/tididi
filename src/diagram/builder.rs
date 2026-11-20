@@ -10,7 +10,7 @@ use crate::limits::{Limits, OperationError};
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
 use super::build_error::TddBuildError;
-use super::level::TddLevel;
+use super::level::{StoredPairs, TddLevel};
 use super::pool::{return_levels, try_take_levels};
 use super::primitives::{ChildPair, EncodedChildRef, NodeIdx, TddNodeId};
 use super::tdd::Tdd;
@@ -733,7 +733,11 @@ fn check_structural_level<const PAIRS: bool>(
         // Gathering leaf forms in the same pass costs about as much as the
         // pass, so a level over two internal children, which has none, skips it.
         if !scanned && !leafy {
-            if every_pair(lvl, fits) {
+            let fit = match lvl.stored() {
+                Some(stored) => stored_pairs_below(stored, lb, rb),
+                None => every_pair(lvl, fits),
+            };
+            if fit {
                 return Ok(());
             }
         } else if !scanned {
@@ -796,18 +800,33 @@ fn check_structural_level<const PAIRS: bool>(
     check_leaf_form(vtree, levels, t, left, right)
 }
 
+/// Whether every node of `stored` has a pair and every pair's sides are
+/// below `lb` and `rb`.
+// Out of line and apart from the implicit levels' loop so that both bounds
+// stay in registers: in a larger function the loop reloads one from the
+// stack on every pair.
+#[inline(never)]
+fn stored_pairs_below(stored: StoredPairs<'_>, lb: usize, rb: usize) -> bool {
+    every_stored_pair(stored, |pair| (pair.left.raw() as usize) < lb && (pair.right.raw() as usize) < rb)
+}
+
 /// Whether every node of `lvl` has a pair and `f` holds on every pair. A
 /// stored level's nodes are read as slices of its arena, in a loop apart from
 /// an implicit level's generated pairs.
 #[inline(always)]
 fn every_pair(lvl: &TddLevel, mut f: impl FnMut(&ChildPair) -> bool) -> bool {
     match lvl.stored() {
-        Some(stored) => stored.nodes().iter().all(|node| {
-            let pairs = stored.of(node);
-            !pairs.is_empty() && pairs.iter().all(&mut f)
-        }),
+        Some(stored) => every_stored_pair(stored, &mut f),
         None => lvl.internal_inputs_iter().all(|(_, mut pairs)| pairs.len() != 0 && pairs.all(|pair| f(&pair))),
     }
+}
+
+#[inline(always)]
+fn every_stored_pair(stored: StoredPairs<'_>, mut f: impl FnMut(&ChildPair) -> bool) -> bool {
+    stored.nodes().iter().all(|node| {
+        let pairs = stored.of(node);
+        !pairs.is_empty() && pairs.iter().all(&mut f)
+    })
 }
 
 /// `Err` naming the first of `sides`, a child and the leaf forms its pairs
