@@ -5,7 +5,7 @@ use crate::diagram::{NodeIdx, Pass, WeightStore};
 use crate::vtree::{Vtree, VtreeIdx};
 use super::{Close, ReductionPlan, ContentTwinPolicy, ContentTwinSchedule};
 use super::prune::{PruneScope, below_root_walk_applies, prune_complement, prune_unreachable};
-use super::contract::{contract_all_twins, contract_leaf::contract_leaf_twins};
+use super::contract::{contract_all_twins, contract_all_twins_known, contract_leaf::contract_leaf_twins};
 use super::contract::content_twin::merge_content_equal_nodes;
 use super::contract::pair_fusion::fuse_pairs_at_parents;
 use super::slot_prune::prune_value_slots;
@@ -25,6 +25,9 @@ pub(super) struct Reduction<'a> {
     /// The leaves leaf contraction found twins at in a closing reduction,
     /// their parents' levels left as they were for the close to drop.
     recorded: Vec<VtreeIdx>,
+    /// Whether the diagram has a marginal level, read at most once: no pass
+    /// changes which levels are marginal, and each read scans every level.
+    marginal: Option<bool>,
     /// The variables some pair names true at entry.
     #[cfg(debug_assertions)]
     named_one: Vec<crate::vtree::VarId>,
@@ -41,6 +44,7 @@ impl<'a> Reduction<'a> {
             tdd,
             seed,
             recorded: Vec::new(),
+            marginal: None,
             #[cfg(debug_assertions)]
             named_one: Vec::new(),
         }
@@ -87,7 +91,7 @@ impl<'a> Reduction<'a> {
             }
             ReductionPlan::Prune => {
                 prune_unreachable(self.eng, self.tdd, scope)?;
-                if self.tdd.has_marginal_level() {
+                if self.marginal() {
                     prune_value_slots(self.eng, self.tdd)?;
                 }
                 self.tdd.close_marked_levels(closed);
@@ -103,7 +107,7 @@ impl<'a> Reduction<'a> {
         let pruned = !self.tdd.is_zero()
             && self.tdd.dirty.loose().is_some_and(<[u32]>::is_empty)
             && below_root_walk_applies(self.tdd)
-            && !self.tdd.has_marginal_level()
+            && !self.marginal()
             && self.tdd.levels[self.tdd.vtree.root().idx()].slot_count() == 1;
         if !pruned {
             prune_unreachable(self.eng, self.tdd, scope)?;
@@ -121,14 +125,14 @@ impl<'a> Reduction<'a> {
         // A content-twin scan ends with the slot prune. Without one, the slots
         // that prune and contraction orphaned at the boundary stores are still
         // there.
-        if !scanned && self.tdd.has_marginal_level() {
+        if !scanned && self.marginal() {
             prune_value_slots(self.eng, self.tdd)?;
         }
-        let mut structural = true;
+        let structural = !self.marginal();
         for level in &mut self.tdd.levels {
-            structural &= !level.is_marginal();
             level.shrink_arrays();
         }
+        debug_assert_eq!(structural, !self.tdd.has_marginal_level());
         // The passes above are the fixpoint of everything a worklist can ask
         // for. What the lists still hold is what the passes' own rewrites
         // pushed after the sweep had taken its list, plus content-twin
@@ -196,7 +200,7 @@ impl<'a> Reduction<'a> {
         let _op = self.eng.limits().enter()?;
         let closed = self.tdd.levels.is_closed();
         match old {
-            Some(old) if below_root_walk_applies(self.tdd) && !self.tdd.has_marginal_level() && old != self.tdd.output.local => {
+            Some(old) if below_root_walk_applies(self.tdd) && !self.marginal() && old != self.tdd.output.local => {
                 prune_complement(self.eng, self.tdd, old)?;
             }
             _ => prune_unreachable(self.eng, self.tdd, PruneScope::BelowRoot)?,
@@ -207,15 +211,19 @@ impl<'a> Reduction<'a> {
         self.finish(closed, true)
     }
 
+    fn marginal(&mut self) -> bool {
+        *self.marginal.get_or_insert_with(|| self.tdd.has_marginal_level())
+    }
+
     /// A closing reduction on a home with no summed-out level records the
     /// leaf sides in place of writing them.
     fn contract(&mut self) -> Result<(), OperationError> {
-        contract_all_twins(self.eng, self.tdd)?;
-        let marginal = self.tdd.has_marginal_level();
+        let marginal = self.marginal();
+        contract_all_twins_known(self.eng, self.tdd, Some(marginal))?;
         let record = self.seed.is_some() && !marginal && on_home(&self.tdd.vtree);
         // Leaf contraction leaves no inner twins unless a level is summed out.
         if contract_leaf_twins(self.eng, self.tdd, record.then_some(&mut self.recorded))? && marginal {
-            contract_all_twins(self.eng, self.tdd)?;
+            contract_all_twins_known(self.eng, self.tdd, Some(marginal))?;
         }
         Ok(())
     }
@@ -224,7 +232,7 @@ impl<'a> Reduction<'a> {
     /// diagrams use the schedule's fourfold growth threshold. Returns whether
     /// a scan ran.
     fn scan_if_due(&mut self, schedule: &mut ContentTwinSchedule) -> Result<bool, OperationError> {
-        if !self.tdd.has_marginal_level() { return Ok(false); }
+        if !self.marginal() { return Ok(false); }
         let before: u64 = self.tdd.levels.iter().map(|l| l.nodes().len() as u64).sum();
         if self.tdd.weights.is_some() || before <= CONTENT_SCAN_MAX_NODES || before >= schedule.next_scan_at_nodes {
             self.content_twins()?;
