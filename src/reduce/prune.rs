@@ -401,11 +401,11 @@ pub(crate) fn prune_unreachable(
     let below_root = matches!(scope, PruneScope::BelowRoot) && below_root_walk_applies(tdd);
     let seeded = match tdd.dirty.loose() {
         Some(loose) if !below_root && below_root_walk_applies(tdd) && !tdd.has_marginal_level() => {
-            let seeds = match tdd.dirty.counted_loose() {
-                Some(counted) => Seeds::of(eng, tdd, counted)?,
-                None => Seeds::of(eng, tdd, &settle_loose(eng, tdd, loose)?)?,
-            };
-            Some(seeds)
+            match tdd.dirty.counted_loose() {
+                Some(counted) => Some(Seeds::of(eng, tdd, counted)?),
+                None if settle_reads_half(tdd, loose) => None,
+                None => Some(Seeds::of(eng, tdd, &settle_loose(eng, tdd, loose)?)?),
+            }
         }
         _ => None,
     };
@@ -424,6 +424,20 @@ pub(crate) fn prune_unreachable(
     }
     tdd.dirty.set_loose(Some(Vec::new()));
     Ok(())
+}
+
+/// Whether settling `listed` may read as many pairs as a walk from the root
+/// reads: then the walk costs less than the settle and the seeded walk
+/// after it. The bound counts a parent once for each listed child.
+fn settle_reads_half(tdd: &Tdd, listed: &[u32]) -> bool {
+    let bound = |t: VtreeIdx| tdd.levels[t.idx()].pairs_bound();
+    let read: usize = listed
+        .iter()
+        .filter_map(|&t| tdd.vtree.node(VtreeIdx(t)).parent())
+        .map(bound)
+        .sum();
+    let all: usize = (0..tdd.vtree.num_nodes() as u32).map(|t| bound(VtreeIdx(t))).sum();
+    read >= all
 }
 
 /// A level the walk must enter whatever it finds: a parent of a loose
