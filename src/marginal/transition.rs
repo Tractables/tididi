@@ -90,14 +90,15 @@ pub(crate) trait MarginalDomain: ValueDomain {
         store: &mut Self::Store,
     ) -> Result<(), OperationError>;
 
-    /// Whatever the domain owes the whole diagram once a cascade pass is over.
-    /// `was_marginal` is the pass-entry marginality snapshot.
+    /// Whatever the domain owes the diagram once a cascade pass is over.
+    /// `made_marginal` lists the levels the pass made marginal, in the order
+    /// it installed them.
     ///
     /// # Errors
     ///
     /// `Err(OperationError::OverBudget)` when `lim` refuses the move of an
     /// implicit level's references.
-    fn end_sweep(lim: &Limits, tdd: &mut Tdd, was_marginal: &[bool]) -> Result<(), OperationError>;
+    fn end_sweep(lim: &Limits, tdd: &mut Tdd, made_marginal: &[VtreeIdx]) -> Result<(), OperationError>;
 
 }
 
@@ -147,16 +148,14 @@ impl MarginalDomain for IntFold {
         crate::marginal::marginalize_leaf_inline(lim, tdd, leaf, vtree)
     }
 
-    /// Make every marginal-side slot reference this pass persisted self-describing,
-    /// once, at the pass's chokepoint.
+    /// Inline the small counts behind the references into the levels this
+    /// pass made marginal, once, at the pass's chokepoint.
     ///
     /// This path does not run the conjunction sweep, so the end-of-apply
-    /// tagger never runs on it, and canon's no-duplicate early return leaves
-    /// untouched boundary references raw. The snapshot is what keeps the sweep
-    /// off children that a prior pass marginalized: those already carry inline
-    /// counts, and re-resolving them as bare slots would misread them.
-    fn end_sweep(lim: &Limits, tdd: &mut Tdd, was_marginal: &[bool]) -> Result<(), OperationError> {
-        crate::diagram::inline_small_marginal_refs(lim, tdd, Some(was_marginal))
+    /// inlining never runs on it, and canon's no-duplicate early return
+    /// leaves untouched boundary references raw.
+    fn end_sweep(lim: &Limits, tdd: &mut Tdd, made_marginal: &[VtreeIdx]) -> Result<(), OperationError> {
+        crate::diagram::inline_small_marginal_refs(lim, tdd, Some(made_marginal))
     }
 }
 impl MarginalDomain for WeightFold {
@@ -208,9 +207,8 @@ impl MarginalDomain for WeightFold {
         crate::marginal::marginalize_leaf_weighted(lim, tdd, leaf, vtree, store)
     }
 
-    /// Nothing: weighted marginal-side references are bare slots end to end, so
-    /// there is no tag to apply and no snapshot to key it off.
-    fn end_sweep(_lim: &Limits, _tdd: &mut Tdd, _was_marginal: &[bool]) -> Result<(), OperationError> {
+    /// Nothing: weighted marginal-side references are bare slots end to end.
+    fn end_sweep(_lim: &Limits, _tdd: &mut Tdd, _made_marginal: &[VtreeIdx]) -> Result<(), OperationError> {
         Ok(())
     }
 }
@@ -262,8 +260,8 @@ impl MarginalDomain for FloatFold {
         WeightFold::sum_out_leaf(lim, tdd, leaf, vtree, store)
     }
 
-    fn end_sweep(lim: &Limits, tdd: &mut Tdd, was_marginal: &[bool]) -> Result<(), OperationError> {
-        WeightFold::end_sweep(lim, tdd, was_marginal)
+    fn end_sweep(lim: &Limits, tdd: &mut Tdd, made_marginal: &[VtreeIdx]) -> Result<(), OperationError> {
+        WeightFold::end_sweep(lim, tdd, made_marginal)
     }
 }
 
@@ -339,11 +337,18 @@ pub(crate) trait InstallTarget {
     ) -> Result<(), OperationError>;
 }
 
+/// A finished diagram as a cascade's target, with the levels the cascade
+/// made marginal, in install order.
+pub(crate) struct Finished<'a> {
+    pub(crate) tdd: &'a mut Tdd,
+    pub(crate) made_marginal: &'a mut Vec<VtreeIdx>,
+}
+
 /// Installs through [`install_finished`], which dedups the column and
 /// rewrites the parent's references.
-impl InstallTarget for Tdd {
+impl InstallTarget for Finished<'_> {
     fn levels(&self) -> &[TddLevel] {
-        &self.levels
+        &self.tdd.levels
     }
 
     fn install<K: MarginalDomain>(
@@ -355,7 +360,9 @@ impl InstallTarget for Tdd {
         _computed: &mut [Option<K::Col>],
         store: &mut K::Store,
     ) -> Result<(), OperationError> {
-        install_finished::<K>(lim, self, vtree, t, col, store)
+        install_finished::<K>(lim, self.tdd, vtree, t, col, store)?;
+        self.made_marginal.push(t.vtree_idx());
+        Ok(())
     }
 }
 

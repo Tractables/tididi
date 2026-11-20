@@ -5,7 +5,7 @@ use crate::diagram::level::TddLevel;
 use crate::limits::{Limits, OperationError};
 use super::refs::ChildSide;
 use crate::diagram::tdd::Tdd;
-use crate::vtree::Vtree;
+use crate::vtree::{Vtree, VtreeIdx};
 
 /// Replace every bare slot reference toward a marginal child whose count is
 /// small enough with the count itself (bit 30 set); a larger count keeps
@@ -17,23 +17,36 @@ use crate::vtree::Vtree;
 /// # Errors
 ///
 /// `Err(OperationError::OverBudget)` when `lim` refuses the move of an
-/// implicit level's side ([`TddLevel::inline_small_refs`]). The levels below
-/// it are through the pass; that side and the ones after it keep bare slot
-/// references, which still read the same counts, and are not marked as
-/// carrying inline ones.
+/// implicit level's side ([`TddLevel::inline_small_refs`]). The levels
+/// visited before it are through the pass; that side and the ones after it
+/// keep bare slot references, which still read the same counts, and are not
+/// marked as carrying inline ones.
 pub(crate) fn inline_small_marginal_refs(
     lim: &Limits,
     tdd: &mut Tdd,
-    // `Some(snapshot)`: `snapshot[i]` is whether level `i` was already marginal
-    // at the enclosing `marginalize_batch` entry, and only sides whose child
-    // became marginal in this batch are emitted (an already inline ref
-    // re-read as a slot index would index out of bounds). `None` falls back to
-    // the level's `has_value_refs` markers.
-    was_marginal: Option<&[bool]>,
+    // `Some(made)`: `made` lists the levels a marginalization pass made
+    // marginal, and only the references into them are rewritten, at the
+    // parents that pass left structural. `None` visits every internal level,
+    // bottom-up, and skips a side by the level's `has_value_refs` marker.
+    made_marginal: Option<&[VtreeIdx]>,
 ) -> Result<(), OperationError> {
     // Disjoint-field borrow: vtree (shape) immutable, levels (data) mutable.
     let vtree = &tdd.vtree;
-    inline_small_marginal_refs_in(lim, vtree, &mut tdd.levels, vtree.internal_bottomup_slice(), was_marginal, |_| {})
+    let levels = &mut tdd.levels;
+    let Some(made) = made_marginal else {
+        return inline_small_marginal_refs_in(lim, vtree, levels, vtree.internal_bottomup_slice(), |_| {});
+    };
+    for &u in made {
+        let Some(t) = vtree.node(u).parent() else { continue };
+        if levels[t.idx()].is_marginal() {
+            continue;
+        }
+        let (left, right) = vtree.children(t);
+        let tags = (levels[left.idx()].is_marginal(), levels[right.idx()].is_marginal());
+        // A parent with both children in `made` is visited once per side.
+        inline_small_marginal_refs_at_level(lim, levels, t, (left, right), tags, (u == left, u == right))?;
+    }
+    Ok(())
 }
 
 /// [`inline_small_marginal_refs`] on levels not yet seated as a diagram, at
@@ -47,9 +60,8 @@ pub(crate) fn inline_small_marginal_refs_in(
     lim: &Limits,
     vtree: &Vtree,
     levels: &mut [TddLevel],
-    at: &[crate::vtree::VtreeIdx],
-    was_marginal: Option<&[bool]>,
-    mut rewrote: impl FnMut(crate::vtree::VtreeIdx),
+    at: &[VtreeIdx],
+    mut rewrote: impl FnMut(VtreeIdx),
 ) -> Result<(), OperationError> {
     // The tests stay in the loop: most levels fail them, and a call per
     // level cost more than the pass's work.
@@ -60,9 +72,15 @@ pub(crate) fn inline_small_marginal_refs_in(
         let (left, right) = vtree.children(t);
         let tag_left = levels[left.idx()].is_marginal();
         let tag_right = levels[right.idx()].is_marginal();
-        if (tag_left || tag_right)
-            && inline_small_marginal_refs_at_level(lim, levels, was_marginal, t, (left, right), (tag_left, tag_right))?
-        {
+        if !(tag_left || tag_right) {
+            continue;
+        }
+        let level = &levels[t.idx()];
+        let emit = (
+            tag_left && !level.has_value_refs(ChildSide::Left),
+            tag_right && !level.has_value_refs(ChildSide::Right),
+        );
+        if inline_small_marginal_refs_at_level(lim, levels, t, (left, right), (tag_left, tag_right), emit)? {
             rewrote(t);
         }
     }
@@ -70,42 +88,28 @@ pub(crate) fn inline_small_marginal_refs_in(
 }
 
 /// One internal level's share of [`inline_small_marginal_refs`], at a level
-/// that is not marginal and has a marginal child (`tag_left`,
-/// `tag_right`): whether it rewrote the level's references.
+/// that is not marginal and has a marginal child (`tag_left`, `tag_right`):
+/// rewrite the sides `emit` names, mark every marginal side, and return
+/// whether it rewrote.
 fn inline_small_marginal_refs_at_level(
     lim: &Limits,
     levels: &mut [TddLevel],
-    was_marginal: Option<&[bool]>,
-    t: crate::vtree::VtreeIdx,
-    (left, right): (crate::vtree::VtreeIdx, crate::vtree::VtreeIdx),
+    t: VtreeIdx,
+    (left, right): (VtreeIdx, VtreeIdx),
     (tag_left, tag_right): (bool, bool),
+    (do_left, do_right): (bool, bool),
 ) -> Result<bool, OperationError> {
     let ti = t.idx();
-    let left_idx = left.idx();
-    let right_idx = right.idx();
-    // Emit a side iff its child became marginal in this batch; the
-    // snapshot is preferred since a rebuild clobbers the marker.
-    let do_left = tag_left
-        && match was_marginal {
-            Some(wm) => !wm[left_idx],
-            None => !levels[ti].has_value_refs(ChildSide::Left),
-        };
-    let do_right = tag_right
-        && match was_marginal {
-            Some(wm) => !wm[right_idx],
-            None => !levels[ti].has_value_refs(ChildSide::Right),
-        };
     if do_left || do_right {
-        let [p, l, r] = levels.get_disjoint_mut([ti, left_idx, right_idx]).expect("distinct");
+        let [p, l, r] = levels.get_disjoint_mut([ti, left.idx(), right.idx()]).expect("distinct");
         p.inline_small_refs(
             lim,
             do_left.then(|| l.marginal_counts()).flatten(),
             do_right.then(|| r.marginal_counts()).flatten(),
         )?;
     }
-    // Mark the sides now carrying inline counts. Keyed off tag_left/tag_right
-    // (the marginal-child predicate), not do_*: an already-inline side stays
-    // marked so a later pass still skips it.
+    // Marked off the marginal-child tags, not the emitted sides: a side
+    // already inline stays marked so a later pass still skips it.
     if tag_left {
         levels[ti].set_has_value_refs(ChildSide::Left, true);
     }

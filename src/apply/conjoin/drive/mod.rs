@@ -732,7 +732,7 @@ fn apply_and_held(
                 lists.built.push(t);
             }
         };
-        match crate::diagram::inline_small_marginal_refs_in(lim, &vtree, levels, cone.built, None, rewrote) {
+        match crate::diagram::inline_small_marginal_refs_in(lim, &vtree, levels, cone.built, rewrote) {
             Ok(()) if cone.constant => {
                 let owed = crate::diagram::Dirty::stacked(&Default::default(), f.dirty(), cone.built.len());
                 assembly.finish_with_or_return(output, owed, cone.built, Some(&lists.built[..]))

@@ -7,7 +7,7 @@ use crate::limits::PollGate;
 use crate::vtree::{Vtree, VtreeIdx};
 
 use crate::value::{FoldInput, IntFold, Retention};
-use super::transition::{MarginalDomain, cascade};
+use super::transition::{Finished, MarginalDomain, cascade};
 
 /// Marginalize `targets` into per-node model counts.
 ///
@@ -49,9 +49,8 @@ pub(crate) fn marginalize_batch(
 /// refused leaf sum-out leaves that leaf and the leaf targets after it as
 /// they were.
 ///
-/// Leaf targets come last: the integer end sweep keys off the pass-entry
-/// snapshot, so a leaf flipped marginal earlier would have its side
-/// re-resolved as bare slots and its inline references misread.
+/// Leaf targets come last, after the end sweep: a leaf is never installed,
+/// and summing it out inlines its parent's references to it.
 ///
 /// `scale(i, column, store)` runs on the column of each internal target
 /// `targets[i]` before it is installed.
@@ -67,7 +66,7 @@ pub(super) fn marginalize_targets<K: MarginalDomain>(
         return Ok(());
     }
     let lim = eng.limits();
-    let was_marginal: Vec<bool> = tdd.levels.iter().map(|l| l.is_marginal()).collect();
+    let mut made_marginal = Vec::new();
     // One column per vtree level, built on demand. (`CountVec` is not `Clone`,
     // so the buffer cannot use `vec![None; n]`.)
     let mut computed: Vec<Option<K::Col>> = (0..vtree.num_nodes()).map(|_| None).collect();
@@ -80,13 +79,14 @@ pub(super) fn marginalize_targets<K: MarginalDomain>(
             break;
         }
         let scale = |col: &mut K::Col, store: &K::Store| scale(i, col, store);
-        if let Err(e) = marginalize_level::<K>(eng, tdd, d, vtree, (store, scale), &mut computed, &mut poll) {
+        let target = Finished { tdd: &mut *tdd, made_marginal: &mut made_marginal };
+        if let Err(e) = marginalize_level::<K>(eng, target, d, vtree, (store, scale), &mut computed, &mut poll) {
             cut = Some(e);
             break;
         }
     }
 
-    let swept = K::end_sweep(lim, tdd, &was_marginal);
+    let swept = K::end_sweep(lim, tdd, &made_marginal);
     if let Some(e) = cut {
         return Err(e);
     }
@@ -104,13 +104,14 @@ pub(super) fn marginalize_targets<K: MarginalDomain>(
 /// leaf, an empty level, or one that is already marginal.
 fn marginalize_level<K: MarginalDomain>(
     eng: &Engine,
-    tdd: &mut Tdd,
+    mut target: Finished<'_>,
     d: VtreeIdx,
     vtree: &Vtree,
     (store, scale): (&mut K::Store, impl FnOnce(&mut K::Col, &K::Store) -> Result<(), OperationError>),
     computed: &mut [Option<K::Col>],
     poll: &mut PollGate<'_>,
 ) -> Result<(), OperationError> {
+    let tdd = &*target.tdd;
     let level = &tdd.levels[d.idx()];
     // A leaf target is summed out at the end of the pass instead.
     if vtree.node(d).is_leaf() || level.is_marginal() || level.slot_count() == 0 {
@@ -129,5 +130,5 @@ fn marginalize_level<K: MarginalDomain>(
         |units| poll.poll(units),
     )?;
     scale(computed[d.idx()].as_mut().expect("the target's column"), store)?;
-    cascade::<K, Tdd>(eng.limits(), tdd, vtree, d, computed, store)
+    cascade::<K, Finished<'_>>(eng.limits(), &mut target, vtree, d, computed, store)
 }
