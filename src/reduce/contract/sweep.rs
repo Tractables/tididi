@@ -379,6 +379,8 @@ fn sweep_twins(eng: &Engine, tdd: &mut Tdd, drop_unnamed: bool) -> Result<(), Op
 
     let mut scratch = eng.scratch.reduce.contract.checkout(eng);
     scratch.drop_unnamed = drop_unnamed;
+    // Taken while known: the first merge's mutable access forgets it.
+    scratch.diagram_marginal = tdd.levels.known_first_marginal().map(|first| first.is_some());
     // Without a marginal level a parent the sweep reaches only through a
     // contraction above it has its children searched at the nodes that
     // contraction changed (`fingerprint::listed`); a parent on the worklist

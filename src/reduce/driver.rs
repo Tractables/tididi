@@ -19,6 +19,9 @@ const CONTENT_SCAN_MAX_NODES: u64 = 131_072;
 pub(super) struct Reduction<'a> {
     eng: &'a Engine,
     tdd: &'a mut Tdd,
+    /// The levels' first marginal level, once known: no pass changes a
+    /// level's kind, so it holds across them all.
+    first_marginal: Option<Option<VtreeIdx>>,
 }
 
 impl<'a> Reduction<'a> {
@@ -26,7 +29,21 @@ impl<'a> Reduction<'a> {
     /// before them holds on a level they did not mark.
     pub(super) fn new(eng: &'a Engine, tdd: &'a mut Tdd) -> Self {
         tdd.levels.hold_counts(tdd.levels.is_closed());
-        Self { eng, tdd }
+        let first_marginal = tdd.levels.known_first_marginal();
+        Self { eng, tdd, first_marginal }
+    }
+
+    fn has_marginal_level(&mut self) -> bool {
+        let levels = &self.tdd.levels;
+        self.first_marginal.get_or_insert_with(|| levels.first_marginal()).is_some()
+    }
+
+    /// [`contract_all_twins`] with the first marginal level known to it.
+    fn contract_all_twins(&mut self) -> Result<(), OperationError> {
+        if let Some(first) = self.first_marginal {
+            self.tdd.levels.keep_first_marginal(first);
+        }
+        contract_all_twins(self.eng, self.tdd)
     }
 
     pub(super) fn run(&mut self, plan: ReductionPlan<'_>, scope: PruneScope) -> Result<(), OperationError> {
@@ -36,6 +53,8 @@ impl<'a> Reduction<'a> {
         // before that close.
         if done.is_err() {
             self.tdd.levels.forget_left_pairs();
+        } else if let Some(first) = self.first_marginal {
+            self.tdd.levels.keep_first_marginal(first);
         }
         done
     }
@@ -45,7 +64,10 @@ impl<'a> Reduction<'a> {
         let whole = matches!(scope, PruneScope::Whole);
         let policy = match plan {
             ReductionPlan::Contract => {
-                contract_all_twins(self.eng, self.tdd)?;
+                // Read here, not lazily by the sweep, whose first merge
+                // forgets it: the result keeps it for the next reduction.
+                self.has_marginal_level();
+                self.contract_all_twins()?;
                 self.tdd.close_marked_levels();
                 return Ok(());
             }
@@ -61,6 +83,9 @@ impl<'a> Reduction<'a> {
                 if self.tdd.levels.is_canonical(self.tdd.output) && self.tdd.dirty.is_empty() {
                     return Ok(());
                 }
+                // Read before the passes, which forget it: every full
+                // reduction reads it below.
+                self.has_marginal_level();
                 policy
             }
         };
@@ -80,7 +105,7 @@ impl<'a> Reduction<'a> {
         // A content-twin scan ends with the slot prune. Without one, the slots
         // that prune and contraction orphaned at the boundary stores are still
         // there.
-        if !scanned && self.tdd.has_marginal_level() {
+        if !scanned && self.has_marginal_level() {
             prune_value_slots(self.eng, self.tdd)?;
         }
         let mut structural = true;
@@ -149,9 +174,9 @@ impl<'a> Reduction<'a> {
 
     /// Leaf rewrites can create inner twins; clean passes drain empty worklists.
     fn contract(&mut self) -> Result<(), OperationError> {
-        contract_all_twins(self.eng, self.tdd)?;
+        self.contract_all_twins()?;
         if contract_leaf_twins(self.eng, self.tdd)? {
-            contract_all_twins(self.eng, self.tdd)?;
+            self.contract_all_twins()?;
         }
         Ok(())
     }
@@ -160,7 +185,7 @@ impl<'a> Reduction<'a> {
     /// diagrams use the schedule's fourfold growth threshold. Returns whether
     /// a scan ran.
     fn scan_if_due(&mut self, schedule: &mut ContentTwinSchedule) -> Result<bool, OperationError> {
-        if !self.tdd.has_marginal_level() { return Ok(false); }
+        if !self.has_marginal_level() { return Ok(false); }
         let before: u64 = self.tdd.levels.iter().map(|l| l.nodes().len() as u64).sum();
         if self.tdd.weights.is_some() || before <= CONTENT_SCAN_MAX_NODES || before >= schedule.next_scan_at_nodes {
             self.content_twins()?;
