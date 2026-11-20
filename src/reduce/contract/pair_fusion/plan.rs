@@ -66,6 +66,9 @@ pub(super) fn collect_fusion_plans<D: SlotValues>(
             continue;
         }
         let node = plevel.pairs_read(n, &mut buf);
+        if node.len() <= FEW_PAIRS && !repeats_ref(node, side) {
+            continue;
+        }
         // A node whose pairs ascend by explicit ref holds each group as one
         // run. Two pairs that do not ascend name two refs: nothing to group.
         // A wide node that does not ascend is sorted into runs, which bounds
@@ -91,6 +94,20 @@ pub(super) fn collect_fusion_plans<D: SlotValues>(
 #[inline(always)]
 pub(super) fn explicit_ref(pair: ChildPair, side: ChildSide) -> u32 {
     side.pick(pair.right.0, pair.left.0)
+}
+
+/// The most pairs of a node first tested for a repeated explicit-side ref
+/// by comparing every two ([`repeats_ref`]). Most nodes of a boundary
+/// parent repeat none, and for so few pairs the test costs less than the
+/// ascent test and the grouping it saves.
+const FEW_PAIRS: usize = 8;
+
+#[inline(always)]
+fn repeats_ref(node: &[ChildPair], side: ChildSide) -> bool {
+    (1..node.len()).any(|i| {
+        let x = explicit_ref(node[i], side);
+        node[..i].iter().any(|&p| explicit_ref(p, side) == x)
+    })
 }
 
 /// The fewest pairs a node sorts into runs rather than hashes. The sort
