@@ -146,7 +146,11 @@ impl<'a> Reduction<'a> {
     /// only merges twins, whose children are the same.
     fn finish(&mut self, structural: bool) -> Result<(), OperationError> {
         self.tdd.close_marked_levels();
+        let before = std::sync::Arc::clone(&self.tdd.vtree);
         self.settle()?;
+        if !structural && !std::sync::Arc::ptr_eq(&before, &self.tdd.vtree) && self.tdd.has_marginal_level() {
+            self.passes_after_trim()?;
+        }
         if self.tdd.vtree.num_nodes() == 0 {
             return Ok(());
         }
@@ -164,6 +168,18 @@ impl<'a> Reduction<'a> {
             super::contract::contract_leaf::assert_no_full_twin_side(self.tdd);
         }
         Ok(())
+    }
+
+    /// Run the passes again, every level owed, on a summed diagram the close
+    /// trimmed onto a smaller projection: the trim can leave a node two pairs
+    /// over the same children, a fusion group no pass has seen.
+    #[cold]
+    #[inline(never)]
+    fn passes_after_trim(&mut self) -> Result<(), OperationError> {
+        let vtree = std::sync::Arc::clone(&self.tdd.vtree);
+        let internal = vtree.internal_bottomup_slice().iter().copied();
+        self.tdd.dirty = crate::diagram::Dirty::default().seeded(&vtree, internal, Some(self.eng))?;
+        self.eng.reduce_plain(self.tdd, ReductionPlan::default())
     }
 
     /// Drop the recorded leaves and the seed's in a closing reduction
