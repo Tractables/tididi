@@ -77,12 +77,14 @@ pub enum ContentTwinPolicy<'a> {
     /// with a marginal level is scanned on every call regardless of the
     /// scheduled size; a diagram with no marginal level is never scanned.
     Adaptive(&'a mut ContentTwinSchedule),
-    /// As `Adaptive`, but a scan the schedule calls for stops once its first
-    /// pass has merged the bottom levels holding a thirty-second of the
-    /// pairs, unless the duplicates it found there held at least `min_yield`
-    /// of those levels' pairs. A stopped scan keeps those merges, runs the
-    /// prune and contraction they need, scans no other level, and sets the
-    /// schedule as a finished scan would.
+    /// As `Adaptive`, but a scan the schedule calls for on a diagram of at
+    /// least `min_pairs` pairs, counted after the prune and contraction that
+    /// precede the scan, stops once its first pass has merged the bottom
+    /// levels holding a thirty-second of the pairs, unless the duplicates it
+    /// found there held at least `min_yield` of those levels' pairs. A
+    /// stopped scan keeps those merges, runs the prune and contraction they
+    /// need, scans no other level, and sets the schedule as a finished scan
+    /// would. Under `min_pairs` the scan is `Adaptive`'s.
     /// [`ContentTwinSchedule::last_sample_yield`] reports the yield measured.
     Sampled {
         /// The schedule, as for `Adaptive`.
@@ -90,6 +92,8 @@ pub enum ContentTwinPolicy<'a> {
         /// The share of the sampled pairs the duplicates must hold for the
         /// scan to go on.
         min_yield: f64,
+        /// The fewest pairs a diagram holds for its scan to be sampled.
+        min_pairs: usize,
     },
 }
 

@@ -55,7 +55,8 @@ fn the_adaptive_policy_reaches_the_fresh_policy_s_diagram() {
 }
 
 /// A sampled scan whose bar any sample clears is the adaptive scan; one whose
-/// bar none clears stops after its sample with the count kept.
+/// bar none clears stops after its sample with the count kept; one on fewer
+/// pairs than its `min_pairs` is the adaptive scan, unsampled.
 #[test]
 fn a_sampled_scan_goes_on_or_stops_at_its_bar() {
     let eng = Engine::new();
@@ -63,13 +64,20 @@ fn a_sampled_scan_goes_on_or_stops_at_its_bar() {
     let count = f.model_count().unwrap();
     let mut adaptive = f.clone();
     eng.reduce(&mut adaptive, ReductionPlan::Full(ContentTwinPolicy::Adaptive(&mut ContentTwinSchedule::default()))).unwrap();
-    let sampled = |min_yield: f64| {
+    let run = |min_yield: f64, min_pairs: usize| {
         let (mut g, mut schedule) = (f.clone(), ContentTwinSchedule::default());
-        eng.reduce(&mut g, ReductionPlan::Full(ContentTwinPolicy::Sampled { schedule: &mut schedule, min_yield })).unwrap();
+        eng.reduce(&mut g, ReductionPlan::Full(ContentTwinPolicy::Sampled { schedule: &mut schedule, min_yield, min_pairs })).unwrap();
         assert_eq!(g.model_count().unwrap(), count);
         check_no_orphan_slots(&g).unwrap();
-        (g, schedule.last_sample_yield().expect("a sampled scan reports its yield"))
+        (g, schedule.last_sample_yield())
     };
+    let sampled = |min_yield: f64| {
+        let (g, found) = run(min_yield, 0);
+        (g, found.expect("a sampled scan reports its yield"))
+    };
+    let (unsampled, none) = run(2.0, usize::MAX);
+    assert_eq!(none, None);
+    assert_same_shape(&adaptive, &unsampled, "adaptive against a scan under min_pairs");
     let (gone_on, found) = sampled(0.0);
     assert!((0.0..=1.0).contains(&found));
     assert_same_shape(&adaptive, &gone_on, "adaptive against a sample with no bar");

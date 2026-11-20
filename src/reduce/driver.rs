@@ -101,7 +101,7 @@ impl<'a> Reduction<'a> {
             ContentTwinPolicy::Skip => false,
             ContentTwinPolicy::Fresh => self.scan_if_due(&mut ContentTwinSchedule::default(), None)?,
             ContentTwinPolicy::Adaptive(schedule) => self.scan_if_due(schedule, None)?,
-            ContentTwinPolicy::Sampled { schedule, min_yield } => self.scan_if_due(schedule, Some(min_yield))?,
+            ContentTwinPolicy::Sampled { schedule, min_yield, min_pairs } => self.scan_if_due(schedule, Some((min_yield, min_pairs)))?,
         };
         // A content-twin scan ends with the slot prune. Without one, the slots
         // that prune and contraction orphaned at the boundary stores are still
@@ -185,12 +185,12 @@ impl<'a> Reduction<'a> {
     /// Always scan small or weighted marginal diagrams. Large unweighted
     /// diagrams use the schedule's fourfold growth threshold. Returns whether
     /// a scan, stopped after its sample or not, ran.
-    fn scan_if_due(&mut self, schedule: &mut ContentTwinSchedule, min_yield: Option<f64>) -> Result<bool, OperationError> {
+    fn scan_if_due(&mut self, schedule: &mut ContentTwinSchedule, sample: Option<(f64, usize)>) -> Result<bool, OperationError> {
         schedule.last_sample_yield = None;
         if !self.has_marginal_level() { return Ok(false); }
         let before: u64 = self.tdd.levels.iter().map(|l| l.nodes().len() as u64).sum();
         if self.tdd.weights.is_some() || before <= CONTENT_SCAN_MAX_NODES || before >= schedule.next_scan_at_nodes {
-            schedule.last_sample_yield = self.content_twins(min_yield)?;
+            schedule.last_sample_yield = self.content_twins(sample)?;
             let after: u64 = self.tdd.levels.iter().map(|l| l.nodes().len() as u64).sum();
             schedule.next_scan_at_nodes = if after > CONTENT_SCAN_MAX_NODES { before.saturating_mul(4) } else { 0 };
             return Ok(true);
@@ -200,11 +200,13 @@ impl<'a> Reduction<'a> {
 
     /// Each productive round removes at least one node. Its rewrites mark the
     /// levels to revisit; only the first round scans the whole diagram, so
-    /// what the slot prune before it reports is not kept. With `min_yield`
+    /// what the slot prune before it reports is not kept. With `sample`'s
+    /// `(min_yield, min_pairs)` on a diagram of at least `min_pairs` pairs
     /// the first round samples its yield ([`ContentTwinPolicy::Sampled`]);
     /// a round that stops there is the last. Returns the sample's yield.
-    pub(super) fn content_twins(&mut self, min_yield: Option<f64>) -> Result<Option<f64>, OperationError> {
+    pub(super) fn content_twins(&mut self, sample: Option<(f64, usize)>) -> Result<Option<f64>, OperationError> {
         prune_value_slots(self.eng, self.tdd)?;
+        let min_yield = sample.and_then(|(min_yield, min_pairs)| (self.tdd.pair_count() >= min_pairs).then_some(min_yield));
         self.tdd.dirty.clear(Pass::ContentTwin);
         let mut next: Option<rustc_hash::FxHashSet<u32>> = None;
         let mut sampled = None;
