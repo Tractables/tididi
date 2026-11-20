@@ -126,7 +126,7 @@ impl<'a> Reduction<'a> {
         // that prune and contraction orphaned at the boundary stores are still
         // there.
         if !scanned && self.marginal() {
-            prune_value_slots(self.eng, self.tdd)?;
+            self.prune_slots()?;
         }
         let structural = !self.marginal();
         for level in &mut self.tdd.levels {
@@ -242,6 +242,15 @@ impl<'a> Reduction<'a> {
         Ok(())
     }
 
+    /// The slot prune, and the contraction each value merge owes at the
+    /// merged level's parent, until a prune merges no values.
+    fn prune_slots(&mut self) -> Result<(), OperationError> {
+        while !prune_value_slots(self.eng, self.tdd)?.is_empty() {
+            self.contract()?;
+        }
+        Ok(())
+    }
+
     /// Always scan small or weighted marginal diagrams. Large unweighted
     /// diagrams use the schedule's fourfold growth threshold. Returns whether
     /// a scan ran.
@@ -259,12 +268,12 @@ impl<'a> Reduction<'a> {
 
     /// Each productive round removes at least one node. Its rewrites mark the
     /// levels to revisit; only the first round scans the whole diagram, so
-    /// what the slot prune before it reports is not kept.
+    /// what the slot prune before it marks is not kept.
     // Inlined into `scan_if_due` with link-time optimization, its merge
     // loop compiled to about 3% more instructions on a pedigree network.
     #[inline(never)]
     pub(super) fn content_twins(&mut self) -> Result<(), OperationError> {
-        prune_value_slots(self.eng, self.tdd)?;
+        self.prune_slots()?;
         self.tdd.dirty.clear(Pass::ContentTwin);
         let mut next: Option<rustc_hash::FxHashSet<u32>> = None;
         loop {
@@ -274,10 +283,7 @@ impl<'a> Reduction<'a> {
             if merged == 0 { break; }
             prune_unreachable(self.eng, self.tdd, PruneScope::Whole)?;
             self.contract()?;
-            // A value merge at a marginal level may make its parents' nodes
-            // equal: those boundaries are scanned again.
-            let merged = prune_value_slots(self.eng, self.tdd)?;
-            self.tdd.dirty.requeue(Pass::ContentTwin, merged);
+            self.prune_slots()?;
             next = Some(self.tdd.dirty.take(Pass::ContentTwin).into_iter().collect());
         }
         self.tdd.dirty.clear(Pass::ContentTwin);

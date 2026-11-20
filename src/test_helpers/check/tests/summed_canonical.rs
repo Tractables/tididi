@@ -11,10 +11,11 @@ use crate::vtree::{Home, VarId, Vtree, VtreeIdx};
 use crate::{Engine, Tdd};
 use super::*;
 
+/// Random weights, or uniform ones, under which summed values repeat.
 fn weights(rng: &mut Lcg, n: u32, arithmetic: Arithmetic) -> Weights {
-    let literals: Vec<_> = (0..n)
-        .map(|_| LiteralWeights { negative: rat(1 + rng.below(4) as i64, 1 + rng.below(3) as i64), positive: rat(1 + rng.below(4) as i64, 1 + rng.below(3) as i64) })
-        .collect();
+    let uniform = rng.below(3) == 0;
+    let mut weight = || if uniform { rat(1, 2) } else { rat(1 + rng.below(4) as i64, 1 + rng.below(3) as i64) };
+    let literals: Vec<_> = (0..n).map(|_| LiteralWeights { negative: weight(), positive: weight() }).collect();
     Weights::new(RationalWeights::from_literals(&literals), arithmetic)
 }
 
@@ -24,7 +25,7 @@ fn summed(rng: &mut Lcg, eng: &Engine) -> Option<(Tdd, String)> {
     let n = 3 + rng.below(5) as u32;
     let shapes = vtree_shapes(n);
     let (shape, base) = &shapes[rng.below(shapes.len() as u64) as usize];
-    let arithmetic = [None, Some(Arithmetic::ExactRational), Some(Arithmetic::ExactRational), Some(Arithmetic::SignedLog)][rng.below(4) as usize];
+    let arithmetic = [None, Some(Arithmetic::ExactRational), Some(Arithmetic::ExactRational), Some(Arithmetic::ScaledFloat), Some(Arithmetic::SignedLog)][rng.below(5) as usize];
     let table = arithmetic.map(|a| weights(rng, n, a));
     let cnf = CnfShape { clauses: n as usize, width: 3 };
     let (f_cnf, g_cnf) = (rand_cnf(rng, n, cnf), rand_cnf(rng, n, cnf));

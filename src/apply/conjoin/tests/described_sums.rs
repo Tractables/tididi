@@ -304,7 +304,7 @@ fn carried_operands(n: u32, seed: u64) -> (Arc<Vtree>, Tdd, Tdd, Vec<VtreeIdx>) 
 fn carried_marginal_children_match_the_cells() {
     let run = |n: u32, seed: u64| {
         let (vtree, partial, third, h4) = carried_operands(n, seed);
-        crate::test_helpers::assert_canonical(&partial);
+        crate::test_helpers::assert_marginal_canonical(&partial);
         for &p in &h4 {
             assert!(
                 partial.levels[p.idx()].implicit().is_some(),
@@ -314,9 +314,11 @@ fn carried_marginal_children_match_the_cells() {
         }
         let value = |a: &Tdd, b: &Tdd| {
             let eng = Engine::new();
-            let both = eng.and(a, b).unwrap();
+            let mut both = eng.and(a, b).unwrap();
             crate::test_helpers::assert_canonical(&both);
             let value = eng.weighted_value(&both).unwrap().unwrap();
+            eng.minimize(&mut both).unwrap();
+            crate::test_helpers::assert_marginal_canonical(&both);
             value.as_scaled().expect("a scaled value").to_f64()
         };
         let described = value(&partial, &third);
