@@ -169,7 +169,7 @@ fn poll_entered_due<'a>(
     units: u64,
     width: usize,
     entered: u64,
-    col_pairs: Option<&[u8]>,
+    col_pairs: Option<&[u8; ROW_COLUMNS_MAX_WIDTH]>,
 ) -> Result<PollGate<'a>, OperationError> {
     let mut s = entered;
     let cells = std::iter::from_fn(|| {
@@ -229,7 +229,7 @@ where
         table,
         charge_of,
     } = rows;
-    let (g_flat, cols, col_of, col_pairs) = (table.pairs(), &table.cols[..], &table.col_of[..], &table.col_pairs[..]);
+    let (g_flat, cols, col_of, col_pairs) = (table.pairs(), &table.cols, &table.col_of, &table.col_pairs);
     let lim = eng.limits();
     let g_width = ctx.g_width;
     debug_assert!(W == 0 || (ONE && W == g_width));

@@ -544,7 +544,7 @@ fn build_level_prefilter_masks(
     shape: LevelShape,
     plan: &MarginalPlan,
     bases: Sides<GridBase>,
-    (lookups, pairs): (PlainLookups, bool),
+    (lookups, pairs): (PlainLookups, Option<&liveness::PairTable>),
 ) -> Result<(), OperationError> {
     let LevelShape { f: fw, g: gw, .. } = shape;
     build_side_masks::<false>(
@@ -556,7 +556,7 @@ fn build_level_prefilter_masks(
             g_width: gw.left,
             base: bases.left.idx(),
         },
-        (matches!(lookups, PlainLookups::CompleteLeft { .. }), pairs.then_some(&*run.pair_cols)),
+        (matches!(lookups, PlainLookups::CompleteLeft { .. }), pairs),
         run.products.arena.slab(),
         &mut run.prefilter_masks.left,
     )?;
@@ -569,7 +569,7 @@ fn build_level_prefilter_masks(
             g_width: gw.right,
             base: bases.right.idx(),
         },
-        (matches!(lookups, PlainLookups::CompleteRight { .. }), pairs.then_some(&*run.pair_cols)),
+        (matches!(lookups, PlainLookups::CompleteRight { .. }), pairs),
         run.products.arena.slab(),
         &mut run.prefilter_masks.right,
     )
@@ -875,11 +875,11 @@ pub(super) fn build_level_dense(
         };
     // A masked level of the dense route whose g level has few pairs in
     // all is read by pairs (`run_level_rows_pairs`).
+    let mut pair_table = None;
     let pairs = masked
         && route == Route::Dense
         && !super::super::pair_rows_forced_off()
         && liveness::fill_pair_columns(
-            lim,
             g_t,
             gw.here,
             (
@@ -896,7 +896,7 @@ pub(super) fn build_level_dense(
                 left: sides.left.view,
                 right: sides.right.view,
             },
-            run.pair_cols,
+            &mut pair_table,
         );
     let mut stream_state: Option<StreamLevelState> =
         build_stream_state(eng, shape, run.levels, run.stream_cache, sweep)?;
@@ -971,7 +971,7 @@ pub(super) fn build_level_dense(
         if !both_multi_pair {
             super::super::note_one_sided_masks();
         }
-        build_level_prefilter_masks(eng, run, g_t, shape, &plan, bases, (lookups, pairs))?;
+        build_level_prefilter_masks(eng, run, g_t, shape, &plan, bases, (lookups, pair_table.as_ref()))?;
     }
     // A level of two complete sides whose operand levels are affine takes
     // the implicit route. Under bounded-precision weights a level of the
@@ -1185,7 +1185,7 @@ pub(super) fn build_level_dense(
         let relay = stream_state.is_none();
         run_row_loop(
             eng,
-            (route, lookups, single_pair, pairs.then_some(&*run.pair_cols), relay),
+            (route, lookups, single_pair, pair_table.as_ref(), relay),
             words.then_some((&mut *run.words, f_rows)),
             (
                 rows,

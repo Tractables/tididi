@@ -282,16 +282,18 @@ pub(super) const ROW_COLUMNS_MAX_WIDTH: usize = 63;
 /// The g pairs of a level read by pairs ([`fill_pair_columns`]), decoded
 /// as the level's views read them, in column order, and their columns:
 /// the one read of g's pairs that both sides' row columns and the row
-/// loop take.
-#[derive(Debug, Default)]
+/// loop take. Of fixed size and held on the level's stack frame, so that
+/// it is neither allocated, charged nor moved with the apply's workspace.
+#[derive(Debug)]
 pub(crate) struct PairTable {
-    pairs: Vec<ChildPair>,
+    pairs: [ChildPair; ROW_COLUMNS_MAX_WIDTH],
+    len: usize,
     /// Each pair's column.
-    pub(super) col_of: Vec<u8>,
+    pub(super) col_of: [u8; ROW_COLUMNS_MAX_WIDTH],
     /// Each column's pairs, as a mask of their bits.
-    pub(super) cols: Vec<u64>,
+    pub(super) cols: [u64; ROW_COLUMNS_MAX_WIDTH],
     /// Each column's number of pairs.
-    pub(super) col_pairs: Vec<u8>,
+    pub(super) col_pairs: [u8; ROW_COLUMNS_MAX_WIDTH],
     /// Whether every column holds one pair: pair `q` is then column `q`'s.
     pub(super) one: bool,
     /// The last pair of each column, as a mask.
@@ -301,17 +303,10 @@ pub(crate) struct PairTable {
 }
 
 impl PairTable {
-    pub(super) fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::execution::pool::Scratch)) {
-        visit(&mut self.pairs);
-        visit(&mut self.col_of);
-        visit(&mut self.cols);
-        visit(&mut self.col_pairs);
-    }
-
     /// g's pairs, in column order.
     #[inline(always)]
     pub(super) fn pairs(&self) -> &[ChildPair] {
-        &self.pairs
+        &self.pairs[..self.len]
     }
 }
 
@@ -323,12 +318,11 @@ impl PairTable {
 /// bit-exact, which the words reproduce, and a `complete` side's child
 /// having columns, which the loop reads whole.
 pub(super) fn fill_pair_columns(
-    lim: &crate::limits::Limits,
     level: &TddLevel,
     g_width: usize,
     (child_g_widths, complete): (Sides<usize>, Sides<bool>),
     views: Sides<ChildDecoder>,
-    out: &mut PairTable,
+    out: &mut Option<PairTable>,
 ) -> bool {
     if g_width > ROW_COLUMNS_MAX_WIDTH
         || bucket_shift(child_g_widths.left) != 0
@@ -345,37 +339,36 @@ pub(super) fn fill_pair_columns(
             return false;
         }
     }
-    out.pairs.clear();
-    out.col_of.clear();
-    out.cols.clear();
-    out.col_pairs.clear();
-    if lim.reserve_exact(&mut out.pairs, total).is_err()
-        || lim.reserve_exact(&mut out.col_of, total).is_err()
-        || lim.reserve_exact(&mut out.cols, g_width).is_err()
-        || lim.reserve_exact(&mut out.col_pairs, g_width).is_err()
-    {
-        return false;
-    }
+    let none = crate::diagram::EncodedChildRef::from_raw(0);
+    let t = out.insert(PairTable {
+        pairs: [ChildPair::new(none, none); ROW_COLUMNS_MAX_WIDTH],
+        len: total,
+        col_of: [0; ROW_COLUMNS_MAX_WIDTH],
+        cols: [0; ROW_COLUMNS_MAX_WIDTH],
+        col_pairs: [0; ROW_COLUMNS_MAX_WIDTH],
+        one: true,
+        tops: 0,
+        inner: 0,
+    });
     let decode = views.left.is_marginal() || views.right.is_marginal();
-    let (mut n, mut one, mut tops, mut inner) = (0, true, 0u64, 0u64);
+    let mut n = 0;
     level.try_for_each_node::<std::convert::Infallible>(0..g_width, |j, pairs| {
         let end = n + pairs.len();
-        out.pairs.extend(pairs.iter().map(|&p| if decode { decoded(p, views.left, views.right) } else { p }));
-        out.col_of.extend(std::iter::repeat_n(j as u8, pairs.len()));
-        out.cols.push(((1u64 << end) - 1) & !((1u64 << n) - 1));
-        out.col_pairs.push(pairs.len() as u8);
-        if end > n {
-            tops |= 1 << (end - 1);
-            inner |= ((1u64 << (end - 1)) - 1) & !((1u64 << n) - 1);
+        for (slot, &p) in t.pairs[n..end].iter_mut().zip(pairs) {
+            *slot = if decode { decoded(p, views.left, views.right) } else { p };
         }
-        one &= pairs.len() == 1;
+        t.col_of[n..end].fill(j as u8);
+        t.cols[j] = ((1u64 << end) - 1) & !((1u64 << n) - 1);
+        t.col_pairs[j] = pairs.len() as u8;
+        if end > n {
+            t.tops |= 1 << (end - 1);
+            t.inner |= ((1u64 << (end - 1)) - 1) & !((1u64 << n) - 1);
+        }
+        t.one &= pairs.len() == 1;
         n = end;
         Ok(())
     }).unwrap_or_else(|never| match never {});
     debug_assert_eq!(n, total);
-    out.one = one;
-    out.tops = tops;
-    out.inner = inner;
     true
 }
 

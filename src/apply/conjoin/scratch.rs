@@ -73,7 +73,6 @@ pub(crate) struct ApplyWorkspace {
     pub(super) products: products::Products,
     pub(super) stream_cache: StreamCache,
     pub(super) prefilter_masks: liveness::PrefilterMaskScratch,
-    pub(super) pair_cols: liveness::PairTable,
     pub(super) words: WordScratch,
     pub(super) cone: super::setup::ConeLists,
     pub(super) lists: super::setup::SweepLists,
@@ -99,7 +98,6 @@ impl Buffers for ApplyWorkspace {
         self.products.buffers(visit);
         self.stream_cache.buffers(visit);
         self.prefilter_masks.buffers(visit);
-        self.pair_cols.buffers(visit);
         self.words.buffers(visit);
         self.cone.buffers(visit);
         self.lists.buffers(visit);
