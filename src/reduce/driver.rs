@@ -97,7 +97,17 @@ impl<'a> Reduction<'a> {
         };
         #[cfg(debug_assertions)]
         let marginal_before: Vec<_> = self.tdd.levels.iter().map(|l| l.is_marginal()).collect();
-        prune_unreachable(self.eng, self.tdd, scope)?;
+        // With no level loose under a root holding the output alone, every
+        // node is reachable: a walk would read nothing, yet be charged as one
+        // from the output.
+        let pruned = !self.tdd.is_zero()
+            && self.tdd.dirty.loose().is_some_and(<[u32]>::is_empty)
+            && below_root_walk_applies(self.tdd)
+            && !self.tdd.has_marginal_level()
+            && self.tdd.levels[self.tdd.vtree.root().idx()].slot_count() == 1;
+        if !pruned {
+            prune_unreachable(self.eng, self.tdd, scope)?;
+        }
         #[cfg(debug_assertions)]
         self.assert_marginal_flags(&marginal_before, "prune");
         self.contract()?;
