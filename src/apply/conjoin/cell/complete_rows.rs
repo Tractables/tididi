@@ -174,6 +174,7 @@ struct EmitLoneColumns<'a, 'l> {
 impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for EmitLoneColumns<'_, '_> {
     const DENSE_SLAB: bool = true;
     const WHOLE_ROWS: bool = true;
+    const ROW_RUNS: bool = true;
 
     /// A row of one or two f pairs whose cells all fit the arenas' room is
     /// written there in one loop ([`lone_row`]).

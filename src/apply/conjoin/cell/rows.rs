@@ -138,6 +138,11 @@ pub(super) trait CellAction<L: ChildLookup, R: ChildLookup> {
         Ok(0)
     }
 
+    /// Whether the row loop offers the action [`whole_rows`](Self::whole_rows):
+    /// a flag apart from [`whole_row`](Self::whole_row)'s, as [`Emit`] offered
+    /// it compiles to a slower row loop (see the row loop's `f_pairs`).
+    const ROW_RUNS: bool = false;
+
     /// The level's rows from the first, each written as
     /// [`whole_row`](Self::whole_row) would write it and charged to the gate
     /// as the row loop charges it, for an action that writes a run of them
@@ -348,7 +353,7 @@ where
         open_row(slab, base, base + f_width * g_width);
     }
     let mut first_row = 0;
-    if A::WHOLE_ROWS && !by_rows && !cull_left && !cull_right {
+    if A::ROW_RUNS && !by_rows && !cull_left && !cull_right {
         first_row = action.whole_rows(
             eng,
             WholeRows {
@@ -374,7 +379,13 @@ where
         }
         let node_idx = &mut slab[..];
 
-        let f_pairs = f_row(f_level, f_described, f_pairs_scratch, i, (left_view, right_view));
+        // Not `f_row`: with it, or with `whole_rows` offered to `Emit`, the
+        // row loop of `Emit` took 0.2% more of one program's instructions,
+        // though neither changes what that loop runs.
+        let f_pairs = match f_described {
+            Some(k) => &f_pairs_scratch[i * k..(i + 1) * k],
+            None => f_level.pairs_view_decoded(i, f_pairs_scratch, left_view, right_view),
+        };
         // Empty pairs means dead (zero-containing) node — skip this row.
         if f_pairs.is_empty() {
             continue;
