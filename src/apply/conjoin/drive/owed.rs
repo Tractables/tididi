@@ -15,8 +15,9 @@ pub(super) type Entry = (u32, Option<crate::reduce::Unnamed>);
 
 /// The internal levels below the root of a plain conjunction's result that
 /// may hold a node no pair of their parent level names, given the operands'
-/// own such levels, as [`settle_loose`](crate::reduce::prune::settle_loose)
-/// leaves them, and which operand each level the sweep carried as an
+/// own such levels, settled under the levels the conjunction builds
+/// ([`settle_loose_below`](crate::reduce::prune::settle_loose_below)), and
+/// which operand each level the sweep carried as an
 /// identity level came from
 /// ([`SweepLists::identity_carrier`](super::super::setup::SweepLists::identity_carrier));
 /// the result took each free level from the operand [`carried_from_f`]
@@ -78,7 +79,7 @@ pub(super) type Entry = (u32, Option<crate::reduce::Unnamed>);
 /// its parent's pairs are that operand's. Every other level is uncounted.
 ///
 /// The list is written into the allocation of the larger operand list, grown
-/// once to the most it can hold. It lists each level once.
+/// once to the most it can hold. It lists each level once, in no order.
 pub(super) fn loose_levels(
     vtree: &Vtree,
     run: &ApplyRun<'_, '_>,
@@ -138,7 +139,6 @@ pub(super) fn loose_levels(
             loose.push((c, unnamed));
         }
     }
-    let under_free_levels = loose.len();
     for &p in cone.built {
         let (left, right) = vtree.children(p);
         let by = run.lists.identity_carrier(p.idx());
@@ -194,17 +194,6 @@ pub(super) fn loose_levels(
             }
             loose.push((c.0, None));
         }
-    }
-    // In the order of the levels' parents bottom-up, the left child first,
-    // as a walk of every level lists them: the levels under the free ones
-    // are sorted into those under the levels of the cone, which are in that
-    // order already.
-    if under_free_levels > 0 {
-        loose.sort_by_key(|&(c, _)| {
-            let c = VtreeIdx(c);
-            let p = vtree.node(c).parent().expect("a listed level has a parent");
-            (vtree.topo_pos(p), vtree.children(p).1 == c)
-        });
     }
     loose
 }

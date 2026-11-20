@@ -646,11 +646,6 @@ pub(crate) fn settle_loose_in<'a>(
         return Ok(Vec::new());
     }
     let lim = eng.limits();
-    // Per level, whether it stays listed (`AT`) and whether a level strictly
-    // under it stays listed (`UNDER`): set on the levels above each one that
-    // stays, up to the first set already, whose own levels above are set.
-    const AT: usize = 0;
-    const UNDER: usize = 1;
     // The prune's scratch, which a prune checks out after this returns: a
     // read clears the block of marks it takes.
     let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
@@ -660,11 +655,6 @@ pub(crate) fn settle_loose_in<'a>(
         settle_parents: parents,
         ..
     } = &mut *scratch;
-    flags.clear();
-    lim.try_resize(flags, vtree.num_nodes(), [false; 2])?;
-    for &t in listed {
-        flags[t as usize][AT] = true;
-    }
     // The listed levels' parents, bottom-up, so that every level under a
     // parent's children is settled before the parent is read.
     parents.clear();
@@ -676,8 +666,53 @@ pub(crate) fn settle_loose_in<'a>(
     );
     parents.sort_unstable_by_key(|&p| vtree.topo_pos(p));
     parents.dedup();
+    settle_under(lim, (vtree, level), listed, parents, flags, counts)
+}
+
+/// [`settle_loose_in`] reading only the listed levels whose parent is one of
+/// `parents`, which are bottom-up and closed upward (the parent of each is
+/// one of them, but for the root): the others stay listed, unread.
+pub(crate) fn settle_loose_below<'a>(
+    eng: &Engine,
+    vtree: &Vtree,
+    level: &dyn Fn(VtreeIdx) -> &'a TddLevel,
+    listed: &[u32],
+    parents: &[VtreeIdx],
+) -> Result<Vec<u32>, OperationError> {
+    if listed.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
+    let PruneScratch {
+        settle_counts: counts,
+        settle_flags: flags,
+        ..
+    } = &mut *scratch;
+    settle_under(eng.limits(), (vtree, level), listed, parents, flags, counts)
+}
+
+/// The settle of `listed` that reads the children of each of `parents`,
+/// bottom-up.
+fn settle_under<'a>(
+    lim: &Limits,
+    (vtree, level): (&Vtree, &dyn Fn(VtreeIdx) -> &'a TddLevel),
+    listed: &[u32],
+    parents: &[VtreeIdx],
+    flags: &mut Vec<[bool; 2]>,
+    counts: &mut Vec<u32>,
+) -> Result<Vec<u32>, OperationError> {
+    // Per level, whether it stays listed (`AT`) and whether a level strictly
+    // under it stays listed (`UNDER`): set on the levels above each one that
+    // stays, up to the first set already, whose own levels above are set.
+    const AT: usize = 0;
+    const UNDER: usize = 1;
+    flags.clear();
+    lim.try_resize(flags, vtree.num_nodes(), [false; 2])?;
+    for &t in listed {
+        flags[t as usize][AT] = true;
+    }
     let mut gate = lim.gate();
-    for &p in parents.iter() {
+    for &p in parents {
         let (left, right) = vtree.children(p);
         if p != vtree.root() && !flags[left.idx()][UNDER] && !flags[right.idx()][UNDER] {
             let sides = [flags[left.idx()][AT], flags[right.idx()][AT]];
