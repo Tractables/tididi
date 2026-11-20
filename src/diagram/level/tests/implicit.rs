@@ -430,7 +430,10 @@ fn a_level_fits_with_its_arena_in_node_order_or_not() {
         let mut moved = pairs.clone();
         let i = rng.below(nodes as u64) as usize;
         moved[i][per_node - 1].1 += 1 + rng.below(3) as i64;
-        if let Some(d) = ImplicitLevel::fit(&level_of(&moved)) {
+        let level = level_of(&moved);
+        let stored = level.stored().unwrap();
+        assert!(!d.holds_in_order(stored.of_idx(0), stored.in_node_order(per_node).unwrap()), "node {i} moved");
+        if let Some(d) = ImplicitLevel::fit(&level) {
             assert_eq!(described(&d), moved, "node {i} moved");
         }
     }

@@ -225,6 +225,38 @@ impl ImplicitLevel {
             }).is_ok()
     }
 
+    /// Whether `pairs`, node after node, are the pairs of this description,
+    /// `zero` node 0's, where every slot fits a stored side
+    /// ([`slots_fit_sides`](Self::slots_fit_sides)): compared a stretch of
+    /// the cursor at a time, with no branch inside a stretch.
+    pub(super) fn holds_in_order(&self, zero: &[ChildPair], pairs: &[ChildPair]) -> bool {
+        let k = zero.len();
+        if k == 0 || pairs.len() != self.nodes * k {
+            return false;
+        }
+        let first = (self.first.0 as u32, self.first.1 as u32);
+        let mut cursor = self.cursor();
+        let mut i = 0;
+        while i < self.nodes {
+            cursor.first_of(i);
+            let (from, end) = (i - cursor.start, (cursor.start + cursor.places).min(self.nodes));
+            let base = (cursor.base.0.wrapping_sub(first.0), cursor.base.1.wrapping_sub(first.1));
+            let offsets = &cursor.offsets[from..end - cursor.start];
+            let same = pairs[i * k..end * k].chunks_exact(k).zip(offsets).fold(true, |same, (node, &(l, r))| {
+                let by = (base.0.wrapping_add(l), base.1.wrapping_add(r));
+                node.iter().zip(zero).fold(same, |same, (p, z)| {
+                    same & (p.left.raw() == z.left.raw().wrapping_add(by.0))
+                        & (p.right.raw() == z.right.raw().wrapping_add(by.1))
+                })
+            });
+            if !same {
+                return false;
+            }
+            i = end;
+        }
+        true
+    }
+
 }
 
 /// The most pairs [`NodeChunks::fill`] writes at a time, unless a node
