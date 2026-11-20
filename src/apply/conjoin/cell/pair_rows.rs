@@ -103,7 +103,7 @@ where
     } = scratch;
     let g_width = ctx.g_width;
     debug_assert!(g_width <= ROW_COLUMNS_MAX_WIDTH);
-    debug_assert_eq!(table.cols[..g_width].iter().map(|c| c.count_ones() as usize).sum::<usize>(), table.pairs().len());
+    debug_assert_eq!(table.cols().iter().map(|c| c.count_ones() as usize).sum::<usize>(), table.pairs().len());
     let one_pair = table.one;
     // A level of many-pair columns reads the columns of a word of pairs off
     // tables of each byte's where it has rows enough to pay for them, and
@@ -122,7 +122,7 @@ where
     {
         charges = [0u8; 1 << CHARGE_TABLE_COLUMNS];
         for set in 1..1usize << g_width {
-            charges[set] = charges[set & (set - 1)] + table.col_pairs[set.trailing_zeros() as usize];
+            charges[set] = charges[set & (set - 1)] + table.col_pairs()[set.trailing_zeros() as usize];
         }
         Some(&charges)
     } else {
@@ -169,7 +169,7 @@ fn poll_entered_due<'a>(
     units: u64,
     width: usize,
     entered: u64,
-    col_pairs: Option<&[u8; ROW_COLUMNS_MAX_WIDTH]>,
+    col_pairs: Option<&[u8]>,
 ) -> Result<PollGate<'a>, OperationError> {
     let mut s = entered;
     let cells = std::iter::from_fn(|| {
@@ -229,7 +229,7 @@ where
         table,
         charge_of,
     } = rows;
-    let (g_flat, cols, col_of, col_pairs) = (table.pairs(), &table.cols, &table.col_of, &table.col_pairs);
+    let (g_flat, cols, col_of, col_pairs) = (table.pairs(), table.cols(), table.col_of(), table.col_pairs());
     let lim = eng.limits();
     let g_width = ctx.g_width;
     debug_assert!(W == 0 || (ONE && W == g_width));

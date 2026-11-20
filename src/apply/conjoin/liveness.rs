@@ -19,6 +19,7 @@
 use crate::Engine;
 use super::{OperationError, NO_PRODUCT, TddLevel, ChildPair};
 use crate::diagram::{decoded, ChildDecoder, Sides};
+use std::mem::MaybeUninit;
 
 /// The fewest cells a product grid of two multi-pair levels has for its
 /// level to build the masks. Under it they cost more than they save: on such
@@ -284,16 +285,15 @@ pub(super) const ROW_COLUMNS_MAX_WIDTH: usize = 63;
 /// the one read of g's pairs that both sides' row columns and the row
 /// loop take. Of fixed size and held on the level's stack frame, so that
 /// it is neither allocated, charged nor moved with the apply's workspace.
-#[derive(Debug)]
+/// Its arrays are left uninitialized past the level's pairs and columns:
+/// zeroing them costs more than the rest of a small level's table.
 pub(crate) struct PairTable {
-    pairs: [ChildPair; ROW_COLUMNS_MAX_WIDTH],
+    pairs: [MaybeUninit<ChildPair>; ROW_COLUMNS_MAX_WIDTH],
     len: usize,
-    /// Each pair's column.
-    pub(super) col_of: [u8; ROW_COLUMNS_MAX_WIDTH],
-    /// Each column's pairs, as a mask of their bits.
-    pub(super) cols: [u64; ROW_COLUMNS_MAX_WIDTH],
-    /// Each column's number of pairs.
-    pub(super) col_pairs: [u8; ROW_COLUMNS_MAX_WIDTH],
+    col_of: [MaybeUninit<u8>; ROW_COLUMNS_MAX_WIDTH],
+    cols: [MaybeUninit<u64>; ROW_COLUMNS_MAX_WIDTH],
+    col_pairs: [MaybeUninit<u8>; ROW_COLUMNS_MAX_WIDTH],
+    width: usize,
     /// Whether every column holds one pair: pair `q` is then column `q`'s.
     pub(super) one: bool,
     /// The last pair of each column, as a mask.
@@ -302,16 +302,57 @@ pub(crate) struct PairTable {
     pub(super) inner: u64,
 }
 
+/// The first `n` entries of `a`, which the caller has written.
+#[inline(always)]
+fn written<T>(a: &[MaybeUninit<T>; ROW_COLUMNS_MAX_WIDTH], n: usize) -> &[T] {
+    let a = &a[..n];
+    // Safety: the caller wrote `a`'s entries.
+    unsafe { std::slice::from_raw_parts(a.as_ptr().cast::<T>(), n) }
+}
+
 impl PairTable {
+    /// A table of no pairs, to be filled by [`fill_pair_columns`].
+    pub(super) fn new() -> Self {
+        Self {
+            pairs: [MaybeUninit::uninit(); ROW_COLUMNS_MAX_WIDTH],
+            len: 0,
+            col_of: [MaybeUninit::uninit(); ROW_COLUMNS_MAX_WIDTH],
+            cols: [MaybeUninit::uninit(); ROW_COLUMNS_MAX_WIDTH],
+            col_pairs: [MaybeUninit::uninit(); ROW_COLUMNS_MAX_WIDTH],
+            width: 0,
+            one: true,
+            tops: 0,
+            inner: 0,
+        }
+    }
+
     /// g's pairs, in column order.
     #[inline(always)]
     pub(super) fn pairs(&self) -> &[ChildPair] {
-        &self.pairs[..self.len]
+        written(&self.pairs, self.len)
+    }
+
+    /// Each pair's column.
+    #[inline(always)]
+    pub(super) fn col_of(&self) -> &[u8] {
+        written(&self.col_of, self.len)
+    }
+
+    /// Each column's pairs, as a mask of their bits.
+    #[inline(always)]
+    pub(super) fn cols(&self) -> &[u64] {
+        written(&self.cols, self.width)
+    }
+
+    /// Each column's number of pairs.
+    #[inline(always)]
+    pub(super) fn col_pairs(&self) -> &[u8] {
+        written(&self.col_pairs, self.width)
     }
 }
 
 /// Whether a masked level is read by pairs, and then its [`PairTable`]
-/// in `out`: each child row's word is over g's pairs, the
+/// in `t`, a [`PairTable::new`]: each child row's word is over g's pairs, the
 /// [`build_row_columns`] of a reach mask a pair, in place of its word over
 /// g's nodes. That takes g's first `g_width` nodes holding at most
 /// [`ROW_COLUMNS_MAX_WIDTH`] pairs in all, child grids whose masks are
@@ -322,7 +363,7 @@ pub(super) fn fill_pair_columns(
     g_width: usize,
     (child_g_widths, complete): (Sides<usize>, Sides<bool>),
     views: Sides<ChildDecoder>,
-    out: &mut Option<PairTable>,
+    t: &mut PairTable,
 ) -> bool {
     if g_width > ROW_COLUMNS_MAX_WIDTH
         || bucket_shift(child_g_widths.left) != 0
@@ -339,27 +380,16 @@ pub(super) fn fill_pair_columns(
             return false;
         }
     }
-    let none = crate::diagram::EncodedChildRef::from_raw(0);
-    let t = out.insert(PairTable {
-        pairs: [ChildPair::new(none, none); ROW_COLUMNS_MAX_WIDTH],
-        len: total,
-        col_of: [0; ROW_COLUMNS_MAX_WIDTH],
-        cols: [0; ROW_COLUMNS_MAX_WIDTH],
-        col_pairs: [0; ROW_COLUMNS_MAX_WIDTH],
-        one: true,
-        tops: 0,
-        inner: 0,
-    });
     let decode = views.left.is_marginal() || views.right.is_marginal();
     let mut n = 0;
     level.try_for_each_node::<std::convert::Infallible>(0..g_width, |j, pairs| {
         let end = n + pairs.len();
-        for (slot, &p) in t.pairs[n..end].iter_mut().zip(pairs) {
-            *slot = if decode { decoded(p, views.left, views.right) } else { p };
+        for ((slot, col), &p) in t.pairs[n..end].iter_mut().zip(&mut t.col_of[n..end]).zip(pairs) {
+            slot.write(if decode { decoded(p, views.left, views.right) } else { p });
+            col.write(j as u8);
         }
-        t.col_of[n..end].fill(j as u8);
-        t.cols[j] = ((1u64 << end) - 1) & !((1u64 << n) - 1);
-        t.col_pairs[j] = pairs.len() as u8;
+        t.cols[j].write(((1u64 << end) - 1) & !((1u64 << n) - 1));
+        t.col_pairs[j].write(pairs.len() as u8);
         if end > n {
             t.tops |= 1 << (end - 1);
             t.inner |= ((1u64 << (end - 1)) - 1) & !((1u64 << n) - 1);
@@ -369,6 +399,7 @@ pub(super) fn fill_pair_columns(
         Ok(())
     }).unwrap_or_else(|never| match never {});
     debug_assert_eq!(n, total);
+    (t.len, t.width) = (total, g_width);
     true
 }
 
