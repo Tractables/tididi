@@ -128,6 +128,21 @@ impl ContentTwinSchedule {
     }
 }
 
+/// The nodes a prune may remove that a diagram knows of without a walk
+/// ([`Engine::unnamed_nodes`]): those no node of their parent level names,
+/// and the root level's other than the output, with the pairs they hold.
+/// None of them is reached from the output, and there are none exactly when
+/// a prune removes nothing; the nodes reached only through them are not
+/// counted.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Unnamed {
+    /// The nodes.
+    pub nodes: usize,
+    /// Their pairs.
+    pub pairs: usize,
+}
+
 use crate::Engine;
 use self::prune::PruneScope;
 use crate::limits::OperationError;
@@ -141,6 +156,36 @@ impl Engine {
     /// well-formed and count-correct at the last completed pass boundary.
     pub fn minimize(&self, f: &mut Tdd) -> Result<(), OperationError> {
         self.reduce(f, ReductionPlan::default())
+    }
+
+    /// The nodes of `f` no node of their parent level names ([`Unnamed`]),
+    /// where `f` keeps the levels that may hold one: after a conjunction
+    /// without summing out, a prune or a contraction, and while no edit
+    /// forgot them. `None` where it does not, on a diagram with a marginal
+    /// level, and on one whose output is not at the root.
+    ///
+    /// The first read after a change reads the parent levels of those
+    /// levels, one unit of work a pair, and keeps the count and the levels
+    /// found holding such a node for the next read and the next prune or
+    /// conjunction.
+    ///
+    /// # Errors
+    ///
+    /// `OverBudget` if the scratch the read takes is refused, and the stop
+    /// the read polls for; `f` is unchanged then.
+    pub fn unnamed_nodes(&self, f: &mut Tdd) -> Result<Option<Unnamed>, OperationError> {
+        if let Some(unnamed) = f.dirty.unnamed() {
+            return Ok(Some(unnamed));
+        }
+        let Some(loose) = f.dirty.loose() else {
+            return Ok(None);
+        };
+        if f.is_zero() || f.is_one() || f.has_marginal_level() || !prune::below_root_walk_applies(f) {
+            return Ok(None);
+        }
+        let (levels, unnamed) = prune::count_unnamed(self, f, loose)?;
+        f.dirty.set_counted_loose(levels, unnamed);
+        Ok(Some(unnamed))
     }
 
     /// Run the selected reduction passes under this engine's resource limits.

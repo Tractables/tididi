@@ -878,3 +878,97 @@ fn a_prune_that_drops_node_0_of_an_implicit_level_names_no_dropped_node() {
         }
     }
 }
+
+/// What [`Engine::unnamed_nodes`](crate::Engine::unnamed_nodes) counts, read
+/// off every pair: the nodes of the internal levels no pair of their parent
+/// level names, and the root level's other than the output, with their
+/// pairs.
+fn unnamed_by_pairs(tdd: &crate::Tdd) -> crate::reduce::Unnamed {
+    let vtree = &tdd.vtree;
+    let mut out = crate::reduce::Unnamed::default();
+    let root = &tdd.levels[vtree.root().idx()];
+    for k in (0..root.slot_count()).filter(|&k| k != tdd.output.local.idx()) {
+        out.nodes += 1;
+        out.pairs += root.pair_count_at(k);
+    }
+    for (p, left, right) in vtree.internal_bottomup() {
+        for (c, on_left) in [(left, true), (right, false)] {
+            if !tdd.is_structural_internal(c) {
+                continue;
+            }
+            let view = tdd.levels[c.idx()].child_decoder();
+            let parent = &tdd.levels[p.idx()];
+            let named: std::collections::BTreeSet<usize> = (0..parent.slot_count())
+                .flat_map(|i| parent.pairs_vec(i))
+                .filter_map(|pair| view.child(if on_left { pair.left } else { pair.right }).index())
+                .collect();
+            let level = &tdd.levels[c.idx()];
+            for k in (0..level.slot_count()).filter(|k| !named.contains(k)) {
+                out.nodes += 1;
+                out.pairs += level.pair_count_at(k);
+            }
+        }
+    }
+    out
+}
+
+/// Clauses conjoined one at a time, by a conjunction or in place, some steps
+/// contracted, some pruned: at each satisfiable step the count of unnamed
+/// nodes is known and the one read off every pair, a second read returns
+/// it again, the conjunctions and prunes that read the levels it settled
+/// reach the canonical diagram, and after a prune it is 0.
+#[test]
+fn the_unnamed_count_is_the_nodes_no_pair_of_the_parent_level_names() {
+    use crate::reduce::ReductionPlan;
+    use crate::test_helpers::{assert_canonical, assert_same_shape, vtree_shapes, rand_cnf, CnfShape, Lcg};
+    let eng = crate::Engine::new();
+    let (mut counted, mut nonzero, mut unknown) = (0, 0, 0);
+    for seed in 0..24u64 {
+        let num_vars = 6 + (seed % 5) as u32;
+        let mut rng = Lcg::new(seed ^ 0x0dd_c0de);
+        let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 14, width: 3 });
+        for (label, vtree) in vtree_shapes(num_vars) {
+            let mut f = eng.cube(&vtree, std::iter::empty::<i32>()).unwrap();
+            for (i, c) in clauses.iter().enumerate() {
+                f = match rng.below(2) {
+                    0 => eng.and(f, eng.clause(&vtree, c.iter().copied()).unwrap()).unwrap(),
+                    _ => eng.and_clause(f, c).unwrap(),
+                };
+                if rng.below(3) == 0 {
+                    eng.reduce(&mut f, ReductionPlan::Contract).unwrap();
+                }
+                let label = format!("seed {seed}, {label}, clause {i}");
+                let Some(unnamed) = eng.unnamed_nodes(&mut f).unwrap() else {
+                    unknown += usize::from(!f.is_zero());
+                    continue;
+                };
+                counted += 1;
+                nonzero += usize::from(unnamed.nodes > 0);
+                assert_eq!(unnamed, unnamed_by_pairs(&f), "{label}");
+                assert_eq!(eng.unnamed_nodes(&mut f).unwrap(), Some(unnamed), "{label}: second read");
+                if rng.below(4) == 0 {
+                    eng.reduce(&mut f, ReductionPlan::Prune).unwrap();
+                    assert_eq!(eng.unnamed_nodes(&mut f).unwrap(), Some(crate::reduce::Unnamed::default()), "{label}: pruned");
+                    assert_eq!(unnamed_by_pairs(&f), crate::reduce::Unnamed::default(), "{label}: pruned");
+                }
+            }
+            eng.minimize(&mut f).unwrap();
+            assert_canonical(&f);
+            assert_same_shape(&f, &compile_clauses(&vtree, &clauses), &format!("seed {seed}, {label}"));
+        }
+    }
+    assert!(unknown == 0 && nonzero > counted / 4, "{nonzero} of {counted} counts nonzero, {unknown} unknown");
+}
+
+/// A diagram with a marginal level keeps no loose levels to count.
+#[test]
+fn a_marginal_level_leaves_the_unnamed_count_unknown() {
+    let eng = crate::Engine::new();
+    let vtree = Arc::new(Vtree::balanced(6));
+    let mut f = compile_clauses(&vtree, &[vec![1, 2, -3], vec![-4, 5], vec![3, -6]]);
+    assert!(eng.unnamed_nodes(&mut f).unwrap().is_some());
+    let below = vtree.children(vtree.root()).0;
+    eng.marginalize_levels(&mut f, &[below]).unwrap();
+    assert!(f.has_marginal_level());
+    assert_eq!(eng.unnamed_nodes(&mut f).unwrap(), None);
+}

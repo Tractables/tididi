@@ -484,6 +484,12 @@ pub(crate) struct Dirty {
     /// edit hands the levels back ([`take_loose`](Self::take_loose)). A
     /// prune leaves none, and it walks only as much as these levels need.
     loose: Option<Vec<u32>>,
+    /// The nodes of the listed levels no node of their parent level names,
+    /// with the root level's nodes other than the output, and their pairs:
+    /// set by [`Engine::unnamed_nodes`](crate::Engine::unnamed_nodes) with
+    /// the list it settled, in which every level holds such a node or cannot
+    /// be read, and forgotten by every other write of the list.
+    unnamed: Option<crate::reduce::Unnamed>,
     /// A bit for each level at which a pair fusion ran to the end and that
     /// no push has named since: no node there holds two pairs that pair
     /// fusion would fuse. Unknown, as every diagram starts, is no bit set.
@@ -505,7 +511,7 @@ impl Dirty {
         level: u32,
         eng: Option<&crate::Engine>,
     ) -> Result<(), crate::OperationError> {
-        self.loose = None;
+        self.forget_loose();
         self.forget_fused(level);
         for pass in Pass::ALL {
             match eng {
@@ -596,6 +602,7 @@ impl Dirty {
         for pass in Pass::ALL {
             carried.list(pass).append(self.list(pass));
         }
+        carried.unnamed = None;
         carried.loose = match (carried.loose.take(), self.loose.take()) {
             (Some(mut under), Some(over)) => {
                 under.extend(over);
@@ -660,6 +667,7 @@ impl Dirty {
             let mut to = Vec::new();
             copy_slice(eng, &mut to, from)?;
             out.loose = Some(to);
+            out.unnamed = self.unnamed;
         }
         copy_slice(eng, &mut out.fused, &self.fused)?;
         Ok(out)
@@ -674,6 +682,7 @@ impl Dirty {
     /// [`remap`](Self::remap), moving the fusion record of each level
     /// `keeps` names to its new index; every other record is dropped.
     pub(crate) fn remap_keeping(&mut self, map: &[VtreeIdx], keeps: impl Fn(usize) -> bool) {
+        self.unnamed = None;
         for list in self.lists.iter_mut().chain(self.loose.as_mut()) {
             for entry in list.iter_mut() {
                 *entry = map[*entry as usize].0;
@@ -724,6 +733,33 @@ impl Dirty {
     #[inline]
     pub(crate) fn set_loose(&mut self, levels: Option<Vec<u32>>) {
         self.loose = levels;
+        self.unnamed = None;
+    }
+
+    /// Record `levels`, each holding a node its parent level does not name
+    /// or not readable, with what they hold
+    /// ([`Engine::unnamed_nodes`](crate::Engine::unnamed_nodes)).
+    pub(crate) fn set_counted_loose(&mut self, levels: Vec<u32>, unnamed: crate::reduce::Unnamed) {
+        self.loose = Some(levels);
+        self.unnamed = Some(unnamed);
+    }
+
+    /// What the loose levels hold, if counted since the list was last written.
+    #[inline]
+    pub(crate) fn unnamed(&self) -> Option<crate::reduce::Unnamed> {
+        self.unnamed
+    }
+
+    /// The loose levels as a prune settles them, if counted: then each holds
+    /// a node its parent level does not name, or cannot be read.
+    #[inline]
+    pub(crate) fn counted_loose(&self) -> Option<&[u32]> {
+        self.unnamed.and(self.loose.as_deref())
+    }
+
+    fn forget_loose(&mut self) {
+        self.loose = None;
+        self.unnamed = None;
     }
 
     /// Take the loose levels, leaving them unknown: for an edit that knows
@@ -731,6 +767,7 @@ impl Dirty {
     /// [`set_loose`](Self::set_loose) after its invalidations.
     #[inline]
     pub(crate) fn take_loose(&mut self) -> Option<Vec<u32>> {
+        self.unnamed = None;
         self.loose.take()
     }
 
@@ -738,6 +775,7 @@ impl Dirty {
     /// nodes of its parent level, whose pairs may have named the only
     /// reference to one of its nodes.
     pub(crate) fn add_loose(&mut self, level: u32) {
+        self.unnamed = None;
         if let Some(loose) = &mut self.loose
             && !loose.contains(&level)
         {
@@ -822,7 +860,7 @@ impl Dirty {
     ) -> Result<Self, crate::OperationError> {
         // Which levels an assembly left loose is its own to say; see
         // `set_loose`.
-        self.loose = None;
+        self.forget_loose();
         self.fused.clear();
         self.seed_rebuilt(rebuilt, eng)?;
         self.dedup_above(vtree.num_nodes());

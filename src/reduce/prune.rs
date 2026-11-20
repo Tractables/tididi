@@ -25,6 +25,7 @@ use crate::diagram::{
 };
 
 use crate::Engine;
+use super::Unnamed;
 
 use crate::execution::pool::{Buffers, PooledScratch, Scratch};
 use crate::limits::{Limits, OperationError, PollGate, TimeTests, Transient};
@@ -400,8 +401,11 @@ pub(crate) fn prune_unreachable(
     let below_root = matches!(scope, PruneScope::BelowRoot) && below_root_walk_applies(tdd);
     let seeded = match tdd.dirty.loose() {
         Some(loose) if !below_root && below_root_walk_applies(tdd) && !tdd.has_marginal_level() => {
-            let loose = settle_loose(eng, tdd, loose)?;
-            Some(Seeds::of(eng, tdd, &loose)?)
+            let seeds = match tdd.dirty.counted_loose() {
+                Some(counted) => Seeds::of(eng, tdd, counted)?,
+                None => Seeds::of(eng, tdd, &settle_loose(eng, tdd, loose)?)?,
+            };
+            Some(seeds)
         }
         _ => None,
     };
@@ -677,7 +681,7 @@ pub(crate) fn settle_loose_in<'a>(
         let (left, right) = vtree.children(p);
         if p != vtree.root() && !flags[left.idx()][UNDER] && !flags[right.idx()][UNDER] {
             let sides = [flags[left.idx()][AT], flags[right.idx()][AT]];
-            let stays = unnamed_children(lim, (vtree, level), p, sides, counts, &mut gate)?;
+            let (stays, _) = unnamed_children(lim, (vtree, level), p, sides, counts, &mut gate)?;
             flags[left.idx()][AT] = stays[0];
             flags[right.idx()][AT] = stays[1];
         }
@@ -703,6 +707,11 @@ pub(crate) fn settle_loose_in<'a>(
 /// pair ([`count_named`]). A level with no node holds none, and a level that
 /// cannot be read counts as holding one: one that is not structural
 /// internal, and each child of a `p` that is not.
+///
+/// Also the width of each side's block in `counts`, the left one's first, 0
+/// for a side not read. A side read that holds an unnamed node was read to
+/// the end, so its block's zeros below the child's node count are exactly
+/// those nodes.
 fn unnamed_children<'a>(
     lim: &Limits,
     (vtree, level_at): (&Vtree, &dyn Fn(VtreeIdx) -> &'a TddLevel),
@@ -710,10 +719,10 @@ fn unnamed_children<'a>(
     sides: [bool; 2],
     counts: &mut Vec<u32>,
     gate: &mut PollGate<'_>,
-) -> Result<[bool; 2], OperationError> {
+) -> Result<([bool; 2], [usize; 2]), OperationError> {
     let structural_internal = |t: VtreeIdx| !vtree.node(t).is_leaf() && !level_at(t).is_marginal();
     if sides == [false; 2] || !structural_internal(p) {
-        return Ok(sides);
+        return Ok((sides, [0; 2]));
     }
     let (left, right) = vtree.children(p);
     let children = [left, right];
@@ -744,7 +753,83 @@ fn unnamed_children<'a>(
         [false, true] => count_named::<false, true>(level, [l, r], gate)?,
         [false, false] => [true; 2],
     };
-    Ok([unread[0] || !named[0], unread[1] || !named[1]])
+    Ok(([unread[0] || !named[0], unread[1] || !named[1]], width))
+}
+
+/// [`settle_loose`] read to the end: the levels of `listed` that hold a node
+/// no pair of their parent level names, or cannot be read, and the nodes
+/// they hold no pair names with the root level's other than the output,
+/// with their pairs ([`Engine::unnamed_nodes`]). The output is at the root
+/// and no level is marginal. Unlike the settle, a level whose parent is the
+/// root or under a level that stays listed is read too, each parent's
+/// pairs in one pass, one unit of work a pair.
+pub(crate) fn count_unnamed(
+    eng: &Engine,
+    tdd: &Tdd,
+    listed: &[u32],
+) -> Result<(Vec<u32>, Unnamed), OperationError> {
+    let (vtree, lim) = (&tdd.vtree, eng.limits());
+    let level_at = |t: VtreeIdx| &tdd.levels[t.idx()];
+    let root = vtree.root();
+    let mut unnamed = Unnamed::default();
+    {
+        let level = level_at(root);
+        for k in (0..level.node_count()).filter(|&k| k != tdd.output.local.idx()) {
+            unnamed.nodes += 1;
+            unnamed.pairs += level.pair_count_at(k);
+        }
+    }
+    if listed.is_empty() {
+        return Ok((Vec::new(), unnamed));
+    }
+    let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
+    let PruneScratch {
+        settle_counts: counts,
+        settle_flags: flags,
+        settle_parents: parents,
+        ..
+    } = &mut *scratch;
+    // Per level, whether it is listed and whether it stays listed.
+    const LISTED: usize = 0;
+    const STAYS: usize = 1;
+    flags.clear();
+    lim.try_resize(flags, vtree.num_nodes(), [false; 2])?;
+    for &t in listed {
+        flags[t as usize][LISTED] = true;
+    }
+    flags[root.idx()][STAYS] = flags[root.idx()][LISTED] && unnamed.nodes > 0;
+    parents.clear();
+    lim.reserve(parents, listed.len())?;
+    parents.extend(listed.iter().filter_map(|&t| vtree.node(VtreeIdx(t)).parent()));
+    parents.sort_unstable_by_key(|p| p.0);
+    parents.dedup();
+    let mut gate = lim.gate();
+    for &p in parents.iter() {
+        let children = <[VtreeIdx; 2]>::from(vtree.children(p));
+        let sides = children.map(|c| flags[c.idx()][LISTED]);
+        let (stays, width) = unnamed_children(lim, (vtree, &level_at), p, sides, counts, &mut gate)?;
+        let mut base = 0;
+        for k in 0..2 {
+            flags[children[k].idx()][STAYS] = stays[k];
+            if stays[k] && width[k] > 0 {
+                let level = level_at(children[k]);
+                for (s, _) in counts[base..base + width[k] - 1].iter().enumerate().filter(|&(_, &n)| n == 0) {
+                    unnamed.nodes += 1;
+                    unnamed.pairs += level.pair_count_at(s);
+                }
+            }
+            base += width[k];
+        }
+    }
+    gate.flush()?;
+    let mut stays: Vec<u32> = Vec::new();
+    lim.reserve(&mut stays, listed.len())?;
+    for &t in listed {
+        if std::mem::take(&mut flags[t as usize][STAYS]) {
+            stays.push(t);
+        }
+    }
+    Ok((stays, unnamed))
 }
 
 /// Count in `blocks`, a count a node, the pairs of `level` that name each

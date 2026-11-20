@@ -565,10 +565,13 @@ fn apply_and_held(
     // The operands' loose levels as a prune would settle them, read before
     // the sweep drops the operands' levels.
     let operand_loose = match (f.dirty().loose(), g.dirty().loose()) {
-        (Some(lf), Some(lg)) if plain => Some(Operands {
-            f: settle_loose_in(eng, &vtree, &|t| f.level(t), lf)?,
-            g: settle_loose_in(eng, &vtree, &|t| g.level(t), lg)?,
-        }),
+        (Some(lf), Some(lg)) if plain => {
+            let settled = |op: &Held<'_>, listed: &[u32]| match op.dirty().counted_loose() {
+                Some(counted) => eng.limits().try_to_vec(counted),
+                None => settle_loose_in(eng, &vtree, &|t| op.level(t), listed),
+            };
+            Some(Operands { f: settled(f, lf)?, g: settled(g, lg)? })
+        }
         _ => None,
     };
 
