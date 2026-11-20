@@ -91,6 +91,19 @@ pub(crate) fn merge_content_equal_nodes(
     filter: Option<rustc_hash::FxHashSet<u32>>,
     min_yield: Option<f64>,
 ) -> Result<(usize, Option<f64>), OperationError> {
+    // Two copies, so the unsampled scan's level loop carries no sample state.
+    match min_yield {
+        None => merge_levels::<false>(eng, tdd, filter, 0.0),
+        Some(min_yield) => merge_levels::<true>(eng, tdd, filter, min_yield),
+    }
+}
+
+fn merge_levels<const SAMPLED: bool>(
+    eng: &Engine,
+    tdd: &mut Tdd,
+    filter: Option<rustc_hash::FxHashSet<u32>>,
+    min_yield: f64,
+) -> Result<(usize, Option<f64>), OperationError> {
     // Marginalized diagrams only (`# Soundness` above).
     if !tdd.has_marginal_level() {
         return Ok((0, None));
@@ -118,18 +131,19 @@ pub(crate) fn merge_content_equal_nodes(
 
     // The pairs the sample's levels held and their duplicates' pairs, until
     // the sample is complete.
-    let total = if min_yield.is_some() { tdd.pair_count() } else { 0 };
-    let mut sample = min_yield.map(|_| (0usize, 0usize));
+    let total = if SAMPLED { tdd.pair_count() } else { 0 };
+    let mut sample = SAMPLED.then_some((0usize, 0usize));
     let mut measured = None;
 
     for level_v in order {
-        if let Some((seen, duplicate)) = sample
+        if SAMPLED
+            && let Some((seen, duplicate)) = sample
             && seen.saturating_mul(SAMPLE_SHARE) >= total
         {
             let found = duplicate as f64 / seen.max(1) as f64;
             measured = Some(found);
             sample = None;
-            if min_yield.is_some_and(|min| found < min) {
+            if found < min_yield {
                 return Ok((dups_merged, measured));
             }
         }
@@ -153,21 +167,21 @@ pub(crate) fn merge_content_equal_nodes(
             continue;
         }
         let entries = ContentEntries(level, tdd.levels.known_live_pairs(level_idx));
-        if let Some((seen, _)) = sample.as_mut() {
+        if SAMPLED && let Some((seen, _)) = sample.as_mut() {
             *seen += entries.len();
         }
         if !group_twins_by_entries(eng, &entries, width, &mut scratch)? {
             continue;
         }
         dups_merged += remap_groups_onto_first(lim, &mut scratch, width)?;
-        if let Some((_, duplicate)) = sample.as_mut() {
+        if SAMPLED && let Some((_, duplicate)) = sample.as_mut() {
             let target = &scratch.remap.content_target[..width];
             *duplicate += (0..width).filter(|&i| target[i] as usize != i).map(|i| level.pair_count_at(i)).sum::<usize>();
         }
         redirect_parent_refs(lim, tdd, level_v, &scratch.remap.content_target[..width], &mut live)?;
     }
 
-    if let Some((seen, duplicate)) = sample {
+    if SAMPLED && let Some((seen, duplicate)) = sample {
         measured = Some(duplicate as f64 / seen.max(1) as f64);
     }
     Ok((dups_merged, measured))
