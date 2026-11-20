@@ -219,10 +219,17 @@ impl TwinEntries for ContextEntries<'_> {
         entries: &mut Vec<u64>,
     ) -> Result<(), OperationError> {
         let level = self.parent_level;
-        level.try_for_each_node(0..level.nodes().len(), |pi, pairs| match self.t1_side {
-            ChildSide::Left => gather_node::<true>(lim, keep, pi as u32, pairs, nodes, entries),
-            ChildSide::Right => gather_node::<false>(lim, keep, pi as u32, pairs, nodes, entries),
-        })
+        let all = 0..level.nodes().len();
+        // Forced inline: the walk calls it from two sites, and a call a node
+        // costs more than the pairs of a short node.
+        match self.t1_side {
+            ChildSide::Left => level.try_for_each_node(all, #[inline(always)] |pi, pairs| {
+                gather_node::<true>(lim, keep, pi as u32, pairs, nodes, entries)
+            }),
+            ChildSide::Right => level.try_for_each_node(all, #[inline(always)] |pi, pairs| {
+                gather_node::<false>(lim, keep, pi as u32, pairs, nodes, entries)
+            }),
+        }
     }
 
     /// Two nodes share a context only where a parent node pairs both with
@@ -252,40 +259,30 @@ fn gather_node<const LEFT: bool>(
     nodes: &mut Vec<u32>,
     entries: &mut Vec<u64>,
 ) -> Result<(), OperationError> {
-    make_room(lim, nodes, entries, pairs.len())?;
-    let side = if LEFT { ChildSide::Left } else { ChildSide::Right };
     let len = nodes.len();
     debug_assert_eq!(len, entries.len());
-    let room_nodes = &mut nodes.spare_capacity_mut()[..pairs.len()];
-    let room_entries = &mut entries.spare_capacity_mut()[..pairs.len()];
-    let mut kept = 0;
+    if nodes.capacity() - len < pairs.len() || entries.capacity() - len < pairs.len() {
+        grow_room(lim, nodes, pairs.len())?;
+        grow_room(lim, entries, pairs.len())?;
+    }
+    let side = if LEFT { ChildSide::Left } else { ChildSide::Right };
+    let at_nodes = nodes.as_mut_ptr();
+    let at_entries = entries.as_mut_ptr();
+    let mut kept = len;
     for pair in pairs {
         let (target, sibling) = split_pair(pair, side);
-        // Safety: `kept` is at most the index of `pair`, below `pairs.len()`,
-        // the length of both rooms.
+        // Safety: `kept` is at most `len` plus the index of `pair`, below
+        // `len + pairs.len()`, within both capacities.
         unsafe {
-            room_nodes.get_unchecked_mut(kept).write(target);
-            room_entries.get_unchecked_mut(kept).write(pack(pi, sibling));
+            at_nodes.add(kept).write(target);
+            at_entries.add(kept).write(pack(pi, sibling));
         }
         kept += usize::from(keep[target as usize]);
     }
-    // Safety: the first `kept` slots of both rooms were written above.
+    // Safety: the slots from `len` to `kept` were written above.
     unsafe {
-        nodes.set_len(len + kept);
-        entries.set_len(len + kept);
-    }
-    Ok(())
-}
-
-/// Room for `n` more records in `nodes` and `entries`. Called once a node,
-/// so the growth, with its charge and host notice, is out of line.
-#[inline(always)]
-fn make_room(lim: &Limits, nodes: &mut Vec<u32>, entries: &mut Vec<u64>, n: usize) -> Result<(), OperationError> {
-    if nodes.capacity() - nodes.len() < n {
-        grow_room(lim, nodes, n)?;
-    }
-    if entries.capacity() - entries.len() < n {
-        grow_room(lim, entries, n)?;
+        nodes.set_len(kept);
+        entries.set_len(kept);
     }
     Ok(())
 }
