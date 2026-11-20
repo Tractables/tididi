@@ -1384,8 +1384,27 @@ impl Vtree {
         self.leaf_of(var).is_none() && link.region_over(rank, rank + 1).is_none()
     }
 
-    /// The region whose extent holds `var`.
-    pub(crate) fn region_of(&self, var: VarId) -> Option<VtreeIdx> {
+    /// The region whose extent holds `var`: a home variable a diagram on
+    /// this vtree has summed out, and which no operand it meets may have as
+    /// a leaf. A region's [`home_node`](Self::home_node) is the home leaf it
+    /// is anchored at, which need not be the only one in its extent.
+    ///
+    /// ```
+    /// use tididi::{Engine, Tdd};
+    /// use tididi::vtree::{Home, VarId, Vtree};
+    ///
+    /// let engine = Engine::new();
+    /// let home = Home::new(Vtree::balanced(4));
+    /// let f = Tdd::clause(&Vtree::projection(&home, [VarId(1), VarId(2)])?, [1, 2])?;
+    /// let g = Tdd::clause(&Vtree::projection(&home, [VarId(2), VarId(3)])?, [-2, 3])?;
+    /// let summed = engine.and_marginalizing_where(&f, &g, |v| v != VarId(3))?;
+    /// let region = summed.vtree().region_of(VarId(1)).expect("1 is summed out");
+    /// assert_eq!(summed.vtree().region_of(VarId(2)), Some(region));
+    /// assert_eq!(summed.vtree().region_of(VarId(3)), None);
+    /// assert_eq!(summed.vtree().region_of(VarId(4)), None);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn region_of(&self, var: VarId) -> Option<VtreeIdx> {
         let link = self.home.as_ref()?;
         let rank = link.home.rank(var)?;
         link.region_over(rank, rank + 1).map(|region| link.region_node(region))
