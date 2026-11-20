@@ -385,7 +385,9 @@ fn rebuild_along_spine(
             none.clear();
             Some(none)
         }
-        false => carried_loose,
+        // Once half the internal levels are listed the list spares a reader
+        // little, and a run of clauses would list every spine again.
+        false => carried_loose.filter(|loose| loose.len() < vtree.internal_bottomup_slice().len() / 2),
     };
     if let Some(loose) = loose.as_mut() {
         for &t in work.spine_internal.iter() {
