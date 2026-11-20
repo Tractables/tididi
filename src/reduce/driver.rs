@@ -99,8 +99,9 @@ impl<'a> Reduction<'a> {
         self.assert_marginal_flags(&marginal_before, "contract+leaf");
         let scanned = match policy {
             ContentTwinPolicy::Skip => false,
-            ContentTwinPolicy::Fresh => self.scan_if_due(&mut ContentTwinSchedule::default())?,
-            ContentTwinPolicy::Adaptive(schedule) => self.scan_if_due(schedule)?,
+            ContentTwinPolicy::Fresh => self.scan_if_due(&mut ContentTwinSchedule::default(), None)?,
+            ContentTwinPolicy::Adaptive(schedule) => self.scan_if_due(schedule, None)?,
+            ContentTwinPolicy::Sampled { schedule, min_yield } => self.scan_if_due(schedule, Some(min_yield))?,
         };
         // A content-twin scan ends with the slot prune. Without one, the slots
         // that prune and contraction orphaned at the boundary stores are still
@@ -183,12 +184,13 @@ impl<'a> Reduction<'a> {
 
     /// Always scan small or weighted marginal diagrams. Large unweighted
     /// diagrams use the schedule's fourfold growth threshold. Returns whether
-    /// a scan ran.
-    fn scan_if_due(&mut self, schedule: &mut ContentTwinSchedule) -> Result<bool, OperationError> {
+    /// a scan, stopped after its sample or not, ran.
+    fn scan_if_due(&mut self, schedule: &mut ContentTwinSchedule, min_yield: Option<f64>) -> Result<bool, OperationError> {
+        schedule.last_sample_yield = None;
         if !self.has_marginal_level() { return Ok(false); }
         let before: u64 = self.tdd.levels.iter().map(|l| l.nodes().len() as u64).sum();
         if self.tdd.weights.is_some() || before <= CONTENT_SCAN_MAX_NODES || before >= schedule.next_scan_at_nodes {
-            self.content_twins()?;
+            schedule.last_sample_yield = self.content_twins(min_yield)?;
             let after: u64 = self.tdd.levels.iter().map(|l| l.nodes().len() as u64).sum();
             schedule.next_scan_at_nodes = if after > CONTENT_SCAN_MAX_NODES { before.saturating_mul(4) } else { 0 };
             return Ok(true);
@@ -198,26 +200,32 @@ impl<'a> Reduction<'a> {
 
     /// Each productive round removes at least one node. Its rewrites mark the
     /// levels to revisit; only the first round scans the whole diagram, so
-    /// what the slot prune before it reports is not kept.
-    pub(super) fn content_twins(&mut self) -> Result<(), OperationError> {
+    /// what the slot prune before it reports is not kept. With `min_yield`
+    /// the first round samples its yield ([`ContentTwinPolicy::Sampled`]);
+    /// a round that stops there is the last. Returns the sample's yield.
+    pub(super) fn content_twins(&mut self, min_yield: Option<f64>) -> Result<Option<f64>, OperationError> {
         prune_value_slots(self.eng, self.tdd)?;
         self.tdd.dirty.clear(Pass::ContentTwin);
         let mut next: Option<rustc_hash::FxHashSet<u32>> = None;
+        let mut sampled = None;
         loop {
             self.eng.limits().check_stop()?;
             if next.as_ref().is_some_and(|levels| levels.is_empty()) { break; }
-            let merged = merge_content_equal_nodes(self.eng, self.tdd, next.take())?;
+            let first = next.is_none();
+            let (merged, found) = merge_content_equal_nodes(self.eng, self.tdd, next.take(), min_yield.filter(|_| first))?;
+            sampled = sampled.or(found);
             if merged == 0 { break; }
             prune_unreachable(self.eng, self.tdd, PruneScope::Whole)?;
             self.contract()?;
             // A value merge at a marginal level may make its parents' nodes
             // equal: those boundaries are scanned again.
             let merged = prune_value_slots(self.eng, self.tdd)?;
+            if min_yield.zip(found).is_some_and(|(min, found)| found < min) { break; }
             self.tdd.dirty.requeue(Pass::ContentTwin, merged);
             next = Some(self.tdd.dirty.take(Pass::ContentTwin).into_iter().collect());
         }
         self.tdd.dirty.clear(Pass::ContentTwin);
-        Ok(())
+        Ok(sampled)
     }
 
     #[cfg(debug_assertions)]

@@ -17,7 +17,7 @@ use crate::diagram::Tdd;
 use crate::limits::{Limits, OperationError};
 use crate::vtree::VtreeIdx;
 
-use super::fingerprint::{group_twins_by_entries, ContentEntries};
+use super::fingerprint::{group_twins_by_entries, ContentEntries, TwinEntries};
 use super::scratch::ContractScratch;
 
 /// The levels this merge canonicalizes, children before parents; the checker
@@ -46,10 +46,14 @@ pub(crate) fn content_twin_scan_levels(tdd: &Tdd) -> Vec<VtreeIdx> {
         .collect()
 }
 
+/// The share of a diagram's pairs, as `1 / SAMPLE_SHARE`, that the sample
+/// of [`merge_content_equal_nodes`] covers at least.
+const SAMPLE_SHARE: usize = 32;
+
 /// Content-based twin merge over every explicit level of a marginalized
 /// diagram, returning how many duplicate nodes were redirected onto their
-/// canonical twin. A return of 0 means invariant 9 holds everywhere the filter
-/// reached.
+/// canonical twin, and the sample's yield with `min_yield`. A count of 0
+/// means invariant 9 holds everywhere the filter reached.
 ///
 /// Two nodes at one level with equal pair multisets are found by the twin
 /// grouping over each node's own pairs, and the parent's references and the
@@ -75,14 +79,21 @@ pub(crate) fn content_twin_scan_levels(tdd: &Tdd) -> Vec<VtreeIdx> {
 /// With `None`, every explicit level is scanned. A filtered-out level can only
 /// be left with unmerged twins, which costs size, not correctness. The set is
 /// taken by value because the pass adds to it as it goes.
+///
+/// `min_yield`: the pass samples the bottom levels that hold a
+/// `SAMPLE_SHARE`-th of the diagram's pairs, merging as it goes, and stops
+/// there unless the duplicates' pairs make up `min_yield` of the pairs those
+/// levels held. The yield returned is the sample's, or the whole pass's
+/// where the levels hold fewer pairs than the diagram counts.
 pub(crate) fn merge_content_equal_nodes(
     eng: &Engine,
     tdd: &mut Tdd,
     filter: Option<rustc_hash::FxHashSet<u32>>,
-) -> Result<usize, OperationError> {
+    min_yield: Option<f64>,
+) -> Result<(usize, Option<f64>), OperationError> {
     // Marginalized diagrams only (`# Soundness` above).
     if !tdd.has_marginal_level() {
-        return Ok(0);
+        return Ok((0, None));
     }
 
     let lim = eng.limits();
@@ -105,7 +116,23 @@ pub(crate) fn merge_content_equal_nodes(
     // sweep runs while this pass does.
     let mut scratch = eng.scratch.reduce.contract.checkout(eng);
 
+    // The pairs the sample's levels held and their duplicates' pairs, until
+    // the sample is complete.
+    let total = if min_yield.is_some() { tdd.pair_count() } else { 0 };
+    let mut sample = min_yield.map(|_| (0usize, 0usize));
+    let mut measured = None;
+
     for level_v in order {
+        if let Some((seen, duplicate)) = sample
+            && seen.saturating_mul(SAMPLE_SHARE) >= total
+        {
+            let found = duplicate as f64 / seen.max(1) as f64;
+            measured = Some(found);
+            sample = None;
+            if min_yield.is_some_and(|min| found < min) {
+                return Ok((dups_merged, measured));
+            }
+        }
         let level_idx = level_v.idx();
 
         // Worklist filter: skip this level if neither it nor a marginal child
@@ -126,14 +153,24 @@ pub(crate) fn merge_content_equal_nodes(
             continue;
         }
         let entries = ContentEntries(level, tdd.levels.known_live_pairs(level_idx));
+        if let Some((seen, _)) = sample.as_mut() {
+            *seen += entries.len();
+        }
         if !group_twins_by_entries(eng, &entries, width, &mut scratch)? {
             continue;
         }
         dups_merged += remap_groups_onto_first(lim, &mut scratch, width)?;
+        if let Some((_, duplicate)) = sample.as_mut() {
+            let target = &scratch.remap.content_target[..width];
+            *duplicate += (0..width).filter(|&i| target[i] as usize != i).map(|i| level.pair_count_at(i)).sum::<usize>();
+        }
         redirect_parent_refs(lim, tdd, level_v, &scratch.remap.content_target[..width], &mut live)?;
     }
 
-    Ok(dups_merged)
+    if let Some((seen, duplicate)) = sample {
+        measured = Some(duplicate as f64 / seen.max(1) as f64);
+    }
+    Ok((dups_merged, measured))
 }
 
 /// Fill `scratch.remap.content_target[..width]` with each node's canonical

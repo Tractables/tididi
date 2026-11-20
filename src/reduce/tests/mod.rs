@@ -9,7 +9,7 @@ fn prune_unreachable(eng: &Engine, tdd: &mut crate::Tdd, scope: super::prune::Pr
     super::prune::prune_unreachable(eng, tdd, scope)
 }
 fn canonicalize_content_twins(eng: &Engine, tdd: &mut crate::Tdd) -> Result<(), OperationError> {
-    super::driver::Reduction::new(eng, tdd).content_twins()
+    super::driver::Reduction::new(eng, tdd).content_twins(None).map(drop)
 }
 use crate::apply::apply_and;
 use crate::test_helpers::clause_to_tdd;

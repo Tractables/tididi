@@ -77,6 +77,20 @@ pub enum ContentTwinPolicy<'a> {
     /// with a marginal level is scanned on every call regardless of the
     /// scheduled size; a diagram with no marginal level is never scanned.
     Adaptive(&'a mut ContentTwinSchedule),
+    /// As `Adaptive`, but a scan the schedule calls for stops once its first
+    /// pass has merged the bottom levels holding a thirty-second of the
+    /// pairs, unless the duplicates it found there held at least `min_yield`
+    /// of those levels' pairs. A stopped scan keeps those merges, runs the
+    /// prune and contraction they need, scans no other level, and sets the
+    /// schedule as a finished scan would.
+    /// [`ContentTwinSchedule::last_sample_yield`] reports the yield measured.
+    Sampled {
+        /// The schedule, as for `Adaptive`.
+        schedule: &'a mut ContentTwinSchedule,
+        /// The share of the sampled pairs the duplicates must hold for the
+        /// scan to go on.
+        min_yield: f64,
+    },
 }
 
 /// Reuse the content-twin scan schedule across successive diagrams.
@@ -91,6 +105,20 @@ pub struct ContentTwinSchedule {
     /// Node count at which a skipped (above-cap) scan is re-attempted.
     /// 0 = scan on the next above-cap call.
     pub(crate) next_scan_at_nodes: u64,
+    /// What the last sampled scan measured.
+    pub(crate) last_sample_yield: Option<f64>,
+}
+
+impl ContentTwinSchedule {
+    /// The share of the sampled pairs that duplicates held in the last scan
+    /// run through this schedule, if that scan was
+    /// [`Sampled`](ContentTwinPolicy::Sampled); `None` after an unsampled
+    /// scan or a reduction that scanned nothing. With no pairs sampled it is
+    /// 0.
+    #[must_use]
+    pub fn last_sample_yield(&self) -> Option<f64> {
+        self.last_sample_yield
+    }
 }
 
 use crate::Engine;
