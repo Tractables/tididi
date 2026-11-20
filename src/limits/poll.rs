@@ -38,6 +38,34 @@ pub(super) const CLOCK_POLL_WORK: u64 = 1 << 16;
 /// millions of pairs.
 pub(crate) const TIME_TEST_PAIRS: usize = 1 << 16;
 
+/// A walk's time tests: one [`Limits::check_time`] each [`TIME_TEST_PAIRS`]
+/// steps, where [`Limits::timed`] held when the walk began, and none
+/// otherwise.
+pub(crate) struct TimeTests<'a> {
+    lim: Option<&'a Limits>,
+    steps: usize,
+}
+
+impl<'a> TimeTests<'a> {
+    pub(crate) fn new(lim: Option<&'a Limits>) -> Self {
+        Self { lim: lim.filter(|lim| lim.timed()), steps: 0 }
+    }
+
+    /// Count `steps` more, and test the time once they reach
+    /// [`TIME_TEST_PAIRS`].
+    #[inline]
+    pub(crate) fn after(&mut self, steps: usize) -> Result<(), OperationError> {
+        if let Some(lim) = self.lim {
+            self.steps += steps;
+            if self.steps >= TIME_TEST_PAIRS {
+                self.steps = 0;
+                lim.check_time()?;
+            }
+        }
+        Ok(())
+    }
+}
+
 /// The last clock reading a cancellation test took, and how many more tests
 /// may answer from it ([`CLOCK_POLLS`], [`CLOCK_POLL_WORK`]).
 #[derive(Clone, Copy, Debug)]

@@ -1,7 +1,7 @@
 //! Materializing candidate context signatures and grouping nodes by them.
 
 use crate::Engine;
-use crate::limits::{Limits, OperationError, TIME_TEST_PAIRS};
+use crate::limits::{Limits, OperationError, TimeTests};
 
 use super::super::bits;
 use super::super::scratch::ContractScratch;
@@ -365,9 +365,9 @@ fn group_by_hashed_signature(
     // after the loop.
     let sig_offsets: &[u32] = counts;
     let mut sorted = Ok(());
-    // Entries compared since the last time test: one candidate's compare
-    // can read and sort a signature of millions of entries.
-    let (timed, mut compared) = (lim.timed(), 0usize);
+    // Time tests by entries compared: one candidate's compare can read and
+    // sort a signature of millions of entries.
+    let mut tests = TimeTests::new(Some(lim));
     probe_fingerprints(
         lim,
         twin_hash_table,
@@ -377,15 +377,9 @@ fn group_by_hashed_signature(
             _ if sorted.is_err() => true,
             Some(j) => {
                 let (a, b) = (candidates[k] as usize, candidates[j] as usize);
-                if timed {
-                    compared += (sig_offsets[a + 1] - sig_offsets[a]) as usize;
-                    if compared >= TIME_TEST_PAIRS {
-                        compared = 0;
-                        if let Err(e) = lim.check_time() {
-                            sorted = Err(e);
-                            return true;
-                        }
-                    }
+                if let Err(e) = tests.after((sig_offsets[a + 1] - sig_offsets[a]) as usize) {
+                    sorted = Err(e);
+                    return true;
                 }
                 match same_signature(lim, entries, sig_offsets, sort_counts, a, b) {
                     Ok(same) => {
