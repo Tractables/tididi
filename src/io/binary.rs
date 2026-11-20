@@ -6,6 +6,7 @@
 //! count is bounded by the bytes left to hold it, so a damaged or hostile file
 //! is refused before it can size an allocation.
 
+use std::convert::Infallible;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
@@ -471,51 +472,48 @@ pub(super) fn encode_levels(tdd: &Tdd, order: &[VtreeIdx], out: &mut Vec<u8>, co
     push_varint(out, u64::from(out_local) + 1);
 
     let structural = ChildDecoder::structural();
+    let (mut stream, mut mapped, mut lens) = (Vec::new(), Vec::<(u32, u32)>::new(), Vec::<usize>::new());
     for &t in order {
         let VtreeNode::Internal { left, right, .. } = *vtree.node(t) else { continue };
         let level = tdd.level(t);
         let local = &numbering[t.idx()].local;
-        let live = || level.internal_inputs_iter().filter(|(i, _)| local[*i] != OMITTED);
-        let (mut nodes, mut multi, mut pairs) = (0u64, 0u64, 0u64);
-        for (_, node_pairs) in live() {
-            nodes += 1;
-            multi += u64::from(node_pairs.len() > 1);
-            pairs += node_pairs.len() as u64;
-        }
         let (left_map, right_map) = (&numbering[left.idx()].local, &numbering[right.idx()].local);
         let (left_bits, right_bits) = (index_bits(numbering[left.idx()].width), index_bits(numbering[right.idx()].width));
-        let mut stream = Vec::new();
+        let map = |pair: &ChildPair| (left_map[structural.node(pair.left).idx()], right_map[structural.node(pair.right).idx()]);
+        stream.clear();
+        lens.clear();
         let mut bits = BitWriter::new(&mut stream);
-        let mut mapped: Vec<(u32, u32)> = Vec::new();
-        for (_, node_pairs) in live() {
-            mapped.clear();
-            mapped.extend(node_pairs.map(|pair| {
-                (left_map[structural.node(pair.left).idx()], right_map[structural.node(pair.right).idx()])
-            }));
-            match *mapped.as_slice() {
-                [(l, r)] => {
-                    bits.put(l, left_bits);
-                    bits.put(r, right_bits);
-                }
-                _ => codes[write_node(&mut bits, &mapped, left_bits, right_bits) as usize] += 1,
+        let _: Result<(), Infallible> = level.try_for_each_node(0..level.nodes().len(), |i, node_pairs| {
+            if local[i] == OMITTED {
+                return Ok(());
             }
-        }
+            lens.push(node_pairs.len());
+            if let [pair] = node_pairs {
+                let (l, r) = map(pair);
+                bits.put(l, left_bits);
+                bits.put(r, right_bits);
+            } else {
+                mapped.clear();
+                mapped.extend(node_pairs.iter().map(map));
+                codes[write_node(&mut bits, &mapped, left_bits, right_bits) as usize] += 1;
+            }
+            Ok(())
+        });
         bits.finish();
 
-        push_varint(out, nodes);
-        push_varint(out, multi);
-        push_varint(out, pairs);
+        let multi = lens.iter().filter(|&&len| len > 1).count();
+        push_varint(out, lens.len() as u64);
+        push_varint(out, multi as u64);
+        push_varint(out, lens.iter().sum::<usize>() as u64);
         push_varint(out, stream.len() as u64);
         if multi > 0 {
             let mut bits = BitWriter::new(out);
-            for (_, node_pairs) in live() {
-                bits.put(u32::from(node_pairs.len() > 1), 1);
+            for &len in &lens {
+                bits.put(u32::from(len > 1), 1);
             }
             bits.finish();
-            for (_, node_pairs) in live() {
-                if node_pairs.len() > 1 {
-                    push_varint(out, node_pairs.len() as u64 - 2);
-                }
+            for &len in lens.iter().filter(|&&len| len > 1) {
+                push_varint(out, len as u64 - 2);
             }
         }
         out.extend_from_slice(&stream);
