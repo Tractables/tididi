@@ -128,7 +128,9 @@ fn evaluate_levels(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx], vtree: &Vtree
 /// The internal nodes of `vtree` whose childless nodes are all finished: a
 /// region, a leaf for which `summed` holds, or a variable leaf `summable`
 /// names. Returns them as a mask over `vtree`'s nodes and, ascending, the
-/// ones whose parent is not finished.
+/// finished nodes that have a parent that is not finished, internal or a
+/// variable leaf `summable` names that `summed` does not, and the root if it
+/// is a finished internal node.
 pub(crate) fn finished(
     eng: &Engine,
     vtree: &Vtree,
@@ -138,14 +140,23 @@ pub(crate) fn finished(
     let lim = eng.limits();
     let mut fin = Vec::new();
     lim.try_resize(&mut fin, vtree.num_nodes(), false)?;
+    let mut leaves = Vec::new();
     for t in vtree.bottomup() {
         fin[t.idx()] = match *vtree.node(t) {
             VtreeNode::Internal { left, right, .. } => fin[left.idx()] && fin[right.idx()],
-            VtreeNode::Leaf { var, .. } => vtree.node(t).is_region() || summed(t) || summable(var),
+            _ if vtree.node(t).is_region() || summed(t) => true,
+            VtreeNode::Leaf { var, .. } => {
+                let done = summable(var);
+                // A root leaf stays: its output names a label, not a value.
+                if done && vtree.node(t).parent().is_some() {
+                    lim.try_push(&mut leaves, t)?;
+                }
+                done
+            }
         };
     }
     let mut maximal = Vec::new();
-    for t in vtree.internal_bottomup_slice().iter().copied() {
+    for t in vtree.internal_bottomup_slice().iter().copied().chain(leaves) {
         if fin[t.idx()] && vtree.node(t).parent().is_none_or(|p| !fin[p.idx()]) {
             lim.try_push(&mut maximal, t)?;
         }
@@ -157,9 +168,9 @@ pub(crate) fn finished(
     Ok((fin, maximal))
 }
 
-/// Fold each of `maximal`, internal nodes of `f`'s vtree none under another,
-/// that is not summed out yet, restore the marginal invariants at all of
-/// them and, on a projection, make every one that is summed out a region.
+/// Fold each of `maximal`, nodes of `f`'s vtree none under another, that is
+/// not summed out yet, restore the marginal invariants at all of them and, on
+/// a projection, make every one that is summed out a region.
 pub(crate) fn sum_out(eng: &Engine, f: &mut Tdd, maximal: &[VtreeIdx]) -> Result<(), OperationError> {
     let vtree = std::sync::Arc::clone(&f.vtree);
     let mut levels = Vec::new();
@@ -174,8 +185,9 @@ pub(crate) fn sum_out(eng: &Engine, f: &mut Tdd, maximal: &[VtreeIdx]) -> Result
     let mut trimmed = Ok(());
     if let Some(home) = vtree.home() {
         levels.clear();
-        levels.extend(maximal.iter().copied().filter(|&t| f.levels[t.idx()].is_marginal()));
-        if !levels.is_empty() {
+        let summed_leaf = maximal.iter().any(|&t| vtree.node(t).is_leaf() && f.levels[t.idx()].is_marginal());
+        levels.extend(maximal.iter().copied().filter(|&t| !vtree.node(t).is_leaf() && f.levels[t.idx()].is_marginal()));
+        if summed_leaf || !levels.is_empty() {
             trimmed = trim(eng, f, &home, None, &levels).map(drop);
         }
     }

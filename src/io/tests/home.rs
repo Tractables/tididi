@@ -103,7 +103,7 @@ fn finish_drops_a_leaf_every_pair_names_one() {
 }
 
 #[test]
-fn finish_seats_a_diagram_with_a_summed_out_level_untrimmed() {
+fn finish_trims_a_summed_out_leaf_to_a_region() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(2));
     let vtree = home.vtree();
@@ -122,9 +122,9 @@ fn finish_seats_a_diagram_with_a_summed_out_level_untrimmed() {
     b.replace_level(&eng, x2, donor.level_view(x2)).unwrap();
     let out = b.push(&eng, vtree.root(), &[ChildPair::new(ONE_LEAF_IDX, side)]).unwrap();
     let f = b.finish(TddNodeId { vtree: vtree.root(), local: out }).unwrap();
-    assert!(Arc::ptr_eq(f.vtree(), vtree));
     assert!(f.has_marginal_level());
-    assert_eq!(f.level(vtree.root()).pairs_vec(0), [ChildPair::new(ONE_LEAF_IDX, side)]);
+    assert!(f.vtree().node(f.vtree().root()).is_region());
+    assert_eq!(f.model_count().unwrap(), num_bigint::BigUint::from(2u32));
 }
 
 #[test]

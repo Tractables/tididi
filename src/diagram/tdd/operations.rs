@@ -1168,7 +1168,8 @@ impl Tdd {
     /// ([`attach_level_counts`](Self::attach_level_counts)) carry over; a
     /// canonical diagram stays canonical when no node merged.
     ///
-    /// A region ([`VtreeNode::is_region`](crate::vtree::VtreeNode::is_region))
+    /// A summed-out variable leaf becomes a region of its one variable. A
+    /// region ([`VtreeNode::is_region`](crate::vtree::VtreeNode::is_region))
     /// stays, unless it holds counts and every reference into it names
     /// 2^(its extent's size): it is then true over its extent, which it
     /// leaves free, and goes like a leaf named as true. Above a region, a
@@ -1182,8 +1183,8 @@ impl Tdd {
     /// # Errors
     ///
     /// [`OperationError::VtreeMismatch`] when `home` is not the diagram's,
-    /// [`OperationError::MarginalLevel`] for a summed-out level that is not a
-    /// region or a variable leaf,
+    /// [`OperationError::MarginalLevel`] for an internal summed-out level
+    /// that is not a region,
     /// [`OperationError::OverBudget`] when an allocation is refused, and
     /// [`OperationError::Stopped`] on cancellation; the diagram is then as it
     /// was.
@@ -1289,16 +1290,15 @@ impl Tdd {
 
     /// Sum out the variables `summable` names.
     ///
-    /// Every internal node of the diagram's vtree whose variable leaves all
-    /// satisfy `summable` is summed out, a region or a summed-out leaf
-    /// counting as satisfied. On a projection
-    /// ([`Vtree::home`](crate::Vtree::home)), each such node not under
-    /// another becomes one childless node, a region
+    /// Every node of the diagram's vtree whose variable leaves all satisfy
+    /// `summable` is summed out, a region or a summed-out leaf counting as
+    /// satisfied. On a projection ([`Vtree::home`](crate::Vtree::home)),
+    /// each such node not under another becomes one childless node, a region
     /// ([`VtreeNode::is_region`](crate::vtree::VtreeNode::is_region)), whose
     /// level holds per node the count or weighted value of the variables
-    /// summed there; on a root vtree its level is summed out as
-    /// [`marginalize_levels`](Self::marginalize_levels) does. A variable leaf
-    /// whose parent is not summed out stays as it is.
+    /// summed there, a lone variable leaf a region of its one variable; on a
+    /// root vtree its level is summed out as
+    /// [`marginalize_levels`](Self::marginalize_levels) does.
     ///
     /// `summable(v)` must be true only if no diagram this one will meet has
     /// `v` as a leaf: a later operand with a leaf in a region is refused

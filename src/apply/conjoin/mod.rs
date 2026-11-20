@@ -1019,9 +1019,9 @@ impl crate::Engine {
     /// Conjoin two diagrams and sum out the variables `summable` names.
     ///
     /// Each operand is owned or borrowed, as [`and`] says. The conjunction is
-    /// built on the vtree holding both operands' leaves, and every internal
-    /// node of it whose variable leaves all satisfy `summable` is summed out
-    /// as the product is built, a region or a leaf summed out in an operand
+    /// built on the vtree holding both operands' leaves, and every node of it
+    /// whose variable leaves all satisfy `summable` is summed out, an
+    /// internal one as the product is built, a region or a leaf summed out in an operand
     /// counting as satisfied; the result is then what
     /// [`Engine::marginalize`] gives on the conjunction, regions on a
     /// projection included. A node over regions only is therefore always
