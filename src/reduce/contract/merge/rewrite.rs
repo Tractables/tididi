@@ -6,6 +6,9 @@ use crate::vtree::VtreeIdx;
 use crate::diagram::{ChildPair, NodeIdx, StoreRoom, Tdd, TddLevel};
 
 use super::super::scratch::MergeRemap;
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+use crate::isa::Avx2;
+use crate::isa::avx2_fn;
 
 /// Set in a merged-away node's `final_remap` entry, above its survivor's
 /// index before the merge, where the parent rewrite drops the pairs naming
@@ -69,10 +72,9 @@ pub(super) fn rewrite_parent(
     // constant of each slide's loop.
     debug_assert!(!ordered || parent_level.ranges_in_node_order(), "a parent known in node order is so");
     if ordered || parent_level.ranges_in_node_order() {
-        let final_remap = &remap.final_remap;
         let live = match t1_side {
-            ChildSide::Left => parent_level.slide_pairs(|pair| canonical_pair::<true>(pair, final_remap)),
-            ChildSide::Right => parent_level.slide_pairs(|pair| canonical_pair::<false>(pair, final_remap)),
+            ChildSide::Left => slide_remapped::<true>(parent_level, &remap.final_remap),
+            ChildSide::Right => slide_remapped::<false>(parent_level, &remap.final_remap),
         };
         return (true, live);
     }
@@ -92,6 +94,33 @@ pub(super) fn rewrite_parent(
     }
     parent_level.note_dead_pairs(dead_acc);
     (false, live)
+}
+
+/// Nodes of fewer pairs are rewritten one pair at a time even where
+/// [`remap_avx2`] runs. Thresholds of 8 and 16 cost more instructions than
+/// 4 on every instance measured.
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+const AVX2_PAIRS: usize = 4;
+
+/// [`rewrite_parent`]'s slide of a parent whose ranges are in node order.
+#[inline(always)]
+fn slide_remapped<const LEFT: bool>(level: &mut TddLevel, final_remap: &[NodeIdx]) -> usize {
+    let one = |pair| {
+        let (pair, kept) = canonical_pair::<LEFT>(pair, final_remap);
+        debug_assert!(kept, "an inline node's pair is never dropped");
+        pair
+    };
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    if let Some(avx2) = Avx2::detect() {
+        assert!(!final_remap.is_empty(), "a merged level has nodes");
+        return level.slide_pairs(one, |seg, from| match seg.len() - from < AVX2_PAIRS {
+            true => remap_pairs::<LEFT>(seg, from, 0, final_remap),
+            // Safety: an `Avx2` exists only where the processor has the
+            // features `remap_avx2` enables, and `final_remap` is not empty.
+            false => unsafe { remap_avx2::<LEFT>(avx2, seg, from, final_remap) },
+        });
+    }
+    level.slide_pairs(one, |seg, from| remap_pairs::<LEFT>(seg, from, 0, final_remap))
 }
 
 /// Point an inline node's single pair at the survivor of its T1-side twin
@@ -151,6 +180,110 @@ fn canonical_pair<const LEFT: bool>(mut pair: ChildPair, final_remap: &[NodeIdx]
     debug_assert_ne!(to, DISCARDED, "a pair names a node the merge drops as unnamed");
     *f = NodeIdx(to & !DROPPED).into();
     (pair, to & DROPPED == 0)
+}
+
+/// Rewrite `seg[read..]` through [`canonical_pair`], writing the kept pairs
+/// in order from `seg[kept]`, and return the kept count; `kept` is at most
+/// `read`.
+#[inline(always)]
+pub(super) fn remap_pairs<const LEFT: bool>(seg: &mut [ChildPair], read: usize, mut kept: usize, final_remap: &[NodeIdx]) -> usize {
+    debug_assert!(kept <= read);
+    for r in read..seg.len() {
+        let (pair, k) = canonical_pair::<LEFT>(seg[r], final_remap);
+        // Safety: `kept` grows by at most one a pair read, so it stays at
+        // most `r`.
+        unsafe { *seg.get_unchecked_mut(kept) = pair };
+        kept += usize::from(k);
+    }
+    kept
+}
+
+/// For each of the 16 masks of dropped pairs among four, the 32-bit lanes
+/// that move the kept pairs, in order, to the front of a vector.
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+const KEEP_LANES: [[i32; 8]; 16] = {
+    let mut lanes = [[0i32; 8]; 16];
+    let mut mask = 0;
+    while mask < 16 {
+        let (mut pair, mut to) = (0, 0);
+        while pair < 4 {
+            if (mask >> pair) & 1 == 0 {
+                lanes[mask][2 * to] = 2 * pair;
+                lanes[mask][2 * to + 1] = 2 * pair + 1;
+                to += 1;
+            }
+            pair += 1;
+        }
+        mask += 1;
+    }
+    lanes
+};
+
+avx2_fn! {
+    /// [`remap_pairs`] from `seg[from]` with the kept count at zero, four
+    /// pairs at a time: their T1-side refs gathered from `final_remap`,
+    /// the kept ones moved to the front of the vector and the vector
+    /// stored at the write cursor, which is at most the read cursor, so
+    /// the store overwrites no pair not yet read. The last pairs are left
+    /// to `remap_pairs`.
+    ///
+    /// A ref past `final_remap`, which no valid diagram holds, is clamped
+    /// to its last entry rather than read past it, so `final_remap` must
+    /// not be empty. The lanes of dropped pairs keep their flag; the store
+    /// puts them past the kept ones, where the next write or the slide's
+    /// truncation covers them.
+    #[inline(never)]
+    pub(super) fn remap_avx2<const LEFT: bool>(
+        _: Avx2,
+        seg: &mut [ChildPair],
+        from: usize,
+        final_remap: &[NodeIdx],
+    ) -> usize {
+        use core::arch::x86_64::*;
+        let n = seg.len();
+        let base = seg.as_mut_ptr();
+        let remap = final_remap.as_ptr().cast::<i32>();
+        let low = _mm256_set1_epi64x(0xFFFF_FFFF);
+        let top = _mm256_set1_epi64x(final_remap.len() as i64 - 1);
+        let (mut read, mut kept) = (from, 0usize);
+        while read + 4 <= n {
+            debug_assert!(
+                seg[read..read + 4]
+                    .iter()
+                    .all(|p| ((if LEFT { p.left.0 } else { p.right.0 }) as usize) < final_remap.len()),
+                "a parent pair names a node of the merged level"
+            );
+            // Safety: `read + 4 <= n`, and `ChildPair` is two `u32`s
+            // (`repr(C)`), left first.
+            let v = unsafe { _mm256_loadu_si256(base.add(read).cast()) };
+            let refs = if LEFT { _mm256_and_si256(v, low) } else { _mm256_srli_epi64::<32>(v) };
+            // The high half of each 64-bit lane is zero in both operands.
+            let refs = _mm256_min_epu32(refs, top);
+            // Safety: every ref is clamped below `final_remap.len()`.
+            let to = unsafe { _mm256_i64gather_epi32::<4>(remap, refs) };
+            let dropped = _mm_movemask_ps(_mm_castsi128_ps(to)) as usize;
+            let to = _mm256_cvtepu32_epi64(to);
+            let pairs = if LEFT {
+                _mm256_or_si256(_mm256_andnot_si256(low, v), to)
+            } else {
+                _mm256_or_si256(_mm256_and_si256(v, low), _mm256_slli_epi64::<32>(to))
+            };
+            // Safety: `dropped` is four bits, and `KEEP_LANES[dropped]` is
+            // eight `i32`s.
+            let lanes = unsafe { _mm256_loadu_si256(KEEP_LANES.get_unchecked(dropped).as_ptr().cast()) };
+            // Safety: `kept <= read`, so the four pairs stored lie within
+            // `seg[..read + 4]`.
+            unsafe {
+                _mm256_storeu_si256(
+                    base.add(kept).cast(),
+                    _mm256_permutevar8x32_epi32(pairs, lanes),
+                );
+            }
+            kept += 4 - dropped.count_ones() as usize;
+            read += 4;
+        }
+        remap_pairs::<LEFT>(seg, read, kept, final_remap)
+    }
 }
 
 /// [`canonical_pair`] with T1's side read at run time.
