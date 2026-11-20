@@ -804,15 +804,12 @@ impl TddLevel {
     }
 
     /// [`live_pairs`](Self::live_pairs) on a level of a closed diagram: a
-    /// stored structural level's off the count kept once read
+    /// structural level's off the count kept once read
     /// ([`HeldPairs`](super::HeldPairs)), read and kept here otherwise.
     #[inline]
     pub(crate) fn live_pairs_closed(&self) -> usize {
-        if let Some(d) = self.implicit() {
-            return d.pairs();
-        }
         let LevelState::Structural(held) = &self.state else {
-            return self.pair_census().0 as usize;
+            return self.live_pairs();
         };
         match held.get() {
             Some(n) => n as usize,
@@ -820,13 +817,23 @@ impl TddLevel {
         }
     }
 
-    /// The census [`live_pairs_closed`](Self::live_pairs_closed) keeps, out
+    /// The count [`live_pairs_closed`](Self::live_pairs_closed) keeps, out
     /// of line.
     #[inline(never)]
     fn read_held_pairs(&self, held: &super::HeldPairs) -> usize {
-        let n = self.pair_census().0;
-        held.set(n);
-        n as usize
+        let n = self.live_pairs();
+        held.set(n as u64);
+        n
+    }
+
+    /// The live pairs kept on this level of closed levels
+    /// ([`HeldPairs`](super::HeldPairs)), if any.
+    #[inline]
+    pub(crate) fn kept_pairs(&self) -> Option<usize> {
+        match &self.state {
+            LevelState::Structural(held) => held.get().map(|n| n as usize),
+            _ => None,
+        }
     }
 
     /// The live pairs of this level, where an operation knows them without

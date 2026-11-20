@@ -194,7 +194,8 @@ fn a_refused_reduction_leaves_no_count_for_a_close() {
 
 /// A conjunction that borrows an operand leaves the borrow's counts as they
 /// were and the result's counts holding; a restoring one refused at each
-/// unit of work hands an owned operand back with the counts it kept.
+/// unit of work hands an owned operand back with every count it kept, and
+/// perhaps more that it counted.
 #[test]
 fn borrowed_and_refused_conjunctions_keep_the_counts_they_were_given() {
     use crate::limits::{LimitConfig, StopAt, StopRules};
@@ -239,7 +240,8 @@ fn borrowed_and_refused_conjunctions_keep_the_counts_they_were_given() {
                             refusals += 1;
                             for (back, was) in [(r.f, x), (r.g, y)] {
                                 let back = back.into_owned();
-                                assert_eq!(kept(&back), kept(was), "refused at work {n}: an operand's counts changed");
+                                let lost = kept(was).into_iter().zip(kept(&back)).any(|(was, back)| was.is_some() && back != was);
+                                assert!(!lost, "refused at work {n}: an operand's counts changed");
                                 assert_eq!(back.levels.is_closed(), was.levels.is_closed());
                                 assert_counts_hold(&back, "a refused restoring conjunction's operand");
                             }

@@ -704,7 +704,7 @@ fn apply_and_held(
     if vtree.has_regions() {
         super::leaf_seed::carry_region_leaves(lim, &vtree, cone.leaves, run.levels, f, g)?;
     }
-    region::take_regions(&vtree, lim, &mut run, f, g)?;
+    let carried = region::take_regions(&vtree, lim, &mut run, f, g, closed)?;
     let mut sweep = Sweep {
         vtree: &vtree,
         targets,
@@ -820,6 +820,9 @@ fn apply_and_held(
         assembly
             .finish_with_or_return(output, owed, &lists.owed_twins, Some(&lists.built[..]))
             .map(|mut out| {
+                if !adopted {
+                    out.levels.know_pairs_beside(carried, cone.built);
+                }
                 if let Some(loose) = loose {
                     out.dirty.set_loose(Some(loose));
                     out.dirty.dedup_above(num_nodes);

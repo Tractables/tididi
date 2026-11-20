@@ -19,7 +19,7 @@ use crate::vtree::{Vtree, VtreeIdx};
 
 use super::super::held::Held;
 use super::super::identity::publish_identity_level;
-use super::super::setup::{ApplyRun, Cone};
+use super::super::setup::{ApplyRun, Cone, Operands};
 
 /// The operand whose level the result takes at the free level `t`: `f`
 /// where `g` is free, as the first identity fast path carries it, also where
@@ -35,6 +35,8 @@ pub(super) fn carried_from_f(cone: Cone<'_>, t: usize) -> bool {
 /// products, and carry the
 /// carrier's levels of every free internal node into the output
 /// ([`Held::carry`]), building a free level where both operands are free.
+/// Returns the live pairs of the levels taken, `closed` saying which
+/// operands' levels were closed.
 ///
 /// The tops are read before any level moves: a top's flag reads the
 /// carrier's levels under it. A borrowed carrier's levels are copied before
@@ -51,7 +53,8 @@ pub(super) fn take_regions(
     run: &mut ApplyRun,
     f: &mut Held<'_>,
     g: &mut Held<'_>,
-) -> Result<(), OperationError> {
+    closed: Operands<bool>,
+) -> Result<usize, OperationError> {
     let cone = run.cone;
     for &t in cone.tops {
         let at = t.idx();
@@ -87,15 +90,22 @@ pub(super) fn take_regions(
     // becomes the result's, and takes only each top, which the levels
     // above read.
     let moved = if run.adopted { cone.tops } else { cone.free };
+    let mut pairs = 0;
     for &t in moved {
         let at = t.idx();
         let both = cone.free_in_f(at) && cone.free_in_g(at);
-        match carried_from_f(cone, at) {
+        let from_f = carried_from_f(cone, at);
+        match from_f {
             true => move_region_level(lim, f, t, both, &mut run.levels[at])?,
             false => move_region_level(lim, g, t, both, &mut run.levels[at])?,
         }
+        let level = &run.levels[at];
+        pairs += match if from_f { closed.f } else { closed.g } {
+            true => level.live_pairs_closed(),
+            false => level.live_pairs(),
+        };
     }
-    Ok(())
+    Ok(pairs)
 }
 
 /// Move an owned carrier's level at `t`, a free level of the other
