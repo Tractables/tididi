@@ -295,21 +295,38 @@ fn rebuild_along_spine(
         dt_pairs: &mut work.dt_pairs,
         spare_nodes: &mut Vec::new(),
         spare_pairs: &mut Vec::new(),
+        top: None,
     };
     for &t in work.spine_internal.iter() {
         rebuild_spine_level(eng, t, vtree, &mut levels, &mut tables)?;
         out_nodes += levels[t.idx()].slot_count() as u64;
         lim.level_done(out_nodes)?;
     }
+    // A right `d` half skipped beside a left node with no `c` half is mostly
+    // named by another pair unless the skips are a good share of the pairs:
+    // below one in four, few such reads dropped a node.
+    let top = tables
+        .top
+        .map(|(t, [left, right], pairs)| (t, [left != 0, right * 4 >= pairs && right != 0]))
+        .filter(|&(_, sides)| sides != [false; 2]);
 
     // Output: conjunction of f's output with c_t at the root, which is on
     // every spine, so its `cd_map` block is filled.
     let out_base = work.level_base[out_vtree.idx()];
     let ct_out = work.cd_map[out_base + out_local_in.idx()][0];
-    let out_local = if ct_out != NO_PRODUCT {
+    let out_local = if ct_out == NO_PRODUCT {
+        ZERO
+    } else if vtree.node(out_vtree).is_leaf() || (levels[out_vtree.idx()].slot_count() == 1 && top.is_none()) {
         NodeIdx(ct_out)
     } else {
-        ZERO
+        NodeIdx(crate::reduce::prune::drop_clause_orphans(
+            eng,
+            vtree,
+            &mut levels,
+            &work.on_spine,
+            top,
+            (out_vtree, ct_out),
+        )?)
     };
 
     // Contract seed: this clause's spine, which is ancestor-closed, so an

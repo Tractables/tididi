@@ -22,6 +22,11 @@ pub(super) struct ClauseTables<'a> {
     /// allocates no arena per level.
     pub(super) spare_nodes: &'a mut Vec<EncodedNode>,
     pub(super) spare_pairs: &'a mut Vec<ChildPair>,
+    /// The highest level with both children on the spine, the one that
+    /// builds no `d_t`; per side, how often it may have left a node of that
+    /// child unnamed (a `d` half beside a partner with no `c` half); and its
+    /// input pairs.
+    pub(super) top: Option<(VtreeIdx, [usize; 2], usize)>,
 }
 
 /// The child-map offsets and worst-case output pairs per input pair for a
@@ -157,6 +162,7 @@ pub(super) fn rebuild_spine_level(
             rebuild_nodes::<true, true, true>(eng, &old, ctx, level, base, tables)?
         }
         (true, true, false) => {
+            tables.top = Some((t, [0; 2], 0));
             rebuild_nodes::<true, true, false>(eng, &old, ctx, level, base, tables)?
         }
         (true, false, true) => {
