@@ -599,12 +599,28 @@ impl LooseLevels {
         if !self.unnamed.is_empty() {
             self.unnamed.push(unnamed);
         }
-        let unindexed = match self.at.is_empty() {
+        self.index_from(self.levels.len() - 1);
+    }
+
+    /// List `levels`, uncounted: none of them is listed, and each comes once.
+    pub(crate) fn extend_unlisted(&mut self, levels: impl IntoIterator<Item = u32>) {
+        let from = self.levels.len();
+        self.levels.extend(levels);
+        if !self.unnamed.is_empty() {
+            self.unnamed.resize(self.levels.len(), None);
+        }
+        self.index_from(from);
+    }
+
+    /// Index the levels from the `from`-th on, or all of them once more than
+    /// [`SEARCHED`] are listed.
+    fn index_from(&mut self, from: usize) {
+        let from = match self.at.is_empty() {
             true if self.levels.len() <= SEARCHED => return,
             true => 0,
-            false => self.levels.len() - 1,
+            false => from,
         };
-        for (i, &t) in self.levels.iter().enumerate().skip(unindexed) {
+        for (i, &t) in self.levels.iter().enumerate().skip(from) {
             if self.at.len() <= t as usize {
                 self.at.resize(t as usize + 1, 0);
             }

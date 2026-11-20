@@ -388,14 +388,16 @@ fn rebuild_along_spine(
         false => carried_loose,
     };
     if let Some(loose) = loose.as_mut() {
-        for &t in work.spine_internal.iter() {
-            loose.insert(t.0);
+        let rebuilt = work.spine_internal.iter().flat_map(|&t| {
             let (left, right) = vtree.children(t);
-            for c in [left, right] {
-                if !vtree.node(c).is_leaf() && !work.on_spine[c.idx()] {
-                    loose.insert(c.0);
-                }
-            }
+            let off_spine = [left, right]
+                .into_iter()
+                .filter(|&c| !vtree.node(c).is_leaf() && !work.on_spine[c.idx()]);
+            std::iter::once(t).chain(off_spine).map(|t| t.0)
+        });
+        match canonical {
+            true => loose.extend_unlisted(rebuilt),
+            false => rebuilt.for_each(|t| loose.insert(t)),
         }
     }
     let mut out = diagram::Assembly::from_levels(eng, vtree, levels, f_weights).finish_with(
