@@ -267,14 +267,6 @@ pub(crate) struct PruneScratch {
     /// ([`slots_from_output`]).
     entered: Vec<bool>,
     from_output: Vec<VtreeIdx>,
-    /// [`settle_loose`]'s flags per level and the parents it reads.
-    settle_flags: Vec<[bool; 3]>,
-    settle_parents: Vec<VtreeIdx>,
-    /// The levels [`settle_loose`] flags above the ones it is given.
-    settle_touched: Vec<VtreeIdx>,
-    /// [`settle_loose`]'s count of the pairs that name each slot of the
-    /// children it reads ([`count_named`]).
-    settle_counts: Vec<u32>,
     /// Marks a byte per slot, those a walk sets in a level's children
     /// before it packs them into bits ([`mark_sides`]).
     bytes: Vec<u8>,
@@ -293,10 +285,6 @@ impl Buffers for PruneScratch {
         visit(&mut self.visits);
         visit(&mut self.entered);
         visit(&mut self.from_output);
-        visit(&mut self.settle_flags);
-        visit(&mut self.settle_parents);
-        visit(&mut self.settle_touched);
-        visit(&mut self.settle_counts);
         visit(&mut self.bytes);
         visit(&mut self.chain);
         visit(&mut self.row);
@@ -306,6 +294,36 @@ impl Buffers for PruneScratch {
 impl PooledScratch for PruneScratch {
     /// Never called: every checkout of the prune's pool is
     /// `checkout_preserving`.
+    fn prepare(&mut self) {}
+}
+
+/// [`settle_loose`]'s buffers, apart from the prune's: a prune whose list
+/// needs no settle checks out only its own, and each checkout moves its
+/// buffers by value.
+#[derive(Default)]
+pub(crate) struct SettleScratch {
+    /// The flags per level and the parents it reads.
+    flags: Vec<[bool; 3]>,
+    parents: Vec<VtreeIdx>,
+    /// The levels flagged above the ones it is given.
+    touched: Vec<VtreeIdx>,
+    /// The count of the pairs that name each slot of the children it reads
+    /// ([`count_named`]).
+    counts: Vec<u32>,
+}
+
+impl Buffers for SettleScratch {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
+        visit(&mut self.flags);
+        visit(&mut self.parents);
+        visit(&mut self.touched);
+        visit(&mut self.counts);
+    }
+}
+
+impl PooledScratch for SettleScratch {
+    /// Never called: [`settle_listed`] checks out with
+    /// `checkout_preserving`, as its flags stay clear between calls.
     fn prepare(&mut self) {}
 }
 
@@ -689,16 +707,8 @@ fn settle_listed<'a, 'l>(
         return Ok(std::borrow::Cow::Borrowed(listed));
     }
     let lim = eng.limits();
-    // The prune's scratch, which a prune checks out after this returns: a
-    // read clears the block of marks it takes.
-    let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
-    let PruneScratch {
-        settle_counts: counts,
-        settle_flags: flags,
-        settle_parents: parents,
-        settle_touched: touched,
-        ..
-    } = &mut *scratch;
+    let mut scratch = eng.scratch.reduce.settle.checkout_preserving(eng);
+    let SettleScratch { counts, flags, parents, touched } = &mut *scratch;
     // The flags are clear between calls: each clears the levels it set, the
     // listed ones and those above them, where clearing them all would cost
     // a prune of a small diagram on a large vtree the vtree's size.

@@ -23,6 +23,8 @@ use crate::value::slots::RefSlotScratch;
 pub(crate) struct ReduceScratch {
     /// `prune_unreachable`'s marks, new indices and walk.
     prune: Pool<self::prune::PruneScratch>,
+    /// The prune's settle of a loose list.
+    settle: Pool<self::prune::SettleScratch>,
     /// The prune's seeds, held across its walk.
     seeds: Pool<self::prune::SeedScratch>,
     /// `prune_value_slots`'s per-store slot bookkeeping.
@@ -39,6 +41,7 @@ pub(crate) struct ReduceScratch {
 impl Pools for ReduceScratch {
     fn pools(&self, visit: &mut dyn FnMut(&dyn Drain)) {
         visit(&self.prune);
+        visit(&self.settle);
         visit(&self.seeds);
         visit(&self.slot_prune_slots);
         visit(&self.slot_prune_remap);
