@@ -307,7 +307,7 @@ fn list_unnamed_children(
         return Ok(());
     }
     let mut gate = lim.gate();
-    let unnamed = crate::reduce::prune::unnamed_children(lim, (vtree, &|c| &levels[c.idx()]), t, read, tables.counts, &mut gate, &mut 0)?;
+    let unnamed = crate::reduce::prune::unnamed_children(lim, (vtree, &|c| &levels[c.idx()]), t, read, tables.counts, &mut gate)?;
     gate.flush()?;
     for (c, unnamed) in children.into_iter().zip(unnamed) {
         if unnamed {
