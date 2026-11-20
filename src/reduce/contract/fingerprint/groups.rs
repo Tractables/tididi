@@ -37,10 +37,12 @@ pub(super) fn build_twin_groups_after_collision<E: TwinEntries>(
 /// One scatter gathers the candidates' entries beside their nodes; a
 /// counting pass over those alone then places them. A scatter reads every
 /// entry of the level, the candidates' among them, so a second one to count
-/// first would cost more than the gathered records' two passes.
-fn materialize_candidate_signatures(
+/// first would cost more than the gathered records' two passes. Records
+/// gathered node by node ([`TwinEntries::GATHERS_BY_NODE`]) are placed as
+/// they stand.
+fn materialize_candidate_signatures<E: TwinEntries>(
     eng: &Engine,
-    entries: &impl TwinEntries,
+    entries: &E,
     child_width: usize,
     scratch: &mut ContractScratch,
 ) -> Result<(), OperationError> {
@@ -69,6 +71,17 @@ fn materialize_candidate_signatures(
     counts[..child_width].fill(0);
     for &node in candidate_nodes.iter() {
         counts[node as usize] += 1;
+    }
+    if E::GATHERS_BY_NODE {
+        let mut start = 0u32;
+        for c in &mut counts[..child_width] {
+            let n = *c;
+            *c = start;
+            start += n;
+        }
+        counts[child_width] = start;
+        std::mem::swap(signatures, candidate_entries);
+        return Ok(());
     }
     // Each count becomes the end of its node's slice; the records placed
     // last to first then leave each at its start, in arrival order.

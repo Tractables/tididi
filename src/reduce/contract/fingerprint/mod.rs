@@ -108,6 +108,11 @@ pub(super) trait TwinEntries {
     /// Whether two nodes with no entry are twins.
     const EMPTY_TWINS: bool = true;
 
+    /// Whether [`Self::gather`] yields each node's entries together, nodes
+    /// in ascending order, so the gathered entries are already the
+    /// signatures, placed.
+    const GATHERS_BY_NODE: bool = false;
+
     /// Call `f(node, entry)` once per entry of every node.
     fn for_each(&self, f: impl FnMut(u32, u64));
 
@@ -237,8 +242,7 @@ fn gather_node<const LEFT: bool>(
     nodes: &mut Vec<u32>,
     entries: &mut Vec<u64>,
 ) -> Result<(), OperationError> {
-    lim.reserve(nodes, pairs.len())?;
-    lim.reserve(entries, pairs.len())?;
+    make_room(lim, nodes, entries, pairs.len())?;
     let side = if LEFT { ChildSide::Left } else { ChildSide::Right };
     let len = nodes.len();
     debug_assert_eq!(len, entries.len());
@@ -261,6 +265,23 @@ fn gather_node<const LEFT: bool>(
         entries.set_len(len + kept);
     }
     Ok(())
+}
+
+/// Room for `n` more records in `nodes` and `entries`. Called once a node,
+/// so the growth, with its charge and host notice, is out of line.
+#[inline(always)]
+fn make_room(lim: &Limits, nodes: &mut Vec<u32>, entries: &mut Vec<u64>, n: usize) -> Result<(), OperationError> {
+    if nodes.capacity() - nodes.len() < n || entries.capacity() - entries.len() < n {
+        grow_rooms(lim, nodes, entries, n)?;
+    }
+    Ok(())
+}
+
+#[cold]
+#[inline(never)]
+fn grow_rooms(lim: &Limits, nodes: &mut Vec<u32>, entries: &mut Vec<u64>, n: usize) -> Result<(), OperationError> {
+    lim.reserve(nodes, n)?;
+    lim.reserve(entries, n)
 }
 
 /// The pair count of a node of `level` that pairs two nodes of the child
@@ -684,9 +705,28 @@ fn file_sibling(local: &mut [u64], stamp: u64, s: u32) -> bool {
 pub(super) struct ContentEntries<'a>(pub(super) &'a TddLevel, pub(super) Option<usize>);
 
 impl TwinEntries for ContentEntries<'_> {
+    const GATHERS_BY_NODE: bool = true;
+
     fn for_each(&self, mut f: impl FnMut(u32, u64)) {
         self.0
             .for_each_node_pair(|i, pair| f(i as u32, pack(pair.left.0, pair.right.0)));
+    }
+
+    fn gather(
+        &self,
+        lim: &Limits,
+        keep: &[bool],
+        nodes: &mut Vec<u32>,
+        entries: &mut Vec<u64>,
+    ) -> Result<(), OperationError> {
+        self.0.try_for_each_node(0..self.0.nodes().len(), |i, pairs| {
+            if keep[i] {
+                make_room(lim, nodes, entries, pairs.len())?;
+                nodes.extend(std::iter::repeat_n(i as u32, pairs.len()));
+                entries.extend(pairs.iter().map(|p| pack(p.left.0, p.right.0)));
+            }
+            Ok(())
+        })
     }
 
     fn len(&self) -> usize {
