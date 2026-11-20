@@ -63,8 +63,54 @@ impl Tdd {
         if self.is_zero() || self.is_one() {
             return reachable;
         }
-        reachable[self.output.vtree.idx()][self.output.local.idx()] = true;
-        self.propagate_reachability(&mut reachable);
+        if self.levels.is_canonical(self.output)
+            && self.output.vtree == self.vtree.root()
+            && self.vtree.internal_bottomup().all(|(t, _, _)| !self.levels[t.idx()].is_marginal())
+        {
+            self.mark_canonical(&mut reachable);
+            #[cfg(debug_assertions)]
+            {
+                let mut walked = self.empty_reach_matrix();
+                walked[self.output.vtree.idx()][self.output.local.idx()] = true;
+                self.propagate_reachability(&mut walked);
+                debug_assert_eq!(reachable, walked, "a certified diagram reaches every internal slot");
+            }
+        } else {
+            reachable[self.output.vtree.idx()][self.output.local.idx()] = true;
+            self.propagate_reachability(&mut reachable);
+        }
         reachable
+    }
+
+    /// [`reachable_nodes`](Self::reachable_nodes) of a certified structural
+    /// diagram rooted at the root level, which reaches every slot of every
+    /// internal level: only the leaf labels need finding, each leaf's in its
+    /// parent's pairs until all are found.
+    fn mark_canonical(&self, reachable: &mut [Vec<bool>]) {
+        reachable[self.output.vtree.idx()][self.output.local.idx()] = true;
+        for (t, left, right) in self.vtree.internal_bottomup() {
+            reachable[t.idx()].fill(true);
+            let level = self.level(t);
+            for (child, left_side) in [(left, true), (right, false)] {
+                if !self.vtree.node(child).is_leaf() {
+                    continue;
+                }
+                let view = self.levels[child.idx()].child_decoder();
+                let marks = &mut reachable[child.idx()];
+                let mut missing = marks.len();
+                let _ = level.try_for_each_node(0..level.nodes().len(), |_, pairs| {
+                    for pair in pairs {
+                        let side = if left_side { pair.left } else { pair.right };
+                        if side != ZERO.into()
+                            && let Some(s) = view.child(side).index()
+                            && !std::mem::replace(&mut marks[s], true)
+                        {
+                            missing -= 1;
+                        }
+                    }
+                    if missing == 0 { Err(()) } else { Ok(()) }
+                });
+            }
+        }
     }
 }

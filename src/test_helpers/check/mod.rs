@@ -21,7 +21,7 @@ mod soundness;
 mod structure;
 mod trimmed;
 
-pub use canonicity::check_canonicity;
+pub use canonicity::{check_canonicity, check_distinct_functions};
 pub use trimmed::{check_trimmed, reachable_true_labels};
 pub use implicit::{check_implicit_levels, check_left_pairs_taken};
 pub use rotation::assert_rotation_locality;
@@ -49,16 +49,19 @@ fn require(label: &str, checker: &str, r: Result<(), String>) {
     }
 }
 
-/// Run all fast invariant checks (structure + no_false_nodes + canonicity).
+/// Run the fast checks of what holds after any operation, minimized or not:
+/// vtree structure, no false nodes, distinct functions within a level
+/// ([`check_distinct_functions`], 3 rounds) and implicit levels. Panics
+/// naming the first that fails.
 ///
-/// Convenience wrapper that runs the three cheapest checks in sequence.
-/// Suitable for a diagram of any size.
+/// It does not decide canonical form: an unminimized result with
+/// unreachable nodes or twins passes. [`check_canonicity`] decides it.
 ///
 /// Cost: O(diagram size).
 pub fn check_all_fast(tdd: &Tdd, label: &str) {
     require(label, "vtree structure", validate_vtree_structure(tdd));
     require(label, "no_false_nodes", check_no_false_nodes(tdd));
-    require(label, "canonicity", check_canonicity(tdd, 3));
+    require(label, "distinct functions", check_distinct_functions(tdd, 3));
     require(label, "implicit levels", check_implicit_levels(tdd));
 }
 

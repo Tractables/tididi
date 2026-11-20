@@ -71,7 +71,8 @@ impl Summary {
 /// so that what a level keeps while the levels are closed holds of its
 /// pairs. `changed` lists the levels the edits since then say they changed
 /// ([`mark_changed`](Self::mark_changed)), so that a reduction that began on
-/// closed levels closes only those.
+/// closed levels closes only those, and `counts_hold` says such edits began
+/// on closed levels ([`hold_counts`](Self::hold_counts)).
 ///
 /// The level counts ([`LevelCounts`]) are kept on the same terms: they
 /// describe the levels as they were when counted, so any mutable access, and
@@ -83,6 +84,7 @@ pub(crate) struct LevelStorage {
     canonical_output: Option<TddNodeId>,
     closed: bool,
     changed: Vec<VtreeIdx>,
+    counts_hold: bool,
     summary: Summary,
     /// Boxed: most diagrams keep none, and every move of a diagram moves
     /// this storage.
@@ -125,13 +127,34 @@ impl LevelStorage {
     }
 
     pub(crate) fn pair_count(&self) -> usize {
-        self.summary.pairs.read(|| (0..self.levels.len()).map(|t| self.live_pairs_at(t)).sum())
+        self.summary.pairs.read(|| match self.closed {
+            true => self.levels.iter().map(TddLevel::live_pairs_closed).sum(),
+            false => self.levels.iter().map(|level| level.known_live_pairs(self.counts_hold).unwrap_or_else(|| level.live_pairs())).sum(),
+        })
     }
 
     /// The live pairs of level `t`, as [`pair_count`](Self::pair_count)
-    /// counts them: kept on the level once read while the levels are closed.
+    /// counts them: kept on the level once read while the levels are closed,
+    /// and on an open level read off what is known of it
+    /// ([`known_live_pairs`](Self::known_live_pairs)) before its nodes. A
+    /// debug build counts them again.
+    #[inline]
     pub(crate) fn live_pairs_at(&self, t: usize) -> usize {
-        if self.closed { self.levels[t].live_pairs_closed() } else { self.levels[t].live_pairs() }
+        let level = &self.levels[t];
+        let n = match self.closed {
+            true => level.live_pairs_closed(),
+            false => self.known_live_pairs(t).unwrap_or_else(|| level.live_pairs()),
+        };
+        debug_assert_eq!(n, level.live_pairs(), "level {t}: a known count other than its live pairs");
+        n
+    }
+
+    /// Level `t`'s live pairs where they are known without a census
+    /// ([`TddLevel::known_live_pairs`]), a count kept at the last close
+    /// included while [`hold_counts`](Self::hold_counts) says it holds.
+    #[inline]
+    pub(crate) fn known_live_pairs(&self, t: usize) -> Option<usize> {
+        self.levels[t].known_live_pairs(self.counts_hold)
     }
 
     pub(crate) fn is_canonical(&self, output: TddNodeId) -> bool {
@@ -161,6 +184,16 @@ impl LevelStorage {
     /// the levels since.
     pub(crate) fn is_closed(&self) -> bool { self.closed }
 
+    /// Record whether the levels were closed when edits began that each mark
+    /// the level they change ([`mark_changed`](Self::mark_changed)): if so,
+    /// the count a level kept at that close holds until an edit marks it,
+    /// and the close that ends the edits ([`close_marked`](Self::close_marked))
+    /// closes the marked levels alone. Every close forgets it.
+    pub(crate) fn hold_counts(&mut self, closed_before: bool) { self.counts_hold = closed_before; }
+
+    /// Whether the counts kept at the last close hold ([`hold_counts`](Self::hold_counts)).
+    pub(crate) fn counts_hold(&self) -> bool { self.counts_hold }
+
     /// Record that an edit changed level `t`'s nodes or pairs, forgetting
     /// the live pairs the level keeps or was left
     /// ([`TddLevel::forget_held_pairs`]).
@@ -171,9 +204,11 @@ impl LevelStorage {
 
     /// Forget the live pairs left on the levels for a close that will not
     /// come ([`TddLevel::forget_left_pairs`]), as when an operation that
-    /// left them is refused before its close. What is known of the levels'
+    /// left them is refused before its close, and forget that the kept counts
+    /// hold ([`hold_counts`](Self::hold_counts)). What is known of the levels'
     /// closed form stands: no level changes.
     pub(crate) fn forget_left_pairs(&mut self) {
+        self.counts_hold = false;
         for level in &mut self.levels {
             level.forget_left_pairs();
         }
@@ -194,8 +229,14 @@ impl LevelStorage {
     /// them back or a renumbering moves them.
     pub(crate) fn reinstate_closed(&mut self) {
         self.summary.forget();
+        self.now_closed();
+    }
+
+    /// Every level closed, so none marked changed and no count held.
+    fn now_closed(&mut self) {
         self.closed = true;
         self.changed.clear();
+        self.counts_hold = false;
     }
 
     /// Take what `from` knows of its levels' closed form, for a copy of them.
@@ -214,8 +255,7 @@ impl LevelStorage {
             level.close();
             level.close_held_pairs();
         }
-        self.closed = true;
-        self.changed.clear();
+        self.now_closed();
     }
 
     /// [`close`](Self::close) the levels in `changed` only, every other level
@@ -226,17 +266,20 @@ impl LevelStorage {
             self.levels[t.idx()].close();
             self.levels[t.idx()].close_held_pairs();
         }
-        self.closed = true;
-        self.changed.clear();
+        self.now_closed();
     }
 
     /// [`close_changed`](Self::close_changed) the levels the edits marked
-    /// changed, every other level being closed already; every level when
-    /// the edits marked as many as there are levels. Every edit marked the
-    /// level it changed, forgetting the live pairs the level kept, so the
-    /// close keeps both a count kept and one left
-    /// ([`TddLevel::settle_held_pairs`]).
+    /// changed, every other level being closed already, where the kept counts
+    /// hold ([`hold_counts`](Self::hold_counts)); every level when the edits
+    /// marked as many as there are levels, and [`close`](Self::close) where
+    /// the counts do not hold. Every edit marked the level it changed,
+    /// forgetting the live pairs the level kept, so the close keeps both a
+    /// count kept and one left ([`TddLevel::settle_held_pairs`]).
     pub(crate) fn close_marked(&mut self) {
+        if !self.counts_hold {
+            return self.close();
+        }
         self.summary.forget();
         let Self { levels, changed, .. } = self;
         if changed.len() >= levels.len() {
@@ -250,8 +293,7 @@ impl LevelStorage {
                 levels[t.idx()].settle_held_pairs();
             }
         }
-        self.closed = true;
-        self.changed.clear();
+        self.now_closed();
     }
 
     pub(crate) fn into_vec(self) -> Vec<TddLevel> { self.levels }

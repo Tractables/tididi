@@ -100,8 +100,14 @@ pub(crate) fn marginalize_levels(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx])
     let _op = eng.limits().enter()?;
     f.check_level_indices(levels)?;
     let vtree = std::sync::Arc::clone(&f.vtree);
-    evaluate_levels(eng, f, levels, &vtree)?;
-    restore_marginal_invariants(eng, f, levels, &vtree)
+    // The folds mark the structural levels they change; what they leave
+    // unmarked became marginal or was cleared, which a close leaves as it is.
+    f.levels.hold_counts(f.levels.is_closed());
+    let done = evaluate_levels(eng, f, levels, &vtree).and_then(|()| restore_marginal_invariants(eng, f, levels, &vtree));
+    if done.is_err() {
+        f.levels.forget_left_pairs();
+    }
+    done
 }
 
 #[cold]
@@ -159,19 +165,25 @@ pub(crate) fn sum_out(eng: &Engine, f: &mut Tdd, maximal: &[VtreeIdx]) -> Result
     let mut levels = Vec::new();
     eng.limits().reserve_exact(&mut levels, maximal.len())?;
     levels.extend(maximal.iter().copied().filter(|&t| !f.levels[t.idx()].is_marginal()));
+    f.levels.hold_counts(f.levels.is_closed());
     let folded = match levels.is_empty() {
         true => Ok(()),
         false => evaluate_levels(eng, f, &levels, &vtree),
     };
     let restored = restore_marginal_invariants(eng, f, maximal, &vtree);
+    let mut trimmed = Ok(());
     if let Some(home) = vtree.home() {
         levels.clear();
         levels.extend(maximal.iter().copied().filter(|&t| f.levels[t.idx()].is_marginal()));
         if !levels.is_empty() {
-            trim(eng, f, &home, None, &levels)?;
+            trimmed = trim(eng, f, &home, None, &levels).map(drop);
         }
     }
-    folded.and(restored)
+    let done = trimmed.and(folded).and(restored);
+    if done.is_err() {
+        f.levels.forget_left_pairs();
+    }
+    done
 }
 
 /// [`Engine::marginalize`]: the nodes [`finished`] names, summed out by

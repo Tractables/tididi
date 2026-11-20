@@ -540,6 +540,25 @@ impl TddLevel {
         Ok(idx)
     }
 
+    /// [`push_node`](Self::push_node) of one single-pair node per pair, in
+    /// order, with one reservation for as many nodes as `pairs` says it
+    /// holds. Returns the first node's index; the others follow it.
+    ///
+    /// # Errors
+    ///
+    /// As [`push_node`](Self::push_node).
+    pub(crate) fn push_singles(
+        &mut self, lim: &Limits, pairs: impl Iterator<Item = ChildPair>,
+    ) -> Result<NodeIdx, OperationError> {
+        self.store_if_implicit(lim)?;
+        let nodes = self.nodes.stored_mut();
+        let first = NodeIdx(nodes.len() as u32);
+        debug_assert_eq!(Some(pairs.size_hint().0), pairs.size_hint().1, "the pairs say how many they are");
+        reserve_node_room(lim, nodes, pairs.size_hint().0)?;
+        nodes.extend(pairs.map(EncodedNode::inline));
+        Ok(first)
+    }
+
     /// Give the node at `idx` the non-empty pair list `pairs` in place of its
     /// own, appended at the arena's tail; its old range is noted dead.
     ///

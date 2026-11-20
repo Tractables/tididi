@@ -383,9 +383,9 @@ fn disjoin_cube<L: crate::LiteralInput>(eng: &Engine, f: Tdd, lits: &[L]) -> Res
     // overlap the reachable cells it duplicates. The loose levels leave out
     // the root, whose other nodes are unreachable.
     if f.levels[root.idx()].slot_count() > 1 || f.dirty.loose().is_none_or(|loose| !loose.is_empty()) {
-        let closed = f.levels.is_closed();
+        f.levels.hold_counts(f.levels.is_closed());
         crate::reduce::prune::prune_unreachable(eng, &mut f, crate::reduce::prune::PruneScope::Whole)?;
-        f.close_marked_levels(closed);
+        f.close_marked_levels();
     }
     let mut label: Vec<u32> = Vec::new();
     lim.try_resize(&mut label, vtree.num_nodes(), ONE_LEAF_IDX.0)?;

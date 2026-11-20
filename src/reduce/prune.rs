@@ -1007,10 +1007,11 @@ impl Child {
 /// `remap` must hold the spans of the dirty children side by side.
 ///
 /// A stored level it changes is left its live pairs for the close
-/// ([`TddLevel::leave_live_pairs`]) where it knew them before
-/// ([`TddLevel::known_live_pairs`], `counted` saying the levels were closed
-/// when the reduction began): those less the pairs of the nodes it drops,
-/// which a rewrite of references leaves as they were. Where every node
+/// ([`TddLevel::leave_live_pairs`]): the pairs of its marked nodes where the
+/// marking read them (`v.kept`), else where it knew them before
+/// ([`TddLevel::known_live_pairs`], as the level storage reads it): those
+/// less the pairs of the nodes it drops, which a rewrite of references
+/// leaves as they were. Where every node
 /// holds the same count of pairs (a description's, or one on a stored level
 /// of inline nodes alone), the level counts the nodes it keeps off the
 /// marks; a stored level otherwise reads the pairs of the nodes it drops in
@@ -1024,13 +1025,13 @@ fn compact_one_level(
     marks: &[u64],
     remap: &mut [u32],
     plan: Option<Plan>,
-    counted: bool,
 ) -> bool {
     let Visit {
         level: t,
         base,
         left,
         right,
+        kept,
     } = v;
     let t_idx = t.idx();
     let width = tdd.levels[t_idx].slot_count();
@@ -1041,10 +1042,18 @@ fn compact_one_level(
         tdd.levels[t_idx].pairs.implicit().is_some() && (lost || left.dirty || right.dirty)
     );
     if !(lost || left.dirty || right.dirty) {
+        // A level the walk read whole and the compaction leaves as it is
+        // keeps no count of its own on open levels: marked changed, it is
+        // left the pairs read, for the close to keep.
+        let level = &tdd.levels[t_idx];
+        if let Some(pairs) = kept.filter(|_| !tdd.levels.counts_hold() && level.implicit().is_none() && level.known_live_pairs(false).is_none()) {
+            tdd.levels.mark_changed(t);
+            tdd.levels[t_idx].leave_live_pairs(pairs);
+        }
         return false;
     }
     let level = &tdd.levels[t_idx];
-    let before = level.known_live_pairs(counted);
+    let before = tdd.levels.known_live_pairs(t_idx);
     // The pairs each node holds, where they are the same for every node: a
     // description's, or one on a stored level of no arena pairs and as many
     // pairs as nodes (each node there holds at most one).
@@ -1092,7 +1101,7 @@ fn compact_one_level(
 
     let level = &mut tdd.levels[t_idx];
     if !lost {
-        if let Some(pairs) = before.filter(|_| level.implicit().is_none()) {
+        if let Some(pairs) = kept.or(before).filter(|_| level.implicit().is_none()) {
             level.leave_live_pairs(pairs);
         }
         return false;
@@ -1109,7 +1118,7 @@ fn compact_one_level(
             // A node drops arena pairs only where the arena holds some: on
             // a level of inline nodes alone nothing is read.
             let mut dead = 0usize;
-            if before.is_some() && per_node.is_none() {
+            if kept.is_none() && before.is_some() && per_node.is_none() {
                 for_each_unmarked(own, width, |i| {
                     dead += level.arena_pairs_at(i);
                     dropped += level.pair_count_at(i);
@@ -1123,12 +1132,16 @@ fn compact_one_level(
     };
     level.note_dead_pairs(dead);
     level.compact_pairs_if_stale();
-    if let Some(before) = before.filter(|_| level.implicit().is_none()) {
-        let pairs = match per_node {
-            Some(k) => count(own) * k,
-            None => before - dropped,
+    if level.implicit().is_none() {
+        let pairs = match (kept, per_node, before) {
+            (Some(kept), _, _) => Some(kept),
+            (None, Some(k), Some(_)) => Some(count(own) * k),
+            (None, None, Some(before)) => Some(before - dropped),
+            (None, _, None) => None,
         };
-        level.leave_live_pairs(pairs);
+        if let Some(pairs) = pairs {
+            level.leave_live_pairs(pairs);
+        }
     }
     true
 }
@@ -1226,6 +1239,7 @@ fn plan_level(
         base,
         left,
         right,
+        ..
     } = v;
     let level = &tdd.levels[t.idx()];
     if level.pairs.implicit().is_none() {
@@ -1462,9 +1476,10 @@ fn moved(remap: Option<&[u32]>) -> impl Fn(i64) -> i64 + '_ {
 ///
 /// `bytes` is the scratch a side marked a byte a slot takes ([`mark_sides`]).
 ///
-/// Returns `Err(OperationError::OverBudget)` if the offsets an implicit
-/// level's nodes are read in are refused ([`mark_described`]), or the
-/// bytes.
+/// Returns, on a stored level whose marks read its marked nodes' pairs, the
+/// count of those pairs, or `Err(OperationError::OverBudget)` if the
+/// offsets an implicit level's nodes are read in are refused
+/// ([`mark_described`]), or the bytes.
 fn mark_children_of_level(
     lim: &Limits,
     tdd: &Tdd,
@@ -1473,12 +1488,12 @@ fn mark_children_of_level(
     children: [Option<usize>; 2],
     marks: &mut [u64],
     bytes: &mut Vec<u8>,
-) -> Result<(), OperationError> {
+) -> Result<Option<usize>, OperationError> {
     match children {
         [Some(l), Some(r)] => mark_sides::<true, true>(lim, tdd, t, base, [l, r], marks, bytes),
         [Some(l), None] => mark_sides::<true, false>(lim, tdd, t, base, [l, 0], marks, bytes),
         [None, Some(r)] => mark_sides::<false, true>(lim, tdd, t, base, [0, r], marks, bytes),
-        [None, None] => Ok(()),
+        [None, None] => Ok(None),
     }
 }
 
@@ -1494,6 +1509,8 @@ fn mark_children_of_level(
 /// scattered children every mark decides that branch and writes its word.
 /// The bytes cost a clear and a pack a slot, which pay where the marks a
 /// slot are about one or more ([`STAGE_SLOTS_PER_NODE`]).
+///
+/// A stored level counts the pairs of its marked nodes as it reads them.
 fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     lim: &Limits,
     tdd: &Tdd,
@@ -1502,7 +1519,7 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     child_base: [usize; 2],
     marks: &mut [u64],
     bytes: &mut Vec<u8>,
-) -> Result<(), OperationError> {
+) -> Result<Option<usize>, OperationError> {
     let [left_base, right_base] = child_base;
     let (left, right) = tdd.vtree.children(t);
     debug_assert!(
@@ -1514,7 +1531,8 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     if let Some(d) = level.implicit() {
         // A side's distinct offsets a marked node, never more marks than
         // its pairs.
-        return mark_described::<LEFT, RIGHT>(lim, d, width, base, left_base, right_base, marks);
+        mark_described::<LEFT, RIGHT>(lim, d, width, base, left_base, right_base, marks)?;
+        return Ok(None);
     }
     // The sides staged as bytes: their slots, rounded up to whole words.
     let marked = count(&marks[base..base + words(width)]);
@@ -1539,7 +1557,8 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
                 [ln, rn],
                 marks,
                 bytes,
-            ),
+            )
+            .map(Some),
             (Some(_), None) => mark_staged::<LEFT, RIGHT, true, false>(
                 lim,
                 tdd,
@@ -1548,7 +1567,8 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
                 [ln, rn],
                 marks,
                 bytes,
-            ),
+            )
+            .map(Some),
             (None, Some(_)) => mark_staged::<LEFT, RIGHT, false, true>(
                 lim,
                 tdd,
@@ -1557,14 +1577,18 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
                 [ln, rn],
                 marks,
                 bytes,
-            ),
+            )
+            .map(Some),
             (None, None) => unreachable!(),
         };
     }
     let stored = level.stored().expect("a level is stored or implicit");
     let (mut left_marks, mut right_marks) = (Marker::new(left_base), Marker::new(right_base));
+    let mut read = 0;
     for_each_marked_beside(width, base, marks, |marks, i| {
-        for &pair in stored.of_idx(i) {
+        let pairs = stored.of_idx(i);
+        read += pairs.len();
+        for &pair in pairs {
             if LEFT {
                 left_marks.mark(marks, left_base, pair.left.raw() as usize);
             }
@@ -1575,7 +1599,7 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     });
     left_marks.finish(marks);
     right_marks.finish(marks);
-    Ok(())
+    Ok(Some(read))
 }
 
 /// The most slots a side of a stored level has, a marked node of the level,
@@ -1606,7 +1630,8 @@ fn note_sides_marked(_bytes: u64, _bits: u64) {}
 /// [`mark_sides`] on a stored level: each side of `LEFT` and `RIGHT` that
 /// `LB` and `RB` stage marked as bytes, `n` of them a side, its slots
 /// rounded up to whole words, and packed into its block of `marks` at
-/// `child_base`; a side not staged marked as bits.
+/// `child_base`; a side not staged marked as bits. Returns the pairs of the
+/// marked nodes.
 #[inline(always)]
 fn mark_staged<const LEFT: bool, const RIGHT: bool, const LB: bool, const RB: bool>(
     lim: &Limits,
@@ -1616,7 +1641,7 @@ fn mark_staged<const LEFT: bool, const RIGHT: bool, const LB: bool, const RB: bo
     n: [usize; 2],
     marks: &mut [u64],
     bytes: &mut Vec<u8>,
-) -> Result<(), OperationError> {
+) -> Result<usize, OperationError> {
     let level = &tdd.levels[t.idx()];
     let stored = level.stored().expect("a staged level is stored");
     let width = level.slot_count();
@@ -1628,8 +1653,11 @@ fn mark_staged<const LEFT: bool, const RIGHT: bool, const LB: bool, const RB: bo
     let (lb, rb) = bytes[..used].split_at_mut(n[0]);
     let (mut left_marks, mut right_marks) =
         (Marker::new(child_base[0]), Marker::new(child_base[1]));
+    let mut read = 0;
     for_each_marked_beside(width, base, marks, |marks, i| {
-        for &pair in stored.of_idx(i) {
+        let pairs = stored.of_idx(i);
+        read += pairs.len();
+        for &pair in pairs {
             let (l, r) = (pair.left.raw() as usize, pair.right.raw() as usize);
             if LEFT {
                 if LB {
@@ -1655,7 +1683,7 @@ fn mark_staged<const LEFT: bool, const RIGHT: bool, const LB: bool, const RB: bo
     if RB {
         pack_bytes(rb, &mut marks[child_base[1]..child_base[1] + n[1] / 64]);
     }
-    Ok(())
+    Ok(read)
 }
 
 /// OR the byte marks of `bytes`, each 0 or 1, into `block`, bit `i` of word
@@ -1801,6 +1829,9 @@ pub(super) struct Visit {
     base: usize,
     left: Child,
     right: Child,
+    /// The pairs of this stored level's marked nodes, where the marking
+    /// read them: its live pairs once the compaction drops the rest.
+    kept: Option<usize>,
 }
 
 impl Visit {
@@ -1811,6 +1842,7 @@ impl Visit {
             base,
             left: Child::KEPT,
             right: Child::KEPT,
+            kept: None,
         }
     }
 }
@@ -1994,7 +2026,7 @@ fn mark_walk(
         };
         let (lb, rb) = (block(left, lw)?, block(right, rw)?);
 
-        mark_children_of_level(lim, tdd, t, visits[i].base, [lb, rb], marks, bytes)?;
+        visits[i].kept = mark_children_of_level(lim, tdd, t, visits[i].base, [lb, rb], marks, bytes)?;
 
         let (lc, rc) = (Child::read(marks, lb, lw), Child::read(marks, rb, rw));
         visits[i].left = lc;
@@ -2118,7 +2150,6 @@ fn compact_visited(
     remap_need: usize,
 ) -> Result<(), OperationError> {
     eng.limits().try_resize(remap, remap_need, UNREACHED)?;
-    let counted = tdd.levels.is_closed();
     // What the compaction does with the levels held as descriptions is
     // decided first.
     let mut plans = plan_levels(
@@ -2134,7 +2165,7 @@ fn compact_visited(
     for k in (0..visits.len()).rev() {
         let v = visits[k];
         let plan = plans.take(v.level);
-        if compact_one_level(tdd, v, marks, remap, plan, counted) {
+        if compact_one_level(tdd, v, marks, remap, plan) {
             if !room {
                 tdd.dirty.reserve_all(k + 1);
                 room = true;
@@ -2249,19 +2280,19 @@ pub(super) fn prune_complement(
     // dropped and the nodes after it one slot down, and in a stored parent
     // the references past it one slot down.
     tdd.dirty.reserve_all(chain.len());
-    let counted = tdd.levels.is_closed();
     for j in (0..chain.len()).rev() {
         let [c, k, up] = chain[j];
         let c = VtreeIdx(c);
         let last = tdd.levels[c.idx()].slot_count() - 1;
         match plans.as_mut().and_then(|plans| plans.take(c)) {
             Some(plan) => {
-                compact_one_level(tdd, visits[j], marks, remap, Some(plan), counted);
+                compact_one_level(tdd, visits[j], marks, remap, Some(plan));
             }
             None => {
                 let level = &tdd.levels[c.idx()];
-                let pairs = level
-                    .known_live_pairs(counted)
+                let pairs = tdd
+                    .levels
+                    .known_live_pairs(c.idx())
                     .map(|n| n - level.pair_count_at(k as usize));
                 tdd.levels.mark_changed(c);
                 let level = &mut tdd.levels[c.idx()];

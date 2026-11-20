@@ -4,7 +4,8 @@
 use std::sync::Arc;
 
 use crate::diagram::{ChildPair, Tdd, TddLevel, ZERO};
-use crate::reduce::prune::{PruneScope, prune_unreachable};
+use crate::reduce::prune::PruneScope;
+use super::prune_unreachable;
 use crate::test_helpers::assert_canonical;
 use crate::vtree::Vtree;
 use crate::Engine;

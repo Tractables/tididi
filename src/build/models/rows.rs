@@ -113,6 +113,15 @@ fn owned_rows(
         for row in packed.chunks_exact_mut(w) {
             row[w - 1] &= tail_mask;
         }
+    } else if n >= BYTE_TABLE_MIN_ROWS && (2..=4).contains(&w) {
+        gate.poll(rows.len() as u64)?;
+        let table = layout.byte_table(lim, w)?;
+        match w {
+            2 => reencode_rows::<2>(&table, rows, &mut packed),
+            3 => reencode_rows::<3>(&table, rows, &mut packed),
+            _ => reencode_rows::<4>(&table, rows, &mut packed),
+        }
+        lim.discard(table);
     } else {
         packed.resize(rows.len(), 0);
         for k in 0..n {
@@ -137,6 +146,20 @@ fn owned_rows(
 
     gate.flush()?;
     sorted_distinct(lim, radix, num_vars, packed, w)
+}
+
+/// Rows from which re-encoding through [`Layout::byte_table`] pays for the
+/// table, which takes about as long to fill as a hundred rows of four
+/// words take to re-encode bit by bit. Past four words the table outgrows
+/// the second-level cache.
+const BYTE_TABLE_MIN_ROWS: usize = 1 << 10;
+
+/// Append `rows`, `W` words each, re-encoded through `table` onto `packed`.
+fn reencode_rows<const W: usize>(table: &[u64], rows: &[u64], packed: &mut Vec<u64>) {
+    for row in rows.chunks_exact(W) {
+        let row: &[u64; W] = row.try_into().expect("a chunk is a row");
+        packed.extend_from_slice(&Layout::reencode_row::<W>(table, row));
+    }
 }
 
 /// Rows already in leaf order, `w` words each, sorted with their repeats
@@ -169,17 +192,33 @@ pub(super) fn sorted_distinct(
         gate.flush()?;
         return Ok(packed);
     }
-    let mut order: Vec<u32> = Vec::new();
+    // A radix sort places the rows by their highest bits that fit above
+    // their index, and a comparison sort orders each run of rows those
+    // bits leave tied.
+    let shift = index_bits(n) as usize;
+    let top = num_vars.min(64 - shift);
+    let index = (1u64 << shift) - 1;
+    let mut order: Vec<u64> = Vec::new();
     lim.reserve_exact(&mut order, n)?;
-    order.extend(0..n as u32);
-    order.sort_unstable_by(|&a, &b| compare_row(&packed, w, a, b));
+    order.extend(packed.chunks_exact(w).enumerate().map(|(k, row)| {
+        let mut high = [0u64];
+        extract(row, num_vars - top, top, &mut high);
+        high[0] << shift | k as u64
+    }));
+    radix.sort(lim, &mut order, shift, top)?;
+    let row_of = |key: u64| (key & index) as u32;
+    for run in order.chunk_by_mut(|a, b| a >> shift == b >> shift) {
+        if run.len() > 1 {
+            run.sort_unstable_by(|&a, &b| compare_row(&packed, w, row_of(a), row_of(b)));
+        }
+    }
 
     let mut out: Vec<u64> = Vec::new();
     lim.reserve_exact(&mut out, packed.len())?;
-    for &k in &order {
+    for &key in &order {
         gate.poll(w as u64)?;
-        let row = row_at(&packed, w, k);
-        if out.len() < w || &out[out.len() - w..] != row {
+        let row = row_at(&packed, w, row_of(key));
+        if out.len() < w || !same_row(&out[out.len() - w..], row) {
             out.extend_from_slice(row);
         }
     }
@@ -199,6 +238,13 @@ fn compare_row(packed: &[u64], w: usize, a: u32, b: u32) -> std::cmp::Ordering {
         }
     }
     std::cmp::Ordering::Equal
+}
+
+/// Whether two rows of one width are equal. A row is a few words, which
+/// this compares in less time than a call to `memcmp` takes.
+#[inline]
+pub(super) fn same_row(a: &[u64], b: &[u64]) -> bool {
+    a.iter().zip(b).fold(0, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// Row `k` of a buffer of `w`-word rows.

@@ -24,7 +24,7 @@ use crate::vtree::Vtree;
 
 use super::layout::Layout;
 use super::plan::{Decomposition, Emitted, Plan, sorted_triples};
-use super::rows::{extract, index_bits, words_per_row};
+use super::rows::{index_bits, same_row, words_per_row};
 use crate::sort::Radix;
 
 /// The distinct values one constrained vtree node takes over the rows, and
@@ -75,7 +75,7 @@ impl Charged for Values<'_> {
 struct Scratch {
     /// Each parent value's low part, `low_words` apiece.
     low: Vec<u64>,
-    /// Each parent value's high part, `high_words` apiece.
+    /// Each high value of a one-word split, in parent order.
     high: Vec<u64>,
     /// The parent values ordered by their low part; in `split_hashed`, the
     /// occupied low slots.
@@ -1225,7 +1225,7 @@ fn from_low(n: usize, s: &Scratch) -> bool {
 /// Split values through their runs: by high part in parent order, and by
 /// low part in the order a sort gives. One-word values whose sort keys `key`
 /// describes find both around one sort of those keys (`runs_of_words`),
-/// other values through their materialized parts (`runs_of_parts`).
+/// other values through their materialized low parts (`runs_of_parts`).
 fn split_parts(
     lim: &Limits,
     s: &mut Scratch,
@@ -1239,7 +1239,7 @@ fn split_parts(
     let written = match key {
         Some(key) => runs_of_words(lim, s, parent, low_width, key)?,
         None => {
-            runs_of_parts(lim, s, parent, low_width, high_width, distinct)?;
+            runs_of_parts(lim, s, parent, low_width, distinct)?;
             None
         }
     };
@@ -1315,12 +1315,15 @@ fn split_parts(
         let highs = s.high_starts.iter();
         high_data.extend(highs.map(|&e| parent.data[e as usize] >> low_width));
     } else {
+        // Word by word: a copy of a few words through `memcpy` costs more
+        // than the copy.
         for &i in &s.low_starts {
             let e = s.order[i as usize] as usize;
-            low_data.extend_from_slice(&s.low[e * lw..][..lw]);
+            low_data.extend(s.low[e * lw..][..lw].iter().copied());
         }
+        let w = parent.words;
         for &e in &s.high_starts {
-            high_data.extend_from_slice(&s.high[e as usize * rw..][..rw]);
+            push_high(&mut high_data, &parent.data[e as usize * w..][..w], low_width, rw);
         }
     }
     let split = Decomposition::Triples {
@@ -1455,12 +1458,11 @@ fn runs_of_parts(
     s: &mut Scratch,
     parent: &Values,
     low_width: usize,
-    high_width: usize,
     distinct: bool,
 ) -> Result<(), OperationError> {
     let n = parent.len();
-    let (lw, rw) = (words_per_row(low_width), words_per_row(high_width));
-    parts(lim, s, parent, low_width, high_width)?;
+    let (lw, w) = (words_per_row(low_width), parent.words);
+    lows(lim, s, parent, low_width)?;
 
     // The parent's order sorts by the high part first, so each high value
     // is one run of parent values.
@@ -1470,9 +1472,9 @@ fn runs_of_parts(
     s.high_starts.clear();
     gate.poll(n as u64)?;
     for e in 0..n {
-        let new_run = match rw {
-            1 => e == 0 || s.high[e] != s.high[e - 1],
-            _ => e == 0 || s.high[e * rw..][..rw] != s.high[(e - 1) * rw..][..rw],
+        let new_run = match w {
+            1 => e == 0 || (parent.data[e] ^ parent.data[e - 1]) >> low_width != 0,
+            _ => e == 0 || !same_high(&parent.data[e * w..][..w], &parent.data[(e - 1) * w..][..w], low_width),
         };
         if new_run {
             lim.try_push(&mut s.high_starts, e as u32)?;
@@ -1505,7 +1507,7 @@ fn runs_of_parts(
             let previous = if i == 0 { 0 } else { s.order[i - 1] as usize };
             let new_run = match lw {
                 1 => i == 0 || s.low[e] != s.low[previous],
-                _ => i == 0 || s.low[e * lw..][..lw] != s.low[previous * lw..][..lw],
+                _ => i == 0 || !same_row(&s.low[e * lw..][..lw], &s.low[previous * lw..][..lw]),
             };
             if new_run {
                 lim.try_push(&mut s.low_starts, i as u32)?;
@@ -1526,39 +1528,55 @@ fn runs_of_parts(
     gate.flush()
 }
 
-/// Cut every parent value into its low part, the low `low_width` bits, and
-/// its high part, the `high_width` bits above them.
-fn parts(
-    lim: &Limits,
-    s: &mut Scratch,
-    parent: &Values,
-    low_width: usize,
-    high_width: usize,
-) -> Result<(), OperationError> {
+/// Cut every parent value's low part, its low `low_width` bits, into `s.low`.
+fn lows(lim: &Limits, s: &mut Scratch, parent: &Values, low_width: usize) -> Result<(), OperationError> {
     let n = parent.len();
-    let (lw, rw) = (words_per_row(low_width), words_per_row(high_width));
+    let lw = words_per_row(low_width);
     s.low.clear();
-    s.high.clear();
     let mut gate = lim.gate();
     if parent.words == 1 {
-        // Both parts are narrower than the parent's one word.
-        lim.reserve_exact(&mut s.low, n * lw)?;
-        lim.reserve_exact(&mut s.high, n * rw)?;
+        lim.reserve_exact(&mut s.low, n)?;
         let mask = (1u64 << low_width) - 1;
         gate.poll(n as u64)?;
         s.low.extend(parent.data.iter().map(|&v| v & mask));
-        s.high.extend(parent.data.iter().map(|&v| v >> low_width));
+    } else if lw == 1 {
+        lim.reserve_exact(&mut s.low, n)?;
+        let mask = tail_mask(low_width);
+        gate.poll(n as u64)?;
+        s.low.extend(parent.data.chunks_exact(parent.words).map(|v| v[0] & mask));
     } else {
-        lim.try_resize(&mut s.low, n * lw, 0)?;
-        lim.try_resize(&mut s.high, n * rw, 0)?;
-        for e in 0..n {
-            gate.poll(parent.words as u64)?;
-            let value = &parent.data[e * parent.words..][..parent.words];
-            extract(value, 0, low_width, &mut s.low[e * lw..][..lw]);
-            extract(value, low_width, high_width, &mut s.high[e * rw..][..rw]);
+        lim.reserve_exact(&mut s.low, n * lw)?;
+        gate.poll((n * lw) as u64)?;
+        let low_tail = tail_mask(low_width);
+        for value in parent.data.chunks_exact(parent.words) {
+            s.low.extend_from_slice(&value[..lw]);
+            *s.low.last_mut().expect("a low part has a word") &= low_tail;
         }
     }
     gate.flush()
+}
+
+/// Whether two values of one level have the same high part, the bits above
+/// their low `low_width`, read in place: bits past the width are clear.
+fn same_high(a: &[u64], b: &[u64], low_width: usize) -> bool {
+    let (skip, shift) = (low_width / 64, low_width % 64);
+    (a[skip] ^ b[skip]) >> shift == 0 && a[skip + 1..] == b[skip + 1..]
+}
+
+/// Append the high part of `value`, the bits above its low `low_width`, as
+/// `rw` words.
+fn push_high(out: &mut Vec<u64>, value: &[u64], low_width: usize, rw: usize) {
+    let (skip, shift) = (low_width / 64, low_width % 64);
+    let word = |at: usize| u128::from(value.get(at).copied().unwrap_or(0));
+    out.extend((0..rw).map(|k| ((word(skip + k + 1) << 64 | word(skip + k)) >> shift) as u64));
+}
+
+/// The mask of the bits a part `width` bits wide uses in its last word.
+fn tail_mask(width: usize) -> u64 {
+    match width % 64 {
+        0 if width > 0 => !0,
+        tail => (1u64 << tail) - 1,
+    }
 }
 
 /// Order the parent values by their low part, ties in parent order, into

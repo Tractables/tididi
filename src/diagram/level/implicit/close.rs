@@ -28,14 +28,10 @@ impl crate::diagram::Tdd {
 
     /// [`close_levels`](Self::close_levels) after edits that mark the levels
     /// they change, as a reduction's passes do: those levels when every
-    /// level was closed before the edits (`closed_before`), every level
-    /// otherwise.
-    pub(crate) fn close_marked_levels(&mut self, closed_before: bool) {
-        if closed_before {
-            self.levels.close_marked();
-        } else {
-            self.levels.close();
-        }
+    /// level was closed when the edits began (as the level storage's
+    /// `hold_counts` recorded), every level otherwise.
+    pub(crate) fn close_marked_levels(&mut self) {
+        self.levels.close_marked();
         self.debug_check_implicit_levels();
     }
 

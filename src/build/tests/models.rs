@@ -589,3 +589,24 @@ fn a_level_numbers_its_nodes_as_a_build_level_by_level_meets_them() {
         assert_numbered_by_least_pairs(&f, &format!("round {round}, {name}"));
     }
 }
+
+#[test]
+fn many_rows_of_several_words_build_as_their_distinct_rows_do() {
+    // Repeats take the rows past the byte table's threshold and the radix
+    // sort's; the distinct rows alone stay under both.
+    let mut rng = Lcg::new(0x5ab1e);
+    for width in [70u32, 150, 230] {
+        let vtree = Arc::new(Vtree::balanced(width));
+        let ids = shuffled_vars(&mut rng, width);
+        let table: Vec<Vec<bool>> = (0..700).map(|_| (0..width).map(|_| rng.coin()).collect()).collect();
+        let mut repeated: Vec<Vec<bool>> = table.iter().chain(&table).chain(&table).cloned().collect();
+        for i in (1..repeated.len()).rev() {
+            repeated.swap(i, rng.below(i as u64 + 1) as usize);
+        }
+        let once = Tdd::from_models(&vtree, &ids, &pack_table(&table)).unwrap();
+        let thrice = Tdd::from_models(&vtree, &ids, &pack_table(&repeated)).unwrap();
+        assert_canonical(&thrice);
+        assert_eq!(thrice.model_count().unwrap(), BigUint::from(distinct(&table)), "{width} variables");
+        assert_same_levels(&once, &thrice, &format!("{width} variables"));
+    }
+}

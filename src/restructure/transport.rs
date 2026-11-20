@@ -534,11 +534,12 @@ impl Route {
         f.dirty.remap_keeping(&to, |_| mirrored.is_empty());
         f.vtree = into;
         f.levels = levels.into();
+        f.levels.hold_counts(closed);
         f.output = TddNodeId { vtree: f.vtree.root(), local: f.output.local };
         for &s in &mirrored {
             f.levels.mark_changed(to[s.idx()]);
         }
-        f.close_marked_levels(closed);
+        f.close_marked_levels();
         if canonical {
             f.levels.certify(f.output);
         }

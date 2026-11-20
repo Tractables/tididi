@@ -8,3 +8,4 @@ pub(crate) mod region;
 mod region_entries;
 mod region_ops;
 mod region_reduce;
+mod weighted_projection;

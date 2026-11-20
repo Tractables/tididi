@@ -31,11 +31,14 @@ pub(super) struct Reduction<'a> {
 }
 
 impl<'a> Reduction<'a> {
+    /// The passes mark the levels they change, so a count kept at the close
+    /// before them holds on a level they did not mark.
     pub(super) fn new(eng: &'a Engine, tdd: &'a mut Tdd, close: Close<'a>) -> Self {
         let seed = match close {
             Close::Plain => None,
             Close::Settle(seed) => Some(seed),
         };
+        tdd.levels.hold_counts(tdd.levels.is_closed());
         Self {
             eng,
             tdd,
@@ -69,19 +72,16 @@ impl<'a> Reduction<'a> {
     fn run_passes(&mut self, plan: ReductionPlan<'_>, scope: PruneScope) -> Result<(), OperationError> {
         let _op = self.eng.limits().enter()?;
         let whole = matches!(scope, PruneScope::Whole);
-        // The passes mark the levels they change; on levels closed before
-        // they ran, those are all the end has to close.
-        let closed = self.tdd.levels.is_closed();
         let policy = match plan {
             ReductionPlan::Contract => {
                 contract_all_twins(self.eng, self.tdd)?;
-                self.tdd.close_marked_levels(closed);
+                self.tdd.close_marked_levels();
                 return self.settle();
             }
             ReductionPlan::Prune => {
                 prune_unreachable(self.eng, self.tdd, scope)?;
                 prune_value_slots(self.eng, self.tdd)?;
-                self.tdd.close_marked_levels(closed);
+                self.tdd.close_marked_levels();
                 return self.settle();
             }
             ReductionPlan::Full(policy) => {
@@ -126,17 +126,16 @@ impl<'a> Reduction<'a> {
         // for. What the lists still hold is what the passes' own rewrites
         // pushed after the sweep had taken its list, plus content-twin
         // entries that only the scan reads.
-        self.finish(closed, structural, whole)
+        self.finish(structural, whole)
     }
 
-    /// Close the levels the passes marked (`closed` saying they were closed
-    /// before), settle a closing reduction, and on a `structural` diagram
-    /// list no level loose: the prune left every node reachable, and a
-    /// contraction only merges twins, whose children are the same. At the
-    /// `fixpoint` of every pass, clear the worklists and certify a structural
-    /// diagram.
-    fn finish(&mut self, closed: bool, structural: bool, fixpoint: bool) -> Result<(), OperationError> {
-        self.tdd.close_marked_levels(closed);
+    /// Close the levels the passes marked, settle a closing reduction, and
+    /// on a `structural` diagram list no level loose: the prune left every
+    /// node reachable, and a contraction only merges twins, whose children
+    /// are the same. At the `fixpoint` of every pass, clear the worklists and
+    /// certify a structural diagram.
+    fn finish(&mut self, structural: bool, fixpoint: bool) -> Result<(), OperationError> {
+        self.tdd.close_marked_levels();
         self.settle()?;
         if self.tdd.vtree.num_nodes() == 0 {
             return Ok(());
@@ -190,7 +189,6 @@ impl<'a> Reduction<'a> {
     /// full reduction does.
     pub(super) fn certify_complement(&mut self, shrink: bool, old: Option<NodeIdx>) -> Result<(), OperationError> {
         let _op = self.eng.limits().enter()?;
-        let closed = self.tdd.levels.is_closed();
         match old {
             Some(old) if below_root_walk_applies(self.tdd) && !self.tdd.has_marginal_level() && old != self.tdd.output.local => {
                 prune_complement(self.eng, self.tdd, old)?;
@@ -202,7 +200,7 @@ impl<'a> Reduction<'a> {
                 level.shrink_arrays();
             }
         }
-        self.finish(closed, true, true)
+        self.finish(true, true)
     }
 
     /// A closing reduction on a home with no summed-out level records the
@@ -350,7 +348,6 @@ mod oracle {
 /// and orphans slots. Bounded-precision arithmetic skips fusion because it
 /// cannot sum exactly.
 pub(crate) fn restore_marginal_invariants(eng: &Engine, tdd: &mut Tdd, levels: &[VtreeIdx], vtree: &Vtree) -> Result<(), OperationError> {
-    let closed = tdd.levels.is_closed();
     if !tdd.weights().is_some_and(Weights::is_bounded) {
         let mut parents: Vec<_> = levels.iter().filter_map(|&level| vtree.node(level).parent()).collect();
         parents.sort_unstable();
@@ -360,6 +357,6 @@ pub(crate) fn restore_marginal_invariants(eng: &Engine, tdd: &mut Tdd, levels: &
         crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(tdd, Some(&parents), "marginalize_levels");
     }
     prune_value_slots(eng, tdd)?;
-    tdd.close_marked_levels(closed);
+    tdd.close_marked_levels();
     Ok(())
 }

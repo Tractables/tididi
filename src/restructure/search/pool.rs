@@ -646,7 +646,13 @@ const KICK_DRAWS: usize = 50;
 
 /// The members' total live pairs.
 fn live_pairs(members: &[&mut Tdd]) -> usize {
-    members.iter().map(|m| m.pair_count()).sum()
+    let n = members.iter().map(|m| m.pair_count()).sum();
+    debug_assert_eq!(
+        n,
+        members.iter().flat_map(|m| m.levels.iter()).map(TddLevel::live_pairs).sum::<usize>(),
+        "a pool member's kept count other than its live pairs"
+    );
+    n
 }
 
 /// What a descent knows of the moves it refused, which holds while the
@@ -1317,10 +1323,11 @@ fn child_toward(tree: &Vtree, mut u: VtreeIdx, top: VtreeIdx) -> VtreeIdx {
 /// Exchange the two sides of `m`'s level at `t`, a node of its tree whose
 /// children were exchanged.
 fn mirror_level(m: &mut Tdd, t: VtreeIdx) {
-    let (canonical, closed) = (m.levels.is_canonical(m.output), m.levels.is_closed());
+    let canonical = m.levels.is_canonical(m.output);
+    m.levels.hold_counts(m.levels.is_closed());
     m.levels[t.idx()].swap_sides();
     m.levels.mark_changed(t);
-    m.close_marked_levels(closed);
+    m.close_marked_levels();
     if canonical {
         m.levels.certify(m.output);
     }

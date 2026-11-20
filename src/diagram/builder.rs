@@ -125,9 +125,9 @@ impl<'a> LevelView<'a> {
 ///
 /// [`finish`](Self::finish) checks references, storage, marginal columns, and
 /// that a level names each leaf child in one form (as `One`, or as `Pos` and
-/// `Neg`). It does not prove determinism: the caller must ensure that nodes at a
-/// structural level represent disjoint functions and that a child pair belongs
-/// to at most one node at that level. Counting relies on these conditions;
+/// `Neg`), and that no pair occurs twice in a level with no marginal level
+/// under it. It does not prove determinism: the caller must ensure that nodes
+/// at a structural level represent disjoint functions. Counting relies on this;
 /// minimization cannot turn an arbitrary overlapping circuit into a TDD.
 ///
 /// ```
@@ -262,6 +262,31 @@ impl TddBuilder {
         Ok(index)
     }
 
+    /// [`push`](Self::push) of one single-pair node per pair to level `t`, in
+    /// order, with one reservation. Returns the first node's index; the
+    /// others follow it.
+    ///
+    /// # Errors
+    ///
+    /// As [`push`](Self::push).
+    pub(crate) fn push_singles(
+        &mut self,
+        eng: &Engine,
+        t: VtreeIdx,
+        pairs: impl Iterator<Item = ChildPair>,
+    ) -> Result<NodeIdx, OperationError> {
+        #[cfg(debug_assertions)]
+        let pairs = {
+            let pairs: Vec<ChildPair> = pairs.collect();
+            debug_assert_pairs(&self.vtree, &self.levels, t, &pairs);
+            pairs.into_iter()
+        };
+        if let Some(cached) = self.interned.get_mut(t.idx()) {
+            *cached = None;
+        }
+        self.levels[t.idx()].push_singles(eng.limits(), pairs)
+    }
+
     /// Size level `t`'s arenas for `nodes` more nodes and `pairs` more pairs,
     /// charging the growth to the engine.
     ///
@@ -381,7 +406,9 @@ impl TddBuilder {
     /// The first invariant violated — [`TddBuildError::BadOutput`] when
     /// `output` is neither a live root node nor the false sentinel (nor, on a
     /// vtree with no node, the true one); [`TddBuildError::MixedLeafForm`]
-    /// when a level names a leaf child both as `One` and as a literal; other
+    /// when a level names a leaf child both as `One` and as a literal;
+    /// [`TddBuildError::RepeatedPair`] when a level with no marginal level
+    /// under it holds a pair twice; other
     /// variants identify invalid references, marginal columns or leaf storage.
     /// [`TddBuildError::OverBudget`] when the trim on a home is refused an
     /// allocation.
@@ -432,6 +459,22 @@ impl TddBuilder {
         self.check(output)?;
         let dirty = self.seed_worklists(Default::default(), None, None).expect("untracked worklists cannot be refused");
         Ok(self.seat(output, dirty, None))
+    }
+
+    /// [`finish_trusting_pairs`](Self::finish_trusting_pairs) for levels
+    /// whose caller has established what [`check_levels`] checks, as the
+    /// binary reader does while it reads them.
+    // Out of line: inlined into the binary reader, its one caller, it pulled
+    // the decode functions in with it, and a query reading its diagrams from
+    // binary files cost about 1.5% more.
+    #[inline(never)]
+    pub(crate) fn finish_validated(self, output: TddNodeId) -> Tdd {
+        debug_assert!(
+            self.check(output).is_ok(),
+            "the caller of a validated finish left a violation the checked one refuses",
+        );
+        let dirty = self.seed_worklists(Default::default(), None, None).expect("untracked worklists cannot be refused");
+        self.seat(output, dirty, None)
     }
 
     /// Finish without the storage validation performed by [`finish`](Self::finish).

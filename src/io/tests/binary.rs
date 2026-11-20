@@ -163,6 +163,14 @@ fn every_node_code_is_written_and_read_back() {
 /// A file over `Vtree::balanced(2)` whose root level is one node of `pairs`
 /// pairs, its stream the `(value, bits)` fields in order.
 fn two_leaf_file(pairs: u8, fields: &[(u32, u32)]) -> Vec<u8> {
+    two_leaf_level(&[1, 1, pairs], &[1, pairs - 2], fields)
+}
+
+/// A file over `Vtree::balanced(2)` whose root level's section starts with
+/// `counts` (nodes, multi-pair nodes, pairs), has `multi` (the bitmap and
+/// pair counts) after the stream's length, and the `(value, bits)` fields as
+/// its stream.
+fn two_leaf_level(counts: &[u8; 3], multi: &[u8], fields: &[(u32, u32)]) -> Vec<u8> {
     let mut stream = Vec::new();
     let (mut acc, mut held) = (0u64, 0u32);
     for &(v, bits) in fields {
@@ -177,10 +185,11 @@ fn two_leaf_file(pairs: u8, fields: &[(u32, u32)]) -> Vec<u8> {
     if held > 0 {
         stream.push(acc as u8);
     }
-    // The vtree's leaf and node counts, its postorder, the output plus one;
-    // the root level: one node, one of them multi-pair, its pairs, the
-    // stream's bytes, the bitmap and the pair count less two.
-    let mut body = vec![2, 3, 1, 2, 0, 1, 1, 1, pairs, stream.len() as u8, 1, pairs - 2];
+    // The vtree's leaf and node counts, its postorder, the output plus one.
+    let mut body = vec![2, 3, 1, 2, 0, 1];
+    body.extend(counts);
+    body.push(stream.len() as u8);
+    body.extend(multi);
     body.extend(stream);
     let mut bytes = b"\x89TDD\r\n\x1a\n".to_vec();
     bytes.extend(1u32.to_le_bytes());
@@ -221,6 +230,37 @@ fn hand_written_node_codes_are_read_or_refused() {
     }
     // More pairs than the stream has bits.
     refused(&two_leaf_file(100, &offset), &vtree, "a hundred pairs in two bytes");
+}
+
+#[test]
+fn single_pair_nodes_are_read_or_refused() {
+    let vtree = Arc::new(Vtree::balanced(2));
+    let both = crate::and(Tdd::clause(&vtree, [1]).unwrap(), Tdd::clause(&vtree, [2]).unwrap()).unwrap();
+    // One node, the pair (x1, x2): leaf index 1 on each side, two bits each.
+    let back = read_tdd_binary(&mut two_leaf_level(&[1, 0, 1], &[], &[(1, 2), (1, 2)]).as_slice(), &vtree).unwrap();
+    assert!(back.equivalent(&both).unwrap());
+    for (counts, fields, what) in [
+        ([1, 0, 1], &[(3, 2), (1, 2)][..], "a left side past the leaf level's three nodes"),
+        ([1, 0, 1], &[(1, 2), (3, 2)][..], "a right side past the leaf level's three nodes"),
+        ([3, 0, 3], &[(1, 2), (1, 2), (2, 2), (2, 2)][..], "three pairs of four bits in one byte"),
+    ] {
+        refused(&two_leaf_level(&counts, &[], fields), &vtree, what);
+    }
+}
+
+#[test]
+fn a_leaf_named_both_as_one_and_as_a_literal_is_refused() {
+    let vtree = Arc::new(Vtree::balanced(2));
+    // Leaf indices: 0 is One, 1 the variable, 2 its negation. Two
+    // single-pair nodes, or one node of two pairs in the plain code.
+    for (counts, multi, fields, what) in [
+        ([2, 0, 2], &[][..], &[(0, 2), (1, 2), (1, 2), (1, 2)][..], "left side, single-pair nodes"),
+        ([2, 0, 2], &[], &[(1, 2), (0, 2), (1, 2), (2, 2)], "right side, single-pair nodes"),
+        ([1, 1, 2], &[1, 0], &[(0, 2), (0, 2), (1, 2), (2, 2), (1, 2)], "left side, one node"),
+        ([1, 1, 2], &[1, 0], &[(0, 2), (1, 2), (1, 2), (2, 2), (0, 2)], "right side, one node"),
+    ] {
+        refused(&two_leaf_level(&counts, multi, fields), &vtree, what);
+    }
 }
 
 #[test]

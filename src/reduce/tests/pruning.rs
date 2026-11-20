@@ -4,9 +4,10 @@
 
 use std::sync::Arc;
 
-use crate::reduce::prune::{PruneScope, Seeds, Select, Start, below_root_walk_applies, few_dropped, keep_marked, FEW_DROPPED, new_indices, prune_walk, prune_complement, prune_unreachable, settle_loose, UNREACHED};
+use crate::reduce::prune::{PruneScope, Seeds, Select, Start, below_root_walk_applies, few_dropped, keep_marked, FEW_DROPPED, new_indices, prune_walk, prune_complement, settle_loose, UNREACHED};
 
 use crate::test_helpers::{compile_clauses, unnamed_levels};
+use super::prune_unreachable;
 use crate::vtree::Vtree;
 
 /// `prune_unreachable` of a diagram that knows its loose levels, walked
@@ -17,6 +18,7 @@ fn prune_loose_from_output(eng: &crate::Engine, tdd: &mut crate::Tdd) -> Result<
     let loose = tdd.dirty.loose().expect("the diagram knows its loose levels").to_vec();
     let loose = settle_loose(eng, tdd, &loose)?;
     let seeds = Seeds::of(eng, tdd, &loose)?;
+    tdd.levels.hold_counts(tdd.levels.is_closed());
     prune_walk(eng, tdd, Some(&seeds.state[..]), Start::Output)?;
     tdd.dirty.set_loose(Some(Vec::new()));
     Ok(())
@@ -541,6 +543,7 @@ fn complement_prunes(eng: &crate::Engine, rng: &mut crate::test_helpers::Lcg) ->
                 let walk_work = eng.limits().work_units() - start;
                 let mut moved = complement;
                 let start = eng.limits().work_units();
+                moved.levels.hold_counts(moved.levels.is_closed());
                 prune_complement(eng, &mut moved, old).unwrap();
                 assert_eq!(eng.limits().work_units() - start, walk_work, "{what}: the two prunes charged different work");
                 assert_eq!(layout(&moved), layout(&walked), "{what}: the two prunes left different diagrams");

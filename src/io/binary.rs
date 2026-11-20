@@ -6,11 +6,12 @@
 //! count is bounded by the bytes left to hold it, so a damaged or hostile file
 //! is refused before it can size an allocation.
 
+use std::convert::Infallible;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, EncodedNode, LevelCounts, NodeIdx, Tdd, TddLevel, TddNodeId, LEAF_WIDTH, ZERO};
+use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, EncodedNode, LevelCounts, NodeIdx, Tdd, TddLevel, TddNodeId, LEAF_WIDTH, ONE_LEAF_IDX, ZERO};
 use crate::value::{CountRead, CountVec};
 use crate::vtree::{Home, VarId, Vtree, VtreeIdx, VtreeNode};
 
@@ -154,8 +155,12 @@ pub fn load_tdd_binary(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd
 ///
 /// Nothing in the file is trusted before it is checked: the magic, version and
 /// byte-order mark, then the checksum over all the bytes, then every count
-/// against the bytes left to hold it and every pair side against its child
-/// level. The reader validates the encoding, not semantic determinism; it
+/// against the bytes left to hold it, every pair side against its child
+/// level, every leaf child of a level against being named both as `One` and
+/// as a literal, and the output against the root level. These are what
+/// [`TddBuilder::finish`](crate::diagram::TddBuilder::finish) checks of the
+/// levels, and are checked while the levels are read, not again after.
+/// The reader validates the encoding, not semantic determinism; it
 /// relies on determinism only to refuse more than one pair in a level over
 /// two one-node levels, whose pairs take no bits. Unlike the text reader, it
 /// does not look for a pair repeated in a level: it trusts the levels, as a
@@ -297,7 +302,7 @@ fn decode_on_home(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
     if stored != xxh64(covered) {
         return Err(malformed(format!("checksum mismatch: the file records {stored:#018x}")));
     }
-    let mut body = Body { bytes: &covered[HEADER_BYTES..], at: 0 };
+    let mut body = Body { bytes: &covered[HEADER_BYTES..], with_trailer: &bytes[HEADER_BYTES..total], at: 0 };
     let own = read_projection(&mut body, &home)?;
     if own.num_nodes() == 0 {
         return decode_without_leaf(bytes, &own);
@@ -345,7 +350,7 @@ fn decode_levels(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
              {computed:#018x}"
         )));
     }
-    parse_body(&covered[HEADER_BYTES..], vtree, version == COUNTS_FORMAT_VERSION)
+    parse_body(&bytes[HEADER_BYTES..], vtree, version == COUNTS_FORMAT_VERSION)
 }
 
 /// `XXH64` with seed 0, the checksum the trailer records.
@@ -361,16 +366,16 @@ pub(super) fn xxh64(data: &[u8]) -> u64 {
     fn merge(acc: u64, val: u64) -> u64 {
         (acc ^ round(0, val)).wrapping_mul(P1).wrapping_add(P4)
     }
-    let word = |i: usize| u64::from_le_bytes(data[i..i + 8].try_into().expect("eight bytes"));
+    let word = |w: &[u8; 8]| u64::from_le_bytes(*w);
     let len = data.len();
-    let mut i = 0;
+    let (stripes, rest) = data.as_chunks::<32>();
     let mut h = if len >= 32 {
         let mut v = [P1.wrapping_add(P2), P2, 0, 0u64.wrapping_sub(P1)];
-        while i + 32 <= len {
-            for (lane, acc) in v.iter_mut().enumerate() {
-                *acc = round(*acc, word(i + 8 * lane));
+        for stripe in stripes {
+            let (lanes, _) = stripe.as_chunks::<8>();
+            for (acc, lane) in v.iter_mut().zip(lanes) {
+                *acc = round(*acc, word(lane));
             }
-            i += 32;
         }
         let mut h = v[0]
             .rotate_left(1)
@@ -385,18 +390,17 @@ pub(super) fn xxh64(data: &[u8]) -> u64 {
         P5
     };
     h = h.wrapping_add(len as u64);
-    while i + 8 <= len {
-        h ^= round(0, word(i));
+    let (words, mut rest) = rest.as_chunks::<8>();
+    for w in words {
+        h ^= round(0, word(w));
         h = h.rotate_left(27).wrapping_mul(P1).wrapping_add(P4);
-        i += 8;
     }
-    if i + 4 <= len {
-        let half = u32::from_le_bytes(data[i..i + 4].try_into().expect("four bytes"));
-        h ^= u64::from(half).wrapping_mul(P1);
+    if let Some((half, after)) = rest.split_first_chunk::<4>() {
+        h ^= u64::from(u32::from_le_bytes(*half)).wrapping_mul(P1);
         h = h.rotate_left(23).wrapping_mul(P2).wrapping_add(P3);
-        i += 4;
+        rest = after;
     }
-    for &byte in &data[i..] {
+    for &byte in rest {
         h ^= u64::from(byte).wrapping_mul(P5);
         h = h.rotate_left(11).wrapping_mul(P1);
     }
@@ -515,51 +519,48 @@ pub(super) fn encode_levels(tdd: &Tdd, order: &[VtreeIdx], out: &mut Vec<u8>, co
     push_varint(out, u64::from(out_local) + 1);
 
     let structural = ChildDecoder::structural();
+    let (mut stream, mut mapped, mut lens) = (Vec::new(), Vec::<(u32, u32)>::new(), Vec::<usize>::new());
     for &t in order {
         let VtreeNode::Internal { left, right, .. } = *vtree.node(t) else { continue };
         let level = tdd.level(t);
         let local = &numbering[t.idx()].local;
-        let live = || level.internal_inputs_iter().filter(|(i, _)| local[*i] != OMITTED);
-        let (mut nodes, mut multi, mut pairs) = (0u64, 0u64, 0u64);
-        for (_, node_pairs) in live() {
-            nodes += 1;
-            multi += u64::from(node_pairs.len() > 1);
-            pairs += node_pairs.len() as u64;
-        }
         let (left_map, right_map) = (&numbering[left.idx()].local, &numbering[right.idx()].local);
         let (left_bits, right_bits) = (index_bits(numbering[left.idx()].width), index_bits(numbering[right.idx()].width));
-        let mut stream = Vec::new();
+        let map = |pair: &ChildPair| (left_map[structural.node(pair.left).idx()], right_map[structural.node(pair.right).idx()]);
+        stream.clear();
+        lens.clear();
         let mut bits = BitWriter::new(&mut stream);
-        let mut mapped: Vec<(u32, u32)> = Vec::new();
-        for (_, node_pairs) in live() {
-            mapped.clear();
-            mapped.extend(node_pairs.map(|pair| {
-                (left_map[structural.node(pair.left).idx()], right_map[structural.node(pair.right).idx()])
-            }));
-            match *mapped.as_slice() {
-                [(l, r)] => {
-                    bits.put(l, left_bits);
-                    bits.put(r, right_bits);
-                }
-                _ => codes[write_node(&mut bits, &mapped, left_bits, right_bits) as usize] += 1,
+        let _: Result<(), Infallible> = level.try_for_each_node(0..level.nodes().len(), |i, node_pairs| {
+            if local[i] == OMITTED {
+                return Ok(());
             }
-        }
+            lens.push(node_pairs.len());
+            if let [pair] = node_pairs {
+                let (l, r) = map(pair);
+                bits.put(l, left_bits);
+                bits.put(r, right_bits);
+            } else {
+                mapped.clear();
+                mapped.extend(node_pairs.iter().map(map));
+                codes[write_node(&mut bits, &mapped, left_bits, right_bits) as usize] += 1;
+            }
+            Ok(())
+        });
         bits.finish();
 
-        push_varint(out, nodes);
-        push_varint(out, multi);
-        push_varint(out, pairs);
+        let multi = lens.iter().filter(|&&len| len > 1).count();
+        push_varint(out, lens.len() as u64);
+        push_varint(out, multi as u64);
+        push_varint(out, lens.iter().sum::<usize>() as u64);
         push_varint(out, stream.len() as u64);
         if multi > 0 {
             let mut bits = BitWriter::new(out);
-            for (_, node_pairs) in live() {
-                bits.put(u32::from(node_pairs.len() > 1), 1);
+            for &len in &lens {
+                bits.put(u32::from(len > 1), 1);
             }
             bits.finish();
-            for (_, node_pairs) in live() {
-                if node_pairs.len() > 1 {
-                    push_varint(out, node_pairs.len() as u64 - 2);
-                }
+            for &len in lens.iter().filter(|&&len| len > 1) {
+                push_varint(out, len as u64 - 2);
             }
         }
         out.extend_from_slice(&stream);
@@ -671,6 +672,8 @@ impl<'a> BitWriter<'a> {
 /// The body after the header, read front to back.
 struct Body<'a> {
     bytes: &'a [u8],
+    /// `bytes` and the checksum after it.
+    with_trailer: &'a [u8],
     at: usize,
 }
 
@@ -689,6 +692,15 @@ impl<'a> Body<'a> {
     /// One `LEB128` varint of at most `bits` bits, 64 or 128.
     fn varint_bits(&mut self, what: &str, bits: u32) -> Result<u128, IoError> {
         let start = self.at;
+        // Nine bytes hold 63 bits, which fit either width.
+        let mut short = 0u64;
+        for (k, &byte) in self.bytes[start..].iter().take(9).enumerate() {
+            short |= u64::from(byte & 0x7f) << (7 * k);
+            if byte & 0x80 == 0 {
+                self.at = start + k + 1;
+                return Ok(u128::from(short));
+            }
+        }
         let mut v = 0u128;
         for shift in (0..bits).step_by(7) {
             let Some(&byte) = self.bytes.get(self.at) else {
@@ -733,21 +745,24 @@ impl<'a> Body<'a> {
 }
 
 /// Reads one level's stream of pairs, bit-packed least significant bit
-/// first. It keeps the largest side of each kind, which the caller compares
-/// with the child widths once, after the last pair.
+/// first. The caller checks the pair sides against the child widths after
+/// the last pair.
 struct PairReader<'a> {
+    /// From the stream's first byte to the end of the file: eight bytes or
+    /// more follow the stream, the checksum's at least.
     bytes: &'a [u8],
+    /// The stream's length in bits.
+    bits: usize,
     /// The next bit to read.
     at: usize,
     left_bits: u32,
     right_bits: u32,
-    left_max: u64,
-    right_max: u64,
 }
 
 impl PairReader<'_> {
-    /// At least 57 bits from bit `at` on, reading past the end of the bytes
-    /// as zeros; the caller compares the bits read with the bytes at the end.
+    /// At least 57 bits from bit `at` on, reading past the end of the file
+    /// as zeros. Bits past the stream are those of the sections after it;
+    /// the caller compares the bits read with the stream's at the end.
     #[inline(always)]
     fn window(&self) -> u64 {
         let byte = self.at / 8;
@@ -784,65 +799,118 @@ impl PairReader<'_> {
         }
     }
 
-    /// A pair of sides, noted for the range check.
-    #[inline(always)]
-    fn record(&mut self, left: u64, right: u64) -> ChildPair {
-        self.left_max = self.left_max.max(left);
-        self.right_max = self.right_max.max(right);
-        ChildPair::new(EncodedChildRef::from_raw(left as u32), EncodedChildRef::from_raw(right as u32))
-    }
-
     /// The next pair, as stored.
     #[inline(always)]
     fn pair(&mut self) -> ChildPair {
         let (l, r) = self.take2(self.left_bits, self.right_bits);
-        self.record(u64::from(l), u64::from(r))
+        side_pair(l, r)
+    }
+
+    /// `count` single-pair nodes, appended to `out`; refused if they run past
+    /// the stream.
+    fn singles(&mut self, count: usize, out: &mut Vec<EncodedNode>) -> Result<(), IoError> {
+        let (left_bits, right_bits) = (self.left_bits, self.right_bits);
+        let width = left_bits + right_bits;
+        let end = (self.at as u64).saturating_add(count as u64 * u64::from(width));
+        if end > self.bits as u64 {
+            return Err(malformed(format!("the pairs run past the stream's {} bits", self.bits)));
+        }
+        if width > 57 {
+            out.extend((0..count).map(|_| EncodedNode::inline(self.pair())));
+            return Ok(());
+        }
+        let bytes = self.bytes;
+        if bytes.len() < self.bits / 8 + 8 {
+            return Err(malformed("the stream of pairs is not followed by the checksum"));
+        }
+        let (left_mask, right_mask) = ((1u64 << left_bits) - 1, (1u64 << right_bits) - 1);
+        let mut at = self.at;
+        out.extend((0..count).map(|_| {
+            // Safety: `at` stays at most `end`, so at most `self.bits`, as
+            // checked above; then `at / 8 + 8 <= self.bits / 8 + 8 <=
+            // bytes.len()`, also checked above.
+            let word = unsafe { bytes.as_ptr().add(at / 8).cast::<u64>().read_unaligned() };
+            let w = u64::from_le(word) >> (at % 8);
+            at += width as usize;
+            EncodedNode::inline(side_pair((w & left_mask) as u32, ((w >> left_bits) & right_mask) as u32))
+        }));
+        self.at = at;
+        Ok(())
     }
 
     /// A node of `len` pairs, two or more, in the code its first two bits
     /// name, appended to `out`.
     fn node(&mut self, len: usize, out: &mut Vec<ChildPair>) -> Result<(), IoError> {
         match self.take(2) {
-            PLAIN => {
-                for _ in 0..len {
-                    let pair = self.pair();
-                    out.push(pair);
-                }
-            }
+            PLAIN => out.extend((0..len).map(|_| self.pair())),
             OFFSET => {
-                let low = u64::from(self.take(self.right_bits));
+                let low = self.take(self.right_bits);
                 let offset_bits = self.take(FIELD_WIDTH_BITS);
                 if self.left_bits + offset_bits == 0 {
                     return Err(malformed("a node's pairs are coded in no bits"));
                 }
-                for _ in 0..len {
+                // Below 2^31 each, so their sum fits.
+                out.extend((0..len).map(|_| {
                     let (l, offset) = self.take2(self.left_bits, offset_bits);
-                    let pair = self.record(u64::from(l), low + u64::from(offset));
-                    out.push(pair);
-                }
+                    side_pair(l, low + offset)
+                }));
             }
             ASCENDING => {
                 let mut l = u64::from(self.take(self.left_bits));
                 let gap_bits = self.take(FIELD_WIDTH_BITS);
-                let low = u64::from(self.take(self.right_bits));
+                let low = self.take(self.right_bits);
                 let offset_bits = self.take(FIELD_WIDTH_BITS);
                 if gap_bits + offset_bits == 0 {
                     return Err(malformed("a node's pairs are coded in no bits"));
                 }
                 let offset = self.take(offset_bits);
-                let pair = self.record(l, low + u64::from(offset));
-                out.push(pair);
-                for _ in 1..len {
+                out.push(side_pair(l as u32, low + offset));
+                out.extend((1..len).map(|_| {
                     let (gap, offset) = self.take2(gap_bits, offset_bits);
-                    l += u64::from(gap) + 1;
-                    let pair = self.record(l, low + u64::from(offset));
-                    out.push(pair);
+                    l = l.saturating_add(u64::from(gap) + 1);
+                    side_pair(l as u32, low + offset)
+                }));
+                // The left sides ascend: none wrapped in its u32 if the last
+                // did not.
+                if l > u64::from(u32::MAX) {
+                    return Err(malformed("a pair side is past its child level"));
                 }
             }
             code => return Err(malformed(format!("node code {code} is not defined"))),
         }
         Ok(())
     }
+}
+
+#[inline(always)]
+fn side_pair(left: u32, right: u32) -> ChildPair {
+    ChildPair::new(EncodedChildRef::from_raw(left), EncodedChildRef::from_raw(right))
+}
+
+/// What the pairs of a level name on one side.
+#[derive(Clone, Copy, Default)]
+struct SideNamed {
+    largest: u32,
+    /// Bit `k mod 32` for each entry `k` named; left empty unless asked for.
+    named: u32,
+}
+
+impl SideNamed {
+    #[inline(always)]
+    fn add<const NAMED: bool>(self, side: EncodedChildRef) -> Self {
+        let named = if NAMED { self.named | 1u32.wrapping_shl(side.raw()) } else { 0 };
+        Self { largest: self.largest.max(side.raw()), named }
+    }
+}
+
+/// What the left and right sides of a level's pairs name, inline and in its
+/// arena: the largest entry, and with `NAMED` the mask of entries.
+fn sides_named<const NAMED: bool>(nodes: &[EncodedNode], arena: &[ChildPair]) -> [SideNamed; 2] {
+    // A multi-pair node reads as a pair the arena holds, so as no new entry.
+    let filler = arena.first().copied().unwrap_or(side_pair(0, 0));
+    let add = |[l, r]: [SideNamed; 2], pair: &ChildPair| [l.add::<NAMED>(pair.left), r.add::<NAMED>(pair.right)];
+    let inline = nodes.iter().fold([SideNamed::default(); 2], |sides, node| add(sides, &node.inline_or(filler).0));
+    arena.iter().fold(inline, add)
 }
 
 /// Check the stored vtree header in `body` against `vtree` and return `vtree`'s
@@ -878,9 +946,10 @@ fn check_vtree_header(body: &mut Body<'_>, vtree: &Vtree) -> Result<Vec<VtreeIdx
 }
 
 /// Check the stored vtree against `vtree`, then read the levels and seat the
-/// diagram.
-fn parse_body(bytes: &[u8], vtree: &Arc<Vtree>, with_counts: bool) -> Result<Tdd, IoError> {
-    let mut body = Body { bytes, at: 0 };
+/// diagram. `with_trailer` is the body and the checksum after it.
+fn parse_body(with_trailer: &[u8], vtree: &Arc<Vtree>, with_counts: bool) -> Result<Tdd, IoError> {
+    let bytes = &with_trailer[..with_trailer.len() - TRAILER_BYTES];
+    let mut body = Body { bytes, with_trailer, at: 0 };
     let order = check_vtree_header(&mut body, vtree)?;
 
     let root = vtree.root();
@@ -890,7 +959,8 @@ fn parse_body(bytes: &[u8], vtree: &Arc<Vtree>, with_counts: bool) -> Result<Tdd
     if output != 0 {
         for (k, &t) in order.iter().enumerate() {
             let VtreeNode::Internal { left, right, .. } = *vtree.node(t) else { continue };
-            let level = read_level(&mut body, width[left.idx()], width[right.idx()]).map_err(|e| match e {
+            let leaves = [vtree.node(left).is_leaf(), vtree.node(right).is_leaf()];
+            let level = read_level(&mut body, width[left.idx()], width[right.idx()], leaves).map_err(|e| match e {
                 IoError::Format(m) => IoError::Format(format!("{m} (the level of vtree node {k} in postorder)")),
                 other => other,
             })?;
@@ -914,8 +984,7 @@ fn parse_body(bytes: &[u8], vtree: &Arc<Vtree>, with_counts: bool) -> Result<Tdd
         }
     };
     let mut tdd = crate::diagram::TddBuilder::from_levels(Arc::clone(vtree), levels)
-        .finish_trusting_pairs(TddNodeId { vtree: root, local })
-        .map_err(|e| malformed(format!("the records do not form a diagram: {e}")))?;
+        .finish_validated(TddNodeId { vtree: root, local });
     if let Some(counts) = counts {
         tdd.levels.keep_counts(counts);
     }
@@ -1056,8 +1125,9 @@ fn read_multi_lengths<'a>(
 }
 
 /// One internal level's section, its pair sides checked against the widths
-/// of its child levels.
-fn read_level(body: &mut Body<'_>, left_width: usize, right_width: usize) -> Result<TddLevel, IoError> {
+/// of its child levels, and each child that `leaves` marks as a leaf named
+/// in one form, as `One` or as literals.
+fn read_level(body: &mut Body<'_>, left_width: usize, right_width: usize, leaves: [bool; 2]) -> Result<TddLevel, IoError> {
     let (left_bits, right_bits) = (index_bits(left_width), index_bits(right_width));
     let nodes = body.count("node count", NodeIdx::MAX_LIVE as u64)?;
     let multi = body.count("multi-pair node count", nodes as u64)?;
@@ -1085,27 +1155,28 @@ fn read_level(body: &mut Body<'_>, left_width: usize, right_width: usize) -> Res
 
     let (bitmap, lengths) = read_multi_lengths(body, nodes, multi, pairs)?;
 
+    let stream_at = body.at;
     let stream = body.take(stream_bytes, "the stream of pairs")?;
-    let mut reader = PairReader { bytes: stream, at: 0, left_bits, right_bits, left_max: 0, right_max: 0 };
+    let bits = stream_bytes.checked_mul(8).ok_or_else(|| malformed("the stream of pairs cannot be addressed in bits"))?;
+    let mut reader = PairReader { bytes: &body.with_trailer[stream_at..], bits, at: 0, left_bits, right_bits };
     let mut level = TddLevel::new();
     let arena = pairs - (nodes - multi);
     level.nodes.stored_mut().try_reserve_exact(nodes).map_err(|_| malformed("no memory for the level's nodes"))?;
     level.pairs.stored_mut().try_reserve_exact(arena).map_err(|_| malformed("no memory for the level's pairs"))?;
-    if multi == 0 {
-        level.nodes.stored_mut().extend((0..nodes).map(|_| EncodedNode::inline(reader.pair())));
-    } else {
-        let mut lengths = lengths.into_iter();
-        for i in 0..nodes {
-            if bitmap[i / 8] >> (i % 8) & 1 == 1 {
-                let len = lengths.next().expect("one length per marked node") as usize;
-                let start = level.pairs.len();
-                reader.node(len, level.pairs.stored_mut())?;
-                let node = level.encode_multi(start, len);
-                level.nodes.stored_mut().push(node);
-            } else {
-                level.nodes.stored_mut().push(EncodedNode::inline(reader.pair()));
-            }
+    let mut lengths = lengths.into_iter();
+    let mut from = 0;
+    loop {
+        let next = next_marked(bitmap, from).min(nodes);
+        reader.singles(next - from, level.nodes.stored_mut())?;
+        if next == nodes {
+            break;
         }
+        let len = lengths.next().expect("one length per marked node") as usize;
+        let start = level.pairs.len();
+        reader.node(len, level.pairs.stored_mut())?;
+        let node = level.encode_multi(start, len);
+        level.nodes.stored_mut().push(node);
+        from = next + 1;
     }
     if reader.at.div_ceil(8) != stream.len() {
         return Err(malformed(format!(
@@ -1117,10 +1188,33 @@ fn read_level(body: &mut Body<'_>, left_width: usize, right_width: usize) -> Res
     if !reader.at.is_multiple_of(8) && stream[reader.at / 8] >> (reader.at % 8) != 0 {
         return Err(malformed("the stream's padding bits are not zero"));
     }
-    if pairs > 0 && (reader.left_max >= left_width as u64 || reader.right_max >= right_width as u64) {
+    let (nodes, arena) = (level.nodes.stored(), level.pairs.stored().unwrap_or_default());
+    let [left, right] = match leaves {
+        [false, false] => sides_named::<false>(nodes, arena),
+        _ => sides_named::<true>(nodes, arena),
+    };
+    if pairs > 0 && (left.largest as usize >= left_width || right.largest as usize >= right_width) {
         return Err(malformed(format!(
             "a pair side is past its child level (left {left_width} nodes, right {right_width})"
         )));
     }
+    // Below `LEAF_WIDTH`, a leaf side is one bit of its mask.
+    let one = 1u32 << ONE_LEAF_IDX.0;
+    if [left, right].iter().zip(leaves).any(|(side, leaf)| leaf && side.named & one != 0 && side.named & !one != 0) {
+        return Err(malformed("a pair names a leaf child as One and another pair names it as a literal"));
+    }
     Ok(level)
+}
+
+/// The first node at or after `from` that the multi-pair bitmap marks, or
+/// `usize::MAX`.
+fn next_marked(bitmap: &[u8], from: usize) -> usize {
+    let byte = from / 8;
+    match bitmap.get(byte).map(|b| b >> (from % 8)) {
+        Some(0) => {}
+        Some(b) => return from + b.trailing_zeros() as usize,
+        None => return usize::MAX,
+    }
+    let after = &bitmap[byte + 1..];
+    after.iter().position(|&b| b != 0).map_or(usize::MAX, |k| (byte + 1 + k) * 8 + after[k].trailing_zeros() as usize)
 }

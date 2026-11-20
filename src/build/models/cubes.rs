@@ -245,7 +245,7 @@ fn root_pieces(
     if w == 1 && n >= BYTE_TABLE_MIN_CUBES {
         // One table per byte of the input word holds where that byte's bits
         // land, so a word is re-encoded by eight lookups.
-        let table = layout.byte_table(lim)?;
+        let table = layout.byte_table(lim, 1)?;
         let live = lower_bits(0, num_vars);
         gate.poll(2 * n as u64)?;
         for k in 0..n {

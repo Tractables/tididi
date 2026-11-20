@@ -50,6 +50,37 @@ fn finish_and_the_reader_refuse_a_level_that_mixes_leaf_forms() {
     assert_eq!(literals.model_count().unwrap(), 3u32.into());
 }
 
+/// A leaf named both ways is refused as the right child of a narrow level,
+/// and as the left child beside a child 16 nodes wide.
+#[test]
+fn finish_refuses_mixed_leaf_forms_on_either_side_and_beside_a_wide_child() {
+    use crate::diagram::{NodeIdx, TddBuildError};
+    use crate::vtree::VarId;
+    let eng = Engine::new();
+    let tree = Arc::new(Vtree::balanced(2));
+    let root = tree.root();
+    let mut b = Tdd::builder(&eng, &tree).unwrap();
+    let node = b.push(&eng, root, &[ChildPair::new(POS_LEAF_IDX, ONE_LEAF_IDX), ChildPair::new(NEG_LEAF_IDX, POS_LEAF_IDX)]).unwrap();
+    let refused = b.finish(TddNodeId { vtree: root, local: node }).unwrap_err();
+    assert_eq!(refused, TddBuildError::MixedLeafForm { level: root, leaf: tree.children(root).1 });
+
+    let leaf = |v: u32| Vtree::leaf(VarId(v));
+    let pair = |l: u32, r: u32| Vtree::join(&leaf(l), &leaf(r)).unwrap();
+    let wide = Vtree::join(&pair(2, 3), &pair(4, 5)).unwrap();
+    let tree = Arc::new(Vtree::join(&leaf(1), &wide).unwrap());
+    let root = tree.root();
+    let build = |first| {
+        let mut b = Tdd::builder(&eng, &tree).unwrap();
+        push_every_pair_below_root(&eng, &tree, &mut b);
+        let pairs = [ChildPair::new(first, NodeIdx(0)), ChildPair::new(NEG_LEAF_IDX, NodeIdx(15))];
+        let node = b.push(&eng, root, &pairs).unwrap();
+        b.finish(TddNodeId { vtree: root, local: node })
+    };
+    assert!(build(POS_LEAF_IDX).is_ok());
+    let refused = build(ONE_LEAF_IDX).map(|_| ()).unwrap_err();
+    assert_eq!(refused, TddBuildError::MixedLeafForm { level: root, leaf: tree.children(root).0 });
+}
+
 #[test]
 fn finish_seats_the_constants_on_a_vtree_with_no_node() {
     use crate::diagram::{NodeIdx, TddBuildError, TRUE, ZERO};
@@ -259,6 +290,25 @@ fn push_products(eng: &Engine, tree: &Vtree, b: &mut crate::diagram::TddBuilder)
         width[t.idx()] = wl * wr;
     }
 }
+
+/// Below the root of a balanced vtree, a one-pair node for every pair of each
+/// level's children: the four pairs of literals over two leaves, then every
+/// pair of the nodes below.
+fn push_every_pair_below_root(eng: &Engine, tree: &Vtree, b: &mut crate::diagram::TddBuilder) {
+    use crate::diagram::NodeIdx;
+    let literals = [POS_LEAF_IDX, NEG_LEAF_IDX];
+    let mut nodes: Vec<Vec<NodeIdx>> = vec![literals.to_vec(); tree.num_nodes()];
+    for (t, l, r) in tree.internal_bottomup().filter(|&(t, _, _)| t != tree.root()) {
+        let mut level = Vec::new();
+        for &left in &nodes[l.idx()] {
+            for &right in &nodes[r.idx()] {
+                level.push(b.push(eng, t, &[ChildPair::new(left, right)]).unwrap());
+            }
+        }
+        nodes[t.idx()] = level;
+    }
+}
+
 
 /// Over ((x1,x2),x3), the inner level holds the nodes `inner` and the root the
 /// one node `root`; every pair on the right of the root names x3.
