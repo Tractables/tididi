@@ -54,9 +54,13 @@ struct Summary {
 
 impl Summary {
     fn forget(&mut self) {
+        self.forget_shape();
+        self.pairs.forget();
+    }
+
+    fn forget_shape(&mut self) {
         self.nodes.forget();
         self.width.forget();
-        self.pairs.forget();
         self.marginal.forget();
     }
 }
@@ -73,6 +77,11 @@ impl Summary {
 /// ([`mark_changed`](Self::mark_changed)), so that a reduction that began on
 /// closed levels closes only those, and `counts_hold` says such edits began
 /// on closed levels ([`hold_counts`](Self::hold_counts)).
+///
+/// The pair total is kept across edits that mark what they change: while
+/// the levels are not closed, `summary.pairs` holds the live pairs of the
+/// levels not marked since the last close, as they were then, and
+/// [`close_marked`](Self::close_marked) adds the marked ones back.
 ///
 /// The level counts ([`LevelCounts`]) are kept on the same terms: they
 /// describe the levels as they were when counted, so any mutable access, and
@@ -127,10 +136,22 @@ impl LevelStorage {
     }
 
     pub(crate) fn pair_count(&self) -> usize {
-        self.summary.pairs.read(|| match self.closed {
-            true => self.levels.iter().map(TddLevel::live_pairs_closed).sum(),
-            false => self.levels.iter().map(|level| level.known_live_pairs(self.counts_hold).unwrap_or_else(|| level.live_pairs())).sum(),
-        })
+        if !self.closed {
+            return self.levels.iter().map(|level| level.known_live_pairs(self.counts_hold).unwrap_or_else(|| level.live_pairs())).sum();
+        }
+        let walk = || self.levels.iter().map(TddLevel::live_pairs_closed).sum();
+        let total = self.summary.pairs.read(walk);
+        debug_assert_eq!(total, walk(), "a kept pair total differs from the levels'");
+        total
+    }
+
+    /// Keep the pair total of closed levels: `beside`, the live pairs of
+    /// every level not in `levels`, plus those of `levels`, which hold no
+    /// index twice.
+    pub(crate) fn know_pairs_beside(&mut self, beside: usize, levels: &[VtreeIdx]) {
+        debug_assert!(self.closed, "a pair total is kept on closed levels");
+        let total = beside + levels.iter().map(|t| self.levels[t.idx()].live_pairs_closed()).sum::<usize>();
+        *self.summary.pairs.0.get_mut() = total;
     }
 
     /// The live pairs of level `t`, as [`pair_count`](Self::pair_count)
@@ -175,7 +196,7 @@ impl LevelStorage {
     /// A mutable access: neither the certification nor the closed form is
     /// known to hold any more.
     fn touch(&mut self) {
-        self.summary.forget();
+        self.summary.forget_shape();
         self.forget();
         self.closed = false;
     }
@@ -197,7 +218,19 @@ impl LevelStorage {
     /// Record that an edit changed level `t`'s nodes or pairs, forgetting
     /// the live pairs the level keeps or was left
     /// ([`TddLevel::forget_held_pairs`]).
+    ///
+    /// Takes the level's live pairs out of the pair total kept across the
+    /// edits, which then needs them kept on the level
+    /// ([`TddLevel::kept_pairs`]) unless it was marked before.
     pub(crate) fn mark_changed(&mut self, t: VtreeIdx) {
+        let total = self.summary.pairs.0.get_mut();
+        if *total != usize::MAX {
+            *total = match self.levels[t.idx()].kept_pairs() {
+                Some(n) => total.checked_sub(n).unwrap_or(usize::MAX),
+                None if self.changed.len() <= MARKS_SEARCHED && self.changed.contains(&t) => *total,
+                None => usize::MAX,
+            };
+        }
         self.changed.push(t);
         self.levels[t.idx()].forget_held_pairs();
     }
@@ -239,9 +272,10 @@ impl LevelStorage {
         self.counts_hold = false;
     }
 
-    /// Take what `from` knows of its levels' closed form, for a copy of them.
+    /// Take what `from` knows of its levels' closed form and sizes, for a
+    /// copy of them.
     pub(crate) fn copy_closed_from(&mut self, from: &LevelStorage) {
-        self.summary.forget();
+        self.summary.clone_from(&from.summary);
         self.closed = from.closed;
         self.changed.clone_from(&from.changed);
     }
@@ -280,9 +314,11 @@ impl LevelStorage {
         if !self.counts_hold {
             return self.close();
         }
+        let beside = *self.summary.pairs.0.get_mut();
         self.summary.forget();
         let Self { levels, changed, .. } = self;
-        if changed.len() >= levels.len() {
+        let all = changed.len() >= levels.len();
+        if all {
             for level in levels.iter_mut() {
                 level.close();
                 level.settle_held_pairs();
@@ -292,6 +328,14 @@ impl LevelStorage {
                 levels[t.idx()].close();
                 levels[t.idx()].settle_held_pairs();
             }
+        }
+        self.closed = true;
+        if beside != usize::MAX && !all {
+            let mut changed = std::mem::take(&mut self.changed);
+            changed.sort_unstable();
+            changed.dedup();
+            self.know_pairs_beside(beside, &changed);
+            self.changed = changed;
         }
         self.now_closed();
     }
@@ -326,6 +370,10 @@ impl LevelStorage {
     /// they are: every column a kept one's level's node counts, in node order.
     pub(crate) fn keep_counts(&mut self, counts: LevelCounts) { self.counts = Some(Box::new(counts)); }
 }
+
+/// The marks [`LevelStorage::mark_changed`] searches for a level marked
+/// before; past them a repeated mark forgets the pair total.
+const MARKS_SEARCHED: usize = 32;
 
 impl From<Vec<TddLevel>> for LevelStorage {
     fn from(levels: Vec<TddLevel>) -> Self { Self { levels, ..Self::default() } }

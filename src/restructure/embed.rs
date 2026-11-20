@@ -1192,7 +1192,7 @@ fn seat_view<'a>(
             let source = &mut moved.levels[..];
             for (s, &d) in plan.embedding.levels.iter().enumerate() {
                 if own(d) {
-                    std::mem::swap(&mut levels[d.idx()], &mut source[s]);
+                    levels[d.idx()].swap_with(&mut source[s]);
                 }
             }
             let carried = moved.take_worklists();
