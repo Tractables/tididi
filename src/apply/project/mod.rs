@@ -32,6 +32,10 @@ pub(crate) fn exists_vars_on(
     // shortcut: the same request is refused whatever the operand happens to be.
     let targets = quantification_targets(eng, f.vtree(), vars)?;
     if targets.is_empty() {
+        let mut f = f;
+        if let Some(plan) = reduction {
+            eng.reduce(&mut f, plan)?;
+        }
         return Ok(f);
     }
     structural::exists_leaves_structural(eng, f, &targets, reduction, close)
@@ -94,6 +98,21 @@ impl crate::Engine {
     /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn exists_vars(&self, f: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
         crate::apply::exit::outcome(self, exists_vars_on(self, f, vars, None, true))
+    }
+
+    /// [`exists_vars`](Self::exists_vars) ending with the reduction `plan`,
+    /// run before the operation's close: cheaper than `exists_vars` followed
+    /// by [`reduce`](Self::reduce), whose passes read the levels that close
+    /// described and store again those they change.
+    ///
+    /// Every plan returns the same function, and the default plan minimizes
+    /// it; with nothing to quantify, `plan` reduces `f` alone.
+    ///
+    /// # Errors
+    ///
+    /// As [`exists_vars`](Self::exists_vars).
+    pub fn exists_vars_with(&self, f: Tdd, vars: &[VarId], plan: ReductionPlan<'_>) -> Result<Tdd, OperationError> {
+        crate::apply::exit::outcome(self, exists_vars_on(self, f, vars, Some(plan), true))
     }
 
     /// Run [`Tdd::forall_vars`](crate::Tdd::forall_vars) using this batch's scratch and resource limits.

@@ -12,9 +12,11 @@ Breaking changes:
   unless it holds a summed-out level. `Tdd::equivalent`, `Tdd::implies` and
   `Tdd::is_zero` are exact either way; `Tdd::is_one` is exact on a
   minimized diagram.
-- `Engine::negate_with`, `Tdd::negate_with`, `Engine::exists_vars_with`,
+- `Engine::negate_with`, `Tdd::negate_with`,
   `Engine::and_exists_with_reduction` and `Engine::filter_nodes_with` are
   removed. Call the operation, then `Engine::reduce` with the plan.
+  `Engine::exists_vars_with` stays: it runs its plan before the close, which
+  costs less than `exists_vars` followed by `Engine::reduce`.
 
 - `Engine::and_filter_products` is removed. Conjoin, then restrict to the
   care constraint with `Engine::restrict_to_care`: the result agrees with
