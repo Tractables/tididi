@@ -71,9 +71,11 @@ pub(crate) fn contract_leaf_twins(eng: &Engine, tdd: &mut Tdd) -> Result<bool, O
 /// An entry of the refusal hints that names no node.
 const NO_HINT: u32 = u32::MAX;
 
-/// Contract each leaf child of `vi`, left side then right. A duplicate dirty
-/// entry is reprocessed; re-classifying an already-contracted level finds no
-/// literal pair and does nothing. `refused` holds the hints
+/// Contract each variable leaf child of `vi`, left side then right. A
+/// region is skipped: its side names value slots, and slots 1 and 2 would
+/// read as the labels `Pos` and `Neg`. A duplicate dirty entry is
+/// reprocessed; re-classifying an already-contracted level finds no literal
+/// pair and does nothing. `refused` holds the hints
 /// [`try_contract_leaf_twins`] reads and writes.
 fn contract_leaf_sides(eng: &Engine, tdd: &mut Tdd, vtree: &Vtree, vi: VtreeIdx, refused: &mut [u32]) -> Result<bool, OperationError> {
     let (left, right) = match *vtree.node(vi) {
@@ -81,10 +83,10 @@ fn contract_leaf_sides(eng: &Engine, tdd: &mut Tdd, vtree: &Vtree, vi: VtreeIdx,
         VtreeNode::Leaf { .. } => return Ok(false),
     };
     let mut changed = false;
-    if vtree.node(left).is_leaf() {
+    if vtree.node(left).is_leaf() && !vtree.node(left).is_region() {
         changed |= try_contract_leaf_twins(eng, tdd, vi, ChildSide::Left, refused)?;
     }
-    if vtree.node(right).is_leaf() {
+    if vtree.node(right).is_leaf() && !vtree.node(right).is_region() {
         changed |= try_contract_leaf_twins(eng, tdd, vi, ChildSide::Right, refused)?;
     }
     Ok(changed)
