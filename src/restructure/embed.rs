@@ -917,7 +917,7 @@ fn assemble_moving<'a>(
     // and free levels have one node, so neither introduces twins. A later
     // child contraction queues its parents. The lists are bounded as a seat
     // bounds an assembly's.
-    let loose = carried.take_loose().map(crate::diagram::LooseLevels::into_levels);
+    let loose = carried.take_loose().map(|loose| loose.into_levels());
     carried.remap(&plan.embedding.levels);
     if chains {
         literal_tops.sort_unstable();

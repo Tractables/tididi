@@ -232,7 +232,7 @@ impl Owed {
         // A canonical operand has every node named; otherwise the operand's
         // loose levels, read before the seeding forgets them.
         let loose = if canonical {
-            Some(crate::diagram::LooseLevels::default())
+            Some(Box::<crate::diagram::LooseLevels>::default())
         } else {
             carried.take_loose()
         };

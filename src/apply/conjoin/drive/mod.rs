@@ -718,7 +718,7 @@ fn apply_and_held(
             .finish_with_or_return(output, owed, &lists.owed_twins, Some(&lists.built[..]))
             .map(|mut out| {
                 if let Some(loose) = loose {
-                    out.dirty.restore_loose(Some(crate::diagram::LooseLevels::counted(loose)));
+                    out.dirty.restore_loose(Some(Box::new(crate::diagram::LooseLevels::counted(loose))));
                     out.dirty.dedup_above(num_nodes);
                 }
                 #[cfg(debug_assertions)]
