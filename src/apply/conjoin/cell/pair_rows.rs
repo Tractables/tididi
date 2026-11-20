@@ -2,7 +2,7 @@
 
 use super::super::liveness::{ROW_COLUMNS_MAX_WIDTH, ROW_LIVE};
 use super::*;
-use crate::diagram::{NodeKind, StoredPairs};
+use crate::diagram::{decoded, ChildDecoder, NodeKind, StoredPairs};
 use crate::limits::{PollGate, Transient};
 
 /// The f pairs a row's intersections are kept for on the stack; a longer row keeps
@@ -383,11 +383,11 @@ where
 
     let (left_view, right_view) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
     let f_described = described_rows(lim, f_level, f_width, left_view, right_view, f_scratch);
-    // A level of two one-pair columns: f's rows where they need no decoding,
-    // and what [`two_column_rows`] reads.
+    // A level of two one-pair columns: f's rows where they are read in
+    // place, and what [`two_column_rows`] reads.
     let two_rows = match f_described {
         Some(k @ 1..=2) if W == 2 && f_scratch.len() >= f_width * k => TwoRows::Described(k),
-        None if W == 2 && !left_view.is_marginal() && !right_view.is_marginal() => {
+        None if W == 2 => {
             match f_level.stored() {
                 Some(stored) if stored.nodes().len() >= f_width => TwoRows::Stored(stored),
                 _ => TwoRows::Neither,
@@ -470,7 +470,7 @@ where
                 let (nodes, arena) = (&stored.nodes()[..f_width], stored.arena());
                 let (to, units, cursor) = two_column_rows(
                     two,
-                    |j| stored_two(nodes, arena, j),
+                    |j| stored_two(nodes, arena, (left_view, right_view), j),
                     (left, right),
                     slab,
                     o.cursor(),
@@ -726,19 +726,22 @@ fn described_two(rows: &[ChildPair], k: usize, i: usize) -> Option<(ChildPair, C
 }
 
 /// Node `i` of a stored level's `nodes`, whose pairs are in `arena`, as
-/// [`described_two`] gives a row, `None` for a node of more than two pairs.
+/// [`described_two`] gives a row, its pairs decoded through `views`, `None`
+/// for a node of more than two pairs.
 #[inline(always)]
 fn stored_two(
     nodes: &[EncodedNode],
     arena: &[ChildPair],
+    (left, right): (ChildDecoder, ChildDecoder),
     i: usize,
 ) -> Option<(ChildPair, ChildPair, u64)> {
     debug_assert!(i < nodes.len());
+    let d = |p| decoded(p, left, right);
     // Safety: the caller reads the nodes below `nodes.len()`.
     match unsafe { nodes.get_unchecked(i) }.kind() {
-        NodeKind::Inline(p) => Some((p, p, 1)),
+        NodeKind::Inline(p) => Some((d(p), d(p), 1)),
         NodeKind::Multi { start, len: 2 } => match arena[start as usize..][..2] {
-            [p, q] => Some((p, q, 2)),
+            [p, q] => Some((d(p), d(q), 2)),
             _ => None,
         },
         _ => None,
