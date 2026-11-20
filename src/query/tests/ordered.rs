@@ -109,7 +109,7 @@ fn the_first_models_are_the_least_on_a_key_spine() {
             sorted.sort_by_key(|r| key(r, keys, &descending));
             let refs: Vec<&[VarId]> = columns.iter().map(Vec::as_slice).collect();
             let minimized = vtree.context().run(|e| e.exists_vars(f.clone(), &unlisted)).unwrap();
-            let pruned = vtree.context().run(|e| crate::apply::with_plan::exists_vars_with(e, f.clone(), &unlisted, ReductionPlan::Prune)).unwrap();
+            let pruned = vtree.context().run(|e| e.exists_vars_with(f.clone(), &unlisted, ReductionPlan::Prune)).unwrap();
             for (g, form) in [(&minimized, "minimized"), (&pruned, "pruned")] {
                 for limit in [0u64, 1, 2, 5, all.len() as u64, all.len() as u64 + 3] {
                     let what = format!("{num_vars} vars, round {round}, {form}, columns {columns:?}, descending {descending:?}, limit {limit}");
@@ -270,7 +270,7 @@ fn the_first_rows_are_the_least_on_any_layout_that_reads_the_keys_first() {
             let mut sorted: Vec<Vec<u32>> = all.iter().cloned().collect();
             sorted.sort_by_key(|r| key(r, keys, &descending));
             let minimized = vtree.context().run(|e| e.exists_vars(f.clone(), &unlisted)).unwrap();
-            let pruned = vtree.context().run(|e| crate::apply::with_plan::exists_vars_with(e, f.clone(), &unlisted, ReductionPlan::Prune)).unwrap();
+            let pruned = vtree.context().run(|e| e.exists_vars_with(f.clone(), &unlisted, ReductionPlan::Prune)).unwrap();
             let key_columns: Vec<Vec<VarId>> = columns[..keys].to_vec();
             let mut values: Vec<Vec<u32>> = expected(num_vars, &truth, &key_columns).into_iter().collect();
             values.sort_by_key(|r| key(r, keys, &descending));

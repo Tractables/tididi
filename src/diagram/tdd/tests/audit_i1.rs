@@ -738,7 +738,7 @@ fn audit_i1_exists_with_pruning_names_exactly_the_targets() {
     ];
     for (what, f, targets) in cases {
         assert_eq!(reachable_true_labels(&f), Ok(None), "{what}: the operand");
-        let got = crate::apply::with_plan::exists_vars_with(&eng, f, &targets, ReductionPlan::Prune).unwrap();
+        let got = eng.exists_vars_with(f, &targets, ReductionPlan::Prune).unwrap();
         assert_eq!(true_leaves(&got), Ok(targets.clone()), "{what}");
         if what == "S3" {
             let b = got.vtree().root();

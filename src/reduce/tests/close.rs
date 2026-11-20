@@ -111,7 +111,7 @@ fn quantification_and_conditioning_close_as_plain_then_trim() {
         }
         for prune in [true, false] {
             let plan = if prune { ReductionPlan::Prune } else { ReductionPlan::Contract };
-            let other = crate::apply::with_plan::exists_vars_with(&eng, f.clone(), &vars, plan).unwrap();
+            let other = eng.exists_vars_with(f.clone(), &vars, plan).unwrap();
             assert_eq!(reachable_true_labels(&other), Ok(None), "{case}, prune {prune}");
             assert!(eng.equivalent(&other, &closed).unwrap(), "{case}, prune {prune}");
         }
@@ -154,7 +154,7 @@ fn exists_under_contract_closes_on_the_union() {
     let leaf = |v| Vtree::leaf(VarId(v));
     let home = Home::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap());
     let f = eng.cube(home.vtree(), [-1, -2, -3]).unwrap();
-    let g = crate::apply::with_plan::exists_vars_with(&eng, f, &[VarId(3)], ReductionPlan::Contract).unwrap();
+    let g = eng.exists_vars_with(f, &[VarId(3)], ReductionPlan::Contract).unwrap();
     assert_eq!(leaf_vars(&g), [VarId(1), VarId(2)]);
     assert_eq!(reachable_true_labels(&g), Ok(None));
     assert!(eng.equivalent(&g, &eng.cube(home.vtree(), [-1, -2]).unwrap()).unwrap());

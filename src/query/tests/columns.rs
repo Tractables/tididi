@@ -110,7 +110,7 @@ fn columns_match_projected_truth_tables_on_every_shape() {
                 let g = vtree.context().run(|e| e.exists_vars(f.clone(), &unlisted)).unwrap();
                 assert_canonical(&g);
                 check(&g, num_vars, &truth, &columns, &mut rng, &format!("{what}, minimized"));
-                let g = vtree.context().run(|e| crate::apply::with_plan::exists_vars_with(e, f.clone(), &unlisted, ReductionPlan::Prune)).unwrap();
+                let g = vtree.context().run(|e| e.exists_vars_with(f.clone(), &unlisted, ReductionPlan::Prune)).unwrap();
                 match g.model_columns(&columns.iter().map(Vec::as_slice).collect::<Vec<_>>()) {
                     Ok(_) => check(&g, num_vars, &truth, &columns, &mut rng, &format!("{what}, pruned")),
                     Err(OperationError::UnlistedLiteral(v)) => assert!(!listed.contains(&v), "{what}"),
@@ -316,7 +316,7 @@ fn ascending_is_exact_on_lexicographic_layouts() {
                 let minimized = vtree.context().run(|e| e.exists_vars(f.clone(), &unlisted)).unwrap();
                 let pruned = vtree
                     .context()
-                    .run(|e| crate::apply::with_plan::exists_vars_with(e, f.clone(), &unlisted, ReductionPlan::Prune))
+                    .run(|e| e.exists_vars_with(f.clone(), &unlisted, ReductionPlan::Prune))
                     .unwrap();
                 for (g, form) in [(&minimized, "minimized"), (&pruned, "pruned")] {
                     let refs: Vec<&[VarId]> = columns.iter().map(Vec::as_slice).collect();

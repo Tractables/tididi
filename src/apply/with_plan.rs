@@ -5,17 +5,12 @@ use std::borrow::Cow;
 use crate::apply::FilterOutcome;
 use crate::diagram::TddNodeId;
 use crate::reduce::ReductionPlan;
-use crate::vtree::VarId;
 use crate::{Engine, OperationError, Tdd};
 
 pub(crate) fn negate_with<'f>(eng: &Engine, f: impl Into<Cow<'f, Tdd>>, plan: ReductionPlan<'_>) -> Result<Tdd, OperationError> {
     let mut g = eng.negate(f)?;
     eng.reduce(&mut g, plan)?;
     Ok(g)
-}
-
-pub(crate) fn exists_vars_with(eng: &Engine, f: Tdd, vars: &[VarId], plan: ReductionPlan<'_>) -> Result<Tdd, OperationError> {
-    crate::apply::project::exists_vars_on(eng, f, vars, Some(plan), true)
 }
 
 pub(crate) fn filter_nodes_with(

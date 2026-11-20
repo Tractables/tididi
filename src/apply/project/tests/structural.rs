@@ -194,7 +194,7 @@ fn a_quantification_under_contract_leaves_every_node_reached() {
                 }
                 let mut canonical = eng.exists_vars(f.clone(), &vars).unwrap();
                 canonical.minimize().unwrap();
-                let mut contracted = crate::apply::with_plan::exists_vars_with(&eng, f, &vars, ReductionPlan::Contract).unwrap();
+                let mut contracted = eng.exists_vars_with(f, &vars, ReductionPlan::Contract).unwrap();
                 let reach = contracted.reachable_nodes();
                 let unreached = (0..reach.len())
                     .filter(|&i| !tree.node(VtreeIdx(i as u32)).is_leaf())
@@ -227,7 +227,7 @@ fn a_root_union_under_contract_is_the_root_alone() {
     f.levels[root.idx()].push_node(eng.limits(), &pairs).unwrap();
     f.dirty.set_loose(None);
     assert!(f.dirty.is_empty(), "no pass is owed, so the sweep does not prune first");
-    let mut out = crate::apply::with_plan::exists_vars_with(&eng, f, &vars, ReductionPlan::Contract).unwrap();
+    let mut out = eng.exists_vars_with(f, &vars, ReductionPlan::Contract).unwrap();
     assert_eq!(out.levels[root.idx()].nodes().len(), 1, "a root cell outside the union stays");
     out.minimize().unwrap();
     assert_canonical(&out);

@@ -244,6 +244,9 @@ impl<'a> Reduction<'a> {
     /// Each productive round removes at least one node. Its rewrites mark the
     /// levels to revisit; only the first round scans the whole diagram, so
     /// what the slot prune before it reports is not kept.
+    // Inlined into `scan_if_due` with link-time optimization, its merge
+    // loop compiled to about 3% more instructions on a pedigree network.
+    #[inline(never)]
     pub(super) fn content_twins(&mut self) -> Result<(), OperationError> {
         prune_value_slots(self.eng, self.tdd)?;
         self.tdd.dirty.clear(Pass::ContentTwin);
