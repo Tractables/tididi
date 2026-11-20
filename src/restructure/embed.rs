@@ -917,7 +917,7 @@ fn assemble_moving<'a>(
     // and free levels have one node, so neither introduces twins. A later
     // child contraction queues its parents. The lists are bounded as a seat
     // bounds an assembly's.
-    let loose = carried.take_loose().map(|loose| loose.into_levels());
+    let loose = carried.take_loose();
     carried.remap(&plan.embedding.levels);
     if chains {
         literal_tops.sort_unstable();
@@ -933,8 +933,7 @@ fn assemble_moving<'a>(
     carried.dedup_above(into.num_nodes());
     debug_assert!(result.dirty.is_empty(), "a seat that rebuilt nothing owes nothing");
     result.dirty = carried;
-    if let Some(mut loose) = loose {
-        loose.sort_unstable();
+    if let Some(loose) = loose {
         moved_loose(tdd.vtree(), into, plan, &loose, &literal_tops, &mut listed);
         result.dirty.set_loose(Some(listed));
     }
@@ -1095,7 +1094,7 @@ pub(crate) fn moved_loose(
     source: &Vtree,
     into: &Vtree,
     plan: &Plan,
-    loose: &[u32],
+    loose: &crate::diagram::LooseLevels,
     literal_tops: &[VtreeIdx],
     out: &mut Vec<u32>,
 ) {
@@ -1119,7 +1118,7 @@ pub(crate) fn moved_loose(
                 true => literal_tops.binary_search(&top).is_err(),
                 false => {
                     let from = plan.covered_by(foot).expect("a chain's foot off a leaf is an image");
-                    loose.binary_search(&from.0).is_err()
+                    !loose.contains(from.0)
                 }
             };
             if !named_whole {

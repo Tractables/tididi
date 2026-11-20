@@ -223,7 +223,7 @@ fn a_contraction_drops_the_nodes_no_pair_names() {
             assert_eq!(contracted.model_count().unwrap(), count, "{label}");
             if let Some(loose) = contracted.dirty.loose() {
                 for t in unnamed_levels(&contracted) {
-                    assert!(loose.contains(&t), "{label}: level {t} holds an unnamed node and is not listed loose");
+                    assert!(loose.contains(t), "{label}: level {t} holds an unnamed node and is not listed loose");
                 }
             }
             let mut full = conj;
@@ -298,7 +298,7 @@ fn an_embedding_lists_the_levels_holding_an_unnamed_node() {
             let (moved, _) = eng.embed_moving(source, &wide, |v| VarId(vars[v.idx()])).map_err(|r| r.error).unwrap();
             let listed = moved.dirty.loose().expect("the source's loose levels are known");
             for t in unnamed_levels(&moved) {
-                assert!(listed.contains(&t), "{what}: level {t} holds an unnamed node and is not listed");
+                assert!(listed.contains(t), "{what}: level {t} holds an unnamed node and is not listed");
             }
             assert_eq!(moved.model_count().unwrap(), count << (wide.num_vars() - k), "{what}");
             carried += unnamed_source.len();

@@ -158,7 +158,7 @@ fn a_carried_level_is_loose_only_where_its_carrier_had_it() {
     let (g, _) = eng.embed_moving(small, &wide, |v| VarId(v.0 + 6)).map_err(|r| r.error).unwrap();
     let clauses = [vec![1, 2], vec![-2, 3], vec![3, -4, 5], vec![-1, 6], vec![4, -5, -6]];
     let f = compile_clauses(&wide, &clauses);
-    assert_eq!(f.dirty.loose(), Some(&[][..]));
+    assert!(f.dirty.loose().is_some_and(|l| l.is_empty()));
     // The left half reads variables 1 to 4, which `f` constrains and `g` does
     // not: the conjunction carries `f`'s levels there.
     let (half, _) = wide.children(wide.root());
@@ -175,8 +175,8 @@ fn a_carried_level_is_loose_only_where_its_carrier_had_it() {
     let view = out.levels[half.idx()].child_decoder();
     let named: std::collections::BTreeSet<usize> =
         (0..root.slot_count()).flat_map(|i| root.pairs_vec(i)).filter_map(|p| view.child(p.left).index()).collect();
-    assert!(loose.contains(&half.0) || named.len() == out.levels[half.idx()].slot_count(), "{loose:?}");
-    assert!(!loose.contains(&a.0) && !loose.contains(&b.0), "{loose:?}");
+    assert!(loose.contains(half.0) || named.len() == out.levels[half.idx()].slot_count(), "{loose:?}");
+    assert!(!loose.contains(a.0) && !loose.contains(b.0), "{loose:?}");
     eng.minimize(&mut out).unwrap();
     assert_canonical(&out);
     let mut all = clauses.to_vec();
@@ -207,8 +207,8 @@ fn built_operands_give_their_conjunction_its_loose_levels() {
                 let (f_rows, g_rows) = (rows(fv.len()), rows(gv.len()));
                 let f = eng.from_models(&vtree, &fv, &f_rows).unwrap();
                 let g = eng.from_models(&vtree, &gv, &g_rows).unwrap();
-                assert_eq!(f.dirty.loose(), Some(&[][..]), "{label}");
-                assert_eq!(g.dirty.loose(), Some(&[][..]), "{label}");
+                assert!(f.dirty.loose().is_some_and(|l| l.is_empty()), "{label}");
+                assert!(g.dirty.loose().is_some_and(|l| l.is_empty()), "{label}");
                 let out = eng.and(f, g).unwrap();
                 if out.is_zero() {
                     continue;

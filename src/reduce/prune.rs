@@ -401,10 +401,11 @@ pub(crate) fn prune_unreachable(
     let below_root = matches!(scope, PruneScope::BelowRoot) && below_root_walk_applies(tdd);
     let seeded = match tdd.dirty.loose() {
         Some(loose) if !below_root && below_root_walk_applies(tdd) && !tdd.has_marginal_level() => {
-            match tdd.dirty.counted_loose() {
-                Some(counted) => Some(Seeds::of(eng, tdd, counted)?),
-                None if settle_reads_all(tdd, loose) => None,
-                None => Some(Seeds::of(eng, tdd, &settle_loose(eng, tdd, loose)?)?),
+            let listed = loose.to_vec_on(eng.limits())?;
+            match loose.all_counted() {
+                true => Some(Seeds::of(eng, tdd, &listed)?),
+                false if settle_reads_all(tdd, &listed) => None,
+                false => Some(Seeds::of(eng, tdd, &settle_loose(eng, tdd, &listed)?)?),
             }
         }
         _ => None,

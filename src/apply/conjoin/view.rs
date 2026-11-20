@@ -218,7 +218,7 @@ fn moved_dirty(
 ) -> Result<Dirty, OperationError> {
     let mut carried = tdd.dirty.clone_on(eng)?;
     carried.reserve_leaf_owes_inner(eng)?;
-    let loose = carried.take_loose().map(|loose| loose.into_levels());
+    let loose = carried.take_loose();
     carried.remap(&plan.embedding.levels);
     literal_tops.sort_unstable();
     if !literal_tops.is_empty() {
@@ -228,12 +228,11 @@ fn moved_dirty(
         });
     }
     carried.dedup_above(into.num_nodes());
-    if let Some(mut loose) = loose {
+    if let Some(loose) = loose {
         let mut listed = Vec::new();
         if !loose.is_empty() || !literal_tops.is_empty() {
             eng.limits().reserve_exact(&mut listed, into.num_nodes())?;
         }
-        loose.sort_unstable();
         moved_loose(tdd.vtree(), into, plan, &loose, literal_tops, &mut listed);
         carried.set_loose(Some(listed));
     }

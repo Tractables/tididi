@@ -340,7 +340,7 @@ fn a_level_whose_products_the_leaf_arm_finds_held_for_every_label_is_tight() {
                 }
                 let loose = out.dirty.loose().expect("both operands' loose levels are known");
                 for t in unnamed_levels(&out) {
-                    assert!(loose.contains(&t), "{what}, {order}: level {t} is not listed loose but holds a node its parent does not name");
+                    assert!(loose.contains(t), "{what}, {order}: level {t} is not listed loose but holds a node its parent does not name");
                 }
             }
         }

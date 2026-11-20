@@ -563,11 +563,11 @@ fn apply_and_held(
 
     // The operands' loose levels, unread: a prune reads the result's once,
     // where reading them here would read them again at each conjunction.
-    let operand_loose = match (f.dirty().loose_levels(), g.dirty().loose_levels()) {
+    let operand_loose = match (f.dirty().loose(), g.dirty().loose()) {
         (Some(lf), Some(lg)) if plain => {
             let entries = |loose: &crate::diagram::LooseLevels| -> Result<Vec<owed::Entry>, OperationError> {
                 let mut entries = Vec::new();
-                eng.limits().reserve_exact(&mut entries, loose.levels().len())?;
+                eng.limits().reserve_exact(&mut entries, loose.len())?;
                 entries.extend(loose.entries());
                 Ok(entries)
             };

@@ -177,7 +177,7 @@ impl Engine {
     /// `OverBudget` if the scratch the read takes is refused, and the stop
     /// the read polls for; `f` is unchanged then.
     pub fn unnamed_nodes(&self, f: &mut Tdd) -> Result<Option<Unnamed>, OperationError> {
-        let Some(loose) = f.dirty.loose_levels() else {
+        let Some(loose) = f.dirty.loose() else {
             return Ok(None);
         };
         if f.is_zero() || f.is_one() || f.has_marginal_level() || !prune::below_root_walk_applies(f) {
@@ -205,7 +205,7 @@ impl Engine {
             unnamed.nodes += 1;
             unnamed.pairs += root.pair_count_at(k);
         }
-        for (_, held) in f.dirty.loose_levels().expect("listed above").entries() {
+        for (_, held) in f.dirty.loose().expect("listed above").entries() {
             let held = held.expect("counted above");
             unnamed.nodes += held.nodes;
             unnamed.pairs += held.pairs;

@@ -376,8 +376,8 @@ fn rebuild_along_spine(
     let fused = carried.take_fused();
     // The loose levels: those `f` had with their counts, each rebuilt level,
     // whose products of nodes the level above no longer names stay, and each
-    // internal child off the spine of a rebuilt level, whose nodes its
-    // rebuilt pairs may no longer name; these two uncounted.
+    // internal child of a rebuilt level, whose nodes its rebuilt pairs may
+    // no longer name; these two uncounted.
     let carried_loose = carried.take_loose();
     let mut loose = match canonical {
         true => {
@@ -388,16 +388,14 @@ fn rebuild_along_spine(
         false => carried_loose,
     };
     if let Some(loose) = loose.as_mut() {
-        let rebuilt = work.spine_internal.iter().flat_map(|&t| {
+        for &t in work.spine_internal.iter() {
+            loose.insert(t.0);
             let (left, right) = vtree.children(t);
-            let off_spine = [left, right]
-                .into_iter()
-                .filter(|&c| !vtree.node(c).is_leaf() && !work.on_spine[c.idx()]);
-            std::iter::once(t).chain(off_spine).map(|t| t.0)
-        });
-        match canonical {
-            true => loose.extend_unlisted(rebuilt),
-            false => rebuilt.for_each(|t| loose.insert(t)),
+            for c in [left, right] {
+                if !vtree.node(c).is_leaf() {
+                    loose.insert(c.0);
+                }
+            }
         }
     }
     let mut out = diagram::Assembly::from_levels(eng, vtree, levels, f_weights).finish_with(

@@ -493,7 +493,7 @@ fn sweep_twins(eng: &Engine, tdd: &mut Tdd, drop_unnamed: bool) -> Result<(), Op
 /// builds check it after each sweep.
 #[cfg(debug_assertions)]
 fn debug_assert_loose_listed(tdd: &Tdd) {
-    let Some(loose) = tdd.dirty.loose_levels() else {
+    let Some(loose) = tdd.dirty.loose() else {
         return;
     };
     if tdd.is_zero() {
