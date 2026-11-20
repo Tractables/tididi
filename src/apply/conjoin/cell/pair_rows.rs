@@ -525,6 +525,22 @@ where
                     continue;
                 }
                 let node_idx = &mut slab[..];
+                // A row of one f pair on one-pair columns has one candidate
+                // a live cell.
+                if ONE && n1 == 1 {
+                    let p = &f_pairs[0];
+                    let (lrow, rrow) = (left.row(p.left.0), right.row(p.right.0));
+                    while cells != 0 {
+                        let j = cells.trailing_zeros() as usize;
+                        cells &= cells - 1;
+                        let q = &g_flat[j];
+                        let lc = left.get_in_row(node_idx, lrow, q.left.0);
+                        let rc = right.get_in_row(node_idx, rrow, q.right.0);
+                        // Safety: the arenas have room for a node a column.
+                        unsafe { o.single(node_idx, row_base + j, lc, rc) };
+                    }
+                    continue;
+                }
                 while cells != 0 {
                     let j = col_at(cells.trailing_zeros() as usize);
                     cells &= cells - 1;
