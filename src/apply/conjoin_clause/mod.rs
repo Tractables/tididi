@@ -380,7 +380,11 @@ fn rebuild_along_spine(
     // rebuilt pairs may no longer name; these two uncounted.
     let carried_loose = carried.take_loose();
     let mut loose = match canonical {
-        true => Some(diagram::LooseLevels::default()),
+        true => {
+            let mut none = carried_loose.unwrap_or_default();
+            none.clear();
+            Some(none)
+        }
         false => carried_loose,
     };
     if let Some(loose) = loose.as_mut() {

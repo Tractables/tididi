@@ -500,10 +500,18 @@ pub(crate) struct LooseLevels {
     levels: Vec<u32>,
     /// Beside each of `levels`.
     unnamed: Vec<Option<crate::reduce::Unnamed>>,
-    /// Per level, its index in `levels` where listed, anything where not: a
-    /// level is listed when the index names it, so nothing is cleared.
+    /// Empty while no more than [`SEARCHED`] levels were listed since the
+    /// set was made, which are searched; then per level its index in
+    /// `levels` where listed, anything where not: a level is listed when the
+    /// index names it, so nothing is cleared, and a set emptied for reuse
+    /// keeps it.
     at: Vec<u32>,
 }
+
+/// The most levels [`LooseLevels`] searches before it indexes them: a
+/// negation or a small conjunction lists a few, and an index as long as the
+/// vtree for each would cost more than the operation.
+const SEARCHED: usize = 16;
 
 impl LooseLevels {
     /// `levels`, uncounted.
@@ -539,6 +547,9 @@ impl LooseLevels {
 
     #[inline]
     fn index(&self, level: u32) -> Option<usize> {
+        if self.at.is_empty() {
+            return self.levels.iter().position(|&t| t == level);
+        }
         let i = *self.at.get(level as usize)? as usize;
         (self.levels.get(i) == Some(&level)).then_some(i)
     }
@@ -566,19 +577,34 @@ impl LooseLevels {
             self.unnamed[i] = unnamed;
             return;
         }
-        if self.at.len() <= level as usize {
-            self.at.resize(level as usize + 1, 0);
-        }
-        self.at[level as usize] = self.levels.len() as u32;
         self.levels.push(level);
         self.unnamed.push(unnamed);
+        let unindexed = match self.at.is_empty() {
+            true if self.levels.len() <= SEARCHED => return,
+            true => 0,
+            false => self.levels.len() - 1,
+        };
+        for (i, &t) in self.levels.iter().enumerate().skip(unindexed) {
+            if self.at.len() <= t as usize {
+                self.at.resize(t as usize + 1, 0);
+            }
+            self.at[t as usize] = i as u32;
+        }
+    }
+
+    /// List no level, keeping the index for the levels listed next.
+    pub(crate) fn clear(&mut self) {
+        self.levels.clear();
+        self.unnamed.clear();
     }
 
     pub(crate) fn remove(&mut self, level: u32) {
         if let Some(i) = self.index(level) {
             self.levels.swap_remove(i);
             self.unnamed.swap_remove(i);
-            if let Some(&moved) = self.levels.get(i) {
+            if let Some(&moved) = self.levels.get(i)
+                && !self.at.is_empty()
+            {
                 self.at[moved as usize] = i as u32;
             }
         }
@@ -853,7 +879,16 @@ impl Dirty {
     /// listed twice is listed once.
     #[inline]
     pub(crate) fn set_loose(&mut self, levels: Option<Vec<u32>>) {
-        self.loose = levels.map(LooseLevels::of);
+        let Some(levels) = levels else {
+            self.loose = None;
+            return;
+        };
+        let mut loose = self.loose.take().unwrap_or_default();
+        loose.clear();
+        for t in levels {
+            loose.insert(t);
+        }
+        self.loose = Some(loose);
     }
 
     /// [`set_loose`](Self::set_loose) for loose levels kept as
