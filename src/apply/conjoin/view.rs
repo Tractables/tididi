@@ -379,6 +379,9 @@ impl View {
     /// and 1 for `Pos` and `Neg`: each reader a renumbered copy of its own
     /// level.
     fn renumber(&mut self, lim: &Limits, tdd: &Tdd, plan: &Plan, tops: &[VtreeIdx]) -> Result<(), OperationError> {
+        if tops.is_empty() {
+            return Ok(());
+        }
         let vtree = Arc::clone(&self.vtree);
         for (parent, moving) in chain_readers(lim, &vtree, tops)? {
             let (left, right) = vtree.children(parent);
