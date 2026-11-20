@@ -35,8 +35,9 @@ use crate::diagram::boundary_marginal_levels;
 
 /// Compact every boundary store to the slots its parent references, merging
 /// equal-valued survivors, and rewrite the parent's refs through the composed
-/// remap. Returns the marginal levels where a value merge fired; their
-/// parents are invalidated ([`Tdd::reindex_level`]).
+/// remap. Returns the marginal levels where a value merge fired: such a merge
+/// can make two parent nodes content-equal, so the content-twin scan restricts
+/// itself to their boundary parents.
 ///
 /// Precondition: the diagram is in post-tagger form (module doc).
 ///

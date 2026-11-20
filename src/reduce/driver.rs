@@ -242,13 +242,27 @@ impl<'a> Reduction<'a> {
         Ok(())
     }
 
-    /// The slot prune, and the contraction each value merge owes at the
-    /// merged level's parent, until a prune merges no values.
+    /// The slot prune, and the passes each value merge owes at the merged
+    /// level's parent, until a prune merges no values: the merge repeats
+    /// references there, which can make fusion groups and leaf twins at the
+    /// parent and twins at its other child. Each merged level is also listed
+    /// for the content-twin scan.
     fn prune_slots(&mut self) -> Result<(), OperationError> {
-        while !prune_value_slots(self.eng, self.tdd)?.is_empty() {
+        loop {
+            let merged = prune_value_slots(self.eng, self.tdd)?;
+            if merged.is_empty() {
+                return Ok(());
+            }
+            let vtree = std::sync::Arc::clone(&self.tdd.vtree);
+            let parents = merged.iter().filter_map(|&v| vtree.node(VtreeIdx(v)).parent()).map(|p| p.0);
+            for p in parents.clone() {
+                self.tdd.dirty.forget_fused(p);
+            }
+            self.tdd.dirty.requeue(Pass::Contract, parents.clone());
+            self.tdd.dirty.requeue(Pass::LeafContract, parents);
+            self.tdd.dirty.requeue(Pass::ContentTwin, merged);
             self.contract()?;
         }
-        Ok(())
     }
 
     /// Always scan small or weighted marginal diagrams. Large unweighted

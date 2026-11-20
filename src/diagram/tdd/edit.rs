@@ -24,10 +24,9 @@ impl Tdd {
     /// values unless `merge` is off on a bounded column
     /// ([`MarginalStorage::compact`]), and redirect its references, as one
     /// edit: `remap` is filled with each referenced slot's new one, and the
-    /// number merged is returned. This preserves every referenced value. A
-    /// merge repeats references at the parent, which can make fusion groups
-    /// there, twins at its other child and content-equal nodes, so the
-    /// parent is invalidated; the loose levels stay as they were.
+    /// number merged is returned. This preserves every referenced value; the
+    /// caller schedules any extra content-twin work caused by equal values
+    /// acquiring the same slot.
     ///
     /// # Errors
     ///
@@ -50,13 +49,6 @@ impl Tdd {
             .compact(referenced, remap, plan);
         if let Some(refs) = refs {
             finish_refs_remap(self, refs, remap);
-        }
-        if merged > 0
-            && let Some(parent) = self.vtree.node(v).parent()
-        {
-            let loose = self.dirty.take_loose();
-            self.invalidate(parent);
-            self.dirty.set_loose(loose);
         }
         Ok(merged)
     }
