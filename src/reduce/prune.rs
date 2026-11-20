@@ -438,8 +438,14 @@ pub(super) fn settle_reads_all(tdd: &Tdd, listed: &[u32]) -> bool {
         .filter_map(|&t| tdd.vtree.node(VtreeIdx(t)).parent())
         .map(bound)
         .sum();
-    let all: usize = (0..tdd.vtree.num_nodes() as u32).map(|t| bound(VtreeIdx(t))).sum();
-    read >= all
+    let mut left = read;
+    (0..tdd.vtree.num_nodes() as u32).all(|t| match left.checked_sub(bound(VtreeIdx(t))) {
+        Some(rest) => {
+            left = rest;
+            true
+        }
+        None => false,
+    })
 }
 
 /// A level the walk must enter whatever it finds: a parent of a loose
