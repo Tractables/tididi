@@ -164,8 +164,6 @@ pub(super) struct WholeRows<'a, 'c, L, R> {
     /// The row loop's `DENSE`: no row is skipped by its alive masks.
     pub(super) dense: bool,
     pub(super) ctx: &'a CellCtx<'c>,
-    pub(super) g_level: &'a TddLevel,
-    pub(super) g_pairs_scratch: &'a mut Vec<ChildPair>,
     /// The slab; on a grid not open whole ([`OPEN_GRID_MAX_CELLS`]), the
     /// action opens each of its rows as the row loop would.
     pub(super) node_idx: &'a mut Vec<u32>,
@@ -361,8 +359,6 @@ where
                 views: (left_view, right_view),
                 dense: DENSE,
                 ctx,
-                g_level,
-                g_pairs_scratch: &mut *g_pairs_scratch,
                 node_idx: &mut *slab,
                 whole_grid,
                 left,
