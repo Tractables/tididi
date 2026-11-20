@@ -10,7 +10,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, EncodedNode, LevelCounts, NodeIdx, Tdd, TddLevel, TddNodeId, LEAF_WIDTH, ZERO};
+use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, EncodedNode, LevelCounts, NodeIdx, Tdd, TddLevel, TddNodeId, LEAF_WIDTH, ONE_LEAF_IDX, ZERO};
 use crate::value::{CountRead, CountVec};
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
@@ -154,8 +154,12 @@ pub fn load_tdd_binary(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd
 ///
 /// Nothing in the file is trusted before it is checked: the magic, version and
 /// byte-order mark, then the checksum over all the bytes, then every count
-/// against the bytes left to hold it and every pair side against its child
-/// level. The reader validates the encoding, not semantic determinism; it
+/// against the bytes left to hold it, every pair side against its child
+/// level, every leaf child of a level against being named both as `One` and
+/// as a literal, and the output against the root level. These are what
+/// [`TddBuilder::finish`](crate::diagram::TddBuilder::finish) checks of the
+/// levels, and are checked while the levels are read, not again after.
+/// The reader validates the encoding, not semantic determinism; it
 /// relies on determinism only to refuse more than one pair in a level over
 /// two one-node levels, whose pairs take no bits. Unlike the text reader, it
 /// does not look for a pair repeated in a level: it trusts the levels, as a
@@ -838,15 +842,30 @@ fn side_pair(left: u32, right: u32) -> ChildPair {
     ChildPair::new(EncodedChildRef::from_raw(left), EncodedChildRef::from_raw(right))
 }
 
-/// The largest left and right sides of a level's pairs, inline and in its
-/// arena.
-fn largest_sides(nodes: &[EncodedNode], arena: &[ChildPair]) -> (u32, u32) {
-    let zero = side_pair(0, 0);
-    let inline = nodes.iter().fold((0, 0), |(l, r), node| {
-        let (pair, _) = node.inline_or(zero);
-        (pair.left.raw().max(l), pair.right.raw().max(r))
-    });
-    arena.iter().fold(inline, |(l, r), pair| (pair.left.raw().max(l), pair.right.raw().max(r)))
+/// What the pairs of a level name on one side.
+#[derive(Clone, Copy, Default)]
+struct SideNamed {
+    largest: u32,
+    /// Bit `k mod 32` for each entry `k` named; left empty unless asked for.
+    named: u32,
+}
+
+impl SideNamed {
+    #[inline(always)]
+    fn add<const NAMED: bool>(self, side: EncodedChildRef) -> Self {
+        let named = if NAMED { self.named | 1u32.wrapping_shl(side.raw()) } else { 0 };
+        Self { largest: self.largest.max(side.raw()), named }
+    }
+}
+
+/// What the left and right sides of a level's pairs name, inline and in its
+/// arena: the largest entry, and with `NAMED` the mask of entries.
+fn sides_named<const NAMED: bool>(nodes: &[EncodedNode], arena: &[ChildPair]) -> [SideNamed; 2] {
+    // A multi-pair node reads as a pair the arena holds, so as no new entry.
+    let filler = arena.first().copied().unwrap_or(side_pair(0, 0));
+    let add = |[l, r]: [SideNamed; 2], pair: &ChildPair| [l.add::<NAMED>(pair.left), r.add::<NAMED>(pair.right)];
+    let inline = nodes.iter().fold([SideNamed::default(); 2], |sides, node| add(sides, &node.inline_or(filler).0));
+    arena.iter().fold(inline, add)
 }
 
 /// Check the stored vtree header in `body` against `vtree` and return `vtree`'s
@@ -896,7 +915,8 @@ fn parse_body(with_trailer: &[u8], vtree: &Arc<Vtree>, with_counts: bool) -> Res
     if output != 0 {
         for (k, &t) in order.iter().enumerate() {
             let VtreeNode::Internal { left, right, .. } = *vtree.node(t) else { continue };
-            let level = read_level(&mut body, width[left.idx()], width[right.idx()]).map_err(|e| match e {
+            let leaves = [vtree.node(left).is_leaf(), vtree.node(right).is_leaf()];
+            let level = read_level(&mut body, width[left.idx()], width[right.idx()], leaves).map_err(|e| match e {
                 IoError::Format(m) => IoError::Format(format!("{m} (the level of vtree node {k} in postorder)")),
                 other => other,
             })?;
@@ -920,8 +940,7 @@ fn parse_body(with_trailer: &[u8], vtree: &Arc<Vtree>, with_counts: bool) -> Res
         }
     };
     let mut tdd = crate::diagram::TddBuilder::from_levels(Arc::clone(vtree), levels, None)
-        .finish_trusting_pairs(TddNodeId { vtree: root, local })
-        .map_err(|e| malformed(format!("the records do not form a diagram: {e}")))?;
+        .finish_validated(TddNodeId { vtree: root, local });
     if let Some(counts) = counts {
         tdd.levels.keep_counts(counts);
     }
@@ -1009,8 +1028,9 @@ fn read_multi_lengths<'a>(
 }
 
 /// One internal level's section, its pair sides checked against the widths
-/// of its child levels.
-fn read_level(body: &mut Body<'_>, left_width: usize, right_width: usize) -> Result<TddLevel, IoError> {
+/// of its child levels, and each child that `leaves` marks as a leaf named
+/// in one form, as `One` or as literals.
+fn read_level(body: &mut Body<'_>, left_width: usize, right_width: usize, leaves: [bool; 2]) -> Result<TddLevel, IoError> {
     let (left_bits, right_bits) = (index_bits(left_width), index_bits(right_width));
     let nodes = body.count("node count", NodeIdx::MAX_LIVE as u64)?;
     let multi = body.count("multi-pair node count", nodes as u64)?;
@@ -1071,11 +1091,20 @@ fn read_level(body: &mut Body<'_>, left_width: usize, right_width: usize) -> Res
     if !reader.at.is_multiple_of(8) && stream[reader.at / 8] >> (reader.at % 8) != 0 {
         return Err(malformed("the stream's padding bits are not zero"));
     }
-    let (left_max, right_max) = largest_sides(level.nodes.stored(), level.pairs.stored().unwrap_or_default());
-    if pairs > 0 && (left_max as usize >= left_width || right_max as usize >= right_width) {
+    let (nodes, arena) = (level.nodes.stored(), level.pairs.stored().unwrap_or_default());
+    let [left, right] = match leaves {
+        [false, false] => sides_named::<false>(nodes, arena),
+        _ => sides_named::<true>(nodes, arena),
+    };
+    if pairs > 0 && (left.largest as usize >= left_width || right.largest as usize >= right_width) {
         return Err(malformed(format!(
             "a pair side is past its child level (left {left_width} nodes, right {right_width})"
         )));
+    }
+    // Below `LEAF_WIDTH`, a leaf side is one bit of its mask.
+    let one = 1u32 << ONE_LEAF_IDX.0;
+    if [left, right].iter().zip(leaves).any(|(side, leaf)| leaf && side.named & one != 0 && side.named & !one != 0) {
+        return Err(malformed("a pair names a leaf child as One and another pair names it as a literal"));
     }
     Ok(level)
 }

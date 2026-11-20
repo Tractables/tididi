@@ -433,15 +433,27 @@ impl TddBuilder {
     }
 
     /// [`finish`](Self::finish) without the repeated-pair check, for levels
-    /// the library wrote or derived from a valid diagram.
-    // Out of line: inlined into the binary reader, its one caller there, it
-    // pulled the decode functions in with it, and a query reading its
-    // diagrams from binary files cost about 1.5% more.
-    #[inline(never)]
+    /// the library derived from a valid diagram.
     pub(crate) fn finish_trusting_pairs(self, output: TddNodeId) -> Result<Tdd, TddBuildError> {
         self.check(output)?;
         let dirty = self.seed_worklists(Default::default(), None, None).expect("untracked worklists cannot be refused");
         Ok(self.seat(output, dirty, None))
+    }
+
+    /// [`finish_trusting_pairs`](Self::finish_trusting_pairs) for levels
+    /// whose caller has established what [`check_levels`] checks, as the
+    /// binary reader does while it reads them.
+    // Out of line: inlined into the binary reader, its one caller, it pulled
+    // the decode functions in with it, and a query reading its diagrams from
+    // binary files cost about 1.5% more.
+    #[inline(never)]
+    pub(crate) fn finish_validated(self, output: TddNodeId) -> Tdd {
+        debug_assert!(
+            self.check(output).is_ok(),
+            "the caller of a validated finish left a violation the checked one refuses",
+        );
+        let dirty = self.seed_worklists(Default::default(), None, None).expect("untracked worklists cannot be refused");
+        self.seat(output, dirty, None)
     }
 
     /// Finish without the storage validation performed by [`finish`](Self::finish).

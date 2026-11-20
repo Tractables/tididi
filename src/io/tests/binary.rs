@@ -248,6 +248,21 @@ fn single_pair_nodes_are_read_or_refused() {
 }
 
 #[test]
+fn a_leaf_named_both_as_one_and_as_a_literal_is_refused() {
+    let vtree = Arc::new(Vtree::balanced(2));
+    // Leaf indices: 0 is One, 1 the variable, 2 its negation. Two
+    // single-pair nodes, or one node of two pairs in the plain code.
+    for (counts, multi, fields, what) in [
+        ([2, 0, 2], &[][..], &[(0, 2), (1, 2), (1, 2), (1, 2)][..], "left side, single-pair nodes"),
+        ([2, 0, 2], &[], &[(1, 2), (0, 2), (1, 2), (2, 2)], "right side, single-pair nodes"),
+        ([1, 1, 2], &[1, 0], &[(0, 2), (0, 2), (1, 2), (2, 2), (1, 2)], "left side, one node"),
+        ([1, 1, 2], &[1, 0], &[(0, 2), (1, 2), (1, 2), (2, 2), (0, 2)], "right side, one node"),
+    ] {
+        refused(&two_leaf_level(&counts, multi, fields), &vtree, what);
+    }
+}
+
+#[test]
 fn a_level_over_one_node_levels_holds_one_pair() {
     // x1 and x2 and x3 and x4 over ((x1 x2) (x3 x4)): each child of the root
     // has one node, so the root's one pair, (0, 0), takes no bits.
