@@ -279,7 +279,7 @@ pub(super) fn level_marginal_is_constant_true(level: &TddLevel, subvars: u32) ->
 ///
 /// `F_IS_CARRIER = true`: `g` is the identity operand, `f` the carrier;
 /// `false`: the reverse.
-fn apply_identity_fast_path<const F_IS_CARRIER: bool>(
+pub(super) fn apply_identity_fast_path<const F_IS_CARRIER: bool>(
     eng: &Engine,
     shape: LevelShape,
     carrier: &mut Held<'_>,

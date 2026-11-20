@@ -139,7 +139,7 @@ pub(super) fn conjoin_projections_kept<'a>(eng: &Engine, f: Cow<'a, Tdd>, g: Cow
             Ok(LeafSets::Union(_)) => return conjoin_borrowing(eng, f, g),
         };
         let mut out = match into {
-            None => conjoin_kept(eng, f, g, Operands::default(), Operands::default(), Operands::default())?,
+            None => conjoin_kept(eng, f, g, Operands::default(), Operands::default(), Operands::default(), Operands::default())?,
             Some(into) => conjoin_onto(eng, f, |v| v, g, |v| v, &into)
                 .map_err(|r| AndRefused { error: extend::operation_error(r.error), f: r.f, g: r.g })?,
         };

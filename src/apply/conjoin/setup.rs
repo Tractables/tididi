@@ -398,6 +398,12 @@ pub(super) struct ApplyRun<'a, 'r> {
     /// any level of the operands or of the output may be marginal, without
     /// a walk over the levels.
     pub(super) built_marginal: bool,
+    /// Whether the sweep built a level with no node: the conjunction is
+    /// false, and the sweep stopped there.
+    pub(super) dead: bool,
+    /// Whether an operand is read through a view that passes through some
+    /// node.
+    pub(super) passing: bool,
     /// Each operand's free levels: internal nodes no variable it was placed
     /// with is under, whose levels are left empty and read as the constant
     /// true level, one node true on both sides, they stand for. The result
@@ -646,7 +652,7 @@ struct Snapshot {
 // Out of line, as is `survey_listed`: inlined, the code of its loop moved
 // with unrelated edits to `apply_and_setup`.
 #[inline(never)]
-fn survey<'r, L: Levels + ?Sized>(
+fn survey<'r, L: Levels + ?Sized, const PASSING: bool>(
     eng: &Engine,
     vtree: &'r Vtree,
     ops: Operands<&L>,
@@ -698,7 +704,10 @@ fn survey<'r, L: Levels + ?Sized>(
         }
         let (w1, w2) = match vtree.node(t).is_leaf() {
             true => (LEAF_WIDTH, LEAF_WIDTH),
-            false => (fl.slot_count(), gl.slot_count()),
+            false => (
+                if PASSING { f.width_at(t.idx()) } else { fl.slot_count() },
+                if PASSING { g.width_at(t.idx()) } else { gl.slot_count() },
+            ),
         };
         f_widths[t.idx()] = w1;
         g_widths[t.idx()] = w2;
@@ -765,8 +774,9 @@ fn survey<'r, L: Levels + ?Sized>(
                 !f.level_at(at).is_marginal() && !g.level_at(at).is_marginal(),
                 "an operand with a free level has a marginal level at {at}",
             );
-            let w1 = if free_f { 1 } else { f.level_at(at).slot_count() };
-            let w2 = if free_g { 1 } else { g.level_at(at).slot_count() };
+            let width = |l: &L| if PASSING { l.width_at(at) } else { l.level_at(at).slot_count() };
+            let w1 = if free_f { 1 } else { width(f) };
+            let w2 = if free_g { 1 } else { width(g) };
             f_widths[at] = w1;
             g_widths[at] = w2;
             free_nodes = free_nodes.saturating_add(cells(w1, w2, 0));
@@ -1051,8 +1061,9 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
         cone,
     ) = match (listed, ops.f.own_levels(), ops.g.own_levels()) {
         (Some(listed), ..) => survey_listed(eng, vtree, ops, free, listed, min_grid, out.0, cone)?,
-        (None, Some(f), Some(g)) => survey(eng, vtree, Operands { f, g }, free, min_grid, out, cone)?,
-        (None, ..) => survey(eng, vtree, ops, free, min_grid, out, cone)?,
+        (None, Some(f), Some(g)) => survey::<_, false>(eng, vtree, Operands { f, g }, free, min_grid, out, cone)?,
+        (None, ..) if ops.f.passes_any() || ops.g.passes_any() => survey::<_, true>(eng, vtree, ops, free, min_grid, out, cone)?,
+        (None, ..) => survey::<_, false>(eng, vtree, ops, free, min_grid, out, cone)?,
     };
     let cone = Cone {
         constant: found_free,
@@ -1095,6 +1106,8 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
         stopped: false,
         plain: false,
         built_marginal: false,
+        dead: false,
+        passing: false,
         cone,
     })
 }

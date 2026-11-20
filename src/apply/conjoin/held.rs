@@ -32,6 +32,9 @@ enum Hold<'a> {
 pub(crate) struct Held<'a> {
     tdd: Hold<'a>,
     view: Option<&'a mut View>,
+    /// Empty, or by node of the view's vtree: whether the view passes
+    /// through it ([`Held::passes`]).
+    passes: &'a [bool],
 }
 
 impl<'s> Held<'s> {
@@ -40,23 +43,30 @@ impl<'s> Held<'s> {
     /// vtree of `view` where there is one, else on its own.
     #[inline]
     pub(crate) fn of(tdd: &'s mut Cow<'_, Tdd>, view: Option<&'s mut View>) -> Self {
+        Self::passing(tdd, view, &[])
+    }
+
+    /// [`Held::of`] through a view of [`View::passing`] that passes through
+    /// the nodes `passes` marks, or through none where `passes` is empty.
+    #[inline]
+    pub(crate) fn passing(tdd: &'s mut Cow<'_, Tdd>, view: Option<&'s mut View>, passes: &'s [bool]) -> Self {
         let tdd = match tdd {
             Cow::Owned(tdd) => Hold::Owned(tdd),
             Cow::Borrowed(tdd) => Hold::Borrowed(tdd),
         };
-        Held { tdd, view }
+        Held { tdd, view, passes }
     }
 
     /// A borrowed operand on its own vtree.
     #[inline]
     pub(crate) fn reading(tdd: &'s Tdd) -> Self {
-        Held { tdd: Hold::Borrowed(tdd), view: None }
+        Held { tdd: Hold::Borrowed(tdd), view: None, passes: &[] }
     }
 
     /// An owned operand on its own vtree.
     #[inline]
     pub(crate) fn owning(tdd: &'s mut Tdd) -> Self {
-        Held { tdd: Hold::Owned(tdd), view: None }
+        Held { tdd: Hold::Owned(tdd), view: None, passes: &[] }
     }
 }
 
@@ -84,6 +94,47 @@ impl Held<'_> {
             None => Some(&self.tdd().levels),
             Some(_) => None,
         }
+    }
+
+    /// Whether the operand passes through `t`: its leaves are under one
+    /// child of `t` and the other child has some, and `t` reads it as the
+    /// identity over that child. [`Held::level`] gives the level of the node
+    /// the chain carries, which has the width of the identity but not its
+    /// pairs.
+    #[inline(always)]
+    pub(crate) fn passes(&self, t: usize) -> bool {
+        self.passes.get(t).copied().unwrap_or(false)
+    }
+
+    /// Whether the view passes through some node.
+    #[inline]
+    pub(crate) fn passes_any(&self) -> bool {
+        !self.passes.is_empty()
+    }
+
+    /// The operand's output where `t` passes to `c` and `c` is the operand's
+    /// top ([`View::top_output`]).
+    #[inline]
+    pub(crate) fn pinned(&self, t: usize, c: usize) -> Option<u32> {
+        match (&self.view, self.passes(c)) {
+            (Some(view), false) => view.top_output(self.tdd(), t),
+            _ => None,
+        }
+    }
+
+    /// [`View::literals`] where the operand passes through `t`.
+    #[inline]
+    pub(crate) fn literals(&self, t: usize) -> Option<u8> {
+        match (&self.view, self.passes(t)) {
+            (Some(view), true) => view.literals(self.tdd(), t),
+            _ => None,
+        }
+    }
+
+    /// Whether the operand has no variable under `t` of a view's vtree.
+    #[inline]
+    pub(crate) fn is_free(&self, t: usize) -> bool {
+        self.view.as_deref().is_some_and(|view| view.is_free(t))
     }
 
     /// The operand's level at node `t` of the sweep's vtree.
@@ -210,7 +261,7 @@ impl Held<'_> {
     ///
     /// [`OperationError::OverBudget`] when the level cannot grow.
     pub(super) fn pass_through(&mut self, lim: &Limits, t: VtreeIdx) -> Result<(), OperationError> {
-        let Held { tdd, view } = self;
+        let Held { tdd, view, .. } = self;
         let tdd: &Tdd = match tdd {
             Hold::Owned(tdd) => tdd,
             Hold::Borrowed(tdd) => tdd,
@@ -316,6 +367,13 @@ pub(super) struct Here<'a> {
 /// does not test for one at each level.
 pub(crate) trait Levels {
     fn level_at(&self, t: usize) -> &TddLevel;
+
+    /// The width of the internal level at `t`, where it is not the level's
+    /// width only if [`Held::passes`] at `t`.
+    #[inline(always)]
+    fn width_at(&self, t: usize) -> usize {
+        self.level_at(t).slot_count()
+    }
 }
 
 impl Levels for [TddLevel] {
@@ -329,6 +387,14 @@ impl Levels for Held<'_> {
     #[inline(always)]
     fn level_at(&self, t: usize) -> &TddLevel {
         self.level(t)
+    }
+
+    #[inline(always)]
+    fn width_at(&self, t: usize) -> usize {
+        match &self.view {
+            Some(view) if self.passes(t) => view.pass_width(self.tdd(), t),
+            _ => self.level(t).slot_count(),
+        }
     }
 }
 

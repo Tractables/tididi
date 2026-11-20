@@ -155,6 +155,106 @@ impl View {
         }
     }
 
+    /// The view of `tdd` on `into` for a sweep that builds the levels at its
+    /// pass-throughs itself: `at` holds the slot of each node `plan` gives
+    /// the operand's variables, a pass-through's naming the level of the
+    /// node its chain carries, and `passes` marks the pass-throughs
+    /// ([`Held::passes`](super::held::Held::passes)). No level is built.
+    /// Refused, `at` comes back cleared.
+    pub(crate) fn passing(
+        eng: &Engine,
+        tdd: &Tdd,
+        into: &Arc<Vtree>,
+        plan: &Plan,
+        at: Vec<Slot>,
+        passes: &[bool],
+    ) -> Result<View, (OperationError, Vec<Slot>)> {
+        let mut view = View {
+            vtree: Arc::clone(into),
+            at,
+            built: Vec::new(),
+            by_node: false,
+            used: 0,
+            empty: TddLevel::new(),
+            output: TddNodeId { vtree: into.root(), local: tdd.output.local },
+            dirty: Dirty::default(),
+            tops: Vec::new(),
+            reached: Vec::new(),
+        };
+        if passes[into.root().idx()] {
+            view.output.local = crate::diagram::NodeIdx(0);
+        }
+        // The tops of the chains over a leaf read as `Pos` and `Neg`, whose
+        // levels hold a node per literal whether the reader names it or not.
+        let mut tops = Vec::new();
+        let one = 1 << crate::diagram::ONE_LEAF_IDX.0;
+        for &t in plan.cone_nodes() {
+            if passes[t.idx()]
+                && view.literals(tdd, t.idx()).is_some_and(|rows| rows & one == 0)
+                && into.node(t).parent().is_none_or(|p| !passes[p.idx()])
+                && let Err(error) = eng.limits().try_push(&mut tops, t)
+            {
+                return Err((error, view.release(plan).0));
+            }
+        }
+        tops.sort_unstable();
+        match copied_dirty(eng, &tdd.dirty, tdd.vtree(), into, plan, &tops) {
+            Ok(dirty) => {
+                view.dirty = dirty;
+                Ok(view)
+            }
+            Err(error) => Err((error, view.release(plan).0)),
+        }
+    }
+
+    /// The width of the operand at `t`, a node it passes through: one above
+    /// its top, where it is read as its output only, a leaf's labels where
+    /// `t` passes over a leaf.
+    #[inline(always)]
+    pub(crate) fn pass_width(&self, tdd: &Tdd, t: usize) -> usize {
+        match self.at[t] {
+            Slot::Own(s) => match s as usize {
+                s if s == tdd.vtree().root().idx() => 1,
+                s if s < tdd.vtree().num_leaf_nodes() => crate::diagram::LEAF_WIDTH,
+                s => tdd.levels[s].slot_count(),
+            },
+            _ => self.level(tdd, t).slot_count(),
+        }
+    }
+
+    /// The operand's output, where `t` passes to the operand's top: `t`
+    /// reads the output as its one node.
+    #[inline]
+    pub(crate) fn top_output(&self, tdd: &Tdd, t: usize) -> Option<u32> {
+        let top = tdd.vtree().root().idx() as u32;
+        matches!(self.at[t], Slot::Own(s) if s == top).then_some(tdd.output.local.0)
+    }
+
+    /// Where `t`, a node the operand passes through, passes over a leaf
+    /// below the operand's top, the labels of the leaf that reach a node,
+    /// one bit each: those the level that reads the leaf names, the two
+    /// literals or the One label alone, as a placement's chain holds them.
+    pub(crate) fn literals(&self, tdd: &Tdd, t: usize) -> Option<u8> {
+        let source = tdd.vtree();
+        let Slot::Own(x) = self.at[t] else { return None };
+        let x = VtreeIdx(x);
+        if x.idx() >= source.num_leaf_nodes() || x == source.root() {
+            return None;
+        }
+        let reader = source.node(x).parent().expect("a leaf below the top has a parent");
+        let side = if source.children(reader).0 == x { ChildSide::Left } else { ChildSide::Right };
+        Some(match first_ref(&tdd.levels[reader.idx()], side) {
+            Some(label) if label == crate::diagram::ONE_LEAF_IDX => 1 << crate::diagram::ONE_LEAF_IDX.0,
+            _ => 1 << crate::diagram::POS_LEAF_IDX.0 | 1 << crate::diagram::NEG_LEAF_IDX.0,
+        })
+    }
+
+    /// Whether the operand has no variable under `t`.
+    #[inline]
+    pub(crate) fn is_free(&self, t: usize) -> bool {
+        matches!(self.at[t], Slot::Free)
+    }
+
     /// Where the view finds each level, the levels it built, the output and
     /// the sorted tops of the chains over a leaf read as `Pos` and `Neg`.
     pub(crate) fn into_parts(self) -> (Vec<Slot>, Vec<TddLevel>, TddNodeId, Vec<VtreeIdx>) {

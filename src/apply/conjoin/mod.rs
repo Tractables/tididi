@@ -453,7 +453,8 @@ pub struct AndOntoRefused<'a> {
 /// [`Engine::and_restoring`](crate::Engine::and_restoring) after its entry
 /// and vtree check, for operands whose free levels ([`ApplyRun::cone`]) are
 /// in `free`: refused, both come back as they were given, every free level
-/// built. An operand with a view has its plan in `plans`.
+/// built. An operand with a view has its plan in `plans`, and the nodes its
+/// view passes through in `passes` ([`Held::passing`]).
 #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
 fn conjoin_kept<'a>(
     eng: &Engine,
@@ -462,6 +463,7 @@ fn conjoin_kept<'a>(
     mut free: Operands<VtreeMask<'_>>,
     mut views: Operands<Option<&mut View>>,
     plans: Operands<Option<&Plan>>,
+    mut passes: Operands<&[bool]>,
 ) -> Result<Tdd, AndRefused<'a>> {
     // Whether a level is marginal, and the widest level, in one pass.
     let scan = |t: &Tdd| t.levels.iter().fold((false, 0), |(marginal, width), l| {
@@ -483,6 +485,7 @@ fn conjoin_kept<'a>(
     let swapped = narrower_right(&mut f, &mut g, &mut free, widths, vtree.as_deref());
     if swapped {
         std::mem::swap(&mut views.f, &mut views.g);
+        std::mem::swap(&mut passes.f, &mut passes.g);
     }
     // A viewed operand was not placed, and has no free level of its own.
     let placed_free = Operands {
@@ -534,7 +537,7 @@ fn conjoin_kept<'a>(
     };
     let (f_known, g_known) = (known(&f, placed_free.f), known(&g, placed_free.g));
     let conjoined = {
-        let (mut f, mut g) = (Held::of(&mut f, views.f), Held::of(&mut g, views.g));
+        let (mut f, mut g) = (Held::passing(&mut f, views.f, passes.f), Held::passing(&mut g, views.g, passes.g));
         drive::apply_and_restoring(eng, &mut f, &mut g, free)
     };
     match conjoined {
@@ -770,6 +773,7 @@ pub(crate) fn conjoin_onto_as<'a>(
             free,
             Operands { f: f_view.as_mut(), g: g_view.as_mut() },
             Operands { f: f_plan.as_ref(), g: g_plan.as_ref() },
+            Operands::default(),
         )
             .map_err(|r| AndOntoRefused { error: r.error.into(), f: back(r.f, f_given), g: back(r.g, g_given) }),
     }
@@ -858,7 +862,7 @@ impl crate::Engine {
         if !Arc::ptr_eq(f.vtree(), g.vtree()) || f.vtree().num_nodes() == 0 {
             return projected::conjoin_projections_kept(self, f, g);
         }
-        conjoin_kept(self, f, g, Operands::default(), Operands::default(), Operands::default()).map(|mut out| {
+        conjoin_kept(self, f, g, Operands::default(), Operands::default(), Operands::default(), Operands::default()).map(|mut out| {
             crate::reduce::close_constant(self, &mut out);
             out
         })
