@@ -242,7 +242,7 @@ prove that an arbitrary circuit's nodes are disjoint (row 1).
 | 5 | Marginality is permanent and downward-closed: a marginal level never becomes structural, and its descendants are marginal or leaves whose contribution is absorbed. | [`marginal::marginalize_levels`] | — | [`reduce`]'s demarginalization guard |
 | 6 | Every reference into a marginal child decodes through [`ChildDecoder`]; no site outside `diagram/` reads the raw bits. | the marginal-reference encoding | — | review |
 | 7 | Inline discipline: no value slot referenced from a structural parent holds an inline-eligible value. | the reference tagger, then the slot prune | apply's emit, before tagging | `test_helpers::check::marginal::check_inline_discipline` |
-| 8 | Pair-fusion saturation: no eligible same-structural-child group remains (exact arithmetic; weighted leaf sums must fit the pinned column). | [`marginalize_levels`]'s fusion sweep | a later twin merge | `test_helpers::check::marginal::check_marginal_canonical_form` |
+| 8 | Pair-fusion saturation: no eligible same-structural-child group remains (exact arithmetic; at a weighted leaf or region the sum must already be in the column, where fusion mints no value). | [`marginalize_levels`]'s fusion sweep | a later twin merge | `test_helpers::check::marginal::check_marginal_canonical_form` |
 | 9 | Twin canonicality, marginal diagrams: no two nodes at one level have equal pair multisets. | twin contraction | pair fusion | `test_helpers::check::marginal::check_marginal_canonical_form` |
 | 10 | Value-slot uniqueness: at a marginal level all stored values are pairwise distinct. | mint-time dedup, then the slot prune | apply's emit | `test_helpers::check::marginal::check_slot_count_uniqueness` |
 | 11 | Weighted leaf column pin: a weight-marginal leaf's three slots are an immutable, label-ordered cache of `Weights::leaf_val`. No pass compacts, erases, reorders or appends to the column, and every reader re-derives it through `diagram::leaf_column_vals`. | `marginal::marginalize_leaf_weighted` | — | `test_helpers::check::marginal::check_leaf_columns_pinned` |
@@ -252,8 +252,11 @@ Rows 1 and 2 hold over every stored node, dead ones included: `trim` reads a lev
 structural form also requires that no twins remain, which no row above
 covers: rows 3 and 9 forbid duplicate pair lists, while twins are nodes their
 parents use identically. `test_helpers::check::check_canonicity` decides
-canonical structural form: rows 3 and 4, no twins, and no leaf child read
-alike through both literals at every node.
+canonical form: rows 3 and 4, no twins, and no leaf child read alike through
+both literals at every node; on a diagram with a summed-out level, rows 7 to
+10 and 12 in place of row 3, which does not hold there (two pairs over
+disjoint children and one summed value compute what one pair over their
+disjunction computes, and no pass merges the two).
 
 A diagram an operation returns without a full reduction may hold unreachable
 nodes, duplicates and twins, but row 1 holds over every stored node, reachable
@@ -276,7 +279,7 @@ grows the output in place or builds its complement beside it drops them first.
 | Oracle | Path | When |
 |---|---|---|
 | Fast invariants | `test_helpers::check::check_all_fast` | After any operation, on any size. |
-| Canonical form | `test_helpers::check::check_canonicity` | After `minimize`, on a structural diagram. |
+| Canonical form | `test_helpers::check::check_canonicity` | After `minimize`. |
 | Minimize round-trip | `test_helpers::check_minimize_soundness` | On small structural diagrams; it minimizes. |
 | Marginal invariants | `test_helpers::check::marginal` | After marginalization or a reduction pass. |
 | Brute-force count | `test_helpers::brute_force_count` | Small formulas, to confirm a count. |

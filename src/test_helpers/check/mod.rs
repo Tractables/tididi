@@ -50,21 +50,23 @@ fn require(label: &str, checker: &str, r: Result<(), String>) {
 }
 
 /// Run the fast checks of what holds after any operation, minimized or not:
-/// vtree structure, no false nodes, distinct functions within a level
-/// ([`check_distinct_functions`], 3 rounds) and implicit levels, and on a
-/// certified diagram canonical form ([`check_canonicity`]). Panics naming
-/// the first that fails.
+/// vtree structure, no false nodes, implicit levels and, on a diagram with no
+/// summed-out level, distinct functions within a level
+/// ([`check_distinct_functions`], 3 rounds); on a certified diagram canonical
+/// form ([`check_canonicity`]) instead. Panics naming the first that fails.
 ///
 /// On an uncertified diagram it does not decide canonical form: an
-/// unminimized result with unreachable nodes or twins passes.
+/// unminimized result with unreachable nodes or twins passes, and so does a
+/// summed one whose sum-out made two nodes equal.
 ///
 /// Cost: O(diagram size).
 pub fn check_all_fast(tdd: &Tdd, label: &str) {
     require(label, "vtree structure", validate_vtree_structure(tdd));
     require(label, "no_false_nodes", check_no_false_nodes(tdd));
-    match tdd.is_canonical() {
-        true => require(label, "canonicity", check_canonicity(tdd, 3)),
-        false => require(label, "distinct functions", check_distinct_functions(tdd, 3)),
+    match (tdd.is_canonical(), tdd.has_marginal_level()) {
+        (true, _) => require(label, "canonicity", check_canonicity(tdd, 3)),
+        (false, false) => require(label, "distinct functions", check_distinct_functions(tdd, 3)),
+        (false, true) => {}
     }
     require(label, "implicit levels", check_implicit_levels(tdd));
 }

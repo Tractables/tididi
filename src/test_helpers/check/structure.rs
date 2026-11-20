@@ -16,7 +16,9 @@ use crate::diagram::{Tdd, ZERO};
 /// Cost: O(diagram size).
 pub fn validate_vtree_structure(tdd: &Tdd) -> Result<(), String> {
     let vtree = &tdd.vtree;
-
+    if vtree.num_nodes() == 0 {
+        return Ok(());
+    }
     if tdd.output.vtree != vtree.root() {
         return Err(format!(
             "output vtree {:?} != root {:?}",
