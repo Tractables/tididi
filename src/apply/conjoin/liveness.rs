@@ -312,7 +312,7 @@ fn written<T>(a: &[MaybeUninit<T>; ROW_COLUMNS_MAX_WIDTH], n: usize) -> &[T] {
 
 impl PairTable {
     /// A table of no pairs, to be filled by [`fill_pair_columns`].
-    pub(super) fn new() -> Self {
+    fn new() -> Self {
         Self {
             pairs: [MaybeUninit::uninit(); ROW_COLUMNS_MAX_WIDTH],
             len: 0,
@@ -351,35 +351,36 @@ impl PairTable {
     }
 }
 
-/// Whether a masked level is read by pairs, and then its [`PairTable`]
-/// in `t`, a [`PairTable::new`]: each child row's word is over g's pairs, the
+/// Whether a masked level is read by pairs, and then its [`PairTable`],
+/// written into `t`: each child row's word is over g's pairs, the
 /// [`build_row_columns`] of a reach mask a pair, in place of its word over
 /// g's nodes. That takes g's first `g_width` nodes holding at most
 /// [`ROW_COLUMNS_MAX_WIDTH`] pairs in all, child grids whose masks are
 /// bit-exact, which the words reproduce, and a `complete` side's child
 /// having columns, which the loop reads whole.
-pub(super) fn fill_pair_columns(
+pub(super) fn fill_pair_columns<'a>(
     level: &TddLevel,
     g_width: usize,
     (child_g_widths, complete): (Sides<usize>, Sides<bool>),
     views: Sides<ChildDecoder>,
-    t: &mut PairTable,
-) -> bool {
+    t: &'a mut MaybeUninit<PairTable>,
+) -> Option<&'a PairTable> {
     if g_width > ROW_COLUMNS_MAX_WIDTH
         || bucket_shift(child_g_widths.left) != 0
         || bucket_shift(child_g_widths.right) != 0
         || (complete.left && child_g_widths.left == 0)
         || (complete.right && child_g_widths.right == 0)
     {
-        return false;
+        return None;
     }
     let mut total = 0;
     for j in 0..g_width {
         total += level.pair_count_at(j);
         if total > ROW_COLUMNS_MAX_WIDTH {
-            return false;
+            return None;
         }
     }
+    let t = t.write(PairTable::new());
     let decode = views.left.is_marginal() || views.right.is_marginal();
     let mut n = 0;
     level.try_for_each_node::<std::convert::Infallible>(0..g_width, |j, pairs| {
@@ -400,7 +401,7 @@ pub(super) fn fill_pair_columns(
     }).unwrap_or_else(|never| match never {});
     debug_assert_eq!(n, total);
     (t.len, t.width) = (total, g_width);
-    true
+    Some(t)
 }
 
 /// The flag bit of a [row columns](build_row_columns) word: the row has a

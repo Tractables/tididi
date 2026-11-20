@@ -875,11 +875,9 @@ pub(super) fn build_level_dense(
         };
     // A masked level of the dense route whose g level has few pairs in
     // all is read by pairs (`run_level_rows_pairs`).
-    let mut pair_table = liveness::PairTable::new();
-    let pairs = masked
-        && route == Route::Dense
-        && !super::super::pair_rows_forced_off()
-        && liveness::fill_pair_columns(
+    let mut pair_slot = std::mem::MaybeUninit::uninit();
+    let pair_table = if masked && route == Route::Dense && !super::super::pair_rows_forced_off() {
+        liveness::fill_pair_columns(
             g_t,
             gw.here,
             (
@@ -896,8 +894,12 @@ pub(super) fn build_level_dense(
                 left: sides.left.view,
                 right: sides.right.view,
             },
-            &mut pair_table,
-        );
+            &mut pair_slot,
+        )
+    } else {
+        None
+    };
+    let pairs = pair_table.is_some();
     let mut stream_state: Option<StreamLevelState> =
         build_stream_state(eng, shape, run.levels, run.stream_cache, sweep)?;
 
@@ -971,7 +973,7 @@ pub(super) fn build_level_dense(
         if !both_multi_pair {
             super::super::note_one_sided_masks();
         }
-        build_level_prefilter_masks(eng, run, g_t, shape, &plan, bases, (lookups, pairs.then_some(&pair_table)))?;
+        build_level_prefilter_masks(eng, run, g_t, shape, &plan, bases, (lookups, pair_table))?;
     }
     // A level of two complete sides whose operand levels are affine takes
     // the implicit route. Under bounded-precision weights a level of the
@@ -1185,7 +1187,7 @@ pub(super) fn build_level_dense(
         let relay = stream_state.is_none();
         run_row_loop(
             eng,
-            (route, lookups, single_pair, pairs.then_some(&pair_table), relay),
+            (route, lookups, single_pair, pair_table, relay),
             words.then_some((&mut *run.words, f_rows)),
             (
                 rows,
