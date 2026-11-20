@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use crate::reduce::prune::{PruneScope, Seeds, Select, Start, below_root_walk_applies, few_dropped, keep_marked, FEW_DROPPED, new_indices, prune_walk, prune_complement, settle_loose, UNREACHED};
+use crate::reduce::prune::{PruneScope, Seeds, Select, Start, below_root_walk_applies, few_dropped, keep_marked, FEW_DROPPED, new_indices, prune_walk, prune_complement, settle_loose, settle_reads_all, UNREACHED};
 
 use crate::test_helpers::{compile_clauses, unnamed_levels};
 use super::prune_unreachable;
@@ -393,7 +393,16 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
             let mut from_output = conj.clone();
             let start = eng.limits().work_units();
             prune_loose_from_output(eng, &mut from_output).unwrap();
-            assert_eq!(eng.limits().work_units() - start, walk_work, "{what}: the seeded walk charged other work than one from the output");
+            let from_output_work = eng.limits().work_units() - start;
+            // Where settling would read as many pairs as the walk from the
+            // root, the prune walks from the root instead.
+            let mut from_root = conj.clone();
+            from_root.dirty.set_loose(None);
+            let start = eng.limits().work_units();
+            prune_unreachable(eng, &mut from_root, PruneScope::Whole).unwrap();
+            let from_root_work = eng.limits().work_units() - start;
+            let expected = if settle_reads_all(&conj, &listed) { from_root_work } else { from_output_work };
+            assert_eq!(walk_work, expected, "{what}: the prune charged other work than the walk it chose");
             assert_eq!(layout(&from_output), layout(&walked), "{what}: the walk from the output left another diagram");
             let root_clean = conj.levels[conj.vtree.root().idx()].slot_count() == 1;
             seeded += usize::from(root_clean);
