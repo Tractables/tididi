@@ -108,6 +108,16 @@ pub(super) struct SparseGate {
     /// as its combinations; at or below the floor on both counts neither
     /// sparse route's setup pays, whatever the density says.
     pub(super) big: bool,
+    /// With the left child the structural sibling of a carried right side:
+    /// the sparse-marginal route's rows, this level's grid and the sibling's,
+    /// cost less than the scatter walk's reads, the sibling's live products
+    /// and both operands' pairs here. Measured on projected counts, a scatter
+    /// read costs one to fourteen times a row cell, so the bar is two cells to
+    /// a read. Taken where
+    /// [`density_wins`](SparseGate::density_wins) is, false elsewhere.
+    pub(super) rows_win_left: bool,
+    /// The same with the right child the sibling.
+    pub(super) rows_win_right: bool,
 }
 
 /// Pick this level's [`Route`].
@@ -142,11 +152,13 @@ pub(super) fn route_level(
     // the level is a join on the structural sibling alone. The scatter walks
     // the sibling's live products and carries the marginal field across,
     // where a grid walk would visit every cell and first densify the
-    // sibling's grid — the product of the operands' widths there. No density
-    // test: the walk costs what the join finds, which a grid walk also pays.
+    // sibling's grid — the product of the operands' widths there. A marginal
+    // carried side may take the sparse-marginal route's rows instead, which
+    // win over narrow rows of a long sibling ([`SparseGate::rows_win_left`]).
+    let takes_rows = |carried_marginal: bool, rows_win: bool| carried_marginal && rows_win;
     let passthrough_only = match (plan.sides.left.is_passthrough(), plan.sides.right.is_passthrough()) {
-        (true, false) => !marginal.right_any,
-        (false, true) => !marginal.left_any,
+        (true, false) => !marginal.right_any && !takes_rows(marginal.left_any, sparse.rows_win_right),
+        (false, true) => !marginal.left_any && !takes_rows(marginal.right_any, sparse.rows_win_left),
         _ => false,
     };
     if sparse.available && passthrough_only && !marginal.is_target && big_grid {
