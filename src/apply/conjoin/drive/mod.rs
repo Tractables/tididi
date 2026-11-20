@@ -561,21 +561,6 @@ fn apply_and_held(
 
     apply_leaf_levels(eng, &mut run)?;
 
-    // The operands' loose levels, unread: a prune reads the result's once,
-    // where reading them here would read them again at each conjunction.
-    let operand_loose = match (f.dirty().loose(), g.dirty().loose()) {
-        (Some(lf), Some(lg)) if plain => {
-            let entries = |loose: &crate::diagram::LooseLevels| -> Result<Vec<owed::Entry>, OperationError> {
-                let mut entries = Vec::new();
-                eng.limits().reserve_exact(&mut entries, loose.len())?;
-                entries.extend(loose.entries());
-                Ok(entries)
-            };
-            Some(Operands { f: entries(lf)?, g: entries(lg)? })
-        }
-        _ => None,
-    };
-
     let canon_leaves = super::leaf_seed::seed_output_leaves(
         f,
         g,
@@ -664,7 +649,13 @@ fn apply_and_held(
         // contraction's worklists.
         run.lists.as_operand.sort_unstable();
         run.lists.outer_held.sort_unstable();
-        let loose = operand_loose.map(|ops| owed::loose_levels(&vtree, &run, ops));
+        // The operands' loose levels are carried unread, with their counts:
+        // a prune reads the result's once, where reading them here would
+        // read them again at each conjunction.
+        let loose = match (f.dirty().loose(), g.dirty().loose()) {
+            (Some(lf), Some(lg)) => Some(owed::loose_levels(&vtree, &run, Operands { f: lf, g: lg })),
+            _ => None,
+        };
         owed::split_built(&vtree, &mut run);
         loose
     } else {
@@ -707,7 +698,7 @@ fn apply_and_held(
             .finish_with_or_return(output, owed, &lists.owed_twins, Some(&lists.built[..]))
             .map(|mut out| {
                 if let Some(loose) = loose {
-                    out.dirty.restore_loose(Some(Box::new(crate::diagram::LooseLevels::counted(loose))));
+                    out.dirty.restore_loose(Some(Box::new(loose)));
                     out.dirty.dedup_above(num_nodes);
                 }
                 #[cfg(debug_assertions)]

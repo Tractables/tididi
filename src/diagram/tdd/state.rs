@@ -522,19 +522,9 @@ impl LooseLevels {
         out
     }
 
-    /// `entries`, each a level and what it holds where counted; a level
-    /// listed twice keeps its last entry.
-    pub(crate) fn counted(entries: impl IntoIterator<Item = (u32, Option<crate::reduce::Unnamed>)>) -> Self {
-        let mut out = Self::default();
-        for (t, unnamed) in entries {
-            out.insert_counted(t, unnamed);
-        }
-        out
-    }
-
-    #[inline]
-    pub(crate) fn len(&self) -> usize {
-        self.len
+    /// No level, with room for the levels of a vtree of `nodes` nodes.
+    pub(crate) fn over(nodes: usize) -> Self {
+        Self { bits: vec![0; nodes.div_ceil(64)], ..Self::default() }
     }
 
     #[inline]
