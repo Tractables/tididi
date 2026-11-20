@@ -108,11 +108,6 @@ pub(super) trait TwinEntries {
     /// Whether two nodes with no entry are twins.
     const EMPTY_TWINS: bool = true;
 
-    /// Whether [`Self::gather`] yields each node's entries together, nodes
-    /// in ascending order, so the gathered entries are already the
-    /// signatures, placed.
-    const GATHERS_BY_NODE: bool = false;
-
     /// Call `f(node, entry)` once per entry of every node.
     fn for_each(&self, f: impl FnMut(u32, u64));
 
@@ -135,6 +130,21 @@ pub(super) trait TwinEntries {
             }
         });
         gathered
+    }
+
+    /// Place the signatures of the nodes `keep` flags in one walk, where the
+    /// entries come node by node: `signatures` the entries of each in node
+    /// order, `starts[i]` where node `i`'s begin, `starts[width]` their
+    /// total. `false`, with nothing written, where they do not come so.
+    fn place_signatures(
+        &self,
+        _lim: &Limits,
+        _keep: &[bool],
+        _width: usize,
+        _starts: &mut Vec<u32>,
+        _signatures: &mut Vec<u64>,
+    ) -> Result<bool, OperationError> {
+        Ok(false)
     }
 
     /// Whether none of the `width` nodes can have a twin: no two nodes share
@@ -271,17 +281,19 @@ fn gather_node<const LEFT: bool>(
 /// so the growth, with its charge and host notice, is out of line.
 #[inline(always)]
 fn make_room(lim: &Limits, nodes: &mut Vec<u32>, entries: &mut Vec<u64>, n: usize) -> Result<(), OperationError> {
-    if nodes.capacity() - nodes.len() < n || entries.capacity() - entries.len() < n {
-        grow_rooms(lim, nodes, entries, n)?;
+    if nodes.capacity() - nodes.len() < n {
+        grow_room(lim, nodes, n)?;
+    }
+    if entries.capacity() - entries.len() < n {
+        grow_room(lim, entries, n)?;
     }
     Ok(())
 }
 
 #[cold]
 #[inline(never)]
-fn grow_rooms(lim: &Limits, nodes: &mut Vec<u32>, entries: &mut Vec<u64>, n: usize) -> Result<(), OperationError> {
-    lim.reserve(nodes, n)?;
-    lim.reserve(entries, n)
+fn grow_room<T>(lim: &Limits, v: &mut Vec<T>, n: usize) -> Result<(), OperationError> {
+    lim.reserve(v, n)
 }
 
 /// The pair count of a node of `level` that pairs two nodes of the child
@@ -705,28 +717,46 @@ fn file_sibling(local: &mut [u64], stamp: u64, s: u32) -> bool {
 pub(super) struct ContentEntries<'a>(pub(super) &'a TddLevel, pub(super) Option<usize>);
 
 impl TwinEntries for ContentEntries<'_> {
-    const GATHERS_BY_NODE: bool = true;
-
     fn for_each(&self, mut f: impl FnMut(u32, u64)) {
         self.0
             .for_each_node_pair(|i, pair| f(i as u32, pack(pair.left.0, pair.right.0)));
     }
 
-    fn gather(
+    fn place_signatures(
         &self,
         lim: &Limits,
         keep: &[bool],
-        nodes: &mut Vec<u32>,
-        entries: &mut Vec<u64>,
-    ) -> Result<(), OperationError> {
-        self.0.try_for_each_node(0..self.0.nodes().len(), |i, pairs| {
+        width: usize,
+        starts: &mut Vec<u32>,
+        signatures: &mut Vec<u64>,
+    ) -> Result<bool, OperationError> {
+        lim.try_resize(starts, width + 1, 0u32)?;
+        signatures.clear();
+        let mut end = 0usize;
+        let level = self.0;
+        level.try_for_each_node(0..level.nodes().len(), |i, pairs| {
+            // Below `u32::MAX`, as each start is stored u32-wide.
+            starts[i] = end as u32;
             if keep[i] {
-                make_room(lim, nodes, entries, pairs.len())?;
-                nodes.extend(std::iter::repeat_n(i as u32, pairs.len()));
-                entries.extend(pairs.iter().map(|p| pack(p.left.0, p.right.0)));
+                end += pairs.len();
+                if end >= u32::MAX as usize {
+                    return Err(OperationError::IndexOverflow);
+                }
+                if signatures.capacity() - signatures.len() < pairs.len() {
+                    grow_room(lim, signatures, pairs.len())?;
+                }
+                let len = signatures.len();
+                let room = &mut signatures.spare_capacity_mut()[..pairs.len()];
+                for (slot, p) in room.iter_mut().zip(pairs) {
+                    slot.write(pack(p.left.0, p.right.0));
+                }
+                // Safety: the `pairs.len()` slots past `len` were written above.
+                unsafe { signatures.set_len(len + pairs.len()) };
             }
             Ok(())
-        })
+        })?;
+        starts[level.nodes().len()..=width].fill(end as u32);
+        Ok(true)
     }
 
     fn len(&self) -> usize {
