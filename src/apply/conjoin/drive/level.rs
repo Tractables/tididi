@@ -413,7 +413,7 @@ pub(super) fn open_level_arenas(
 /// a description ([`run_level_rows_single`]).
 fn run_row_loop(
     eng: &Engine,
-    (route, lookups, single_pair, pairs, relay): (Route, PlainLookups, bool, bool, bool),
+    (route, lookups, single_pair, pairs, relay): (Route, PlainLookups, bool, Option<&liveness::PairTable>, bool),
     words: Option<(&mut WordScratch, Sides<usize>)>,
     (rows, scratch): (RowLoop<'_>, RowScratch<'_>),
     level: &mut TddLevel,
@@ -421,12 +421,12 @@ fn run_row_loop(
     stream_state: &mut Option<StreamLevelState>,
 ) -> Result<(), OperationError> {
     let cell_ctx = rows.ctx;
-    if pairs {
+    if let Some(table) = pairs {
         debug_assert!(
             route == Route::Dense,
             "only a masked level is read by pairs"
         );
-        return run_level_rows_pairs(eng, rows, scratch, level, lookups);
+        return run_level_rows_pairs(eng, rows, scratch, table, level, lookups);
     }
     if let Some((words, f_rows)) = words {
         if let Route::Stream { marginal_children } = route {
@@ -544,7 +544,7 @@ fn build_level_prefilter_masks(
     shape: LevelShape,
     plan: &MarginalPlan,
     bases: Sides<GridBase>,
-    (lookups, pairs): (PlainLookups, bool),
+    (lookups, pairs): (PlainLookups, Option<&liveness::PairTable>),
 ) -> Result<(), OperationError> {
     let LevelShape { f: fw, g: gw, .. } = shape;
     build_side_masks::<false>(
@@ -875,21 +875,31 @@ pub(super) fn build_level_dense(
         };
     // A masked level of the dense route whose g level has few pairs in
     // all is read by pairs (`run_level_rows_pairs`).
-    let pairs = masked
-        && route == Route::Dense
-        && !super::super::pair_rows_forced_off()
-        && liveness::pairs_fit(
+    let mut pair_slot = std::mem::MaybeUninit::uninit();
+    let pair_table = if masked && route == Route::Dense && !super::super::pair_rows_forced_off() {
+        liveness::fill_pair_columns(
             g_t,
             gw.here,
+            (
+                Sides {
+                    left: gw.left,
+                    right: gw.right,
+                },
+                Sides {
+                    left: matches!(lookups, PlainLookups::CompleteLeft { .. }),
+                    right: matches!(lookups, PlainLookups::CompleteRight { .. }),
+                },
+            ),
             Sides {
-                left: gw.left,
-                right: gw.right,
+                left: sides.left.view,
+                right: sides.right.view,
             },
-            Sides {
-                left: matches!(lookups, PlainLookups::CompleteLeft { .. }),
-                right: matches!(lookups, PlainLookups::CompleteRight { .. }),
-            },
-        );
+            &mut pair_slot,
+        )
+    } else {
+        None
+    };
+    let pairs = pair_table.is_some();
     let mut stream_state: Option<StreamLevelState> =
         build_stream_state(eng, shape, run.levels, run.stream_cache, sweep)?;
 
@@ -963,7 +973,7 @@ pub(super) fn build_level_dense(
         if !both_multi_pair {
             super::super::note_one_sided_masks();
         }
-        build_level_prefilter_masks(eng, run, g_t, shape, &plan, bases, (lookups, pairs))?;
+        build_level_prefilter_masks(eng, run, g_t, shape, &plan, bases, (lookups, pair_table))?;
     }
     // A level of two complete sides whose operand levels are affine takes
     // the implicit route. Under bounded-precision weights a level of the
@@ -1065,7 +1075,8 @@ pub(super) fn build_level_dense(
             .expect("a vtree node and its two children are distinct level indices");
         let (left_level, right_level) = (&*left_level, &*right_level);
 
-        let right_cols = column_table_pays(f_t, g_t, fw.here, gw.here, grouped)
+        // A level read by pairs reads its columns off its pair table.
+        let right_cols = (!pairs && column_table_pays(f_t, g_t, fw.here, gw.here, grouped))
             .then(|| {
                 RightColumns::build(
                     eng,
@@ -1176,7 +1187,7 @@ pub(super) fn build_level_dense(
         let relay = stream_state.is_none();
         run_row_loop(
             eng,
-            (route, lookups, single_pair, pairs, relay),
+            (route, lookups, single_pair, pair_table, relay),
             words.then_some((&mut *run.words, f_rows)),
             (
                 rows,

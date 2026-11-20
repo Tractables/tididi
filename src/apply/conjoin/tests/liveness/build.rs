@@ -1,5 +1,6 @@
 use super::{build_live_cols_bitmask, build_pair_row_columns, build_reach_columns, build_reach_masks, build_row_columns, bucket_shift, PrefilterSideMasks, REACH_COLUMNS_MIN_WIDTH, ROW_COLUMNS_MAX_WIDTH, ROW_LIVE};
 use crate::apply::conjoin::NO_PRODUCT;
+use crate::diagram::{ChildPair, EncodedChildRef};
 use crate::test_helpers::{with_stored_copy, x_decision_diagram};
 use crate::vtree::rng::Lcg;
 use crate::Engine;
@@ -143,8 +144,11 @@ fn the_pair_row_columns_are_the_row_columns_of_the_live_masks() {
                 build_live_cols_bitmask(&eng, rows, width, base, &slab, &mut out, 0).unwrap();
                 let live_cols = out.live_cols.clone();
                 build_row_columns(&eng, &live_cols, &reach, &mut want_cols).unwrap();
-                out.reach.clone_from(&reach);
-                build_pair_row_columns(&eng, rows, width, base, &slab, &mut out).unwrap();
+                let table: Vec<ChildPair> = reach
+                    .iter()
+                    .map(|r| ChildPair::new(EncodedChildRef::from_raw(r.trailing_zeros()), EncodedChildRef::from_raw(0)))
+                    .collect();
+                build_pair_row_columns(&eng, (rows, width, base), &slab, (&table, |p: &ChildPair| p.left.raw()), &mut out).unwrap();
                 assert_eq!(out.row_cols, want_cols, "width {width}, pairs {pairs}, rows {rows}");
                 assert!(out.live_cols.is_empty(), "width {width}, pairs {pairs}, rows {rows}");
             }

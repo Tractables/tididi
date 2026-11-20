@@ -349,12 +349,25 @@ impl<'a> RoutesView<'a> {
     #[inline(always)]
     pub(super) fn find(self, segment: Segment, key: u32) -> &'a [(u32, u32)] {
         if segment.bits == Segment::DENSE {
-            // Keys are the level's inner-g children, below the width the
-            // table was opened with; an empty run has equal bounds.
-            let at = segment.base as usize + key as usize;
-            let bounds = &self.bounds[at..at + 2];
-            return &self.entries[bounds[0] as usize..bounds[1] as usize];
+            self.find_dense(segment, key)
+        } else {
+            self.find_hashed(segment, key)
         }
+    }
+
+    /// [`RoutesView::find`] in a table indexed by key.
+    #[inline(always)]
+    pub(super) fn find_dense(self, segment: Segment, key: u32) -> &'a [(u32, u32)] {
+        // Keys are the level's inner-g children, below the width the
+        // table was opened with; an empty run has equal bounds.
+        let at = segment.base as usize + key as usize;
+        let bounds = &self.bounds[at..at + 2];
+        &self.entries[bounds[0] as usize..bounds[1] as usize]
+    }
+
+    /// [`RoutesView::find`] in an open-addressed table.
+    #[inline(always)]
+    pub(super) fn find_hashed(self, segment: Segment, key: u32) -> &'a [(u32, u32)] {
         let size = 1usize << segment.bits;
         let table = &self.slots[segment.base as usize..segment.base as usize + size];
         let mut at = route_slot(key, segment.bits);

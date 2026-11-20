@@ -7,7 +7,7 @@ use crate::apply::conjoin::held::Here;
 use crate::diagram::{ChildDecoder, ChildSide, Sides, TddLevel};
 use super::OperationError;
 use crate::Engine;
-use super::liveness::{bucket_shift, build_live_cols_bitmask, build_pair_reach, build_pair_row_columns, build_reach_columns, build_reach_masks, build_row_columns, one_sided_masks_pay, PrefilterSideMasks, ROW_COLUMNS_MAX_WIDTH};
+use super::liveness::{bucket_shift, build_live_cols_bitmask, build_pair_row_columns, build_reach_columns, build_reach_masks, build_row_columns, one_sided_masks_pay, PairTable, PrefilterSideMasks, ROW_COLUMNS_MAX_WIDTH};
 use super::setup::{ApplyRun, LevelShape, Operands};
 use super::route::LevelMarg;
 
@@ -278,22 +278,23 @@ pub(super) struct ChildGrid {
 /// reads it whole. One whose child has no columns keeps them, for the
 /// row loop's fold to skip every row as before.
 ///
-/// On a level read by `pairs` ([`super::liveness::pairs_fit`]) the reach
-/// masks are a pair's and the row columns are over g's pairs, read off the
-/// child grid's cells without its live column masks where it has at most
-/// 64 columns (`build_pair_row_columns`); a complete side builds none.
+/// On a level read by pairs (`pairs`, [`super::liveness::fill_pair_columns`])
+/// the reach masks are a pair's and the row columns are over g's pairs,
+/// read off the child grid's cells without its live column masks where it
+/// has at most 64 columns (`build_pair_row_columns`); a complete side
+/// builds none.
 pub(super) fn build_side_masks<const RIGHT: bool>(
     eng: &Engine,
     (right_level, g_width): (&TddLevel, usize),
     child: ChildGrid,
-    (complete, pairs): (bool, bool),
+    (complete, pairs): (bool, Option<&PairTable>),
     node_idx: &[u32],
     out: &mut PrefilterSideMasks,
 ) -> Result<(), OperationError> {
     let ChildGrid { plan, f_width: f_child_width, g_width: g_child_width, base } = child;
     out.reach_cols.clear();
     out.row_cols.clear();
-    out.rows = !(pairs
+    out.rows = !(pairs.is_some()
         || g_width > ROW_COLUMNS_MAX_WIDTH
         || (complete && g_child_width == 0)
         || super::reach_columns_forced_off()
@@ -301,7 +302,7 @@ pub(super) fn build_side_masks<const RIGHT: bool>(
     if plan.is_passthrough() {
         return Ok(());
     }
-    if (out.rows || pairs) && complete {
+    if (out.rows || pairs.is_some()) && complete {
         out.live_cols.clear();
         out.reach.clear();
         return Ok(());
@@ -309,12 +310,22 @@ pub(super) fn build_side_masks<const RIGHT: bool>(
     let shift = bucket_shift(g_child_width);
     let view = plan.view;
     let side = |p: &crate::diagram::ChildPair| view.coord(if RIGHT { p.right } else { p.left }) as usize;
-    if pairs {
+    if let Some(table) = pairs {
         debug_assert_eq!(shift, 0, "a level read by pairs has bit-exact masks");
-        build_pair_reach(eng, right_level, g_width, &mut out.reach, side)?;
+        // The table's pairs are decoded already.
+        let child = |p: &crate::diagram::ChildPair| if RIGHT { p.right.raw() } else { p.left.raw() };
         if g_child_width <= 64 {
-            return build_pair_row_columns(eng, f_child_width, g_child_width, base, node_idx, out);
+            return build_pair_row_columns(
+                eng,
+                (f_child_width, g_child_width, base),
+                node_idx,
+                (table.pairs(), child),
+                out,
+            );
         }
+        out.reach.clear();
+        eng.limits().reserve_exact(&mut out.reach, table.pairs().len())?;
+        out.reach.extend(table.pairs().iter().map(|p| 1u128 << child(p)));
         build_live_cols_bitmask(eng, f_child_width, g_child_width, base, node_idx, out, shift)?;
         return build_row_columns(eng, &out.live_cols, &out.reach, &mut out.row_cols);
     }

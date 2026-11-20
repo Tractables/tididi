@@ -2205,10 +2205,23 @@ impl RoutedWalk<'_> {
         ticker: &mut crate::limits::PollGate,
         push: &mut impl FnMut(ParEntry) -> Result<(), OperationError>,
     ) -> Result<(), OperationError> {
-        for e in self.inner.bucket(inner1 as usize) {
-            let under = self.routes.find(segment, e.g_idx.0);
-            if !under.is_empty() {
-                push_run::<SWAPPED>(under, e.prod_idx.0, ticker, push)?;
+        // A loop per kind of table: a pair meets about one product, so the
+        // open-addressed table's setup, hoisted out of a shared loop, would
+        // be paid by every pair of a table indexed by key.
+        let bucket = self.inner.bucket(inner1 as usize);
+        if segment.bits == Segment::DENSE {
+            for e in bucket {
+                let under = self.routes.find_dense(segment, e.g_idx.0);
+                if !under.is_empty() {
+                    push_run::<SWAPPED>(under, e.prod_idx.0, ticker, push)?;
+                }
+            }
+        } else {
+            for e in bucket {
+                let under = self.routes.find_hashed(segment, e.g_idx.0);
+                if !under.is_empty() {
+                    push_run::<SWAPPED>(under, e.prod_idx.0, ticker, push)?;
+                }
             }
         }
         Ok(())
@@ -3985,13 +3998,16 @@ pub(super) fn emit_owned(
             lim.reserve(moved_pairs, n)?;
             moved_pairs.extend_from_slice(&arena[base..base + n]);
             arena.truncate(base + total);
+            // Slices, so that their bounds stay in registers across the
+            // loop's stores.
+            let (ranges, counts, singles) = (&mut arena[base..], &mut pair_counts[..], &mut single_pairs[..]);
             for (&k, &pair) in owners.iter().zip(moved_pairs.iter()) {
-                let cursor = pair_counts[k as usize];
+                let cursor = counts[k as usize];
                 if cursor == INLINE {
-                    single_pairs[k as usize] = pair;
+                    singles[k as usize] = pair;
                 } else {
-                    arena[base + cursor as usize] = pair;
-                    pair_counts[k as usize] = cursor + 1;
+                    ranges[cursor as usize] = pair;
+                    counts[k as usize] = cursor + 1;
                 }
             }
         }
