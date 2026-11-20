@@ -254,10 +254,12 @@ impl Shape {
         let mut gate = lim.gate();
         for t in vtree.bottomup() {
             let VtreeNode::Internal { left, right, .. } = *vtree.node(t) else {
-                let kind = if summed && vtree.node(t).is_region() { Kind::Region } else { Kind::Leaf };
+                let marginal = summed && f.levels[t.idx()].is_marginal();
+                let kind = if marginal || summed && vtree.node(t).is_region() { Kind::Region } else { Kind::Leaf };
                 (shape.kind[t.idx()], shape.leaves[t.idx()], shape.kept[t.idx()]) = (kind, 1, 1);
                 if summed {
-                    shape.adds[t.idx()] = f.levels[t.idx()].is_marginal();
+                    shape.adds[t.idx()] = marginal;
+                    shape.dropped |= marginal && vtree.node(t).is_var_leaf();
                 }
                 continue;
             };
@@ -384,8 +386,7 @@ impl Shape {
     /// The level at the end of `c`'s chain, rebuilt with one value per node
     /// of `t`: the sum over the node's pairs of the values they reach, in the
     /// diagram's algebra. Equal values share a slot, and a small count rides
-    /// inline. `held` receives the references. A summed variable leaf, whose
-    /// column readers decode as labels, is refused.
+    /// inline. `held` receives the references.
     #[cold]
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
@@ -402,9 +403,6 @@ impl Shape {
         let lim = eng.limits();
         let vtree = &*f.vtree;
         let end = self.end(vtree, c);
-        if vtree.node(end).is_var_leaf() {
-            return Err(OperationError::MarginalLevel(c));
-        }
         let at = self.regrouped.iter().position(|&(e, _)| e == end);
         let source = at.map_or(&f.levels[end.idx()], |k| &self.regrouped[k].1);
         let (level, below) = (&f.levels[t.idx()], &self.values[c.idx()]);
@@ -554,8 +552,8 @@ fn negative_half(vtree: &Vtree, t: VtreeIdx, side: ChildSide) -> Option<u32> {
 ///
 /// `collapse` lists, ascending, internal marginal levels of `f` not under
 /// another; each becomes the region [`Vtree::folded_region`] gives, and its
-/// subtree goes. Another internal marginal level is refused. A region stays,
-/// a marginal leaf stays.
+/// subtree goes. Another internal marginal level is refused. A region stays;
+/// a marginal variable leaf becomes the region of its variable.
 /// `dropped` as [`Shape::read`].
 pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, dropped: Option<&[VtreeIdx]>, collapse: &[VtreeIdx]) -> Result<bool, OperationError> {
     let lim = eng.limits();
@@ -570,7 +568,7 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, dropped: Option<&[Vtr
     lim.check_stop()?;
     let root = vtree.root();
     if vtree.node(root).is_leaf() {
-        if f.output.local != ONE_LEAF_IDX || vtree.node(root).is_region() {
+        if f.output.local != ONE_LEAF_IDX || vtree.node(root).is_region() || f.levels[root.idx()].is_marginal() {
             return Ok(false);
         }
         replace(eng, f, constant_without_leaf(&Vtree::empty_projection(home), true));
@@ -584,12 +582,7 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, dropped: Option<&[Vtr
     // region kept.
     let mut keep_full = false;
     let (mut shape, local, own, map, mut plans, placed) = 'read: loop {
-        // With nothing to collapse, a diagram whose drop would rebuild a summed
-        // variable leaf stays as it is.
-        let mut shape = match Shape::read(eng, f, dropped, summed, keep_full) {
-            Err(OperationError::MarginalLevel(_)) if collapse.is_empty() => return Ok(false),
-            shape => shape?,
-        };
+        let mut shape = Shape::read(eng, f, dropped, summed, keep_full)?;
         if shape.multiplied {
             keep_full = true;
             continue;
@@ -607,12 +600,6 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, dropped: Option<&[Vtr
                     ValueRef::Slot(slot) => Some(NodeIdx(slot)),
                     ValueRef::Inline(count) => {
                         let end = shape.end(&vtree, root);
-                        if vtree.node(end).is_var_leaf() {
-                            return match collapse.is_empty() {
-                                true => Ok(false),
-                                false => Err(OperationError::MarginalLevel(end)),
-                            };
-                        }
                         let mut level = TddLevel::new();
                         level.become_marginal(Vec::new(), None);
                         let slot = push_count_slot(eng, &mut level, Count::from_u128(u128::from(count)))?;
@@ -642,6 +629,7 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, dropped: Option<&[Vtr
             match shape.kind[t.idx()] {
                 Kind::Leaf => ranks.push(home.rank(vtree.leaf_var(t)).expect("a variable of the home")),
                 Kind::Region if vtree.node(t).is_region() => lim.try_push(&mut regions, vtree.region_at(t))?,
+                Kind::Region if vtree.node(t).is_leaf() => lim.try_push(&mut regions, vtree.folded_region(t))?,
                 Kind::Region => {
                     collapse.binary_search(&t).map_err(|_| OperationError::MarginalLevel(t))?;
                     lim.try_push(&mut regions, vtree.folded_region(t))?;

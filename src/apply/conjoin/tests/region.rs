@@ -276,8 +276,8 @@ fn and_refuses_intersecting_regions() {
     assert!(b.f.vtree().regions().next().is_some());
     assert!(matches!(eng.and(&a.f, &b.f), Err(OperationError::MarginalLevel(_))));
     let c = summed_clause(&eng, &home, &[-2, 3], &[over(&home, &[1, 2])]);
-    assert!(c.f.vtree().regions().next().is_none(), "a lone leaf is not summed");
-    assert!(matches!(eng.and(&a.f, &c.f), Err(OperationError::MarginalLevel(_))), "a leaf in the other's region");
+    assert!(c.f.vtree().regions().next().is_some(), "a lone leaf is summed into a region");
+    assert!(matches!(eng.and(&a.f, &c.f), Err(OperationError::MarginalLevel(_))), "a region in the other's region");
 }
 
 /// A region over 1 and 2 under the node of 1, 2 and 5 meets a leaf 3: in the

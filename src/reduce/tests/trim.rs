@@ -421,7 +421,7 @@ fn trim_summed(f: &mut Tdd, home: &Home) -> Result<bool, OperationError> {
 
 /// `f` on the projection of a home of four variables on 1, 2 and 3, its leaf
 /// 2 summed out: the level over leaves 1 and 2 names 1 as true, so it is
-/// dropped over the marginal leaf 2.
+/// dropped over the marginal leaf 2, which becomes a region.
 fn summed_leaf_under_a_dropped_level(clause: &[i32], vars: &[u32], arithmetic: Option<Arithmetic>) -> (Tdd, Tdd, Home) {
     use crate::marginal::tests::region::weights;
     let home = match arithmetic {
@@ -441,7 +441,8 @@ fn trim_drops_a_level_over_a_summed_out_leaf() {
     for arithmetic in [None, Some(Arithmetic::ExactRational), Some(Arithmetic::ScaledFloat)] {
         let (mut f, g, home) = summed_leaf_under_a_dropped_level(&[2, 3], &[1, 2, 3], arithmetic);
         assert!(trim_summed(&mut f, &home).unwrap(), "{arithmetic:?}");
-        assert_eq!(f.vtree().num_leaves(), 2, "{arithmetic:?}");
+        assert_eq!(f.vtree().num_leaves(), 1, "{arithmetic:?}");
+        assert_eq!(f.vtree().regions().count(), 1, "{arithmetic:?}");
         check_form(&f, &format!("{arithmetic:?}"));
         check_values(&f, &g, 4, arithmetic, &format!("{arithmetic:?}"));
     }
@@ -456,14 +457,16 @@ fn trim_drops_a_root_over_a_summed_out_leaf_when_the_output_names_a_slot() {
             let what = format!("{vars:?} {arithmetic:?}");
             let (mut f, g, home) = summed_leaf_under_a_dropped_level(&[2], vars, arithmetic);
             assert!(trim_summed(&mut f, &home).unwrap(), "{what}");
-            assert_eq!(f.vtree().num_leaves(), 1, "{what}");
+            assert_eq!(f.vtree().num_leaves(), 0, "{what}");
+            assert!(f.vtree().node(f.vtree().root()).is_region(), "{what}");
             check_form(&f, &what);
             check_values(&f, &g, 4, arithmetic, &what);
         }
     }
+    // An inline count at the root gets a level of one slot.
     let (mut f, g, home) = summed_leaf_under_a_dropped_level(&[2], &[1, 2], None);
-    let leaf = g.vtree().leaf_of(crate::vtree::VarId(2)).unwrap();
-    let _ = leaf;
-    assert_eq!(trim_summed(&mut f, &home), Ok(false), "an inline count at the root names no slot: the diagram stays");
-    assert!(Arc::ptr_eq(f.vtree(), g.vtree()));
+    assert_eq!(trim_summed(&mut f, &home), Ok(true));
+    assert!(f.vtree().node(f.vtree().root()).is_region());
+    check_form(&f, "inline");
+    check_values(&f, &g, 4, None, "inline");
 }

@@ -295,16 +295,17 @@ fn marginalize_levels_refuses_a_projection() {
     assert!(!f.has_marginal_level());
 }
 
-/// A summable leaf whose parent has a variable that is not summable is not
-/// summed out.
+/// A summable leaf whose parent has a variable that is not summable becomes
+/// a region of its one variable.
 #[test]
-fn a_lone_summable_leaf_stays_a_variable_leaf() {
+fn a_lone_summable_leaf_becomes_a_region() {
     let home = Home::new(Vtree::balanced(4));
     let own = Vtree::projection(&home, [VarId(1), VarId(3)]).unwrap();
     let mut f = Tdd::clause(&own, [1, 3]).unwrap();
     f.marginalize(|v| v == VarId(1)).unwrap();
-    assert!(!f.has_marginal_level());
-    assert_eq!(f.vtree().num_leaves(), 2);
+    check_form(&f, "sum of 1");
+    assert_eq!(f.vtree().regions().count(), 1);
+    assert_eq!(f.vtree().num_leaves(), 1);
     assert_eq!(f.model_count().unwrap(), BigUint::from(12u32));
 }
 
