@@ -405,7 +405,10 @@ impl ImplicitLevel {
         // node by node.
         let held = (per_node == 1 && fitted.holds_inline(level.nodes.stored()))
             || if fitted.slots_fit_sides() {
-                fitted.holds_shifted(first_pairs, |i| stored.of_idx(i))
+                match stored.in_node_order(per_node) {
+                    Some(arena) => fitted.holds_shifted(first_pairs, |i| &arena[i * per_node..(i + 1) * per_node]),
+                    None => fitted.holds_shifted(first_pairs, |i| stored.of_idx(i)),
+                }
             } else {
                 fitted.holds(shifted, |i| Some(stored.of_idx(i).iter().map(slots)))
             };
