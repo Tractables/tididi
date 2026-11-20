@@ -181,16 +181,15 @@ pub(crate) struct ContractScratch {
     // ── `find_twin_groups` buffers ──
     // Node indices and per-node counts are u32-wide throughout: every ref into
     // a level is a `NodeIdx(u32)`, and the candidate mass that bounds `counts`
-    // and `cursors` is checked against `u32::MAX` by `count_candidate_entries`
+    // is checked against `u32::MAX` by `materialize_candidate_signatures`
     // before any offset is stored.
-    /// Per-node count of parent pairs referencing it (signature length), then
-    /// repurposed in place as the prefix-sum offset table into `entries`.
+    /// The start of each node's signature in `entries`, and their end after
+    /// the last node.
     pub(super) counts: Vec<u32>,
     /// Flat signature buffer: packed (parent_idx, sibling_idx) entries per node.
     pub(super) entries: Vec<u64>,
-    /// Write cursor into `entries` for each node during signature fill, then
-    /// reused by the grouping pass as each candidate's representative,
-    /// indexed by the candidate's rank in `candidates`.
+    /// The grouping pass's representative of each candidate, indexed by the
+    /// candidate's rank in `candidates`.
     pub(super) cursors: Vec<u32>,
     /// Open-addressing hash table for twin grouping; see [`TwinSlot`].
     pub(super) twin_hash_table: Vec<TwinSlot>,
@@ -279,6 +278,11 @@ pub(crate) struct ContractScratch {
     /// The candidates' node indices in ascending order, which the grouping
     /// pass hashes and groups alone.
     pub(super) candidates: Vec<u32>,
+    /// The candidates' entries in the order a scatter yields them, each
+    /// beside its node in `candidate_nodes`, before they are placed node by
+    /// node in `entries`.
+    pub(super) candidate_entries: Vec<u64>,
+    pub(super) candidate_nodes: Vec<u32>,
     /// The counting sort's tables for the signature slices a comparison
     /// sorts (`fingerprint::groups`).
     pub(super) sort_counts: super::fingerprint::SortCounts,
@@ -407,6 +411,8 @@ impl Buffers for ContractScratch {
         visit(&mut self.rooms);
         visit(&mut self.is_candidate);
         visit(&mut self.candidates);
+        visit(&mut self.candidate_entries);
+        visit(&mut self.candidate_nodes);
         self.sort_counts.buffers(visit);
         visit(&mut self.reach_bits);
         visit(&mut self.unnamed);

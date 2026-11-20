@@ -114,6 +114,24 @@ pub(super) trait TwinEntries {
     /// The number of entries [`Self::for_each`] yields.
     fn len(&self) -> usize;
 
+    /// Append each entry of every node `keep` flags to `entries`, and its
+    /// node to `nodes`, in the order [`Self::for_each`] yields them.
+    fn gather(
+        &self,
+        lim: &Limits,
+        keep: &[bool],
+        nodes: &mut Vec<u32>,
+        entries: &mut Vec<u64>,
+    ) -> Result<(), OperationError> {
+        let mut gathered = Ok(());
+        self.for_each(|node, e| {
+            if keep[node as usize] && gathered.is_ok() {
+                gathered = lim.try_push(nodes, node).and_then(|()| lim.try_push(entries, e));
+            }
+        });
+        gathered
+    }
+
     /// Whether none of the `width` nodes can have a twin: no two nodes share
     /// an entry, and at most one has none where two nodes with none are
     /// twins ([`Self::EMPTY_TWINS`]). `false` when that is not known.
@@ -175,6 +193,23 @@ impl TwinEntries for ContextEntries<'_> {
         self.parent_level.live_pairs()
     }
 
+    /// A parent node at a time, with room for its every pair reserved
+    /// first: each pair is written and kept by moving past it, with no
+    /// branch on whether its node is kept.
+    fn gather(
+        &self,
+        lim: &Limits,
+        keep: &[bool],
+        nodes: &mut Vec<u32>,
+        entries: &mut Vec<u64>,
+    ) -> Result<(), OperationError> {
+        let level = self.parent_level;
+        level.try_for_each_node(0..level.nodes().len(), |pi, pairs| match self.t1_side {
+            ChildSide::Left => gather_node::<true>(lim, keep, pi as u32, pairs, nodes, entries),
+            ChildSide::Right => gather_node::<false>(lim, keep, pi as u32, pairs, nodes, entries),
+        })
+    }
+
     /// Two nodes share a context only where a parent node pairs both with
     /// one sibling ([`repeats_a_sibling`]); a level whose parent nodes never
     /// repeat one, common on grids, then needs no fingerprint.
@@ -189,6 +224,43 @@ impl TwinEntries for ContextEntries<'_> {
         }
         Ok(repeats_a_sibling(self.parent_level, self.t1_side, lim, scratch)?.is_none())
     }
+}
+
+/// [`ContextEntries::gather`] over the `pairs` of parent node `pi`, the
+/// child on the left when `LEFT`.
+#[inline(always)]
+fn gather_node<const LEFT: bool>(
+    lim: &Limits,
+    keep: &[bool],
+    pi: u32,
+    pairs: &[ChildPair],
+    nodes: &mut Vec<u32>,
+    entries: &mut Vec<u64>,
+) -> Result<(), OperationError> {
+    lim.reserve(nodes, pairs.len())?;
+    lim.reserve(entries, pairs.len())?;
+    let side = if LEFT { ChildSide::Left } else { ChildSide::Right };
+    let len = nodes.len();
+    debug_assert_eq!(len, entries.len());
+    let room_nodes = &mut nodes.spare_capacity_mut()[..pairs.len()];
+    let room_entries = &mut entries.spare_capacity_mut()[..pairs.len()];
+    let mut kept = 0;
+    for pair in pairs {
+        let (target, sibling) = split_pair(pair, side);
+        // Safety: `kept` is at most the index of `pair`, below `pairs.len()`,
+        // the length of both rooms.
+        unsafe {
+            room_nodes.get_unchecked_mut(kept).write(target);
+            room_entries.get_unchecked_mut(kept).write(pack(pi, sibling));
+        }
+        kept += usize::from(keep[target as usize]);
+    }
+    // Safety: the first `kept` slots of both rooms were written above.
+    unsafe {
+        nodes.set_len(len + kept);
+        entries.set_len(len + kept);
+    }
+    Ok(())
 }
 
 /// The pair count of a node of `level` that pairs two nodes of the child
