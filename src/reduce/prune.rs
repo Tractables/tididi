@@ -426,9 +426,10 @@ pub(crate) fn prune_unreachable(
     Ok(())
 }
 
-/// Whether settling `listed` may read as many pairs as a walk from the root
-/// reads: then the walk costs less than the settle and the seeded walk
-/// after it. The bound counts a parent once for each listed child.
+/// Whether settling or counting `listed` may read as many pairs as a walk
+/// from the root reads: then the walk costs less than the read and the
+/// seeded walk after it. The bound counts a parent once for each listed
+/// child.
 pub(super) fn settle_reads_all(tdd: &Tdd, listed: &[u32]) -> bool {
     let bound = |t: VtreeIdx| tdd.levels[t.idx()].pairs_bound();
     let read: usize = listed

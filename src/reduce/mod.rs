@@ -162,7 +162,9 @@ impl Engine {
     /// where `f` keeps the levels that may hold one: after a conjunction
     /// without summing out, a prune or a contraction, and while no edit
     /// forgot them. `None` where it does not, on a diagram with a marginal
-    /// level, and on one whose output is not at the root.
+    /// level, on one whose output is not at the root, and where the read
+    /// may read as many pairs as a prune's walk from the root, which a prune
+    /// then takes.
     ///
     /// A read reads the parent levels of the levels not counted since they
     /// last changed, one unit of work a pair, and keeps each level's count
@@ -183,6 +185,9 @@ impl Engine {
         }
         let uncounted: Vec<u32> = loose.entries().filter(|e| e.1.is_none()).map(|e| e.0).collect();
         if !uncounted.is_empty() {
+            if prune::settle_reads_all(f, &uncounted) {
+                return Ok(None);
+            }
             let held = prune::count_unnamed(self, f, &uncounted)?;
             let loose = f.dirty.loose_levels_mut().expect("listed above");
             for (t, unnamed) in held {
