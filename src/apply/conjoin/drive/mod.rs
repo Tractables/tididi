@@ -46,7 +46,6 @@ use super::*;
 use super::identity::init_leaf_identity_over;
 use super::price::{built_pairs, price_dense_level, refuse_past_cap};
 use crate::Engine;
-use crate::reduce::prune::settle_loose_below;
 
 /// What one sweep carries beside its [`ApplyRun`]: the vtree, the
 /// marginalization schedule, and the weight store the marginal levels write to.
@@ -562,29 +561,17 @@ fn apply_and_held(
 
     apply_leaf_levels(eng, &mut run)?;
 
-    // The operands' loose levels as a prune would settle them, read before
-    // the sweep drops the operands' levels. Only the levels under a level the
-    // conjunction builds are read: one under a free level keeps its parent,
-    // so the result lists it as its operand does, for a prune to read once.
-    let operand_loose = match (f.dirty().loose(), g.dirty().loose()) {
+    // The operands' loose levels, unread: a prune reads the result's once,
+    // where reading them here would read them again at each conjunction.
+    let operand_loose = match (f.dirty().loose_levels(), g.dirty().loose_levels()) {
         (Some(lf), Some(lg)) if plain => {
-            let settled = |op: &Held<'_>, listed: &[u32]| -> Result<Vec<owed::Entry>, OperationError> {
+            let entries = |loose: &crate::diagram::LooseLevels| -> Result<Vec<owed::Entry>, OperationError> {
                 let mut entries = Vec::new();
-                match op.dirty().counted_loose() {
-                    Some(_) => {
-                        let loose = op.dirty().loose_levels().expect("counted");
-                        eng.limits().reserve_exact(&mut entries, loose.levels().len())?;
-                        entries.extend(loose.entries());
-                    }
-                    None => {
-                        let settled = settle_loose_below(eng, &vtree, &|t| op.level(t), listed, cone.built)?;
-                        eng.limits().reserve_exact(&mut entries, settled.len())?;
-                        entries.extend(settled.into_iter().map(|t| (t, None)));
-                    }
-                }
+                eng.limits().reserve_exact(&mut entries, loose.levels().len())?;
+                entries.extend(loose.entries());
                 Ok(entries)
             };
-            Some(Operands { f: settled(f, lf)?, g: settled(g, lg)? })
+            Some(Operands { f: entries(lf)?, g: entries(lg)? })
         }
         _ => None,
     };

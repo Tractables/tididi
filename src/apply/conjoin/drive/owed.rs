@@ -15,8 +15,7 @@ pub(super) type Entry = (u32, Option<crate::reduce::Unnamed>);
 
 /// The internal levels below the root of a plain conjunction's result that
 /// may hold a node no pair of their parent level names, given the operands'
-/// own such levels, settled under the levels the conjunction builds
-/// ([`settle_loose_below`](crate::reduce::prune::settle_loose_below)), and
+/// own such levels ([`Dirty::loose`](crate::diagram::Dirty::loose)), and
 /// which operand each level the sweep carried as an
 /// identity level came from
 /// ([`SweepLists::identity_carrier`](super::super::setup::SweepLists::identity_carrier));

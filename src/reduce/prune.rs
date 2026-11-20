@@ -684,28 +684,6 @@ pub(crate) fn settle_loose_in<'a>(
     settle_under(lim, (vtree, level), listed, parents, flags, counts)
 }
 
-/// [`settle_loose_in`] reading only the listed levels whose parent is one of
-/// `parents`, which are bottom-up and closed upward (the parent of each is
-/// one of them, but for the root): the others stay listed, unread.
-pub(crate) fn settle_loose_below<'a>(
-    eng: &Engine,
-    vtree: &Vtree,
-    level: &dyn Fn(VtreeIdx) -> &'a TddLevel,
-    listed: &[u32],
-    parents: &[VtreeIdx],
-) -> Result<Vec<u32>, OperationError> {
-    if listed.is_empty() {
-        return Ok(Vec::new());
-    }
-    let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
-    let PruneScratch {
-        settle_counts: counts,
-        settle_flags: flags,
-        ..
-    } = &mut *scratch;
-    settle_under(eng.limits(), (vtree, level), listed, parents, flags, counts)
-}
-
 /// The settle of `listed` that reads the children of each of `parents`,
 /// bottom-up.
 fn settle_under<'a>(

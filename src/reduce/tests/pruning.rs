@@ -451,7 +451,7 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
     }
     assert!(cases > 360, "expected a corpus, got {cases} cases");
     assert!(loose > 300, "expected levels holding an unnamed node, got {loose}");
-    assert!(cleared > 300, "expected levels an operand listed and the result does not, got {cleared}");
+    assert!(cleared > 50, "expected levels an operand listed and the result does not, got {cleared}");
     assert!(settled_away > 400, "expected listed levels the prune settles away, got {settled_away}");
     assert!(seeded > 150, "expected prunes that start at the seeds, got {seeded}");
     assert!(nested > 100, "expected seeded prunes with a forced level that is not clean, got {nested}");
