@@ -285,9 +285,9 @@ pub fn big_to_u128(b: &BigUint) -> u128 {
 /// A structural diagram gets the fast family
 /// ([`check_all_fast`](crate::test_helpers::check::check_all_fast)): vtree
 /// structure, no false nodes, distinct functions within a level by
-/// random-assignment signature, and implicit levels. That holds of an
-/// unminimized result too, so it does not decide canonical form;
-/// [`check_canonicity`](crate::test_helpers::check::check_canonicity) does. A diagram with a
+/// random-assignment signature, and implicit levels, all of which hold of an
+/// unminimized result too; a certified diagram is held to canonical form
+/// ([`check_canonicity`](crate::test_helpers::check::check_canonicity)). A diagram with a
 /// marginal level gets the structure and false-node checks and then the
 /// marginal family instead of the signature check: a marginal child
 /// contributes its stored count to a signature rather than anything
@@ -303,7 +303,6 @@ pub fn assert_canonical(tdd: &Tdd) {
     crate::test_helpers::check::check_certified(tdd).unwrap_or_else(|e| panic!("assert_canonical: {e}"));
     if !tdd.has_marginal_level() {
         check_all_fast(tdd, "assert_canonical");
-        crate::test_helpers::check::check_canonicity(tdd, 3).unwrap_or_else(|e| panic!("assert_canonical: canonicity: {e}"));
         return;
     }
     validate_vtree_structure(tdd).unwrap_or_else(|e| panic!("assert_canonical: vtree structure: {e}"));
