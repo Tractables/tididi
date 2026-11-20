@@ -115,26 +115,24 @@ where
     // The number of g pairs of a set of columns, which a row's charge
     // counts: off a table of every set where the level has few columns and
     // rows enough to pay for it, else column by column.
-    let mut charges;
-    let charge_of: Option<&[u8; 1 << CHARGE_TABLE_COLUMNS]> = if !tops
+    let mut charges = std::mem::MaybeUninit::<[u8; 1 << CHARGE_TABLE_COLUMNS]>::uninit();
+    let tabled = !tops
         && g_width <= CHARGE_TABLE_COLUMNS
-        && (1 << g_width) <= f_width.saturating_mul(CHARGE_TABLE_ENTRIES_A_ROW)
-    {
-        charges = [0u8; 1 << CHARGE_TABLE_COLUMNS];
+        && (1 << g_width) <= f_width.saturating_mul(CHARGE_TABLE_ENTRIES_A_ROW);
+    if tabled {
+        let charges = charges.write([0; 1 << CHARGE_TABLE_COLUMNS]);
         for set in 1..1usize << g_width {
             charges[set] = charges[set & (set - 1)] + table.col_pairs()[set.trailing_zeros() as usize];
         }
-        Some(&charges)
-    } else {
-        None
-    };
+    }
     super::super::note_pair_rows(!left.kills() || !right.kills(), one_pair);
     let rows = PairRows {
         f_level,
         ctx,
         f_width,
         table,
-        charge_of,
+        charges: &charges,
+        tabled,
     };
     // A level of two one-pair columns keeps them in registers and writes
     // each row's cells once.
@@ -194,9 +192,11 @@ struct PairRows<'a> {
     ctx: &'a CellCtx<'a>,
     f_width: usize,
     table: &'a PairTable,
-    /// The number of pairs of each set of columns, on a level that tables
-    /// them.
-    charge_of: Option<&'a [u8; 1 << CHARGE_TABLE_COLUMNS]>,
+    /// The number of pairs of each set of columns, written where `tabled`.
+    /// A reference to the caller's frame rather than an `Option`, so that the
+    /// inlined row loop reads it at a fixed frame offset.
+    charges: &'a std::mem::MaybeUninit<[u8; 1 << CHARGE_TABLE_COLUMNS]>,
+    tabled: bool,
 }
 
 /// The row loop of [`pair_rows`], `ONE` where every column holds one pair,
@@ -227,7 +227,8 @@ where
         ctx,
         f_width,
         table,
-        charge_of,
+        charges,
+        tabled,
     } = rows;
     let (g_flat, cols, col_of, col_pairs) = (table.pairs(), table.cols(), table.col_of(), table.col_pairs());
     let lim = eng.limits();
@@ -253,8 +254,11 @@ where
         if W > 0 {
             return (0..W).map(|j| s >> j & 1).sum();
         }
-        if let Some(charge_of) = charge_of {
-            return u64::from(charge_of[s as usize]);
+        if tabled {
+            debug_assert!(s < 1 << g_width);
+            // Safety: a tabled level wrote `charges`.
+            let charges = unsafe { charges.assume_init_ref() };
+            return u64::from(charges[usize::from(s as u8)]);
         }
         if ONE {
             return u64::from(s.count_ones());
@@ -496,7 +500,7 @@ where
             debug_assert_eq!(cells & !entered, 0, "a live cell the masks do not enter");
             if let Some(o) = out
                 .as_mut()
-                .filter(|o| o.has_room(n1 * g_flat.len(), width))
+                .filter(|o| o.has_room(n1 * if ONE { width } else { g_flat.len() }, width))
             {
                 if W > 0 {
                     let mut row = [NO_PRODUCT; W];
