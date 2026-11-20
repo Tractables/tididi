@@ -615,17 +615,23 @@ fn try_for_each_cell_candidate<const ONE: bool, L: ChildLookup, R: ChildLookup, 
     (left, right): (&L, &R),
     mut emit: impl FnMut(u32, u32) -> Result<(), E>,
 ) -> Result<(), E> {
+    if ONE {
+        // Read once here: read in the loop, the compiler reloads it after
+        // each `emit`, whose writes go through raw pointers.
+        let q = g_flat[j];
+        for (p, &and) in f_pairs.iter().zip(ands) {
+            if and & col != 0 {
+                emit(
+                    left.get(node_idx, p.left.0, q.left.0),
+                    right.get(node_idx, p.right.0, q.right.0),
+                )?;
+            }
+        }
+        return Ok(());
+    }
     for (p, &and) in f_pairs.iter().zip(ands) {
         let mut m = and & col;
         if m == 0 {
-            continue;
-        }
-        if ONE {
-            let q = &g_flat[j];
-            emit(
-                left.get(node_idx, p.left.0, q.left.0),
-                right.get(node_idx, p.right.0, q.right.0),
-            )?;
             continue;
         }
         let (lrow, rrow) = (left.row(p.left.0), right.row(p.right.0));
