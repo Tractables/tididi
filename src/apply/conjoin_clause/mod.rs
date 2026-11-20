@@ -326,10 +326,27 @@ fn rebuild_along_spine(
         spare_pairs: &mut Vec::new(),
         top: None,
     };
+    let vtree = Arc::clone(vtree);
+    let mut carried = f.take_worklists();
+    let fused = carried.take_fused();
+    let carried_loose = carried.take_loose();
+    let mut loose = match canonical {
+        true => {
+            let mut none = carried_loose.unwrap_or_default();
+            none.clear();
+            Some(none)
+        }
+        // Once half the internal levels are listed the list spares a reader
+        // little, and a run of clauses would list every spine again.
+        false => carried_loose.filter(|loose| loose.len() < vtree.internal_bottomup_slice().len() / 2),
+    };
     for &t in work.spine_internal.iter() {
-        rebuild_spine_level(eng, t, vtree, &mut levels, &mut tables)?;
+        let dropped = rebuild_spine_level(eng, t, &vtree, &mut levels, &mut tables)?;
         out_nodes += levels[t.idx()].slot_count() as u64;
         lim.level_done(out_nodes)?;
+        if let Some(loose) = loose.as_mut() {
+            list_rebuilt(loose, &vtree, t, tables.on_spine, tables.need_dt, dropped);
+        }
     }
     // A right `d` half skipped beside a left node with no `c` half is mostly
     // named by another pair unless the skips are a good share of the pairs:
@@ -353,7 +370,7 @@ fn rebuild_along_spine(
     } else {
         let (out, [dropped, read]) = crate::reduce::prune::drop_clause_orphans(
             eng,
-            vtree,
+            &vtree,
             &mut levels,
             &work.on_spine,
             top,
@@ -371,35 +388,6 @@ fn rebuild_along_spine(
     // is also all the walk changed, and so all the seat closes.
     // The pair fusion records (`Dirty::is_fused`) off the spine are the
     // accumulator's too.
-    let vtree = Arc::clone(vtree);
-    let mut carried = f.take_worklists();
-    let fused = carried.take_fused();
-    // The loose levels: those `f` had with their counts, each rebuilt level,
-    // whose products of nodes the level above no longer names stay, and each
-    // internal child of a rebuilt level, whose nodes its rebuilt pairs may
-    // no longer name; these two uncounted.
-    let carried_loose = carried.take_loose();
-    let mut loose = match canonical {
-        true => {
-            let mut none = carried_loose.unwrap_or_default();
-            none.clear();
-            Some(none)
-        }
-        // Once half the internal levels are listed the list spares a reader
-        // little, and a run of clauses would list every spine again.
-        false => carried_loose.filter(|loose| loose.len() < vtree.internal_bottomup_slice().len() / 2),
-    };
-    if let Some(loose) = loose.as_mut() {
-        for &t in work.spine_internal.iter() {
-            loose.insert(t.0);
-            let (left, right) = vtree.children(t);
-            for c in [left, right] {
-                if !vtree.node(c).is_leaf() {
-                    loose.insert(c.0);
-                }
-            }
-        }
-    }
     let mut out = diagram::Assembly::from_levels(eng, vtree, levels, f_weights).finish_with(
         TddNodeId {
             vtree: out_vtree,
@@ -427,6 +415,43 @@ fn rebuild_along_spine(
         );
     }
     Ok(out)
+}
+
+/// List the levels the rebuild of spine level `t` may leave holding a node
+/// no pair of their parent level names, given whether it dropped a pair of
+/// the other child ([`rebuild_spine_level`]): the root, which may hold
+/// products the output is not, and each internal child that may. A rebuilt
+/// child's nodes are its nodes' products, each named where the node it came
+/// from was, since a node other than false has a `c_t` or a `d_t` product and
+/// a pair keeps the product of either that the parent computes; but under a
+/// level with both children relevant and no `d_t`, the type-3 and
+/// `(c_L, d_R)` pairs name a `d_t` product only where the other side's `c_t`
+/// is not false. So a rebuilt child is listed under such a level or where it
+/// was listed, its count forgotten; the other child keeps its nodes and,
+/// unless a pair naming one was dropped, the nodes named, so its entry and
+/// count hold.
+fn list_rebuilt(
+    loose: &mut crate::diagram::LooseLevels,
+    vtree: &crate::vtree::Vtree,
+    t: VtreeIdx,
+    on_spine: &[bool],
+    need_dt: &[bool],
+    dropped: bool,
+) {
+    if t == vtree.root() {
+        loose.insert(t.0);
+    }
+    let (left, right) = vtree.children(t);
+    let fork = on_spine[left.idx()] && on_spine[right.idx()] && !need_dt[t.idx()];
+    for c in [left, right] {
+        let listed = match on_spine[c.idx()] {
+            true => fork || loose.contains(c.0),
+            false => dropped,
+        };
+        if listed && !vtree.node(c).is_leaf() {
+            loose.insert(c.0);
+        }
+    }
 }
 
 /// Conjoin `clause` into `f` under `eng`'s limits. The implementation behind

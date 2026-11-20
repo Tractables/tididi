@@ -92,14 +92,17 @@ fn fits_reserve(capacity: usize, need: usize) -> bool {
 }
 
 /// Rebuild one spine level as the conjunction of the accumulator's level with
-/// the clause, filling this level's `cd_map` block.
+/// the clause, filling this level's `cd_map` block. Returns whether a pair
+/// of the accumulator's level was dropped where the level has one relevant
+/// child and computes no `d_t`: only there can a node of the other child
+/// that a pair named be named by none after.
 pub(super) fn rebuild_spine_level(
     eng: &Engine,
     t: VtreeIdx,
     vtree: &Vtree,
     levels: &mut [TddLevel],
     tables: &mut ClauseTables<'_>,
-) -> Result<(), OperationError> {
+) -> Result<bool, OperationError> {
     let lim = eng.limits();
     let t_idx = t.idx();
     let (left, right) = vtree.children(t);
@@ -157,7 +160,7 @@ pub(super) fn rebuild_spine_level(
         right_grid_base,
         pair_mult,
     };
-    match (left_rel, right_rel, compute_dt) {
+    let dropped = match (left_rel, right_rel, compute_dt) {
         (true, true, true) => {
             rebuild_nodes::<true, true, true>(eng, &old, ctx, level, base, tables)?
         }
@@ -178,7 +181,7 @@ pub(super) fn rebuild_spine_level(
             rebuild_nodes::<false, true, false>(eng, &old, ctx, level, base, tables)?
         }
         (false, false, _) => unreachable!("a spine level has a relevant child"),
-    }
+    };
     let old_value_ref_sides = old.value_ref_sides;
     // A spare the level did not take is freed with `old`.
     old.clear();
@@ -194,13 +197,13 @@ pub(super) fn rebuild_spine_level(
     // marginal clause leaf, `plan_cd_map_bases` a marginal spine level), so
     // the input level's markers carry over exactly.
     level.value_ref_sides = old_value_ref_sides;
-    Ok(())
+    Ok(dropped && !both_rel && !compute_dt)
 }
 
 /// Rebuild the nodes with the level's relevant children and complement demand fixed.
 /// The separate frame keeps level setup out of the specialized pair loops.
 /// Each node charges the work clock a unit for each pair it reads and each
-/// pair it writes.
+/// pair it writes. Returns whether the nodes wrote fewer pairs than they read.
 #[inline(never)]
 fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
     eng: &Engine,
@@ -209,7 +212,7 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
     level: &mut TddLevel,
     base: usize,
     tables: &mut ClauseTables<'_>,
-) -> Result<(), OperationError> {
+) -> Result<bool, OperationError> {
     // The one call site keeps `conjoin_node_with_clause` inlined here.
     // An implicit level's node's pairs are generated into `buf`: a stored
     // node's off its range, and the nodes the description implies, which
@@ -218,6 +221,7 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
     let stored = old.stored();
     let (mut buf, mut cursor) = (Vec::new(), None);
     let mut gate = eng.limits().gate();
+    let (mut read, mut wrote) = (0usize, 0usize);
     for i in 0..old.slot_count() {
         let inputs: &[ChildPair] = match (nodes.get(i), stored) {
             (Some(node), Some(s)) => s.of(node),
@@ -237,8 +241,11 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
         let written =
             conjoin_node_with_clause::<LEFT, RIGHT, DT>(eng, inputs, ctx, level, base + i, tables)?;
         gate.poll((inputs.len() + written) as u64)?;
+        read += inputs.len();
+        wrote += written;
     }
-    gate.flush()
+    gate.flush()?;
+    Ok(wrote < read)
 }
 
 /// Emit the node whose pairs sit at `level.pairs[pair_start..]` and return
