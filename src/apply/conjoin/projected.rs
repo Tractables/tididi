@@ -244,7 +244,7 @@ fn join_at_root(
             Cow::Owned(mut moved) => {
                 let source = &mut moved.levels[..];
                 for (from, &to) in map.iter().enumerate() {
-                    std::mem::swap(&mut levels[to.idx()], &mut source[from]);
+                    levels[to.idx()].swap_with(&mut source[from]);
                 }
                 return_levels(eng, std::mem::take(&mut moved.levels).into_vec());
                 moved.take_worklists()

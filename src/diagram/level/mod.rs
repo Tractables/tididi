@@ -616,6 +616,21 @@ impl TddLevel {
         }
     }
 
+    /// Exchange this level with `other`, as [`std::mem::swap`] does.
+    // `mem::swap` of a level steps through it eight bytes at a time; a read,
+    // a copy and a write move it in vector registers. A conjunction swaps a
+    // level for every free level it carries.
+    #[inline(always)]
+    pub(crate) fn swap_with(&mut self, other: &mut TddLevel) {
+        // Safety: two `&mut` never alias, and every value moved out is
+        // written back before either is read again.
+        unsafe {
+            let held = std::ptr::read(self);
+            std::ptr::copy_nonoverlapping(other, self, 1);
+            std::ptr::write(other, held);
+        }
+    }
+
     /// Clone the level into `out`, reserving every arena through `lim` so
     /// an allocation the host cannot serve comes back as
     /// [`OperationError::OverBudget`](crate::limits::OperationError::OverBudget)

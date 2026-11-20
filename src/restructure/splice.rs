@@ -58,7 +58,7 @@ impl Tdd {
 
         let right_child = self.vtree.children(t).1;
         for idx in self.vtree.subtree(right_child) {
-            std::mem::swap(&mut self.levels[idx.idx()], &mut other.levels[idx.idx()]);
+            self.levels[idx.idx()].swap_with(&mut other.levels[idx.idx()]);
         }
 
         self.levels[t.idx()].clear();

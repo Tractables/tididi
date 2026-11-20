@@ -249,7 +249,7 @@ impl Held<'_> {
     pub(crate) fn carry(&mut self, lim: &Limits, t: usize, out: &mut TddLevel) -> Result<(), OperationError> {
         match (self.view.is_none(), &mut self.tdd) {
             (true, Hold::Owned(tdd)) => {
-                std::mem::swap(out, &mut tdd.levels[t]);
+                out.swap_with(&mut tdd.levels[t]);
                 Ok(())
             }
             _ => self.carry_other(lim, t, out),
@@ -262,7 +262,7 @@ impl Held<'_> {
             None => t,
             Some(view) => match view.held_mut(t) {
                 Ok(Some(built)) => {
-                    std::mem::swap(out, built);
+                    out.swap_with(built);
                     return Ok(());
                 }
                 Ok(None) => {
@@ -273,7 +273,7 @@ impl Held<'_> {
             },
         };
         match &mut self.tdd {
-            Hold::Owned(tdd) => std::mem::swap(out, &mut tdd.levels[own]),
+            Hold::Owned(tdd) => out.swap_with(&mut tdd.levels[own]),
             Hold::Borrowed(tdd) => tdd.levels[own].try_clone_over(lim, 0, 0, out)?,
         }
         Ok(())
@@ -287,7 +287,7 @@ impl Held<'_> {
         let own = match self.view.as_deref_mut().map(|view| view.held_mut(t)) {
             None => t,
             Some(Ok(Some(built))) => {
-                std::mem::swap(out, built);
+                out.swap_with(built);
                 return;
             }
             Some(Ok(None)) => {
@@ -297,7 +297,7 @@ impl Held<'_> {
             Some(Err(own)) => own,
         };
         if let Hold::Owned(tdd) = &mut self.tdd {
-            std::mem::swap(out, &mut tdd.levels[own]);
+            out.swap_with(&mut tdd.levels[own]);
         }
     }
 }

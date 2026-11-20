@@ -171,7 +171,7 @@ impl<'a> MarginalStorage<'a> {
     /// the destination was taken from the pool, so that they go back to it
     /// with the source's levels.
     pub(crate) fn move_from(&mut self, source: &mut TddLevel) {
-        std::mem::swap(self.level, source);
+        self.level.swap_with(source);
     }
 
     pub(crate) fn push_weight(&mut self, eng: &crate::Engine, value: WeightValue) -> Result<u32, crate::OperationError> {

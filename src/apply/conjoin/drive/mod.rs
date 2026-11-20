@@ -793,7 +793,7 @@ fn apply_and_held(
             let mut own = std::mem::take(&mut f.levels).into_vec();
             let levels = assembly.levels_mut();
             for t in visited(&vtree, cone, g.reached()) {
-                std::mem::swap(&mut levels[t], &mut own[t]);
+                levels[t].swap_with(&mut own[t]);
             }
             std::mem::swap(levels, &mut own);
             for t in visited(&vtree, cone, g.reached()) {

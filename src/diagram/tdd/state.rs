@@ -198,9 +198,10 @@ impl LevelStorage {
         self.changed.clear();
     }
 
-    /// Take what `from` knows of its levels' closed form, for a copy of them.
+    /// Take what `from` knows of its levels' closed form and sizes, for a
+    /// copy of them.
     pub(crate) fn copy_closed_from(&mut self, from: &LevelStorage) {
-        self.summary.forget();
+        self.summary.clone_from(&from.summary);
         self.closed = from.closed;
         self.changed.clone_from(&from.changed);
     }
