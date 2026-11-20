@@ -372,18 +372,21 @@ fn rebuild_along_spine(
     let (listed, bare, counts): (&[bool], &mut [bool], _) = match &mut loose {
         Some(list) => {
             let lw = &mut **work.loose.get_or_insert_with(Default::default);
-            lw.listed.cover(lim, num_nodes)?;
             lim.try_resize(&mut lw.bare, num_nodes, false)?;
-            let (on_spine, listed) = (&work.on_spine, &mut lw.listed);
-            list.retain(|&c| {
-                let c = VtreeIdx(c);
-                if !vtree.node(c).parent().is_some_and(|p| on_spine[p.idx()]) {
-                    return true;
-                }
-                listed.mark(c);
-                !on_spine[c.idx()]
-            });
-            (&lw.listed, &mut lw.bare, &mut lw.counts)
+            if !list.is_empty() {
+                lw.listed.cover(lim, num_nodes)?;
+                let (on_spine, listed) = (&work.on_spine, &mut lw.listed);
+                list.retain(|&c| {
+                    let c = VtreeIdx(c);
+                    if !vtree.node(c).parent().is_some_and(|p| on_spine[p.idx()]) {
+                        return true;
+                    }
+                    listed.mark(c);
+                    !on_spine[c.idx()]
+                });
+            }
+            let listed: &[bool] = if lw.listed.is_clear() { &[] } else { &lw.listed };
+            (listed, &mut lw.bare, &mut lw.counts)
         }
         None => (&[], &mut [], &mut spare_counts),
     };
@@ -398,6 +401,7 @@ fn rebuild_along_spine(
         spare_pairs: &mut Vec::new(),
         listed,
         bare,
+        any_bare: false,
         counts,
     };
     for &t in work.spine_internal.iter() {
@@ -426,7 +430,7 @@ fn rebuild_along_spine(
     let vtree = Arc::clone(vtree);
     let mut carried = f.take_worklists();
     let fused = carried.take_fused();
-    let mut out = diagram::Assembly::from_levels(eng, Arc::clone(&vtree), levels, f_weights).finish_with(
+    let mut out = diagram::Assembly::from_levels(eng, vtree, levels, f_weights).finish_with(
         TddNodeId {
             vtree: out_vtree,
             local: out_local,

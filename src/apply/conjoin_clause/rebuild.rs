@@ -22,8 +22,15 @@ pub(super) struct ClauseTables<'a> {
     /// allocates no arena per level.
     pub(super) spare_nodes: &'a mut Vec<EncodedNode>,
     pub(super) spare_pairs: &'a mut Vec<ChildPair>,
+    /// Per level, whether the accumulator listed it loose under a spine
+    /// parent; empty where it listed none there.
     pub(super) listed: &'a [bool],
     pub(super) bare: &'a mut [bool],
+    /// Whether a level of this clause's spine was recorded in [`bare`] so
+    /// far: until one is, no lookup in it can find one.
+    ///
+    /// [`bare`]: ClauseTables::bare
+    pub(super) any_bare: bool,
     pub(super) counts: &'a mut Vec<u32>,
 }
 
@@ -198,12 +205,17 @@ pub(super) fn rebuild_spine_level(
         // The lookups go from cheapest to dearest: a vtree node is read only
         // for a spine child recorded bare.
         let bare = |s: VtreeIdx, rel: bool| rel && tables.bare[s.idx()] && !vtree.node(s).is_leaf();
-        let bare_side = [bare(left, left_rel), bare(right, right_rel)];
-        tables.bare[t_idx] = dead || bare_side[0] || bare_side[1];
+        let bare_side = match tables.any_bare {
+            true => [bare(left, left_rel), bare(right, right_rel)],
+            false => [false; 2],
+        };
+        let is_bare = dead || bare_side[0] || bare_side[1];
+        tables.bare[t_idx] = is_bare;
+        tables.any_bare |= is_bare;
         let (children, rel) = ([left, right], [left_rel, right_rel]);
         let mut read = [false; 2];
         for side in 0..2 {
-            let listed = tables.listed[children[side].idx()];
+            let listed = !tables.listed.is_empty() && tables.listed[children[side].idx()];
             read[side] = match rel[side] {
                 true => listed || both_rel && (!compute_dt || bare_side[1 - side]),
                 false => !listed && if compute_dt { bare_side[1 - side] } else { dropped },

@@ -414,7 +414,7 @@ pub(super) fn seed_list<'a>(
         return Ok(std::borrow::Cow::Borrowed(loose));
     }
     let level = |t: VtreeIdx| &tdd.levels[t.idx()];
-    Ok(std::borrow::Cow::Owned(settle_listed(eng, &tdd.vtree, &level, loose, true)?))
+    settle_listed(eng, &tdd.vtree, &level, loose, true)
 }
 
 /// A level's slots and arena pairs: what a read of its pairs or a walk
@@ -665,7 +665,7 @@ pub(crate) fn settle_loose_in<'a>(
     level: &dyn Fn(VtreeIdx) -> &'a TddLevel,
     listed: &[u32],
 ) -> Result<Vec<u32>, OperationError> {
-    settle_listed(eng, vtree, level, listed, false)
+    settle_listed(eng, vtree, level, listed, false).map(std::borrow::Cow::into_owned)
 }
 
 /// Per level, in [`settle_listed`]'s flags: whether it stays listed,
@@ -678,15 +678,15 @@ const ABOVE: usize = 2;
 
 /// [`settle_loose_in`], which with `weigh` reads no level, and keeps the list
 /// as it is, unless the reads can pay ([`READ_COST`]).
-fn settle_listed<'a>(
+fn settle_listed<'a, 'l>(
     eng: &Engine,
     vtree: &Vtree,
     level: &dyn Fn(VtreeIdx) -> &'a TddLevel,
-    listed: &[u32],
+    listed: &'l [u32],
     weigh: bool,
-) -> Result<Vec<u32>, OperationError> {
+) -> Result<std::borrow::Cow<'l, [u32]>, OperationError> {
     if listed.is_empty() {
-        return Ok(Vec::new());
+        return Ok(std::borrow::Cow::Borrowed(listed));
     }
     let lim = eng.limits();
     // The prune's scratch, which a prune checks out after this returns: a
@@ -712,10 +712,11 @@ fn settle_listed<'a>(
     for &t in listed.iter().chain(touched.iter().map(|t| &t.0)) {
         flags[t as usize] = [false; 3];
     }
-    settled
+    Ok(settled?.map_or(std::borrow::Cow::Borrowed(listed), std::borrow::Cow::Owned))
 }
 
-/// [`settle_listed`] in its cleared buffers.
+/// [`settle_listed`] in its cleared buffers: `None` where it keeps the list
+/// as it is.
 #[allow(clippy::too_many_arguments)]
 fn settle_marked<'a>(
     lim: &Limits,
@@ -727,7 +728,7 @@ fn settle_marked<'a>(
     parents: &mut Vec<VtreeIdx>,
     touched: &mut Vec<VtreeIdx>,
     counts: &mut Vec<u32>,
-) -> Result<Vec<u32>, OperationError> {
+) -> Result<Option<Vec<u32>>, OperationError> {
     for &t in listed {
         flags[t as usize][AT] = true;
     }
@@ -763,7 +764,7 @@ fn settle_marked<'a>(
             }
         }
         if walk <= reads {
-            return Ok(listed.to_vec());
+            return Ok(None);
         }
     }
     let mut gate = lim.gate();
@@ -790,7 +791,7 @@ fn settle_marked<'a>(
     let mut kept = Vec::new();
     lim.reserve(&mut kept, listed.len())?;
     kept.extend(listed.iter().copied().filter(|&t| flags[t as usize][AT]));
-    Ok(kept)
+    Ok(Some(kept))
 }
 
 /// What a settle's reads and the walk they may spare are taken to cost, in

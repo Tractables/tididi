@@ -64,6 +64,11 @@ impl MarkBuffer {
         );
     }
 
+    /// Whether no flag is set.
+    pub(super) fn is_clear(&self) -> bool {
+        self.set.is_empty()
+    }
+
     /// Replay the log, so every flag is false again.
     pub(super) fn unmark_all(&mut self) {
         for &t in &self.set {
