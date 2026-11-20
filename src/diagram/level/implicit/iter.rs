@@ -678,7 +678,10 @@ impl<'a> NodeCursor<'a> {
     /// a digit its carry reaches, and one behind read off its digits.
     #[inline(never)]
     fn seek(&mut self, i: usize) -> (i64, i64) {
-        let run = i / self.cycle;
+        // The next run, where a walk in order steps, is found without a
+        // division: a walk of a few nodes a run seeks at every run.
+        let ahead = i.wrapping_sub((self.run + 1) * self.cycle);
+        let run = if ahead < self.cycle { self.run + 1 } else { i / self.cycle };
         if run != self.run {
             if run == self.run + 1 {
                 self.runs.step_counted(self.slow, run);
@@ -690,7 +693,10 @@ impl<'a> NodeCursor<'a> {
             self.run = run;
         }
         let within = i - run * self.cycle;
-        let skip = within - within % self.span;
+        // A stretch is `RUN_PAIRS` places of a lead digit or a whole run of
+        // at most that many.
+        let skip = within & !(RUN_PAIRS - 1);
+        debug_assert_eq!(skip, within - within % self.span);
         self.start = run * self.cycle + skip;
         self.places = self.span.min(self.cycle - skip);
         let (l, r) = self.runs.at;
