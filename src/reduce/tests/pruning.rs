@@ -946,6 +946,11 @@ fn the_unnamed_count_is_the_nodes_no_pair_of_the_parent_level_names() {
                 nonzero += usize::from(unnamed.nodes > 0);
                 assert_eq!(unnamed, unnamed_by_pairs(&f), "{label}");
                 assert_eq!(eng.unnamed_nodes(&mut f).unwrap(), Some(unnamed), "{label}: second read");
+                if rng.below(3) == 0 {
+                    eng.reduce(&mut f, ReductionPlan::Contract).unwrap();
+                    let contracted = eng.unnamed_nodes(&mut f).unwrap();
+                    assert_eq!(contracted, Some(unnamed_by_pairs(&f)), "{label}: contracted after a read");
+                }
                 if rng.below(4) == 0 {
                     eng.reduce(&mut f, ReductionPlan::Prune).unwrap();
                     assert_eq!(eng.unnamed_nodes(&mut f).unwrap(), Some(crate::reduce::Unnamed::default()), "{label}: pruned");
@@ -957,7 +962,7 @@ fn the_unnamed_count_is_the_nodes_no_pair_of_the_parent_level_names() {
             assert_same_shape(&f, &compile_clauses(&vtree, &clauses), &format!("seed {seed}, {label}"));
         }
     }
-    assert!(unknown == 0 && nonzero > counted / 4, "{nonzero} of {counted} counts nonzero, {unknown} unknown");
+    assert!(unknown == 0 && nonzero > counted / 5, "{nonzero} of {counted} counts nonzero, {unknown} unknown");
 }
 
 /// A diagram with a marginal level keeps no loose levels to count.

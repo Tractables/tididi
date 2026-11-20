@@ -232,12 +232,7 @@ fn contract_child(
 /// Take `t1` off the loose levels ([`Dirty::loose`](crate::diagram::Dirty::loose)),
 /// where they are known: its parent level names every node of it.
 fn unlist_loose(tdd: &mut Tdd, t1: VtreeIdx) {
-    if tdd.dirty.loose().is_some_and(|loose| loose.contains(&t1.0))
-        && let Some(mut loose) = tdd.dirty.take_loose()
-    {
-        loose.retain(|&t| t != t1.0);
-        tdd.dirty.set_loose(Some(loose));
-    }
+    tdd.dirty.unlist_loose(t1.0);
 }
 
 /// A listed search must find every group a search of the whole level does:
@@ -498,7 +493,7 @@ fn sweep_twins(eng: &Engine, tdd: &mut Tdd, drop_unnamed: bool) -> Result<(), Op
 /// builds check it after each sweep.
 #[cfg(debug_assertions)]
 fn debug_assert_loose_listed(tdd: &Tdd) {
-    let Some(loose) = tdd.dirty.loose() else {
+    let Some(loose) = tdd.dirty.loose_levels() else {
         return;
     };
     if tdd.is_zero() {
@@ -510,7 +505,7 @@ fn debug_assert_loose_listed(tdd: &Tdd) {
             continue;
         }
         for (c, side) in [(left, ChildSide::Left), (right, ChildSide::Right)] {
-            if !tdd.is_structural_internal(c) || loose.contains(&c.0) {
+            if !tdd.is_structural_internal(c) || loose.contains(c.0) {
                 continue;
             }
             let mut named = vec![false; tdd.levels[c.idx()].slot_count()];

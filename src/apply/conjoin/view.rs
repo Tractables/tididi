@@ -218,7 +218,7 @@ fn moved_dirty(
 ) -> Result<Dirty, OperationError> {
     let mut carried = tdd.dirty.clone_on(eng)?;
     carried.reserve_leaf_owes_inner(eng)?;
-    let loose = carried.take_loose();
+    let loose = carried.take_loose().map(crate::diagram::LooseLevels::into_levels);
     carried.remap(&plan.embedding.levels);
     literal_tops.sort_unstable();
     if !literal_tops.is_empty() {

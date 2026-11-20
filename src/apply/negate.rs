@@ -232,12 +232,12 @@ impl Owed {
         // A canonical operand has every node named; otherwise the operand's
         // loose levels, read before the seeding forgets them.
         let loose = if canonical {
-            Some(Vec::new())
+            Some(crate::diagram::LooseLevels::default())
         } else {
             carried.take_loose()
         };
         let may_be_loose = |c: crate::vtree::VtreeIdx| {
-            !vtree.node(c).is_leaf() && loose.as_ref().is_none_or(|l| l.contains(&c.0))
+            !vtree.node(c).is_leaf() && loose.as_ref().is_none_or(|l| l.contains(c.0))
         };
         let root = vtree.root();
         let mut rebuilt = vec![root];

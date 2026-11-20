@@ -756,31 +756,27 @@ fn unnamed_children<'a>(
     Ok(([unread[0] || !named[0], unread[1] || !named[1]], width))
 }
 
-/// [`settle_loose`] read to the end: the levels of `listed` that hold a node
-/// no pair of their parent level names, or cannot be read, and the nodes
-/// they hold no pair names with the root level's other than the output,
-/// with their pairs ([`Engine::unnamed_nodes`]). The output is at the root
-/// and no level is marginal. Unlike the settle, a level whose parent is the
-/// root or under a level that stays listed is read too, each parent's
-/// pairs in one pass, one unit of work a pair.
+/// [`settle_loose`] read to the end: each level of `listed` that holds a
+/// node no pair of its parent level names, or cannot be read, with the
+/// nodes it holds no pair names and their pairs ([`Engine::unnamed_nodes`]);
+/// a level that cannot be read, and the root level, are given none. The
+/// output is at the root and no level is marginal. Unlike the settle, a
+/// level whose parent is the root or under a level that stays listed is read
+/// too, each parent's pairs in one pass, one unit of work a pair.
 pub(crate) fn count_unnamed(
     eng: &Engine,
     tdd: &Tdd,
     listed: &[u32],
-) -> Result<(Vec<u32>, Unnamed), OperationError> {
+) -> Result<Vec<(u32, Unnamed)>, OperationError> {
     let (vtree, lim) = (&tdd.vtree, eng.limits());
     let level_at = |t: VtreeIdx| &tdd.levels[t.idx()];
     let root = vtree.root();
-    let mut unnamed = Unnamed::default();
-    {
-        let level = level_at(root);
-        for k in (0..level.node_count()).filter(|&k| k != tdd.output.local.idx()) {
-            unnamed.nodes += 1;
-            unnamed.pairs += level.pair_count_at(k);
-        }
+    let mut held: Vec<(u32, Unnamed)> = Vec::new();
+    if listed.contains(&root.0) && level_at(root).node_count() > 1 {
+        lim.try_push(&mut held, (root.0, Unnamed::default()))?;
     }
     if listed.is_empty() {
-        return Ok((Vec::new(), unnamed));
+        return Ok(held);
     }
     let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
     let PruneScratch {
@@ -789,47 +785,43 @@ pub(crate) fn count_unnamed(
         settle_parents: parents,
         ..
     } = &mut *scratch;
-    // Per level, whether it is listed and whether it stays listed.
-    const LISTED: usize = 0;
-    const STAYS: usize = 1;
     flags.clear();
     lim.try_resize(flags, vtree.num_nodes(), [false; 2])?;
     for &t in listed {
-        flags[t as usize][LISTED] = true;
+        flags[t as usize][0] = true;
     }
-    flags[root.idx()][STAYS] = flags[root.idx()][LISTED] && unnamed.nodes > 0;
     parents.clear();
     lim.reserve(parents, listed.len())?;
     parents.extend(listed.iter().filter_map(|&t| vtree.node(VtreeIdx(t)).parent()));
     parents.sort_unstable_by_key(|p| p.0);
     parents.dedup();
+    lim.reserve(&mut held, listed.len())?;
     let mut gate = lim.gate();
     for &p in parents.iter() {
         let children = <[VtreeIdx; 2]>::from(vtree.children(p));
-        let sides = children.map(|c| flags[c.idx()][LISTED]);
+        let sides = children.map(|c| flags[c.idx()][0]);
         let (stays, width) = unnamed_children(lim, (vtree, &level_at), p, sides, counts, &mut gate)?;
         let mut base = 0;
         for k in 0..2 {
-            flags[children[k].idx()][STAYS] = stays[k];
-            if stays[k] && width[k] > 0 {
-                let level = level_at(children[k]);
-                for (s, _) in counts[base..base + width[k] - 1].iter().enumerate().filter(|&(_, &n)| n == 0) {
-                    unnamed.nodes += 1;
-                    unnamed.pairs += level.pair_count_at(s);
+            if stays[k] {
+                let mut unnamed = Unnamed::default();
+                if width[k] > 0 {
+                    let level = level_at(children[k]);
+                    for (s, _) in counts[base..base + width[k] - 1].iter().enumerate().filter(|&(_, &n)| n == 0) {
+                        unnamed.nodes += 1;
+                        unnamed.pairs += level.pair_count_at(s);
+                    }
                 }
+                held.push((children[k].0, unnamed));
             }
             base += width[k];
         }
     }
     gate.flush()?;
-    let mut stays: Vec<u32> = Vec::new();
-    lim.reserve(&mut stays, listed.len())?;
     for &t in listed {
-        if std::mem::take(&mut flags[t as usize][STAYS]) {
-            stays.push(t);
-        }
+        flags[t as usize][0] = false;
     }
-    Ok((stays, unnamed))
+    Ok(held)
 }
 
 /// Count in `blocks`, a count a node, the pairs of `level` that name each

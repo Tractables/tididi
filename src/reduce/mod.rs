@@ -164,27 +164,47 @@ impl Engine {
     /// forgot them. `None` where it does not, on a diagram with a marginal
     /// level, and on one whose output is not at the root.
     ///
-    /// The first read after a change reads the parent levels of those
-    /// levels, one unit of work a pair, and keeps the count and the levels
-    /// found holding such a node for the next read and the next prune or
-    /// conjunction.
+    /// A read reads the parent levels of the levels not counted since they
+    /// last changed, one unit of work a pair, and keeps each level's count
+    /// for the next read, and the levels found holding such a node for the
+    /// next prune or conjunction; a conjunction without summing out keeps
+    /// the counts of the levels it takes from an operand with their parent.
     ///
     /// # Errors
     ///
     /// `OverBudget` if the scratch the read takes is refused, and the stop
     /// the read polls for; `f` is unchanged then.
     pub fn unnamed_nodes(&self, f: &mut Tdd) -> Result<Option<Unnamed>, OperationError> {
-        if let Some(unnamed) = f.dirty.unnamed() {
-            return Ok(Some(unnamed));
-        }
-        let Some(loose) = f.dirty.loose() else {
+        let Some(loose) = f.dirty.loose_levels() else {
             return Ok(None);
         };
         if f.is_zero() || f.is_one() || f.has_marginal_level() || !prune::below_root_walk_applies(f) {
             return Ok(None);
         }
-        let (levels, unnamed) = prune::count_unnamed(self, f, loose)?;
-        f.dirty.set_counted_loose(levels, unnamed);
+        let uncounted: Vec<u32> = loose.entries().filter(|e| e.1.is_none()).map(|e| e.0).collect();
+        if !uncounted.is_empty() {
+            let held = prune::count_unnamed(self, f, &uncounted)?;
+            let loose = f.dirty.loose_levels_mut().expect("listed above");
+            for (t, unnamed) in held {
+                loose.insert_counted(t, Some(unnamed));
+            }
+            for t in uncounted {
+                if loose.unnamed(t).is_none() {
+                    loose.remove(t);
+                }
+            }
+        }
+        let mut unnamed = Unnamed::default();
+        let root = &f.levels[f.vtree.root().idx()];
+        for k in (0..root.node_count()).filter(|&k| k != f.output.local.idx()) {
+            unnamed.nodes += 1;
+            unnamed.pairs += root.pair_count_at(k);
+        }
+        for (_, held) in f.dirty.loose_levels().expect("listed above").entries() {
+            let held = held.expect("counted above");
+            unnamed.nodes += held.nodes;
+            unnamed.pairs += held.pairs;
+        }
         Ok(Some(unnamed))
     }
 

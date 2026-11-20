@@ -374,33 +374,26 @@ fn rebuild_along_spine(
     let vtree = Arc::clone(vtree);
     let mut carried = f.take_worklists();
     let fused = carried.take_fused();
-    // The loose levels: those `f` had, each rebuilt level, whose products of
-    // nodes the level above no longer names stay, and each internal child
-    // off the spine of a rebuilt level, whose nodes its rebuilt pairs may no
-    // longer name.
+    // The loose levels: those `f` had with their counts, each rebuilt level,
+    // whose products of nodes the level above no longer names stay, and each
+    // internal child off the spine of a rebuilt level, whose nodes its
+    // rebuilt pairs may no longer name; these two uncounted.
     let carried_loose = carried.take_loose();
-    let loose = match canonical {
-        true => Some(Vec::new()),
+    let mut loose = match canonical {
+        true => Some(diagram::LooseLevels::default()),
         false => carried_loose,
     };
-    let loose = match loose {
-        Some(mut loose) => {
-            lim.reserve(&mut loose, 3 * work.spine_internal.len())?;
-            for &t in work.spine_internal.iter() {
-                loose.push(t.0);
-                let (left, right) = vtree.children(t);
-                for c in [left, right] {
-                    if !vtree.node(c).is_leaf() && !work.on_spine[c.idx()] {
-                        loose.push(c.0);
-                    }
+    if let Some(loose) = loose.as_mut() {
+        for &t in work.spine_internal.iter() {
+            loose.insert(t.0);
+            let (left, right) = vtree.children(t);
+            for c in [left, right] {
+                if !vtree.node(c).is_leaf() && !work.on_spine[c.idx()] {
+                    loose.insert(c.0);
                 }
             }
-            loose.sort_unstable();
-            loose.dedup();
-            Some(loose)
         }
-        None => None,
-    };
+    }
     let mut out = diagram::Assembly::from_levels(eng, vtree, levels, f_weights).finish_with(
         TddNodeId {
             vtree: out_vtree,
@@ -414,7 +407,7 @@ fn rebuild_along_spine(
     if let Some(first) = first_marginal {
         out.levels.keep_first_marginal(first);
     }
-    out.dirty.set_loose(loose);
+    out.dirty.restore_loose(loose);
     #[cfg(debug_assertions)]
     {
         let recorded: Vec<VtreeIdx> = (0..out.vtree.num_nodes() as u32)

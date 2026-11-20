@@ -174,10 +174,18 @@ pub(super) fn contract_twins(
     // survivor, twins having equal contexts; and the parent keeps its
     // nodes. Only the children of the dropped unnamed nodes can lose their
     // last name, and are listed loose after the rebuild.
-    let loose = match diagram_marginal {
+    let mut loose = match diagram_marginal {
         true => None,
         false => tdd.dirty.take_loose(),
     };
+    // What `t1` holds changes, and the parent's pairs.
+    if let Some(loose) = loose.as_mut() {
+        for t in [t1, parent] {
+            if loose.contains(t.0) {
+                loose.insert(t.0);
+            }
+        }
+    }
     if merged_members == 0 {
         tdd.invalidate_shrunk(t1);
     } else {
@@ -188,7 +196,7 @@ pub(super) fn contract_twins(
     } else {
         tdd.invalidate_shrunk(parent);
     }
-    tdd.dirty.set_loose(loose);
+    tdd.dirty.restore_loose(loose);
     tdd.levels.mark_changed(parent);
 
     // A repeated pair is legal where a level of the diagram is marginal;

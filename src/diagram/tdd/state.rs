@@ -483,17 +483,111 @@ pub(crate) struct Dirty {
     /// what every diagram starts as and what any edit makes it, unless the
     /// edit hands the levels back ([`take_loose`](Self::take_loose)). A
     /// prune leaves none, and it walks only as much as these levels need.
-    loose: Option<Vec<u32>>,
-    /// The nodes of the listed levels no node of their parent level names,
-    /// with the root level's nodes other than the output, and their pairs:
-    /// set by [`Engine::unnamed_nodes`](crate::Engine::unnamed_nodes) with
-    /// the list it settled, in which every level holds such a node or cannot
-    /// be read, and forgotten by every other write of the list.
-    unnamed: Option<crate::reduce::Unnamed>,
+    loose: Option<LooseLevels>,
     /// A bit for each level at which a pair fusion ran to the end and that
     /// no push has named since: no node there holds two pairs that pair
     /// fusion would fuse. Unknown, as every diagram starts, is no bit set.
     fused: Vec<u64>,
+}
+
+/// The loose levels ([`Dirty::loose`]), each once in no order, with what
+/// each holds where counted
+/// ([`Engine::unnamed_nodes`](crate::Engine::unnamed_nodes)). A count holds
+/// while neither the level's nodes nor its parent level's pairs change: an
+/// edit that changes either lists the level again, which forgets it.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct LooseLevels {
+    levels: Vec<u32>,
+    /// Beside each of `levels`.
+    unnamed: Vec<Option<crate::reduce::Unnamed>>,
+    /// Per level, its index in `levels` where listed, anything where not: a
+    /// level is listed when the index names it, so nothing is cleared.
+    at: Vec<u32>,
+}
+
+impl LooseLevels {
+    /// `levels`, uncounted.
+    pub(crate) fn of(levels: Vec<u32>) -> Self {
+        Self::counted(levels.into_iter().map(|t| (t, None)))
+    }
+
+    /// `entries`, each a level and what it holds where counted; a level
+    /// listed twice keeps its last entry.
+    pub(crate) fn counted(entries: impl IntoIterator<Item = (u32, Option<crate::reduce::Unnamed>)>) -> Self {
+        let mut out = Self::default();
+        for (t, unnamed) in entries {
+            out.insert_counted(t, unnamed);
+        }
+        out
+    }
+
+    /// The levels, in no order.
+    #[inline]
+    pub(crate) fn levels(&self) -> &[u32] {
+        &self.levels
+    }
+
+    /// Each level with what it holds where counted.
+    pub(crate) fn entries(&self) -> impl Iterator<Item = (u32, Option<crate::reduce::Unnamed>)> + '_ {
+        self.levels.iter().copied().zip(self.unnamed.iter().copied())
+    }
+
+    /// The levels as a list, their counts dropped.
+    pub(crate) fn into_levels(self) -> Vec<u32> {
+        self.levels
+    }
+
+    #[inline]
+    fn index(&self, level: u32) -> Option<usize> {
+        let i = *self.at.get(level as usize)? as usize;
+        (self.levels.get(i) == Some(&level)).then_some(i)
+    }
+
+    #[inline]
+    pub(crate) fn contains(&self, level: u32) -> bool {
+        self.index(level).is_some()
+    }
+
+    /// What `level` holds, if listed and counted.
+    #[inline]
+    pub(crate) fn unnamed(&self, level: u32) -> Option<crate::reduce::Unnamed> {
+        self.index(level).and_then(|i| self.unnamed[i])
+    }
+
+    /// List `level`, uncounted.
+    #[inline]
+    pub(crate) fn insert(&mut self, level: u32) {
+        self.insert_counted(level, None);
+    }
+
+    /// List `level` with what it holds, `None` for not counted.
+    pub(crate) fn insert_counted(&mut self, level: u32, unnamed: Option<crate::reduce::Unnamed>) {
+        if let Some(i) = self.index(level) {
+            self.unnamed[i] = unnamed;
+            return;
+        }
+        if self.at.len() <= level as usize {
+            self.at.resize(level as usize + 1, 0);
+        }
+        self.at[level as usize] = self.levels.len() as u32;
+        self.levels.push(level);
+        self.unnamed.push(unnamed);
+    }
+
+    pub(crate) fn remove(&mut self, level: u32) {
+        if let Some(i) = self.index(level) {
+            self.levels.swap_remove(i);
+            self.unnamed.swap_remove(i);
+            if let Some(&moved) = self.levels.get(i) {
+                self.at[moved as usize] = i as u32;
+            }
+        }
+    }
+
+    /// Forget every count.
+    pub(crate) fn forget_counts(&mut self) {
+        self.unnamed.fill(None);
+    }
 }
 
 impl Dirty {
@@ -602,10 +696,13 @@ impl Dirty {
         for pass in Pass::ALL {
             carried.list(pass).append(self.list(pass));
         }
-        carried.unnamed = None;
         carried.loose = match (carried.loose.take(), self.loose.take()) {
             (Some(mut under), Some(over)) => {
-                under.extend(over);
+                for t in over.levels {
+                    under.insert(t);
+                }
+                // The levels below and above were edited apart.
+                under.forget_counts();
                 Some(under)
             }
             _ => None,
@@ -664,10 +761,11 @@ impl Dirty {
             copy_slice(eng, out.list(pass), &self.lists[pass as usize])?;
         }
         if let Some(from) = &self.loose {
-            let mut to = Vec::new();
-            copy_slice(eng, &mut to, from)?;
+            let mut to = LooseLevels::default();
+            copy_slice(eng, &mut to.levels, &from.levels)?;
+            copy_slice(eng, &mut to.unnamed, &from.unnamed)?;
+            copy_slice(eng, &mut to.at, &from.at)?;
             out.loose = Some(to);
-            out.unnamed = self.unnamed;
         }
         copy_slice(eng, &mut out.fused, &self.fused)?;
         Ok(out)
@@ -682,11 +780,14 @@ impl Dirty {
     /// [`remap`](Self::remap), moving the fusion record of each level
     /// `keeps` names to its new index; every other record is dropped.
     pub(crate) fn remap_keeping(&mut self, map: &[VtreeIdx], keeps: impl Fn(usize) -> bool) {
-        self.unnamed = None;
-        for list in self.lists.iter_mut().chain(self.loose.as_mut()) {
+        for list in self.lists.iter_mut() {
             for entry in list.iter_mut() {
                 *entry = map[*entry as usize].0;
             }
+        }
+        if let Some(loose) = self.loose.take() {
+            let levels = loose.levels.into_iter().map(|t| map[t as usize].0).collect();
+            self.loose = Some(LooseLevels::of(levels));
         }
         let fused = std::mem::take(&mut self.fused);
         for (w, &word) in fused.iter().enumerate() {
@@ -713,7 +814,7 @@ impl Dirty {
     /// nearly every level was sorted again on nearly every push, as the
     /// levels a run of clause conjunctions rebuilds between two reductions.
     pub(crate) fn dedup_above(&mut self, n: usize) {
-        for list in self.lists.iter_mut().chain(self.loose.as_mut()) {
+        for list in self.lists.iter_mut() {
             if list.len() > 2 * n {
                 list.sort_unstable();
                 list.dedup();
@@ -722,64 +823,83 @@ impl Dirty {
     }
 
     /// The levels that may hold a node their parent level does not name, if
-    /// that is known.
+    /// that is known, each once.
     #[inline]
     pub(crate) fn loose(&self) -> Option<&[u32]> {
-        self.loose.as_deref()
+        self.loose.as_ref().map(|loose| &loose.levels[..])
+    }
+
+    /// The loose levels with what each holds where counted, if known.
+    #[inline]
+    pub(crate) fn loose_levels(&self) -> Option<&LooseLevels> {
+        self.loose.as_ref()
+    }
+
+    /// The loose levels to count, if known.
+    #[inline]
+    pub(crate) fn loose_levels_mut(&mut self) -> Option<&mut LooseLevels> {
+        self.loose.as_mut()
+    }
+
+    /// Whether `level` may hold a node its parent level does not name: listed
+    /// loose, or the loose levels are not known.
+    #[inline]
+    pub(crate) fn may_be_loose(&self, level: u32) -> bool {
+        self.loose.as_ref().is_none_or(|loose| loose.contains(level))
     }
 
     /// Record which levels may hold a node their parent level does not name:
-    /// `None` for not known, and no level once nothing is unreachable.
+    /// `None` for not known, and no level once nothing is unreachable. A level
+    /// listed twice is listed once.
     #[inline]
     pub(crate) fn set_loose(&mut self, levels: Option<Vec<u32>>) {
-        self.loose = levels;
-        self.unnamed = None;
+        self.loose = levels.map(LooseLevels::of);
     }
 
-    /// Record `levels`, each holding a node its parent level does not name
-    /// or not readable, with what they hold
-    /// ([`Engine::unnamed_nodes`](crate::Engine::unnamed_nodes)).
-    pub(crate) fn set_counted_loose(&mut self, levels: Vec<u32>, unnamed: crate::reduce::Unnamed) {
-        self.loose = Some(levels);
-        self.unnamed = Some(unnamed);
-    }
-
-    /// What the loose levels hold, if counted since the list was last written.
+    /// [`set_loose`](Self::set_loose) for loose levels kept as
+    /// [`take_loose`](Self::take_loose) took them, their counts included.
     #[inline]
-    pub(crate) fn unnamed(&self) -> Option<crate::reduce::Unnamed> {
-        self.unnamed
+    pub(crate) fn restore_loose(&mut self, loose: Option<LooseLevels>) {
+        self.loose = loose;
     }
 
-    /// The loose levels as a prune settles them, if counted: then each holds
-    /// a node its parent level does not name, or cannot be read.
+    /// The loose levels as a prune settles them, if each is counted: then
+    /// each holds a node its parent level does not name, or cannot be read.
     #[inline]
     pub(crate) fn counted_loose(&self) -> Option<&[u32]> {
-        self.unnamed.and(self.loose.as_deref())
+        self.loose
+            .as_ref()
+            .filter(|loose| loose.unnamed.iter().all(Option::is_some))
+            .map(|loose| &loose.levels[..])
     }
 
     fn forget_loose(&mut self) {
         self.loose = None;
-        self.unnamed = None;
     }
 
     /// Take the loose levels, leaving them unknown: for an edit that knows
     /// the levels it leaves loose, which puts them back with
+    /// [`restore_loose`](Self::restore_loose) or
     /// [`set_loose`](Self::set_loose) after its invalidations.
     #[inline]
-    pub(crate) fn take_loose(&mut self) -> Option<Vec<u32>> {
-        self.unnamed = None;
+    pub(crate) fn take_loose(&mut self) -> Option<LooseLevels> {
         self.loose.take()
     }
 
-    /// List `level` loose where the loose levels are known: an edit dropped
-    /// nodes of its parent level, whose pairs may have named the only
-    /// reference to one of its nodes.
+    /// List `level` loose where the loose levels are known, its count
+    /// forgotten: an edit dropped nodes of its parent level, whose pairs may
+    /// have named the only reference to one of its nodes.
     pub(crate) fn add_loose(&mut self, level: u32) {
-        self.unnamed = None;
-        if let Some(loose) = &mut self.loose
-            && !loose.contains(&level)
-        {
-            loose.push(level);
+        if let Some(loose) = &mut self.loose {
+            loose.insert(level);
+        }
+    }
+
+    /// Take `level` off the loose levels: its parent level names every node
+    /// of it.
+    pub(crate) fn unlist_loose(&mut self, level: u32) {
+        if let Some(loose) = &mut self.loose {
+            loose.remove(level);
         }
     }
 

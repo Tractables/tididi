@@ -566,9 +566,21 @@ fn apply_and_held(
     // the sweep drops the operands' levels.
     let operand_loose = match (f.dirty().loose(), g.dirty().loose()) {
         (Some(lf), Some(lg)) if plain => {
-            let settled = |op: &Held<'_>, listed: &[u32]| match op.dirty().counted_loose() {
-                Some(counted) => eng.limits().try_to_vec(counted),
-                None => settle_loose_in(eng, &vtree, &|t| op.level(t), listed),
+            let settled = |op: &Held<'_>, listed: &[u32]| -> Result<Vec<owed::Entry>, OperationError> {
+                let mut entries = Vec::new();
+                match op.dirty().counted_loose() {
+                    Some(_) => {
+                        let loose = op.dirty().loose_levels().expect("counted");
+                        eng.limits().reserve_exact(&mut entries, loose.levels().len())?;
+                        entries.extend(loose.entries());
+                    }
+                    None => {
+                        let settled = settle_loose_in(eng, &vtree, &|t| op.level(t), listed)?;
+                        eng.limits().reserve_exact(&mut entries, settled.len())?;
+                        entries.extend(settled.into_iter().map(|t| (t, None)));
+                    }
+                }
+                Ok(entries)
             };
             Some(Operands { f: settled(f, lf)?, g: settled(g, lg)? })
         }
@@ -706,7 +718,7 @@ fn apply_and_held(
             .finish_with_or_return(output, owed, &lists.owed_twins, Some(&lists.built[..]))
             .map(|mut out| {
                 if let Some(loose) = loose {
-                    out.dirty.set_loose(Some(loose));
+                    out.dirty.restore_loose(Some(crate::diagram::LooseLevels::counted(loose)));
                     out.dirty.dedup_above(num_nodes);
                 }
                 #[cfg(debug_assertions)]
