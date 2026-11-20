@@ -215,6 +215,11 @@ impl LevelStorage {
     /// Whether the counts kept at the last close hold ([`hold_counts`](Self::hold_counts)).
     pub(crate) fn counts_hold(&self) -> bool { self.counts_hold }
 
+    /// Forget the pair total kept across marked edits, for edits that
+    /// change some level's pairs without marking it, as a level made
+    /// marginal or cleared.
+    pub(crate) fn forget_pair_total(&mut self) { self.summary.pairs.forget(); }
+
     /// Record that an edit changed level `t`'s nodes or pairs, forgetting
     /// the live pairs the level keeps or was left
     /// ([`TddLevel::forget_held_pairs`]).
