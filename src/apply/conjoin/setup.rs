@@ -548,6 +548,12 @@ impl ApplyRun<'_, '_> {
         let available = self.products.arena.is_bump();
         let big = over_floor(cells(f.here, g.here), f_level, g_level, min_grid);
         let child_grid_wins = available && !big && child_grids();
+        let walked = available && (big || child_grid_wins);
+        let pairs = |l: &TddLevel| (l.pairs.len() + l.node_count()) as u128;
+        let rows_win = |sibling: VtreeIdx, max: u64| {
+            let read = live(sibling) + pairs(f_level) + pairs(g_level);
+            walked && u128::from(cells(f.here, g.here)) + u128::from(max) < 2 * read
+        };
         SparseGate {
             available,
             density_wins: available
@@ -557,6 +563,8 @@ impl ApplyRun<'_, '_> {
                 && factor * live(left) * live(right) < max_left as u128 * max_right as u128,
             child_grid_wins,
             big,
+            rows_win_left: rows_win(left, max_left),
+            rows_win_right: rows_win(right, max_right),
         }
     }
 
