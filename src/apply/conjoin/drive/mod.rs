@@ -159,11 +159,13 @@ fn build_level(
         t.idx(),
     );
 
+    let mut child_marginal = false;
     if !taken {
         // One decision per level, taken before any of the level's storage
         // is touched: the marginal plan and the two gates read only metadata.
         let here = Operands { f: f.here(shape), g: g.here(shape) };
         let marginal = run.level_marginal(here, shape, sweep.targets);
+        child_marginal = marginal.left_now || marginal.right_now;
         let plan = plan_marginal_level(here, shape, run, &marginal);
         let mut route = route_level(
             &plan,
@@ -227,7 +229,14 @@ fn build_level(
         }
     }
 
-    run.built_marginal |= run.levels[t.idx()].is_marginal();
+    let structural = !run.levels[t.idx()].is_marginal();
+    run.built_marginal |= !structural;
+    // A plain conjunction has no marginal level. A child is marginal for
+    // good once its parent is built: a later cascade sums out the parent too.
+    let marginal = |c: VtreeIdx| run.levels[c.idx()].is_marginal();
+    if structural && (child_marginal || taken && !run.plain && (marginal(left) || marginal(right))) {
+        run.lists.inline_at.push(t);
+    }
     if run.plain && !taken {
         owed::note_operand_level(run, f, g, vtree, t);
     }
@@ -727,12 +736,25 @@ fn apply_and_held(
             }
         }
         let levels = assembly.parts_mut().0;
+        let at = std::mem::take(&mut lists.inline_at);
         let rewrote = |t: VtreeIdx| {
             if !lists.seat_closes(t.idx(), closed) {
                 lists.built.push(t);
             }
         };
-        match crate::diagram::inline_small_marginal_refs_in(lim, &vtree, levels, cone.built, rewrote) {
+        let inlined = crate::diagram::inline_small_marginal_refs_in(lim, &vtree, levels, &at, rewrote);
+        lists.inline_at = at;
+        #[cfg(debug_assertions)]
+        if inlined.is_ok() {
+            let levels = assembly.parts_mut().0;
+            let marked = |t: VtreeIdx, c: VtreeIdx, side| !levels[c.idx()].is_marginal() || levels[t.idx()].has_value_refs(side);
+            for &t in cone.built.iter().filter(|t| !levels[t.idx()].is_marginal()) {
+                let (left, right) = vtree.children(t);
+                use crate::diagram::ChildSide::{Left, Right};
+                debug_assert!(marked(t, left, Left) && marked(t, right, Right), "level {} missed by the inlining", t.idx());
+            }
+        }
+        match inlined {
             Ok(()) if cone.constant => {
                 let owed = crate::diagram::Dirty::stacked(&Default::default(), f.dirty(), cone.built.len());
                 assembly.finish_with_or_return(output, owed, cone.built, Some(&lists.built[..]))
