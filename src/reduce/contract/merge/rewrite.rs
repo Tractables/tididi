@@ -96,9 +96,9 @@ pub(super) fn rewrite_parent(
     (false, live)
 }
 
-/// Nodes with fewer pairs than this are rewritten one pair at a time even
-/// with AVX2: below it the call and the scalar tail cost more than the
-/// vector loop saves.
+/// Nodes of fewer pairs are rewritten one pair at a time even where
+/// [`remap_avx2`] runs. Thresholds of 8 and 16 cost more instructions than
+/// 4 on every instance measured.
 #[cfg(all(target_arch = "x86_64", not(miri)))]
 const AVX2_PAIRS: usize = 4;
 
