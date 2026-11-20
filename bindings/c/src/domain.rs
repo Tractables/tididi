@@ -18,11 +18,13 @@ pub struct TididiLimits {
     pub output_nodes: u64,
     /// Cooperative timeout in seconds; -1 means unlimited. Other values must be finite and nonnegative.
     pub timeout_seconds: f64,
+    /// Whether the operation minimizes its result.
+    pub canonical_results: bool,
 }
 /// Return unlimited limits. Modify fields before passing their address to an operation.
 #[unsafe(no_mangle)]
 pub extern "C" fn tididi_limits_default() -> TididiLimits {
-    TididiLimits { memory_bytes: u64::MAX, output_nodes: u64::MAX, timeout_seconds: -1.0 }
+    TididiLimits { memory_bytes: u64::MAX, output_nodes: u64::MAX, timeout_seconds: -1.0, canonical_results: false }
 }
 pub(crate) unsafe fn limits(value: *const TididiLimits) -> Result<LimitConfig> {
     let Some(value) = (unsafe { value.as_ref() }) else { return Ok(LimitConfig::none()); };
@@ -31,7 +33,8 @@ pub(crate) unsafe fn limits(value: *const TididiLimits) -> Result<LimitConfig> {
         Some(Instant::now().checked_add(duration).ok_or_else(|| invalid("timeout is too large"))?)
     };
     Ok(LimitConfig::none().with_memory_budget_bytes((value.memory_bytes != u64::MAX).then_some(value.memory_bytes))
-        .with_output_node_cap((value.output_nodes != u64::MAX).then_some(value.output_nodes)).with_deadline(deadline))
+        .with_output_node_cap((value.output_nodes != u64::MAX).then_some(value.output_nodes)).with_deadline(deadline)
+        .with_canonical_results(value.canonical_results))
 }
 pub(crate) fn run<T>(vtree: &Arc<Vtree>, config: LimitConfig,
     f: impl FnOnce(&Engine) -> std::result::Result<T, tididi::OperationError>) -> Result<T> {

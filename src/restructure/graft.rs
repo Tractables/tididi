@@ -120,6 +120,7 @@ fn graft_impl(
         return Ok((crate::build::constant_zero_padded(eng, &grafted_arc), layout));
     }
 
+    let canonical = parts.iter().all(Tdd::is_canonical);
     let mut placement = MovePlacement::new(eng, &grafted_arc)?;
     for (k, part) in parts.iter_mut().enumerate() {
         placement.move_part(part, layout.part(k).as_slice());
@@ -152,7 +153,11 @@ fn graft_impl(
         NodeIdx(0)
     };
     placement.check_weights().map_err(GraftError::DestinationWeights)?;
-    Ok((placement.finish(output_local, &[])?, layout))
+    let mut result = placement.finish(output_local, &[])?;
+    if canonical && !result.has_marginal_level() {
+        result.certify_built();
+    }
+    Ok((result, layout))
 }
 
 /// Require a destination interpretation for every marginal value that a part will carry across.

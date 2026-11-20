@@ -22,7 +22,7 @@ mod structure;
 mod trimmed;
 
 pub use canonicity::{check_canonicity, check_distinct_functions};
-pub use trimmed::{check_trimmed, reachable_true_labels};
+pub use trimmed::{check_certified, check_trimmed, reachable_true_labels};
 pub use implicit::{check_implicit_levels, check_left_pairs_taken};
 pub use rotation::assert_rotation_locality;
 pub use soundness::{assert_no_mixed_leaf_side, check_determinism, labels_at};
@@ -51,17 +51,21 @@ fn require(label: &str, checker: &str, r: Result<(), String>) {
 
 /// Run the fast checks of what holds after any operation, minimized or not:
 /// vtree structure, no false nodes, distinct functions within a level
-/// ([`check_distinct_functions`], 3 rounds) and implicit levels. Panics
-/// naming the first that fails.
+/// ([`check_distinct_functions`], 3 rounds) and implicit levels, and on a
+/// certified diagram canonical form ([`check_canonicity`]). Panics naming
+/// the first that fails.
 ///
-/// It does not decide canonical form: an unminimized result with
-/// unreachable nodes or twins passes. [`check_canonicity`] decides it.
+/// On an uncertified diagram it does not decide canonical form: an
+/// unminimized result with unreachable nodes or twins passes.
 ///
 /// Cost: O(diagram size).
 pub fn check_all_fast(tdd: &Tdd, label: &str) {
     require(label, "vtree structure", validate_vtree_structure(tdd));
     require(label, "no_false_nodes", check_no_false_nodes(tdd));
-    require(label, "distinct functions", check_distinct_functions(tdd, 3));
+    match tdd.is_canonical() {
+        true => require(label, "canonicity", check_canonicity(tdd, 3)),
+        false => require(label, "distinct functions", check_distinct_functions(tdd, 3)),
+    }
     require(label, "implicit levels", check_implicit_levels(tdd));
 }
 

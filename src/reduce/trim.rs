@@ -74,6 +74,7 @@ impl Engine {
 /// labels. With a summed-out level `dropped` holds at most the caller's seed
 /// and a diagram whose summed levels are regions or leaves is trimmed by
 /// detection instead; the smooth form, with an internal summed level, stays.
+/// Elsewhere a false `f` has its levels emptied.
 ///
 /// # Errors
 ///
@@ -87,7 +88,8 @@ pub(crate) fn settle(eng: &Engine, f: &mut Tdd, dropped: &mut Vec<VtreeIdx>) -> 
     settle_cold(eng, f, dropped)
 }
 
-/// [`settle`] with no leaf dropped, which is never refused.
+/// [`settle`] with no leaf dropped, which is never refused. A false `f` it
+/// does not replace has its levels emptied.
 #[inline]
 pub(crate) fn close_constant(eng: &Engine, f: &mut Tdd) {
     if f.vtree.num_nodes() != 0 && (f.is_zero() || f.is_one_leaf_one()) {
@@ -98,18 +100,24 @@ pub(crate) fn close_constant(eng: &Engine, f: &mut Tdd) {
 #[cold]
 #[inline(never)]
 fn close_constant_cold(eng: &Engine, f: &mut Tdd) {
-    let Some(home) = f.vtree.home() else { return };
     let one = !f.is_zero();
-    if one && f.vtree.node(f.vtree.root()).is_region() {
-        return;
+    let kept = one && f.vtree.node(f.vtree.root()).is_region();
+    match f.vtree.home() {
+        Some(home) if !kept => {
+            replace(eng, f, constant_without_leaf(&Vtree::empty_projection(&home), one));
+        }
+        _ if !one => super::prune::clear_false(f),
+        _ => {}
     }
-    replace(eng, f, constant_without_leaf(&Vtree::empty_projection(&home), one));
 }
 
 #[cold]
 #[inline(never)]
 fn settle_cold(eng: &Engine, f: &mut Tdd, dropped: &mut Vec<VtreeIdx>) -> Result<(), OperationError> {
-    let Some(home) = f.vtree.home() else { return Ok(()) };
+    let Some(home) = f.vtree.home() else {
+        close_constant(eng, f);
+        return Ok(());
+    };
     if f.has_marginal_level() {
         // A summed internal level is the smooth form `marginalize_levels`
         // leaves on the home, which stays as it is.

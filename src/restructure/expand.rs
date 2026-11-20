@@ -93,7 +93,8 @@ impl Tdd {
     /// one for each value of the class's leaf that the levels above reference;
     /// where they reference true and a literal of one class, each reference to
     /// true becomes two pairs, one per literal, and no node for true is built.
-    /// The result is canonical when this diagram is. Weights are not carried,
+    /// The result is not certified canonical
+    /// ([`is_canonical`](Self::is_canonical)). Weights are not carried,
     /// and a diagram with summed-out levels is refused. Runs on this diagram's
     /// context; use [`Engine::expand_variables`] inside a bounded batch.
     ///

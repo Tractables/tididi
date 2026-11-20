@@ -405,3 +405,22 @@ fn every_refused_reserve_of_an_expansion_leaves_the_operand() {
     }
     assert!(refused > 0, "no expansion refused");
 }
+
+/// A constant on a home lives on the home's empty projection.
+#[test]
+fn a_constant_on_a_home_expands_over_the_classes() {
+    let eng = Engine::new();
+    let home = crate::vtree::Home::new(eng.bind_vtree(Vtree::balanced(2)));
+    let expansion = VariableExpansion {
+        classes: vec![vec![pos(1), neg(3)], vec![neg(2)]],
+        constants: vec![pos(4)],
+        free: vec![VarId(5)],
+        num_vars: 5,
+    };
+    for (f, value) in [(eng.one(home.vtree()), true), (eng.zero(home.vtree()), false)] {
+        assert_eq!(f.vtree().num_leaves(), 0);
+        let g = eng.expand_variables(&f, &expansion).unwrap();
+        assert_canonical(&g);
+        assert_eq!(models(&g, 5), expected_models(&[value; 4], &expansion), "{value}");
+    }
+}

@@ -89,8 +89,13 @@ static PANIC_AT: std::sync::Mutex<String> = std::sync::Mutex::new(String::new())
 
 /// Whether `t` holds a node its output does not reach, where its known
 /// loose levels allow one ([`check_loose_levels`](crate::test_helpers::check::check_loose_levels)).
+/// Its stored nodes, reached or not, are deterministic.
 fn unreached(t: &Tdd) -> Result<bool, String> {
     crate::test_helpers::check::check_loose_levels(t)?;
+    crate::test_helpers::check::check_certified(t)?;
+    if !t.has_marginal_level() {
+        crate::test_helpers::check::check_determinism(t)?;
+    }
     if t.is_zero() || t.is_one() {
         return Ok(false);
     }

@@ -414,6 +414,44 @@ impl Tdd {
         self.output.local == TRUE
     }
 
+    /// Whether the diagram is certified canonical: its output reaches every
+    /// node it stores and no two nodes of a level denote the same function,
+    /// so [`Engine::minimize`](crate::Engine::minimize) would leave it as it
+    /// is. A diagram on a vtree with no node is certified. An operation's
+    /// documentation says whether its result keeps the certificate of its
+    /// operands; a result without it may still be canonical, unknown to the
+    /// library. The certificate does not say that no pair names a leaf as
+    /// true: a diagram an embedding padded keeps its padding.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{and, Engine, Tdd, Vtree};
+    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let f = Tdd::clause(&vtree, [-1, 2])?;
+    /// let mut y = and(f, Tdd::clause(&vtree, [1, 2])?)?;
+    /// assert!(!y.is_canonical());
+    /// Engine::new().minimize(&mut y)?;
+    /// assert!(y.is_canonical());
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    pub fn is_canonical(&self) -> bool {
+        self.vtree.num_nodes() == 0 || self.levels.is_canonical(self.output)
+    }
+
+    /// Certify the diagram canonical, for a producer that built it so: every
+    /// node reached and no twin.
+    pub(crate) fn certify_built(&mut self) {
+        self.levels.certify(self.output);
+        self.dirty.set_loose(Some(Vec::new()));
+        #[cfg(debug_assertions)]
+        {
+            crate::reduce::prune::debug_assert_all_reached(self);
+            if !self.has_marginal_level() {
+                crate::reduce::contract::contract_leaf::assert_no_full_twin_side(self);
+            }
+        }
+    }
+
     /// True on a vtree that is one leaf, the output naming that leaf `One`.
     pub(crate) fn is_one_leaf_one(&self) -> bool {
         self.output.local == ONE_LEAF_IDX && self.vtree.num_nodes() == 1

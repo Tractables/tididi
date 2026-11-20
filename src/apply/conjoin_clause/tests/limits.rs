@@ -69,6 +69,11 @@ fn the_rebuild_charges_the_pairs_it_reads_and_writes() {
             let mark = eng.limits().mark();
             let out = eng.and_clause(f, &clause).unwrap();
             let work = eng.limits().work_since(mark);
+            if out.is_zero() {
+                // A false result holds none of the pairs the rebuild wrote.
+                assert!(work >= read, "{name}, case {case}: charged {work} for {read} pairs read");
+                continue;
+            }
             let pairs = read + spine_pairs(&out, &spine);
             let slack = (2 * width + 3 * vtree.num_nodes()) as u64;
             assert!(

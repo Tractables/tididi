@@ -100,6 +100,7 @@ fn table_function(vtree: &Arc<Vtree>, constrained: &[VarId], table: &[Vec<bool>]
             .collect();
         f = crate::or(f, Tdd::cube(vtree, cube).unwrap()).unwrap();
     }
+    f.minimize().unwrap();
     f
 }
 

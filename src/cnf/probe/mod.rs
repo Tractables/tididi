@@ -4,7 +4,7 @@
 //! [`SatOracle`], which encoded nodes can be true together with its other
 //! clauses, and marks the others dead. A [`ProbePolicy`] decides at fixed
 //! points whether the probe goes on. The caller removes the dead nodes with
-//! [`Engine::filter_nodes_with`](crate::Engine::filter_nodes_with).
+//! [`Engine::filter_nodes`](crate::Engine::filter_nodes).
 
 use std::ops::ControlFlow;
 

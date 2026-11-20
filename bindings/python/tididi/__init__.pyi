@@ -41,7 +41,8 @@ class Literal:
 
 class Limits:
     def __init__(self, *, memory_bytes: int | None = None,
-                 output_nodes: int | None = None, timeout: float | None = None) -> None: ...
+                 output_nodes: int | None = None, timeout: float | None = None,
+                 canonical_results: bool = False) -> None: ...
 
 class Algebra(Protocol[_T]):
     def zero(self) -> _T: ...

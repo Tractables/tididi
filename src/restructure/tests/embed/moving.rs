@@ -345,7 +345,7 @@ fn moved_diagrams_negate_and_disjoin_like_copies() {
                 failures.push(format!("determinism {clauses:?} -> {positions:?}: {e}"));
             }
             let expect = eng.negate(copied.clone()).unwrap();
-            let got = eng.negate_with(moved.clone(), ReductionPlan::Prune).unwrap();
+            let got = crate::apply::with_plan::negate_with(&eng, moved.clone(), ReductionPlan::Prune).unwrap();
             if !eng.equivalent(&got, &expect).unwrap() {
                 failures.push(format!("negate_with {clauses:?} -> {positions:?}"));
             }

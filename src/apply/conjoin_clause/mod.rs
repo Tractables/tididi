@@ -402,7 +402,8 @@ pub(crate) fn conjoin_clause_on<L: crate::LiteralInput>(
 }
 
 impl Tdd {
-    /// Build a canonical disjunction of literals over the shared vtree.
+    /// Build a disjunction of literals over the shared vtree. The result is
+    /// not certified canonical ([`is_canonical`](Self::is_canonical)).
     ///
     /// Integers are signed and one-based; typed [`Literal`] values also work.
     /// Repeated literals are ignored. Both polarities of a variable make the
@@ -461,7 +462,7 @@ impl crate::Engine {
         }
         gate.flush()?;
         let one = self.cube(vtree, std::iter::empty::<Literal>())?;
-        conjoin_clause_on(self, one, &clause)
+        crate::apply::exit::outcome(self, conjoin_clause_on(self, one, &clause))
     }
 
     /// Run [`Tdd::and_clause`](crate::Tdd::and_clause) using this batch's scratch and resource limits.
@@ -481,7 +482,7 @@ impl crate::Engine {
         f: Tdd,
         clause: &[L],
     ) -> Result<Tdd, OperationError> {
-        conjoin_clause_on(self, f, clause)
+        crate::apply::exit::outcome(self, conjoin_clause_on(self, f, clause))
     }
 }
 

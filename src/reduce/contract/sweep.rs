@@ -351,12 +351,18 @@ fn restore_pending_dirty(tdd: &mut Tdd, pending: &mut Pending, current: Option<u
 /// the unprocessed parents are back on the `Pass::Contract` worklist, so a
 /// later minimize resumes them.
 pub(crate) fn contract_all_twins(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
-    sweep_twins(eng, tdd, true)
+    sweep_twins(eng, tdd, true, None)
+}
+
+/// [`contract_all_twins`] given whether the diagram has a marginal level,
+/// where the caller has read it.
+pub(crate) fn contract_all_twins_known(eng: &Engine, tdd: &mut Tdd, marginal: Option<bool>) -> Result<(), OperationError> {
+    sweep_twins(eng, tdd, true, marginal)
 }
 
 /// [`contract_all_twins`], dropping the nodes no pair names that a whole
 /// search lists where `drop_unnamed`.
-fn sweep_twins(eng: &Engine, tdd: &mut Tdd, drop_unnamed: bool) -> Result<(), OperationError> {
+fn sweep_twins(eng: &Engine, tdd: &mut Tdd, drop_unnamed: bool, marginal: Option<bool>) -> Result<(), OperationError> {
     let lim = eng.limits();
     let num_nodes = tdd.vtree.num_nodes();
 
@@ -367,6 +373,7 @@ fn sweep_twins(eng: &Engine, tdd: &mut Tdd, drop_unnamed: bool) -> Result<(), Op
 
     let mut scratch = eng.scratch.reduce.contract.checkout(eng);
     scratch.drop_unnamed = drop_unnamed;
+    scratch.diagram_marginal = marginal;
     // Without a marginal level a parent the sweep reaches only through a
     // contraction above it has its children searched at the nodes that
     // contraction changed (`fingerprint::listed`); a parent on the worklist
@@ -540,7 +547,7 @@ pub(crate) fn debug_assert_no_twins_under(eng: &Engine, tdd: &Tdd, parents: &[Vt
     copy.dirty.restore(Pass::Contract, check.clone());
     let before = copy.levels.node_count();
     // A refusal under the caller's limits leaves nothing checked.
-    if sweep_twins(eng, &mut copy, false).is_ok() {
+    if sweep_twins(eng, &mut copy, false, None).is_ok() {
         assert_eq!(
             copy.levels.node_count(),
             before,

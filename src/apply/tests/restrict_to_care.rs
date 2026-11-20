@@ -234,6 +234,11 @@ fn trace_used_pairs(f: &Tdd, c: &Tdd, g: &Tdd, nvars: u32) -> usize {
 #[test]
 fn restrict_differing_root_containment_difftest() {
     let vtree = Arc::new(Vtree::balanced(8));
+    let reroot_to_child = |t: &Tdd, side: ChildSide| {
+        let mut m = t.clone();
+        m.minimize().unwrap();
+        crate::test_helpers::reroot_to_child(&m, side)
+    };
     let lit = |v: u32, p: bool| clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(v + 1, p)]));
     // Function-level soundness oracle: g∧c == f∧c over all 2^nvars assignments,
     // and g never larger than f. Apply-free (shares no machinery with `restrict_to_care`).
@@ -1098,7 +1103,7 @@ fn has_implicit(t: &Tdd, p: impl Fn(&crate::diagram::TddLevel) -> bool) -> bool 
 /// marginal on each leaf, and the restriction joins a `care` level of one
 /// node as a spine.
 fn alternating_operands(k: u32) -> (Tdd, Tdd) {
-    let engine = Engine::new();
+    let engine = crate::test_helpers::canonical_engine();
     let vtree = Arc::new(Vtree::linear(2 * k));
     let same = engine.or(engine.cube(&vtree, [3, 5]).unwrap(), engine.cube(&vtree, [-3, -5]).unwrap()).unwrap();
     let f = engine.or(engine.cube(&vtree, [1]).unwrap(), same).unwrap();

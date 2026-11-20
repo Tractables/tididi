@@ -118,3 +118,174 @@ fn reseating_a_diagram_on_a_home_off_the_home_panics_in_debug() {
     // Safety: never reached past the debug check.
     unsafe { f.reseat_vtree_unchecked(&bare) };
 }
+
+mod producers {
+    use super::*;
+    use crate::reduce::ReductionPlan;
+    use crate::test_helpers::check::check_certified;
+    use crate::test_helpers::{rand_conj, rand_conj_over};
+    use crate::vtree::rng::Lcg;
+    use crate::vtree::VarId;
+
+    fn certified(t: &Tdd, what: &str) {
+        assert!(t.is_canonical(), "{what}: not certified");
+        check_certified(t).unwrap_or_else(|e| panic!("{what}: {e}"));
+    }
+
+    /// A random vtree on `n` variables, some of them kept, and the vtree
+    /// restricted to those, renumbered `1..=k` in order.
+    fn restriction(n: u32, seed: u64, rng: &mut Lcg) -> Option<(Arc<Vtree>, Arc<Vtree>, Vec<u32>)> {
+        let vtree = Arc::new(Vtree::random(n, seed));
+        let kept: Vec<u32> = (1..=n).filter(|_| rng.coin()).collect();
+        let local_of = |v: VarId| kept.iter().position(|&k| k == v.0).map(|i| VarId(i as u32 + 1));
+        let restricted = Arc::new(vtree.project_to_vars(local_of, kept.len() as u32)?);
+        Some((vtree, restricted, kept))
+    }
+
+    /// A minimized diagram on `vtree` over `vars`: a literal one time in
+    /// four, else a random CNF.
+    fn source(vtree: &Arc<Vtree>, vars: &[u32], rng: &mut Lcg) -> Tdd {
+        let mut f = match rng.below(4) {
+            0 => {
+                let v = vars[rng.below(vars.len() as u64) as usize] as i32;
+                Tdd::clause(vtree, [if rng.coin() { v } else { -v }]).unwrap()
+            }
+            _ => rand_conj_over(vtree, vars, 4, 3, false, rng),
+        };
+        Engine::new().minimize(&mut f).unwrap();
+        f
+    }
+
+    #[test]
+    fn embeddings_of_certified_diagrams_are_certified() {
+        let eng = Engine::new();
+        let mut moved_certified = 0;
+        for seed in 0..300u64 {
+            let mut rng = Lcg::new(seed ^ 0xe3b);
+            let n = 2 + rng.below(7) as u32;
+            let Some((into, small, kept)) = restriction(n, seed, &mut rng) else { continue };
+            let local: Vec<u32> = (1..=kept.len() as u32).collect();
+            let f = source(&small, &local, &mut rng);
+            let map = |v: VarId| VarId(kept[v.idx()]);
+            let count = f.model_count().unwrap() << (n as usize - kept.len());
+            let (a, _) = f.embed(&into, map).unwrap();
+            certified(&a, &format!("seed {seed}: embed"));
+            assert_eq!(a.model_count().unwrap(), count, "seed {seed}");
+            let plan = eng.embedding_plan(f.vtree(), &into, map).unwrap();
+            certified(&eng.embed_with(&f, &plan).unwrap(), &format!("seed {seed}: embed_with"));
+            certified(&plan.apply(&f).unwrap(), &format!("seed {seed}: plan"));
+            certified(&eng.embed_over(&f, &into, map).unwrap().0, &format!("seed {seed}: embed_over"));
+            let (moved, _) = eng.embed_moving(f.clone(), &into, map).map_err(|r| r.error).unwrap();
+            check_certified(&moved).unwrap_or_else(|e| panic!("seed {seed}: embed_moving: {e}"));
+            moved_certified += usize::from(moved.is_canonical());
+            assert_eq!(moved.model_count().unwrap(), count, "seed {seed}");
+        }
+        assert!(moved_certified > 100, "{moved_certified} moved embeddings certified");
+    }
+
+    #[test]
+    fn projections_onto_kept_variables_are_certified() {
+        let eng = Engine::new();
+        for seed in 0..300u64 {
+            let mut rng = Lcg::new(seed ^ 0x9e1);
+            let n = 2 + rng.below(7) as u32;
+            let Some((vtree, small, kept)) = restriction(n, seed, &mut rng) else { continue };
+            let mut f = rand_conj(&vtree, n, 4, 3, false, &mut rng);
+            if rng.coin() {
+                eng.minimize(&mut f).unwrap();
+            }
+            let local_of = |v: VarId| kept.iter().position(|&k| k == v.0).map(|i| VarId(i as u32 + 1));
+            let g = f.project_to_vars(local_of, kept.len() as u32).unwrap();
+            certified(&g, &format!("seed {seed}: project_to_vars"));
+            let h = eng.project_over(&f, &small, local_of).unwrap();
+            certified(&h, &format!("seed {seed}: project_over"));
+            assert!(eng.equivalent(&g.embed(&small, |v| v).unwrap().0, &h).unwrap(), "seed {seed}");
+        }
+    }
+
+    #[test]
+    fn grafts_of_certified_parts_are_certified() {
+        for seed in 0..200u64 {
+            let mut rng = Lcg::new(seed ^ 0x6a7);
+            let mut next = 1u32;
+            let mut parts = Vec::new();
+            for _ in 0..1 + rng.below(3) {
+                let vars: Vec<u32> = (next..next + 1 + rng.below(3) as u32).collect();
+                next += vars.len() as u32;
+                let order: Vec<VarId> = vars.iter().map(|&v| VarId(v)).collect();
+                let vtree = Arc::new(Vtree::balanced_over(&order).unwrap());
+                parts.push(source(&vtree, &vars, &mut rng));
+            }
+            let spine: Vec<VarId> = (0..rng.below(3) as u32).map(|i| VarId(next + i)).collect();
+            let count = parts.iter().map(|p| p.model_count().unwrap()).product::<num_bigint::BigUint>() << spine.len();
+            let Ok(g) = Engine::new().graft(parts, &spine) else { continue };
+            certified(&g, &format!("seed {seed}: graft"));
+            assert_eq!(g.model_count().unwrap(), count, "seed {seed}");
+        }
+    }
+
+    #[test]
+    fn projections_to_a_subtree_are_certified() {
+        let eng = Engine::new();
+        for seed in 0..100u64 {
+            let mut rng = Lcg::new(seed ^ 0x51b);
+            let n = 2 + rng.below(6) as u32;
+            let vtree = Arc::new(Vtree::random(n, seed));
+            let f = rand_conj(&vtree, n, 4, 3, false, &mut rng);
+            for key in vtree.bottomup().filter(|&t| t != vtree.root()) {
+                let g = eng.project_to_subtree(&f, key).unwrap();
+                certified(&g, &format!("seed {seed}: project_to_subtree at {}", key.0));
+            }
+        }
+    }
+
+    #[test]
+    fn constants_without_a_node_are_certified() {
+        let home = crate::vtree::Home::new(Vtree::random(3, 1));
+        let empty = Vtree::empty_projection(&home);
+        assert!(Tdd::one(&empty).is_canonical());
+        assert!(Tdd::zero(&empty).is_canonical());
+    }
+
+    /// Prune and contraction keep a certificate with nothing owed; a
+    /// negation certifies its result under every plan from a certified
+    /// operand, and from any operand under `canonical_results`.
+    #[test]
+    fn idle_reductions_and_negations_certify() {
+        let eng = Engine::new();
+        for seed in 0..300u64 {
+            let mut rng = Lcg::new(seed ^ 0x4e9);
+            let n = 2 + rng.below(7) as u32;
+            let vtree = Arc::new(Vtree::random(n, seed));
+            let f = rand_conj(&vtree, n, 5, 3, false, &mut rng);
+            let mut c = f.clone();
+            eng.minimize(&mut c).unwrap();
+            for plan in [ReductionPlan::Prune, ReductionPlan::Contract] {
+                let (mut d, label) = (c.clone(), format!("seed {seed}: reduce({plan:?})"));
+                eng.reduce(&mut d, plan).unwrap();
+                certified(&d, &label);
+            }
+            let expected = eng.negate(&c).unwrap();
+            certified(&expected, &format!("seed {seed}: negate"));
+            for plan in [ReductionPlan::Prune, ReductionPlan::Contract] {
+                let label = format!("seed {seed}: negate_with({plan:?})");
+                let g = crate::apply::with_plan::negate_with(&eng, &c, plan).unwrap();
+                certified(&g, &label);
+                assert!(eng.equivalent(&g, &expected).unwrap(), "seed {seed}");
+            }
+            let g = crate::test_helpers::canonical_engine().negate(&f).unwrap();
+            certified(&g, &format!("seed {seed}: negate of an uncertified operand"));
+            assert_eq!(g.node_count(), expected.node_count(), "seed {seed}");
+        }
+    }
+}
+
+/// The checker rejects a certificate on a diagram with twins.
+#[test]
+fn a_false_certificate_fails_the_check() {
+    let vtree = Arc::new(Vtree::balanced(2));
+    let f = Tdd::clause(&vtree, [-1, 2]).unwrap();
+    let mut y = crate::and(f, Tdd::clause(&vtree, [1, 2]).unwrap()).unwrap();
+    y.levels.certify(y.output);
+    assert!(crate::test_helpers::check::check_certified(&y).is_err());
+}

@@ -30,7 +30,8 @@ impl Tdd {
     ///
     /// `local_of(v)` gives a kept variable its id in the result's
     /// `1..=num_local` space and returns `None` for a variable to drop. The
-    /// result is canonical, its vtree a new allocation on this diagram's
+    /// result is certified canonical ([`is_canonical`](Self::is_canonical)),
+    /// its vtree a new allocation on this diagram's
     /// execution context, and it is the inverse of [`embed`](Self::embed):
     /// embedding the result back under the inverse renaming gives
     /// `∃ dropped. self`.
@@ -74,7 +75,9 @@ impl Tdd {
     /// // Embedded back, it is f with x2 and x4 quantified away.
     /// let (back, _) = g.embed(&vtree, |v| VarId(2 * v.0 - 1))?;
     /// assert!(back.equivalent(&f.exists_vars(&[VarId(2), VarId(4)])?)?);
+    /// assert!(g.is_canonical() && back.is_canonical());
     /// # tididi::test_helpers::assert_canonical(&g);
+    /// # tididi::test_helpers::assert_canonical(&back);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn project_to_vars(
@@ -225,10 +228,15 @@ impl Engine {
             Cow::Borrowed(f) => f.try_clone_on(self)?,
             Cow::Owned(f) => f,
         };
-        let mut g = crate::apply::project::exists_vars_on(self, f, dropped, crate::reduce::ReductionPlan::default(), false)?;
+        let mut g = crate::apply::project::exists_vars_on(self, f, dropped, Some(crate::reduce::ReductionPlan::default()), false)?;
         self.minimize_plain(&mut g)?;
         match splice(self, &g, into, plan)? {
-            Some(result) => Ok(result),
+            Some(mut result) => {
+                if g.levels.is_canonical(g.output) {
+                    result.certify_built();
+                }
+                Ok(result)
+            }
             None => unreachable!("a canonical diagram over the kept variables alone splices"),
         }
     }

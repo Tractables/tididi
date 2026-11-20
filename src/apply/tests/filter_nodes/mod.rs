@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use super::*;
+use crate::reduce::ReductionPlan;
 use crate::diagram::{EncodedNode, NEG_LEAF_IDX, POS_LEAF_IDX};
 use crate::limits::{LimitConfig, StopAt, StopRules};
 use crate::test_helpers::*;
@@ -199,12 +200,12 @@ fn a_refused_allocation_leaves_the_operand_intact() {
     assert_canonical(&f);
     let (before, output) = (storage(&f), f.output());
     let keep = sparse_rejection(7, 4);
-    let (expected, expected_stats) = filtered(Engine::new().filter_nodes_with(&f, &keep, ReductionPlan::default()).unwrap());
+    let (expected, expected_stats) = filtered(crate::apply::with_plan::filter_nodes_with(&Engine::new(), &f, &keep, ReductionPlan::default()).unwrap());
     let mut completed = false;
     for nth in 0..4096 {
         let eng = Engine::new();
         eng.refuse_nth_reserve(nth);
-        let result = eng.filter_nodes_with(&f, &keep, ReductionPlan::default());
+        let result = crate::apply::with_plan::filter_nodes_with(&eng, &f, &keep, ReductionPlan::default());
         let pending = eng.limits().refusal_pending();
         eng.limits().grant_every_reserve();
         assert_eq!(storage(&f), before, "reservation {nth} changed the operand");

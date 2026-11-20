@@ -134,8 +134,7 @@ pub fn check_no_false_nodes_in_levels(tdd: &Tdd) -> Result<(), String> {
     Ok(())
 }
 
-/// Check the loose levels a diagram knows
-/// (`Dirty::loose`): each structural
+/// Check the loose levels a diagram knows: each structural
 /// internal level below the root that they leave out has every node named
 /// by a pair of its parent level. A diagram that does not know them passes.
 ///

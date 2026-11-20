@@ -15,7 +15,7 @@ pub(crate) mod contract_leaf; // twin contraction at leaf-adjacent levels
 pub(crate) mod content_twin; // content-twin merge over every explicit level
 pub(crate) mod pair_fusion; // same-structural-side pair fusion
 
-pub(crate) use sweep::contract_all_twins;
+pub(crate) use sweep::{contract_all_twins, contract_all_twins_known};
 #[cfg(debug_assertions)]
 pub(crate) use sweep::debug_assert_no_twins_under;
 

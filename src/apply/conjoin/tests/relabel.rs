@@ -218,7 +218,7 @@ fn a_relabelled_level_quantified_on_its_left_side_agrees() {
     for (nvars, seed) in [(8, 0x0f2_e2e), (10, 0x0f2_e2f), (12, 0x0f2_e30), (12, 0x0f2_e31)] {
         for (what, f, g) in cases(nvars, seed) {
             for (a, b) in [(&f, &g), (&g, &f)] {
-                let eng = Engine::new();
+                let eng = crate::test_helpers::canonical_engine();
                 let out = eng.and(a.clone(), b.clone()).unwrap();
                 let mut minimized = out.clone();
                 eng.minimize(&mut minimized).unwrap();

@@ -126,7 +126,8 @@ impl Tdd {
     /// free leaves in between; what it may not do is split or regroup them.
     ///
     /// The levels are copied: no apply runs, the result shares `into`, and it
-    /// is canonical when this diagram is. A level whose image has its
+    /// is certified canonical ([`is_canonical`](Self::is_canonical)) when this
+    /// diagram is. A level whose image has its
     /// children the other way round is copied with the two sides of every
     /// pair exchanged, which denotes the same function over the mirrored
     /// node, since a level's nodes are classes of assignments to the node's
@@ -183,6 +184,7 @@ impl Tdd {
     /// let into = Arc::new(Vtree::linear(2));
     /// let (g, _) = f.embed(&into, |v| VarId(3 - v.0))?;
     /// assert!(g.equivalent(&Tdd::cube(&into, [2, -1])?)?);
+    /// assert!(g.is_canonical());
     /// # tididi::test_helpers::assert_canonical(&both);
     /// # tididi::test_helpers::assert_canonical(&g);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -299,7 +301,8 @@ impl Engine {
     /// variable through such levels, and the pairs of each mirrored level. The result is the
     /// diagram [`Engine::embed`] returns, up to the numbering of its nodes and
     /// a node for a literal of such a variable that nothing reads, which
-    /// [`Engine::minimize`] removes. The levels move into storage the engine
+    /// [`Engine::minimize`] removes. It is certified canonical when the
+    /// source is and no level reads such a variable through its literals. The levels move into storage the engine
     /// supplies and are not charged again; the level array and every level
     /// the embedding builds are charged to the engine's limits.
     ///
@@ -342,8 +345,13 @@ impl Engine {
                 });
             }
         };
-        place_moving(self, tdd, into, map, Free::Build)
-            .map(|(result, plan)| (result, plan.embedding))
+        let canonical = tdd.levels.is_canonical(tdd.output);
+        let (mut result, plan) = place_moving(self, tdd, into, map, Free::Build)?;
+        // A literal chain whose reader names one literal is listed loose.
+        if canonical && result.dirty.loose().is_some_and(<[u32]>::is_empty) {
+            result.certify_built();
+        }
+        Ok((result, plan.embedding))
     }
 
     /// [`Tdd::embed`] for a diagram whose levels may hold weighted marginal
@@ -1076,6 +1084,11 @@ fn assemble(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: &Plan) -> Result<T
         into.node(if plan.is_free(left) { right } else { left }).is_leaf()
     }) {
         eng.reduce_plain(&mut result, crate::reduce::ReductionPlan::Prune)?;
+    }
+    // A literal chain sits on a pass-through over a leaf, so its unread
+    // literal went with the prune.
+    if tdd.levels.is_canonical(tdd.output) {
+        result.certify_built();
     }
     Ok(result)
 }

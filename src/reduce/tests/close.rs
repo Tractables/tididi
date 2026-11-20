@@ -100,8 +100,9 @@ fn quantification_and_conditioning_close_as_plain_then_trim() {
         }
         let vars: Vec<VarId> = (1..=n).map(VarId).filter(|_| rng.below(3) == 0).collect();
         let case = format!("seed {seed}, {n} variables, {vars:?}");
-        let closed = eng.exists_vars(f.clone(), &vars).unwrap();
-        let mut plain = crate::apply::project::exists_vars_on(&eng, f.clone(), &vars, ReductionPlan::default(), false).unwrap();
+        let mut closed = eng.exists_vars(f.clone(), &vars).unwrap();
+        eng.minimize(&mut closed).unwrap();
+        let mut plain = crate::apply::project::exists_vars_on(&eng, f.clone(), &vars, Some(ReductionPlan::default()), false).unwrap();
         dropped += usize::from(trim_by_rebuild(&mut plain, &home).unwrap());
         assert_eq!(reachable_true_labels(&closed), Ok(None), "{case}");
         assert_eq!(leaf_vars(&closed), leaf_vars(&plain), "{case}");
@@ -110,15 +111,16 @@ fn quantification_and_conditioning_close_as_plain_then_trim() {
         }
         for prune in [true, false] {
             let plan = if prune { ReductionPlan::Prune } else { ReductionPlan::Contract };
-            let other = eng.exists_vars_with(f.clone(), &vars, plan).unwrap();
+            let other = crate::apply::with_plan::exists_vars_with(&eng, f.clone(), &vars, plan).unwrap();
             assert_eq!(reachable_true_labels(&other), Ok(None), "{case}, prune {prune}");
             assert!(eng.equivalent(&other, &closed).unwrap(), "{case}, prune {prune}");
         }
         let var = VarId(1 + rng.below(u64::from(n)) as u32);
         let value = rng.coin();
-        let conditioned = eng.condition_var(f.clone(), var, value).unwrap();
+        let mut conditioned = eng.condition_var(f.clone(), var, value).unwrap();
+        eng.minimize(&mut conditioned).unwrap();
         let literal = eng.literal(home.vtree(), Literal { var, sign: value }).unwrap();
-        let mut by_exists = crate::apply::project::exists_vars_on(&eng, eng.and(&f, &literal).unwrap(), &[var], ReductionPlan::default(), false).unwrap();
+        let mut by_exists = crate::apply::project::exists_vars_on(&eng, eng.and(&f, &literal).unwrap(), &[var], Some(ReductionPlan::default()), false).unwrap();
         trim_by_rebuild(&mut by_exists, &home).unwrap();
         assert_eq!(reachable_true_labels(&conditioned), Ok(None), "{case}, {var:?} = {value}");
         assert_eq!(leaf_vars(&conditioned), leaf_vars(&by_exists), "{case}, {var:?} = {value}");
@@ -152,7 +154,7 @@ fn exists_under_contract_closes_on_the_union() {
     let leaf = |v| Vtree::leaf(VarId(v));
     let home = Home::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap());
     let f = eng.cube(home.vtree(), [-1, -2, -3]).unwrap();
-    let g = eng.exists_vars_with(f, &[VarId(3)], ReductionPlan::Contract).unwrap();
+    let g = crate::apply::with_plan::exists_vars_with(&eng, f, &[VarId(3)], ReductionPlan::Contract).unwrap();
     assert_eq!(leaf_vars(&g), [VarId(1), VarId(2)]);
     assert_eq!(reachable_true_labels(&g), Ok(None));
     assert!(eng.equivalent(&g, &eng.cube(home.vtree(), [-1, -2]).unwrap()).unwrap());

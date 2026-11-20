@@ -43,21 +43,7 @@ impl Pools for NegateScratch {
 
 impl Engine {
     /// Run [`Tdd::negate`](crate::Tdd::negate) using this batch's scratch and
-    /// resource limits, on an owned or borrowed operand as
-    /// [`negate_with`](Self::negate_with) says.
-    ///
-    /// # Errors
-    ///
-    /// Returns the linked operation's errors; cancellation, allocation refusal and
-    /// the output-node cap return [`OperationError::Stopped`],
-    /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
-    pub fn negate<'f>(&self, f: impl Into<Cow<'f, Tdd>>) -> Result<Tdd, OperationError> {
-        self.negate_with(f, crate::reduce::ReductionPlan::default())
-    }
-
-    /// [`negate`](Self::negate) with the reduction it ends with chosen
-    /// explicitly. See [`Tdd::negate_with`] for what the plans cost and what
-    /// they leave behind.
+    /// resource limits.
     ///
     /// The operand is a [`Tdd`], consumed on success and on error, or a
     /// `&Tdd`, read in place and left as it is. The result holds every
@@ -67,6 +53,12 @@ impl Engine {
     /// level and then grows it. The copies are charged to the memory
     /// budget, not to the work clock; owned or borrowed, the result is the
     /// same diagram for the same work.
+    ///
+    /// The complement of a certified operand ([`Tdd::is_canonical`]) is
+    /// certified. Of any other operand it is pruned but not contracted: it
+    /// may hold twins; [`minimize`](Self::minimize),
+    /// or an engine with [`canonical_results`](crate::limits::LimitConfig::with_canonical_results),
+    /// certifies it.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -81,41 +73,45 @@ impl Engine {
     ///
     /// # Errors
     ///
-    /// As [`negate`](Self::negate).
-    pub fn negate_with<'f>(
-        &self,
-        f: impl Into<Cow<'f, Tdd>>,
-        plan: crate::reduce::ReductionPlan<'_>,
-    ) -> Result<Tdd, OperationError> {
+    /// Returns the linked operation's errors; cancellation, allocation refusal and
+    /// the output-node cap return [`OperationError::Stopped`],
+    /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
+    pub fn negate<'f>(&self, f: impl Into<Cow<'f, Tdd>>) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        let f = f.into();
-        if f.vtree.num_nodes() == 0 {
-            return negate_without_leaf(f);
-        }
-        let canonical = f.levels.is_canonical(f.output);
-        let (mut result, old) = complement_on(self, f)?;
-        if result.vtree.num_nodes() == 0 {
-            return Ok(result);
-        }
-        // `expand_full` left every level below the root covering its
-        // children's whole basis, and the old output and its complement cover
-        // the root's, so every node is named from the level above and the only
-        // nodes the complement can have orphaned are below the root cells it
-        // dropped.
-        // The complement of a canonical operand has no twins to contract.
-        let full = matches!(plan, crate::reduce::ReductionPlan::Full(_));
-        if canonical && (full || matches!(plan, crate::reduce::ReductionPlan::Prune)) {
-            self.certify_complement(&mut result, full, old)?;
-        } else {
-            self.reduce_scoped(
-                &mut result,
-                plan,
-                crate::reduce::prune::PruneScope::BelowRoot,
-                crate::reduce::Close::Settle(&[]),
-            )?;
-        }
-        Ok(result)
+        crate::apply::exit::outcome(self, negate_closed(self, f.into()))
     }
+}
+
+/// [`Engine::negate`] without the exit.
+pub(crate) fn negate_closed(eng: &Engine, f: Cow<'_, Tdd>) -> Result<Tdd, OperationError> {
+    if f.vtree.num_nodes() == 0 {
+        return negate_without_leaf(f);
+    }
+    let canonical = f.levels.is_canonical(f.output);
+    let (mut result, old) = complement_on(eng, f)?;
+    if result.vtree.num_nodes() == 0 {
+        return Ok(result);
+    }
+    // The complement of a canonical operand has no twins, and the one class
+    // it orphans is the old output's, which the prune reads alone; keeping the
+    // certificate here costs a fraction of the complement.
+    if canonical {
+        eng.certify_complement(&mut result, old)?;
+        if result.is_zero() {
+            crate::reduce::prune::clear_false(&mut result);
+        }
+    } else {
+        // The dropped root cells may orphan nodes below the root. Pruning them
+        // here walks from the output alone; left in place, the loose levels
+        // are unknown and every later prune walks the whole diagram.
+        eng.reduce_scoped(
+            &mut result,
+            crate::reduce::ReductionPlan::Prune,
+            crate::reduce::prune::PruneScope::BelowRoot,
+            crate::reduce::Close::Settle(&[]),
+        )?;
+    }
+    Ok(result)
 }
 
 /// The complement of a constant on a vtree with no node.
@@ -125,7 +121,7 @@ fn negate_without_leaf(f: Cow<'_, Tdd>) -> Result<Tdd, OperationError> {
 }
 
 /// Make `tdd` full and complement it at the root, consuming the operand;
-/// [`Engine::negate`] also minimizes the result.
+/// [`Engine::negate`] also closes it.
 pub(crate) fn negate_on(eng: &Engine, tdd: Tdd) -> Result<Tdd, OperationError> {
     complement_on(eng, Cow::Owned(tdd)).map(|(result, _)| result)
 }

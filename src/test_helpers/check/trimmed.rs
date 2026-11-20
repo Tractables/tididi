@@ -47,11 +47,14 @@ pub fn reachable_true_labels(tdd: &Tdd) -> Result<Option<String>, String> {
     Ok(first)
 }
 
-/// No pair of `tdd` names a variable leaf as `One`, nor does the output; a
-/// constant has no leaf; on a home, summed-out levels and regions as
-/// `regions` checks; a canonical `tdd` with no summed-out level reads no leaf
-/// child through twin literals in every node. With `minimized` and no
-/// summed-out level, also that the leaves are the
+/// No pair of `tdd` names a variable leaf as `One`, nor does the output,
+/// dead nodes included; a constant has no leaf; on a home, summed-out levels
+/// and regions as `regions` checks; the loose levels, when known, are
+/// complete ([`check_loose_levels`](super::check_loose_levels)); a certified
+/// `tdd` reaches every node it stores and, with no summed-out level, reads no
+/// leaf child through twin literals in every node. An uncertified `tdd` may
+/// hold nodes its output does not reach. With `minimized` and no summed-out
+/// level, also that the leaves are the
 /// [`support`](Tdd::support).
 ///
 /// Cost: O(diagram size).
@@ -91,8 +94,12 @@ pub fn check_trimmed(tdd: &Tdd, minimized: bool) -> Result<(), String> {
             }
         }
     }
-    if tdd.levels.is_canonical(tdd.output()) && !tdd.has_marginal_level() {
-        full_twin_side(tdd)?;
+    super::check_loose_levels(tdd)?;
+    if tdd.levels.is_canonical(tdd.output()) {
+        every_node_reached(tdd)?;
+        if !tdd.has_marginal_level() {
+            full_twin_side(tdd)?;
+        }
     }
     if minimized && !tdd.has_marginal_level() {
         let mut leaves: Vec<_> = vtree.bottomup().filter(|&t| vtree.node(t).is_leaf()).map(|t| vtree.leaf_var(t)).collect();
@@ -128,6 +135,57 @@ fn regions(tdd: &Tdd) -> Result<(), String> {
         Some(w) => Err(format!("extents or variable leaves overlap: ranks {:?} and {:?}", w[0], w[1])),
         None => Ok(()),
     }
+}
+
+/// A certified `tdd` holds to its certificate: its output reaches every node
+/// it stores, no level reads a leaf child the same through both literals in
+/// every node, no two nodes of a structural level denote the same function
+/// ([`check_canonicity`](super::check_canonicity)), and a copy with the
+/// certificate dropped and every level owing the contraction passes
+/// minimizes to as many nodes and pairs. An uncertified `tdd` passes.
+///
+/// Cost: O(diagram size), and a minimization of a copy.
+pub fn check_certified(tdd: &Tdd) -> Result<(), String> {
+    if !tdd.levels.is_canonical(tdd.output()) || tdd.vtree().num_nodes() == 0 {
+        return Ok(());
+    }
+    every_node_reached(tdd)?;
+    if tdd.has_marginal_level() {
+        return Ok(());
+    }
+    full_twin_side(tdd)?;
+    super::check_canonicity(tdd, 3)?;
+    let eng = crate::Engine::new();
+    let mut copy = tdd.clone();
+    copy.levels.forget();
+    let internal = tdd.vtree().internal_bottomup_slice().iter().copied();
+    copy.dirty = crate::diagram::Dirty::default().seeded(tdd.vtree(), internal, Some(&eng)).map_err(|e| e.to_string())?;
+    // Counted on a copy: a count kept on the levels would show in `tdd`.
+    let before = tdd.clone();
+    let before = (before.node_count(), before.pair_count());
+    eng.minimize_plain(&mut copy).map_err(|e| e.to_string())?;
+    let after = (copy.node_count(), copy.pair_count());
+    if after != before {
+        return Err(format!("certified with (nodes, pairs) {before:?}, which minimize to {after:?}"));
+    }
+    Ok(())
+}
+
+/// The output of a certified `tdd` reaches every node of its structural
+/// internal levels.
+fn every_node_reached(tdd: &Tdd) -> Result<(), String> {
+    let vtree = tdd.vtree();
+    let reach = tdd.reachable_nodes();
+    for t in vtree.bottomup() {
+        let level = tdd.level(t);
+        if vtree.node(t).is_leaf() || level.is_marginal() {
+            continue;
+        }
+        if let Some(j) = (0..level.slot_count()).find(|&j| !reach[t.idx()].get(j).copied().unwrap_or(false)) {
+            return Err(format!("certified, yet the output does not reach node {j} of level {}", t.0));
+        }
+    }
+    Ok(())
 }
 
 /// No level of a canonical `tdd` reads a leaf child the same through both

@@ -20,16 +20,12 @@ impl Engine {
         f: Tdd,
         replacements: &[(VarId, &Tdd)],
     ) -> Result<Tdd, OperationError> {
-        if replacements.iter().any(|&(_, diagram)| super::extend::needed([&f, diagram])) {
-            return self.substitute_across(f, replacements);
-        }
-        self.substitute_with(
-            f,
-            replacements
-                .iter()
-                .map(|&(var, diagram)| (var, Replacement::Diagram(diagram))),
-        )
-        .and_then(|result| super::extend::trimmed(self, result))
+        let result = if replacements.iter().any(|&(_, diagram)| super::extend::needed([&f, diagram])) {
+            self.substitute_across(f, replacements)?
+        } else {
+            self.substitute_with(f, replacements.iter().map(|&(var, diagram)| (var, Replacement::Diagram(diagram))))?
+        };
+        super::exit::outcome(self, super::extend::trimmed(self, result))
     }
 
     /// Run [`Tdd::rename_vars`](crate::Tdd::rename_vars) using this batch's scratch and resource limits.
@@ -40,12 +36,13 @@ impl Engine {
     /// the output-node cap return [`OperationError::Stopped`],
     /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn rename_vars(&self, f: Tdd, renames: &[(VarId, VarId)]) -> Result<Tdd, OperationError> {
-        self.substitute_with(
+        let result = self.substitute_with(
             f,
             renames
                 .iter()
                 .map(|&(source, target)| (source, Replacement::Literal(Literal::pos(target)))),
-        )
+        );
+        super::exit::outcome(self, result)
     }
 
     /// Validate replacements into one leaf-indexed table and rebuild through the Boolean kernels.
@@ -88,7 +85,7 @@ impl Engine {
         }
         gate.flush()?;
         if f.is_zero() || f.is_one() {
-            self.minimize(&mut f)?;
+            self.close(&mut f, &[])?;
             return Ok(f);
         }
         self.substitute_prepared(f, &by_leaf, gate)
@@ -110,11 +107,10 @@ impl Engine {
         let mut operands = super::extend::on_one::<Vec<_>>(self, operands)?.into_iter();
         let f = operands.next().expect("f").into_owned();
         let placed: Vec<_> = operands.collect();
-        let result = self.substitute_with(
+        self.substitute_with(
             f,
             replacements.iter().zip(&placed).map(|(&(var, _), diagram)| (var, Replacement::Diagram(diagram))),
-        )?;
-        super::extend::trimmed(self, result)
+        )
     }
 
     /// Rebuild from validated simultaneous replacements while retaining the operation's poll state.
@@ -205,7 +201,7 @@ impl Engine {
                             gate.poll(1)?;
                             let a = columns[left.idx()][pair.left.raw() as usize].take(self)?;
                             let b = columns[right.idx()][pair.right.raw() as usize].take(self)?;
-                            terms.push(self.and(a, b)?);
+                            terms.push(super::conjoin::conjoin_either(self, a.into(), b.into())?);
                         }
                         let result = disjoin_many_on(self, terms)?;
                         columns[t.idx()].push(SharedCircuit::new(result, uses[t.idx()][i]));
@@ -217,8 +213,7 @@ impl Engine {
         }
         gate.flush()?;
         let mut result = columns[f.output().vtree.idx()][f.output().local.idx()].take(self)?;
-        // A leaf output can be a cloned replacement, which need not be minimized.
-        self.minimize(&mut result)?;
+        self.close(&mut result, &[])?;
         Ok(result)
     }
 }

@@ -114,28 +114,31 @@ impl PyLiteral {
 /// Optional resource bounds for one operation. Unspecified bounds are unlimited.
 /// memory_bytes bounds charged operation storage, not the process's total memory.
 /// timeout is in seconds and is checked at cooperative polling points.
+/// canonical_results makes the operation minimize its result.
 #[pyclass(name = "Limits", module = "tididi", skip_from_py_object, frozen)]
 #[derive(Clone, Default)]
 pub struct PyLimits {
     memory_bytes: Option<u64>,
     output_nodes: Option<u64>,
     timeout: Option<f64>,
+    canonical_results: bool,
 }
 
 #[pymethods]
 impl PyLimits {
     #[new]
-    #[pyo3(signature = (*, memory_bytes=None, output_nodes=None, timeout=None))]
-    fn new(memory_bytes: Option<u64>, output_nodes: Option<u64>, timeout: Option<f64>) -> PyResult<Self> {
-        let result = Self { memory_bytes, output_nodes, timeout };
+    #[pyo3(signature = (*, memory_bytes=None, output_nodes=None, timeout=None, canonical_results=false))]
+    fn new(memory_bytes: Option<u64>, output_nodes: Option<u64>, timeout: Option<f64>, canonical_results: bool) -> PyResult<Self> {
+        let result = Self { memory_bytes, output_nodes, timeout, canonical_results };
         result.config()?;
         Ok(result)
     }
     fn __repr__(&self) -> String {
-        format!("Limits(memory_bytes={}, output_nodes={}, timeout={})",
+        format!("Limits(memory_bytes={}, output_nodes={}, timeout={}, canonical_results={})",
             self.memory_bytes.map_or("None".into(), |v| v.to_string()),
             self.output_nodes.map_or("None".into(), |v| v.to_string()),
-            self.timeout.map_or("None".into(), |v| v.to_string()))
+            self.timeout.map_or("None".into(), |v| v.to_string()),
+            if self.canonical_results { "True" } else { "False" })
     }
 }
 
@@ -147,7 +150,8 @@ impl PyLimits {
             Instant::now().checked_add(duration).ok_or_else(|| PyValueError::new_err("timeout is too large"))
         }).transpose()?;
         Ok(LimitConfig::none().with_memory_budget_bytes(self.memory_bytes)
-            .with_output_node_cap(self.output_nodes).with_deadline(deadline))
+            .with_output_node_cap(self.output_nodes).with_deadline(deadline)
+            .with_canonical_results(self.canonical_results))
     }
 }
 

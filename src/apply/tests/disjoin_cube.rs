@@ -297,6 +297,7 @@ fn an_unreachable_node_does_not_join_the_fill() {
             continue;
         }
         unreached += 1;
+        assert_partition(&f, &format!("seed {seed}, the operand"));
         let lit = a[0].0 as i32;
         let general = crate::or(f.clone(), Tdd::cube(f.vtree(), [lit]).unwrap()).unwrap();
         let out = f.or_cube([lit]).unwrap();

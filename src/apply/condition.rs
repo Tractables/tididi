@@ -87,7 +87,13 @@ fn condition_targets(
     let mut seed = Vec::new();
     eng.limits().reserve_exact(&mut seed, targets.len())?;
     seed.extend(targets.iter().map(|&(leaf, _)| leaf));
-    eng.reduce_seeded(&mut tdd, ReductionPlan::default(), &seed)?;
+    // The settle reads every level's first node, so the nodes the sweep
+    // emptied go first.
+    if emptied {
+        eng.reduce_seeded(&mut tdd, ReductionPlan::Prune, &seed)?;
+    } else {
+        eng.close(&mut tdd, &seed)?;
+    }
     Ok(tdd)
 }
 
@@ -173,7 +179,7 @@ impl crate::Engine {
     /// Returns the linked operation's errors, [`OperationError::Stopped`] on
     /// cancellation, or [`OperationError::OverBudget`] on allocation refusal.
     pub fn condition(&self, f: Tdd, assignment: impl IntoIterator<Item = impl TryInto<crate::diagram::Literal, Error: Into<OperationError>>>) -> Result<Tdd, OperationError> {
-        condition_on(self, f, assignment)
+        crate::apply::exit::outcome(self, condition_on(self, f, assignment))
     }
 
     /// Run [`Tdd::condition_var`](crate::Tdd::condition_var) using this batch's scratch and resource limits.
@@ -183,7 +189,7 @@ impl crate::Engine {
     /// Returns the linked operation's errors, [`OperationError::Stopped`] on
     /// cancellation, or [`OperationError::OverBudget`] on allocation refusal.
     pub fn condition_var(&self, f: Tdd, x: VarId, value: bool) -> Result<Tdd, OperationError> {
-        crate::apply::condition::condition_vars_on(self, f, &[x], value)
+        crate::apply::exit::outcome(self, crate::apply::condition::condition_vars_on(self, f, &[x], value))
     }
 
     /// Run [`Tdd::condition_vars`](crate::Tdd::condition_vars) using this batch's scratch and resource limits.
@@ -193,6 +199,6 @@ impl crate::Engine {
     /// Returns the linked operation's errors, [`OperationError::Stopped`] on
     /// cancellation, or [`OperationError::OverBudget`] on allocation refusal.
     pub fn condition_vars(&self, f: Tdd, vars: &[VarId], value: bool) -> Result<Tdd, OperationError> {
-        crate::apply::condition::condition_vars_on(self, f, vars, value)
+        crate::apply::exit::outcome(self, crate::apply::condition::condition_vars_on(self, f, vars, value))
     }
 }

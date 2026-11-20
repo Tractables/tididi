@@ -28,8 +28,8 @@ fn expansion_of_a_twice_negated_diagram_negates() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let f = Tdd::one(&vtree).and_clause([-1i32, -2]).unwrap();
-    let a = eng.negate_with(&f, ReductionPlan::Contract).unwrap();
-    let b = eng.negate_with(&a, ReductionPlan::Contract).unwrap();
+    let a = eng.negate(&f).unwrap();
+    let b = eng.negate(&a).unwrap();
     check_determinism(&b).unwrap();
     let g = eng.expand_variables(&b, &identity_with_free(3, 1)).unwrap();
     let neg = eng.negate(&g).unwrap();
@@ -203,10 +203,16 @@ fn step(eng: &Engine, rng: &mut Rng, vtree: &Arc<Vtree>, pool: &[(Tdd, Table)], 
             eng.substitute(f.clone(), &[(x, g)]).unwrap(),
             tabulate(n, |m| tf[set(m, x, tg[m as usize]) as usize]),
         ),
-        16 => (eng.negate_with(f, ReductionPlan::Prune).unwrap(), tabulate(n, |m| !tf[m as usize])),
-        17 => (eng.negate_with(f, ReductionPlan::Contract).unwrap(), tabulate(n, |m| !tf[m as usize])),
-        18 => (eng.exists_vars_with(f.clone(), &vars, ReductionPlan::Prune).unwrap(), quantified(tf, n, &vars, true)),
-        19 => (eng.exists_vars_with(f.clone(), &vars, ReductionPlan::Contract).unwrap(), quantified(tf, n, &vars, true)),
+        16 | 17 => {
+            let mut r = f.clone();
+            r.reduce(if op == 16 { ReductionPlan::Prune } else { ReductionPlan::Contract }).unwrap();
+            (r, tf.clone())
+        }
+        18 => (eng.negate(eng.negate(f).unwrap()).unwrap(), tf.clone()),
+        19 => (
+            eng.exists_vars(eng.and(f, g).unwrap(), &vars).unwrap(),
+            quantified(&pointwise(|a, b| a && b), n, &vars, true),
+        ),
         20 => {
             let mut r = f.clone();
             r.minimize().unwrap();

@@ -148,6 +148,7 @@ pub struct LimitConfig {
     stop_callback: Option<StopCallback>,
     memory_hooks: MemoryHooks,
     conjunction_progress: bool,
+    canonical_results: bool,
     sparse_route: SparseRoute,
 }
 
@@ -286,6 +287,17 @@ impl LimitConfig {
         self
     }
 
+    /// Make every operation minimize its result, so that it is certified
+    /// canonical ([`Tdd::is_canonical`](crate::Tdd::is_canonical)) unless it
+    /// holds a summed-out level. Off by default: an operation then returns
+    /// what its rustdoc says, often uncertified, and a caller that needs the
+    /// canonical form calls [`Engine::minimize`](crate::Engine::minimize).
+    #[must_use]
+    pub fn with_canonical_results(mut self, on: bool) -> LimitConfig {
+        self.canonical_results = on;
+        self
+    }
+
     /// Set when conjunction levels take the sparse route.
     #[must_use]
     pub fn with_sparse_route(mut self, route: SparseRoute) -> LimitConfig {
@@ -346,6 +358,14 @@ impl LimitConfig {
         self.conjunction_progress
     }
 
+    /// Whether every operation minimizes its result
+    /// ([`with_canonical_results`](Self::with_canonical_results)).
+    #[must_use]
+    #[inline]
+    pub fn canonical_results(&self) -> bool {
+        self.canonical_results
+    }
+
     /// When conjunction levels take the sparse route.
     #[must_use]
     #[inline]
@@ -380,6 +400,7 @@ pub struct Limits {
     output_node_cap: Cell<Option<u64>>,
     bounded_growth: Cell<bool>,
     conjunction_progress: Cell<bool>,
+    canonical_results: Cell<bool>,
     conjunction: Cell<Option<ConjunctionProgress>>,
     sparse_route: Cell<SparseRoute>,
     memory_hooks: RefCell<MemoryHooks>,
@@ -448,6 +469,7 @@ impl Limits {
             output_node_cap: Cell::new(None),
             bounded_growth: Cell::new(false),
             conjunction_progress: Cell::new(false),
+            canonical_results: Cell::new(false),
             conjunction: Cell::new(None),
             sparse_route: Cell::new(SparseRoute::DEFAULT),
             memory_hooks: RefCell::new(MemoryHooks::NONE),
@@ -472,6 +494,13 @@ impl Limits {
     }
 
 
+    /// Whether every operation minimizes its result; read by
+    /// [`crate::apply::exit::outcome`] alone.
+    #[inline]
+    pub(crate) fn canonical_results(&self) -> bool {
+        self.canonical_results.get()
+    }
+
     /// When conjunction levels take the sparse route.
     #[inline]
     pub(crate) fn sparse_route(&self) -> SparseRoute {
@@ -488,6 +517,7 @@ impl Limits {
             stop_callback: self.stop_callback.borrow().clone(),
             memory_hooks: self.memory_hooks.borrow().clone(),
             conjunction_progress: self.conjunction_progress.get(),
+            canonical_results: self.canonical_results.get(),
             sparse_route: self.sparse_route.get(),
         }
     }
@@ -533,6 +563,7 @@ impl Limits {
         self.clock.set(poll::ClockReading::NONE);
         self.stop_callback.replace(set.stop_callback);
         self.conjunction_progress.set(set.conjunction_progress);
+        self.canonical_results.set(set.canonical_results);
         self.sparse_route.set(set.sparse_route);
         self.hooked.set(!set.memory_hooks.is_none());
         self.memory_hooks.replace(set.memory_hooks);

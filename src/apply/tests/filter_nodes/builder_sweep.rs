@@ -5,6 +5,7 @@
 //! seeds.
 
 use super::*;
+use crate::reduce::ReductionPlan;
 use crate::diagram::{TddBuilder, TddLevel};
 
 /// The replica. Returns the unfinished builder, the output or `None` when it
@@ -160,7 +161,7 @@ fn every_outcome_matches_a_builder_sweep_under_either_reduction() {
         for full in [false, true] {
             let plan = || if full { ReductionPlan::default() } else { ReductionPlan::Prune };
             let eng = Engine::new();
-            let outcome = eng.filter_nodes_with(&f, &keep, plan()).unwrap();
+            let outcome = crate::apply::with_plan::filter_nodes_with(&eng, &f, &keep, plan()).unwrap();
             let (builder, output, stats) = replica(&eng, &f, &keep);
             match outcome {
                 FilterOutcome::Unchanged => {

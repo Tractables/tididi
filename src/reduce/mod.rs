@@ -147,6 +147,24 @@ impl Engine {
         self.reduce_scoped(f, plan, PruneScope::Whole, Close::Settle(seed))
     }
 
+    /// The close an operation owes its result and no pass: the levels back
+    /// in their closed form and, on a home with no summed-out level, false
+    /// or a one-leaf true as the constant on the empty projection and the
+    /// leaves of `seed` dropped, which every pair at each one's parent names
+    /// true ([`trim::settle`]); elsewhere a false result with its levels
+    /// emptied.
+    pub(crate) fn close(&self, f: &mut Tdd, seed: &[crate::vtree::VtreeIdx]) -> Result<(), OperationError> {
+        if f.vtree.num_nodes() == 0 {
+            return Ok(());
+        }
+        f.levels.hold_counts(f.levels.is_closed());
+        f.close_marked_levels();
+        let mut dropped = Vec::new();
+        self.limits().reserve_exact(&mut dropped, seed.len())?;
+        dropped.extend_from_slice(seed);
+        trim::settle(self, f, &mut dropped)
+    }
+
     /// [`reduce`](Self::reduce) with the scope of its prune chosen by the
     /// caller. Only an operation that knows how the diagram it just built
     /// became unreachable in places may narrow it; see [`PruneScope`].
@@ -164,11 +182,11 @@ impl Engine {
     }
 
     /// End a negation of a canonical operand: prune below the root and
-    /// certify the result canonical, with no contraction. `shrink` trims the
-    /// level arrays as a full reduction does. `old` is the old output's slot
-    /// where the complement was built beside it.
-    pub(crate) fn certify_complement(&self, f: &mut Tdd, shrink: bool, old: Option<crate::diagram::NodeIdx>) -> Result<(), OperationError> {
-        driver::Reduction::new(self, f, Close::Plain).certify_complement(shrink, old)
+    /// certify the result canonical, with no contraction, and trim the level
+    /// arrays as a full reduction does. `old` is the old output's slot where
+    /// the complement was built beside it.
+    pub(crate) fn certify_complement(&self, f: &mut Tdd, old: Option<crate::diagram::NodeIdx>) -> Result<(), OperationError> {
+        driver::Reduction::new(self, f, Close::Plain).certify_complement(old)
     }
 }
 

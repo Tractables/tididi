@@ -202,8 +202,7 @@ fn the_node_filter_agrees_with_the_rebuild_from_marks() {
                         || !(u64::from(id.vtree.0) * 31 + u64::from(id.local.0) + u64::from(round))
                             .is_multiple_of(5)
                 };
-                let sweep = match eng
-                    .filter_nodes_with(&f, keep, ReductionPlan::default())
+                let sweep = match crate::apply::with_plan::filter_nodes_with(&eng, &f, keep, ReductionPlan::default())
                     .unwrap()
                 {
                     FilterOutcome::Unchanged => f.clone(),

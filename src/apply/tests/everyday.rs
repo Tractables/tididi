@@ -374,7 +374,7 @@ fn exercise(eng: &Engine, op: usize, f: &Tdd, g: &Tdd) -> Result<(), OperationEr
             eng.satisfying_assignment(f)?;
         }
         5 => {
-            eng.ite(f.clone(), g.clone(), g.clone())?;
+            eng.ite(f.clone(), g.clone(), f.clone())?;
         }
         6 => {
             eng.xor(f.clone(), g.clone())?;

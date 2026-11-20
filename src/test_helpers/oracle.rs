@@ -300,8 +300,10 @@ pub fn assert_canonical(tdd: &Tdd) {
     if tdd.vtree().num_nodes() == 0 {
         return;
     }
+    crate::test_helpers::check::check_certified(tdd).unwrap_or_else(|e| panic!("assert_canonical: {e}"));
     if !tdd.has_marginal_level() {
         check_all_fast(tdd, "assert_canonical");
+        crate::test_helpers::check::check_canonicity(tdd, 3).unwrap_or_else(|e| panic!("assert_canonical: canonicity: {e}"));
         return;
     }
     validate_vtree_structure(tdd).unwrap_or_else(|e| panic!("assert_canonical: vtree structure: {e}"));

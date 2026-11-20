@@ -263,7 +263,7 @@ fn random_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, n: u32, rng: &mut
     });
     a.run("restrict_to_care", || eng.restrict_to_care(f.clone(), &g).map(crate::apply::RestrictionOutcome::into_tdd));
     a.run("negate", || f.clone().negate());
-    a.run("negate_with(Prune)", || eng.negate_with(&f, ReductionPlan::Prune));
+    a.run("negate_with(Prune)", || crate::apply::with_plan::negate_with(eng, &f, ReductionPlan::Prune));
     a.run("transport", || eng.transport(&f, &hm, |v| v, 0).map(|(t, _)| t).map_err(|r| r.error));
     if let Some(pivot) = pick(&internal_nodes(&f), rng) {
         let kind = if rng.coin() { RotationKind::Left } else { RotationKind::Right };
@@ -304,7 +304,7 @@ fn random_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, n: u32, rng: &mut
     a.run("rename_vars", || f.clone().rename_vars(&rename));
     a.run("project_over", || eng.project_over(&f, home, Some));
     a.run("project_to_vars", || f.project_to_vars(Some, n));
-    a.run("filter_nodes_with(Prune)", || match eng.filter_nodes_with(&f, |_| rng_keep(), ReductionPlan::Prune)? {
+    a.run("filter_nodes_with(Prune)", || match crate::apply::with_plan::filter_nodes_with(eng, &f, |_| rng_keep(), ReductionPlan::Prune)? {
         FilterOutcome::Unchanged => Ok(f.clone()),
         FilterOutcome::Filtered { tdd, .. } | FilterOutcome::Unsatisfiable { tdd, .. } => Ok::<_, OperationError>(tdd),
     });
@@ -335,14 +335,14 @@ fn random_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, n: u32, rng: &mut
         });
     }
     // An unminimized operand: some nodes dropped, nothing contracted.
-    if let Ok(FilterOutcome::Filtered { tdd: u, .. }) = eng.filter_nodes_with(&f, |_| rng_keep(), ReductionPlan::Prune)
+    if let Ok(FilterOutcome::Filtered { tdd: u, .. }) = crate::apply::with_plan::filter_nodes_with(eng, &f, |_| rng_keep(), ReductionPlan::Prune)
         && matches!(reachable_true_labels(&u), Ok(None))
     {
         a.run("minimize", || mutate(&u, &|t| t.minimize()));
         a.run("reduce(Full)", || mutate(&u, &|t| t.reduce(ReductionPlan::Full(ContentTwinPolicy::Fresh))));
-        a.run("negate_with(Full)", || eng.negate_with(&u, ReductionPlan::Full(ContentTwinPolicy::Fresh)));
+        a.run("negate_with(Full)", || crate::apply::with_plan::negate_with(eng, &u, ReductionPlan::Full(ContentTwinPolicy::Fresh)));
     }
-    a.run("filter_nodes_with(Full)", || match eng.filter_nodes_with(&f, |_| rng_keep(), ReductionPlan::default())? {
+    a.run("filter_nodes_with(Full)", || match crate::apply::with_plan::filter_nodes_with(eng, &f, |_| rng_keep(), ReductionPlan::default())? {
         FilterOutcome::Unchanged => Ok(f.clone()),
         FilterOutcome::Filtered { tdd, .. } | FilterOutcome::Unsatisfiable { tdd, .. } => Ok::<_, OperationError>(tdd),
     });
@@ -738,7 +738,7 @@ fn audit_i1_exists_with_pruning_names_exactly_the_targets() {
     ];
     for (what, f, targets) in cases {
         assert_eq!(reachable_true_labels(&f), Ok(None), "{what}: the operand");
-        let got = eng.exists_vars_with(f, &targets, ReductionPlan::Prune).unwrap();
+        let got = crate::apply::with_plan::exists_vars_with(&eng, f, &targets, ReductionPlan::Prune).unwrap();
         assert_eq!(true_leaves(&got), Ok(targets.clone()), "{what}");
         if what == "S3" {
             let b = got.vtree().root();
