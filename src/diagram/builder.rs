@@ -259,6 +259,31 @@ impl TddBuilder {
         Ok(index)
     }
 
+    /// [`push`](Self::push) of one single-pair node per pair to level `t`, in
+    /// order, with one reservation. Returns the first node's index; the
+    /// others follow it.
+    ///
+    /// # Errors
+    ///
+    /// As [`push`](Self::push).
+    pub(crate) fn push_singles(
+        &mut self,
+        eng: &Engine,
+        t: VtreeIdx,
+        pairs: impl Iterator<Item = ChildPair>,
+    ) -> Result<NodeIdx, OperationError> {
+        #[cfg(debug_assertions)]
+        let pairs = {
+            let pairs: Vec<ChildPair> = pairs.collect();
+            debug_assert_pairs(&self.vtree, &self.levels, t, &pairs);
+            pairs.into_iter()
+        };
+        if let Some(cached) = self.interned.get_mut(t.idx()) {
+            *cached = None;
+        }
+        self.levels[t.idx()].push_singles(eng.limits(), pairs)
+    }
+
     /// Size level `t`'s arenas for `nodes` more nodes and `pairs` more pairs,
     /// charging the growth to the engine.
     ///

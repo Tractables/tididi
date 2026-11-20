@@ -364,10 +364,12 @@ impl Emit<'_> {
                 sort,
                 triples.iter().map(|triple| pair_key(node_pair(triple))),
             )?;
-            for atom in in_order(&order, atoms) {
-                gate.poll(1)?;
-                debug_assert_eq!(triples[atom][0] as usize, atom);
-                locals[atom] = assembly.push(eng, t, &[node_pair(&triples[atom])])?;
+            gate.poll(atoms as u64)?;
+            debug_assert!(triples.iter().enumerate().all(|(atom, triple)| triple[0] as usize == atom));
+            let pairs = in_order(&order, atoms).map(|atom| node_pair(&triples[atom]));
+            let first = assembly.push_singles(eng, t, pairs)?;
+            for (k, atom) in in_order(&order, atoms).enumerate() {
+                locals[atom] = NodeIdx(first.0 + k as u32);
             }
             lim.discard(order);
         } else {
