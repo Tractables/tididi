@@ -166,7 +166,7 @@ fn a_carried_level_is_loose_only_where_its_carrier_had_it() {
     // `g` has one node on each of those levels, named by its parent; listed
     // all the same, as a list may, they are settled away.
     let mut g = g;
-    let mut listed = g.dirty.loose().expect("an embedding knows its loose levels").to_vec();
+    let mut listed = g.dirty.loose().expect("an embedding knows its loose levels").levels().collect::<Vec<u32>>();
     listed.extend([a.0, b.0]);
     g.dirty.set_loose(Some(listed));
     let mut out = eng.and(f, g).unwrap();

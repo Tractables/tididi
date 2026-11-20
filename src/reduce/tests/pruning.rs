@@ -15,7 +15,7 @@ use crate::vtree::Vtree;
 /// charges are held to.
 fn prune_loose_from_output(eng: &crate::Engine, tdd: &mut crate::Tdd) -> Result<(), crate::OperationError> {
     debug_assert!(below_root_walk_applies(tdd) && !tdd.has_marginal_level());
-    let loose = tdd.dirty.loose().expect("the diagram knows its loose levels").to_vec();
+    let loose = tdd.dirty.loose().expect("the diagram knows its loose levels").levels().collect::<Vec<u32>>();
     let loose = settle_loose(eng, tdd, &loose)?;
     let seeds = Seeds::of(eng, tdd, &loose)?;
     tdd.levels.hold_counts(tdd.levels.is_closed());
@@ -345,7 +345,7 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
         if conj.is_zero() {
             return;
         }
-        let mut listed = conj.dirty.loose().expect("both operands' loose levels are known").to_vec();
+        let mut listed = conj.dirty.loose().expect("both operands' loose levels are known").levels().collect::<Vec<u32>>();
         listed.sort_unstable();
         listed.dedup();
         let unnamed = unnamed_levels(&conj);
@@ -431,7 +431,7 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
                     if f.is_zero() || g.is_zero() || h.is_zero() {
                         continue;
                     }
-                    let [lf, lg, lh] = [&f, &g, &h].map(|d| d.dirty.loose().expect("an embedding knows its loose levels").to_vec());
+                    let [lf, lg, lh] = [&f, &g, &h].map(|d| d.dirty.loose().expect("an embedding knows its loose levels").levels().collect::<Vec<u32>>());
                     let what = format!("{name}, case {case}, floor {floor}");
                     for (d, listed) in [(&f, &lf), (&g, &lg), (&h, &lh)] {
                         for t in unnamed_levels(d) {
@@ -441,7 +441,7 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
                     let both = eng.and(f.clone(), g.clone()).unwrap();
                     let kept = eng.and_restoring(f, g).map_err(|r| r.error).unwrap();
                     assert_eq!(layout(&both), layout(&kept), "{what}: and and and_restoring differ");
-                    let lb = both.dirty.loose().unwrap().to_vec();
+                    let lb = both.dirty.loose().unwrap().levels().collect::<Vec<u32>>();
                     check(kept, [&lf, &lg], &format!("{what}, f and g"));
                     check(eng.and(both, h).unwrap(), [&lb, &lh], &format!("{what}, then h"));
                     cases += 1;
@@ -484,7 +484,7 @@ fn the_seeds_give_back_their_charge() {
             if conj.is_zero() || !below_root_walk_applies(&conj) || conj.has_marginal_level() {
                 continue;
             }
-            let mut listed = conj.dirty.loose().expect("both operands' loose levels are known").to_vec();
+            let mut listed = conj.dirty.loose().expect("both operands' loose levels are known").levels().collect::<Vec<u32>>();
             listed.sort_unstable();
             listed.dedup();
             let loose = settle_loose(eng, &conj, &listed).unwrap();

@@ -304,7 +304,7 @@ fn a_level_under_one_built_as_an_operand_is_tight_where_the_operand_s_is() {
                     if out.is_zero() {
                         continue;
                     }
-                    let loose = out.dirty.loose().expect("both operands' loose levels are known").to_vec();
+                    let loose = out.dirty.loose().expect("both operands' loose levels are known").levels().collect::<Vec<u32>>();
                     for (t, _, _) in vtree.internal_bottomup() {
                         if t == vtree.root() || loose.contains(&t.0) {
                             continue;

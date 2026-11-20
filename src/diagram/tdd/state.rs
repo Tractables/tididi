@@ -551,13 +551,8 @@ impl LooseLevels {
         })
     }
 
-    /// The levels as a list, ascending.
-    #[cfg(test)]
-    pub(crate) fn to_vec(&self) -> Vec<u32> {
-        self.levels().collect()
-    }
-
-    /// [`to_vec`](Self::to_vec) under the operation's allocation budget.
+    /// The levels as a list, ascending, under the operation's allocation
+    /// budget.
     pub(crate) fn to_vec_on(&self, lim: &crate::limits::Limits) -> Result<Vec<u32>, crate::OperationError> {
         let mut out = Vec::new();
         lim.reserve_exact(&mut out, self.len)?;
