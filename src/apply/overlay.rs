@@ -194,12 +194,14 @@ pub(super) fn leaf_index(f_level: &TddLevel, g_level: &TddLevel, left: bool) -> 
 
 /// An operand's nodes at a node of the vtree the overlay runs on.
 pub(super) trait Reads {
-    type Pairs<'s>: Iterator<Item = ChildPair>
+    type Pairs<'s>: ExactSizeIterator<Item = ChildPair>
     where
         Self: 's;
     /// How many nodes, indexed from zero.
     fn width(&self) -> usize;
     fn pairs_of(&self, a: usize) -> Self::Pairs<'_>;
+    /// `visit(n, p)` for each pair `p` of each node `n`.
+    fn for_each_pair(&self, visit: impl FnMut(u32, ChildPair));
     /// An upper bound on the pairs of every node, for a reservation.
     fn pair_bound(&self) -> usize;
 }
@@ -216,6 +218,14 @@ impl Reads for &TddLevel {
     #[inline]
     fn pairs_of(&self, a: usize) -> Self::Pairs<'_> {
         self.pairs_iter_of_idx(a)
+    }
+    #[inline]
+    fn for_each_pair(&self, mut visit: impl FnMut(u32, ChildPair)) {
+        for (n, pairs) in self.internal_inputs_iter() {
+            for p in pairs {
+                visit(n as u32, p);
+            }
+        }
     }
     #[inline]
     fn pair_bound(&self) -> usize {
@@ -267,6 +277,11 @@ impl Reads for Placed {
                 Some(false) => ChildPair::new(one, a),
             })
             .into_iter()
+    }
+    fn for_each_pair(&self, mut visit: impl FnMut(u32, ChildPair)) {
+        for n in 0..self.width() {
+            self.pairs_of(n).for_each(|p| visit(n as u32, p));
+        }
     }
     #[inline]
     fn pair_bound(&self) -> usize {
@@ -427,11 +442,9 @@ fn index_owners(
 ) -> Result<(), OperationError> {
     owner.clear();
     eng.limits().reserve_map(owner, level.pair_bound())?;
-    for n in 0..level.width() {
-        for p in level.pairs_of(n) {
-            owner.insert(key(p.left.0, p.right.0), n as u32);
-        }
-    }
+    level.for_each_pair(|n, p| {
+        owner.insert(key(p.left.0, p.right.0), n);
+    });
     Ok(())
 }
 
@@ -445,7 +458,7 @@ fn index_pairs(
     held.clear();
     for n in nodes {
         let pairs = level.pairs_of(n);
-        eng.limits().reserve_set(held, pairs.size_hint().0)?;
+        eng.limits().reserve_set(held, pairs.len())?;
         for p in pairs {
             held.insert(key(p.left.0, p.right.0));
         }
