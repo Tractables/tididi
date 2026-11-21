@@ -482,7 +482,25 @@ impl PassRows<'_> {
             }
             false => carrier.try_for_each_node::<OperationError>(0..self.width, |_, pairs| {
                 self.gate.poll((pairs.len() * self.passing) as u64)?;
-                (0..self.passing).try_for_each(|i| self.cell::<LEFT>(level, map, pairs, i, passed(i)))
+                let ([pair], None) = (pairs, self.literals) else {
+                    return (0..self.passing).try_for_each(|i| self.cell::<LEFT>(level, map, pairs, i, passed(i)));
+                };
+                let c = if LEFT { pair.left.raw() } else { pair.right.raw() };
+                let nodes = level.nodes.stored_mut();
+                let before = nodes.len();
+                map.extend((0..self.passing).map(|i| {
+                    let product = passed(i)(c);
+                    if product == NO_PRODUCT {
+                        return NO_PRODUCT;
+                    }
+                    nodes.push(EncodedNode::inline(match LEFT {
+                        true => ChildPair::new(NodeIdx(product), pair.right),
+                        false => ChildPair::new(pair.left, NodeIdx(product)),
+                    }));
+                    (nodes.len() - 1) as u32
+                }));
+                self.inline += nodes.len() - before;
+                Ok(())
             }),
         }
     }
@@ -514,6 +532,27 @@ impl PassRows<'_> {
             self.gate.poll(pairs.len() as u64)?;
             let side = |pair: &ChildPair| if LEFT { (pair.left.raw(), pair.right) } else { (pair.right.raw(), pair.left) };
             let products = |x: u32| &inverse[2 * offsets[x as usize] as usize..2 * offsets[x as usize + 1] as usize];
+            if let [pair] = pairs {
+                // A child's products are listed in cell order, so by passing
+                // node: each is a cell of its own.
+                let (y, other) = side(pair);
+                let found = products(y);
+                debug_assert!(found.chunks_exact(2).is_sorted_by_key(|found| found[0]));
+                lim.reserve(list, found.len() / 2)?;
+                for found in found.chunks_exact(2) {
+                    list.push(ProductEntry {
+                        f_idx: FNodeIdx(x as u32),
+                        g_idx: GNodeIdx(found[0]),
+                        prod_idx: ProductNodeIdx(level.nodes.stored().len() as u32),
+                    });
+                    level.nodes.stored_mut().push(EncodedNode::inline(match LEFT {
+                        true => ChildPair::new(NodeIdx(found[1]), other),
+                        false => ChildPair::new(other, NodeIdx(found[1])),
+                    }));
+                }
+                self.inline += found.len() / 2;
+                return Ok(());
+            }
             let total: usize = pairs.iter().map(|pair| products(side(pair).0).len() / 2).sum();
             if total == 0 {
                 return Ok(());
