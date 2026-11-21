@@ -107,21 +107,16 @@ pub(super) fn build_clause_spine(
 /// Propagate `need_dt` top-down over the spine: a level needs the complement
 /// conjunction (acc × `d_t`) iff its parent needs it or has both children on
 /// the spine (the both-relevant `c_t` contains `(d_L, c_R)` and `(c_L, d_R)`).
-/// Only spine levels are written. Returns the topmost level with both
-/// children on the spine, the one such level that computes no `d_t`.
+/// Only spine levels are written.
 pub(super) fn propagate_need_dt(
     vtree: &crate::vtree::Vtree,
     spine_internal: &[VtreeIdx],
     on_spine: &[bool],
     need_dt: &mut MarkBuffer,
-) -> Option<VtreeIdx> {
-    let mut top_fork = None;
+) {
     for &t in spine_internal.iter().rev() {
         let (l, r) = vtree.children(t);
         let both = on_spine[l.idx()] && on_spine[r.idx()];
-        if both && top_fork.is_none() {
-            top_fork = Some(t);
-        }
         let inherited = need_dt[t.idx()] || both;
         if inherited {
             if on_spine[l.idx()] {
@@ -132,7 +127,6 @@ pub(super) fn propagate_need_dt(
             }
         }
     }
-    top_fork
 }
 
 /// Lay out the `cd_map` blocks for the spine: one `LEAF_WIDTH` block per clause

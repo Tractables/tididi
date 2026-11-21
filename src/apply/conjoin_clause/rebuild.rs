@@ -27,10 +27,11 @@ pub(super) struct ClauseTables<'a> {
     /// child unnamed (a `d` half beside a partner with no `c` half); and its
     /// input pairs.
     pub(super) top: Option<(VtreeIdx, [usize; 2], usize)>,
-    /// Whether the level rebuilt last has one relevant child, computes no
-    /// `d_t`, and dropped a pair: only there can a node of the other child
-    /// that a pair named be named by none after.
-    pub(super) dropped: bool,
+    /// The levels with one relevant child and no `d_t` whose rebuild dropped
+    /// a pair, while the walk lists loose levels: only there can a node of
+    /// the other child that a pair named be named by none after. Reserved
+    /// for the whole spine.
+    pub(super) dropped_at: &'a mut Vec<VtreeIdx>,
 }
 
 /// The child-map offsets and worst-case output pairs per input pair for a
@@ -96,14 +97,15 @@ fn fits_reserve(capacity: usize, need: usize) -> bool {
 }
 
 /// Rebuild one spine level as the conjunction of the accumulator's level with
-/// the clause, filling this level's `cd_map` block and
-/// [`ClauseTables::dropped`].
+/// the clause, filling this level's `cd_map` block, and with `track` its
+/// entry in [`ClauseTables::dropped_at`].
 pub(super) fn rebuild_spine_level(
     eng: &Engine,
     t: VtreeIdx,
     vtree: &Vtree,
     levels: &mut [TddLevel],
     tables: &mut ClauseTables<'_>,
+    track: bool,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     let t_idx = t.idx();
@@ -164,23 +166,33 @@ pub(super) fn rebuild_spine_level(
     };
     match (left_rel, right_rel, compute_dt) {
         (true, true, true) => {
-            rebuild_nodes::<true, true, true>(eng, &old, ctx, level, base, tables)?
+            rebuild_nodes::<true, true, true, false>(eng, &old, ctx, level, base, tables)?;
         }
         (true, true, false) => {
             tables.top = Some((t, [0; 2], 0));
-            rebuild_nodes::<true, true, false>(eng, &old, ctx, level, base, tables)?
+            rebuild_nodes::<true, true, false, false>(eng, &old, ctx, level, base, tables)?;
         }
         (true, false, true) => {
-            rebuild_nodes::<true, false, true>(eng, &old, ctx, level, base, tables)?
+            rebuild_nodes::<true, false, true, false>(eng, &old, ctx, level, base, tables)?;
+        }
+        (true, false, false) if track => {
+            if rebuild_nodes::<true, false, false, true>(eng, &old, ctx, level, base, tables)? {
+                tables.dropped_at.push(t);
+            }
         }
         (true, false, false) => {
-            rebuild_nodes::<true, false, false>(eng, &old, ctx, level, base, tables)?
+            rebuild_nodes::<true, false, false, false>(eng, &old, ctx, level, base, tables)?;
         }
         (false, true, true) => {
-            rebuild_nodes::<false, true, true>(eng, &old, ctx, level, base, tables)?
+            rebuild_nodes::<false, true, true, false>(eng, &old, ctx, level, base, tables)?;
+        }
+        (false, true, false) if track => {
+            if rebuild_nodes::<false, true, false, true>(eng, &old, ctx, level, base, tables)? {
+                tables.dropped_at.push(t);
+            }
         }
         (false, true, false) => {
-            rebuild_nodes::<false, true, false>(eng, &old, ctx, level, base, tables)?
+            rebuild_nodes::<false, true, false, false>(eng, &old, ctx, level, base, tables)?;
         }
         (false, false, _) => unreachable!("a spine level has a relevant child"),
     }
@@ -205,16 +217,18 @@ pub(super) fn rebuild_spine_level(
 /// Rebuild the nodes with the level's relevant children and complement demand fixed.
 /// The separate frame keeps level setup out of the specialized pair loops.
 /// Each node charges the work clock a unit for each pair it reads and each
-/// pair it writes.
+/// pair it writes. With `TRACK`, for a level with one relevant child and no
+/// `d_t`, returns whether a node wrote fewer pairs than it read; otherwise
+/// false, and the loop is the untracked one.
 #[inline(never)]
-fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
+fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool, const TRACK: bool>(
     eng: &Engine,
     old: &TddLevel,
     ctx: SpineCtx,
     level: &mut TddLevel,
     base: usize,
     tables: &mut ClauseTables<'_>,
-) -> Result<(), OperationError> {
+) -> Result<bool, OperationError> {
     // The one call site keeps `conjoin_node_with_clause` inlined here.
     // An implicit level's node's pairs are generated into `buf`: a stored
     // node's off its range, and the nodes the description implies, which
@@ -243,12 +257,12 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
         let written =
             conjoin_node_with_clause::<LEFT, RIGHT, DT>(eng, inputs, ctx, level, base + i, tables)?;
         gate.poll((inputs.len() + written) as u64)?;
-        if LEFT != RIGHT && !DT {
+        if TRACK {
             dropped |= written < inputs.len();
         }
     }
-    tables.dropped = dropped;
-    gate.flush()
+    gate.flush()?;
+    Ok(dropped)
 }
 
 /// Emit the node whose pairs sit at `level.pairs[pair_start..]` and return

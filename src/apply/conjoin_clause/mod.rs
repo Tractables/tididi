@@ -54,6 +54,9 @@ pub(crate) struct ClauseWork {
     t3_buf: Vec<ChildPair>,
     /// Kept across walks, as the pool keeps the rest.
     drop_yield: DropYield,
+    /// The spine levels whose rebuild dropped a pair naming a node of their
+    /// off-spine child ([`ClauseTables::dropped_at`]).
+    dropped_at: Vec<VtreeIdx>,
 }
 
 /// The nodes the drop of unnamed nodes has removed against the parent pairs
@@ -91,6 +94,7 @@ impl Buffers for ClauseWork {
         visit(&mut self.spine_internal);
         visit(&mut self.dt_pairs);
         visit(&mut self.t3_buf);
+        visit(&mut self.dropped_at);
     }
 }
 
@@ -103,6 +107,7 @@ impl PooledScratch for ClauseWork {
         self.spine_internal.clear();
         self.dt_pairs.clear();
         self.t3_buf.clear();
+        self.dropped_at.clear();
     }
 
     /// The marks are cleared on every exit, an error's too, so the parked
@@ -281,7 +286,7 @@ fn rebuild_along_spine(
     work.on_spine.cover(lim, num_nodes)?;
     build_clause_spine(lim, vtree, clause, &mut work.on_spine, &mut work.spine_internal)?;
     work.need_dt.cover(lim, num_nodes)?;
-    let top_fork = propagate_need_dt(vtree, &work.spine_internal, &work.on_spine, &mut work.need_dt);
+    propagate_need_dt(vtree, &work.spine_internal, &work.on_spine, &mut work.need_dt);
 
     // Take ownership of f's levels: off-spine levels pass through as the
     // identity, spine internal levels are rebuilt in place below, and f is
@@ -311,22 +316,6 @@ fn rebuild_along_spine(
 
     fill_leaf_maps(clause, &work.level_base, &work.need_dt, &mut work.cd_map);
 
-    // Rebuild each spine internal level bottom-up. Children's maps are fully
-    // written before any parent reads them. The stop axis and the output cap
-    // are checked after each level, the cap against the rebuilt levels' nodes.
-    let mut out_nodes = 0u64;
-    let mut tables = ClauseTables {
-        cd_map: &mut work.cd_map,
-        level_base: &work.level_base,
-        need_dt: &work.need_dt,
-        on_spine: &work.on_spine,
-        t3_buf: &mut work.t3_buf,
-        dt_pairs: &mut work.dt_pairs,
-        spare_nodes: &mut Vec::new(),
-        spare_pairs: &mut Vec::new(),
-        top: None,
-        dropped: false,
-    };
     let vtree = Arc::clone(vtree);
     let mut carried = f.take_worklists();
     let fused = carried.take_fused();
@@ -341,19 +330,30 @@ fn rebuild_along_spine(
         // little, and a run of clauses would list every spine again.
         false => carried_loose.filter(|loose| loose.len() < vtree.internal_bottomup_slice().len() / 2),
     };
+    let track = loose.is_some();
+    if track {
+        lim.reserve(&mut work.dropped_at, work.spine_internal.len())?;
+    }
+    // Rebuild each spine internal level bottom-up. Children's maps are fully
+    // written before any parent reads them. The stop axis and the output cap
+    // are checked after each level, the cap against the rebuilt levels' nodes.
+    let mut out_nodes = 0u64;
+    let mut tables = ClauseTables {
+        cd_map: &mut work.cd_map,
+        level_base: &work.level_base,
+        need_dt: &work.need_dt,
+        on_spine: &work.on_spine,
+        t3_buf: &mut work.t3_buf,
+        dt_pairs: &mut work.dt_pairs,
+        spare_nodes: &mut Vec::new(),
+        spare_pairs: &mut Vec::new(),
+        top: None,
+        dropped_at: &mut work.dropped_at,
+    };
     for &t in work.spine_internal.iter() {
-        rebuild_spine_level(eng, t, &vtree, &mut levels, &mut tables)?;
+        rebuild_spine_level(eng, t, &vtree, &mut levels, &mut tables, track)?;
         out_nodes += levels[t.idx()].slot_count() as u64;
         lim.level_done(out_nodes)?;
-        if tables.dropped
-            && let Some(loose) = loose.as_mut()
-        {
-            let (left, right) = vtree.children(t);
-            let off = if tables.on_spine[left.idx()] { right } else { left };
-            if !vtree.node(off).is_leaf() {
-                loose.insert(off.0);
-            }
-        }
     }
     // A right `d` half skipped beside a left node with no `c` half is mostly
     // named by another pair unless the skips are a good share of the pairs:
@@ -363,7 +363,7 @@ fn rebuild_along_spine(
         .map(|(t, [left, right], pairs)| (t, [left != 0, right * 4 >= pairs && right != 0]))
         .filter(|&(_, sides)| sides != [false; 2]);
     if let Some(loose) = loose.as_mut() {
-        list_rebuilt(loose, &vtree, &work.spine_internal, top_fork);
+        list_rebuilt(loose, &vtree, &work.spine_internal, &work.on_spine, &work.dropped_at);
     }
 
     // Output: conjunction of f's output with c_t at the root, which is on
@@ -428,32 +428,43 @@ fn rebuild_along_spine(
 }
 
 /// List the levels a clause's rebuild may leave holding a node no pair of
-/// their parent level names, beside the off-spine children of the levels
-/// that dropped a pair ([`ClauseTables::dropped`]), which the rebuild lists:
-/// the root, which may hold products the output is not, and the internal
-/// children of the topmost level with both children on the spine. A rebuilt
-/// child's nodes are its nodes' products, each named where the node it came
-/// from was, since a node other than false has a `c_t` or a `d_t` product and
-/// a pair keeps the product of either that the parent computes; but under a
-/// level with both children relevant and no `d_t`, the type-3 and
-/// `(c_L, d_R)` pairs name a `d_t` product only where the other side's `c_t`
-/// is not false, and only the topmost such level computes no `d_t`
-/// ([`propagate_need_dt`]). Every other rebuilt level keeps its entry, its
-/// count forgotten; an off-spine level keeps its nodes and, unless a pair
+/// their parent level names: the off-spine children of the levels in
+/// `dropped_at`, the root, which may hold products the output is not, and
+/// the internal children of the topmost level with both children on the
+/// spine. A rebuilt child's nodes are its nodes' products, each named where
+/// the node it came from was, since a node other than false has a `c_t` or a
+/// `d_t` product and a pair keeps the product of either that the parent
+/// computes; but under a level with both children relevant and no `d_t`, the
+/// type-3 and `(c_L, d_R)` pairs name a `d_t` product only where the other
+/// side's `c_t` is not false, and only the topmost such level computes no
+/// `d_t` (`propagate_need_dt`). Every other rebuilt level keeps its entry,
+/// its count forgotten; an off-spine level keeps its nodes and, unless a pair
 /// naming one was dropped, the nodes named, so its entry and count hold.
 fn list_rebuilt(
     loose: &mut crate::diagram::LooseLevels,
     vtree: &crate::vtree::Vtree,
     spine_internal: &[VtreeIdx],
-    top_fork: Option<VtreeIdx>,
+    on_spine: &[bool],
+    dropped_at: &[VtreeIdx],
 ) {
+    for &t in dropped_at {
+        let (left, right) = vtree.children(t);
+        let off = if on_spine[left.idx()] { right } else { left };
+        if !vtree.node(off).is_leaf() {
+            loose.insert(off.0);
+        }
+    }
     if loose.has_counts() {
         for &t in spine_internal {
             loose.forget_count(t.0);
         }
     }
     loose.insert(vtree.root().0);
-    if let Some(p) = top_fork {
+    let top_fork = spine_internal.iter().rev().find(|&&t| {
+        let (left, right) = vtree.children(t);
+        on_spine[left.idx()] && on_spine[right.idx()]
+    });
+    if let Some(&p) = top_fork {
         let (left, right) = vtree.children(p);
         for c in [left, right] {
             if !vtree.node(c).is_leaf() {
