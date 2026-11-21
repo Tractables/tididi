@@ -424,14 +424,18 @@ where
                 && let Some(o) = out.as_mut()
             {
                 let (nodes, arena) = (&stored.nodes()[..f_width], stored.arena());
-                let (to, units, cursor) = two_column_rows(
-                    two,
-                    |j| stored_two(nodes, arena, (left_view, right_view), j),
-                    (left, right),
-                    slab,
-                    o.cursor(),
-                    (i, f_width, poll.due_in()),
-                );
+                let at = (i, f_width, poll.due_in());
+                let (to, units, cursor) = match left_view.is_marginal() || right_view.is_marginal() {
+                    true => two_column_rows(
+                        two,
+                        |j| stored_two(nodes, arena, Some((left_view, right_view)), j),
+                        (left, right),
+                        slab,
+                        o.cursor(),
+                        at,
+                    ),
+                    false => two_column_rows(two, |j| stored_two(nodes, arena, None, j), (left, right), slab, o.cursor(), at),
+                };
                 o.set_cursor(cursor);
                 if to > i {
                     poll.add_short(units);
@@ -705,17 +709,17 @@ fn described_two(rows: &[ChildPair], k: usize, i: usize) -> Option<(ChildPair, C
 }
 
 /// Node `i` of a stored level's `nodes`, whose pairs are in `arena`, as
-/// [`described_two`] gives a row, its pairs decoded through `views`, `None`
-/// for a node of more than two pairs.
+/// [`described_two`] gives a row, its pairs decoded through `views` where
+/// given, `None` for a node of more than two pairs.
 #[inline(always)]
 fn stored_two(
     nodes: &[EncodedNode],
     arena: &[ChildPair],
-    (left, right): (ChildDecoder, ChildDecoder),
+    views: Option<(ChildDecoder, ChildDecoder)>,
     i: usize,
 ) -> Option<(ChildPair, ChildPair, u64)> {
     debug_assert!(i < nodes.len());
-    let d = |p| decoded(p, left, right);
+    let d = |p| views.map_or(p, |(left, right)| decoded(p, left, right));
     // Safety: the caller reads the nodes below `nodes.len()`.
     match unsafe { nodes.get_unchecked(i) }.kind() {
         NodeKind::Inline(p) => Some((d(p), d(p), 1)),
