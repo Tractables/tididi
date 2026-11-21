@@ -145,14 +145,14 @@ fn add_on(eng: &Engine, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
         crate::apply::extend::refuse_other_homes([&f, &g])?;
         refuse_unshared_sums(&f, &g)?;
     }
+    if !f.is_zero() && !g.is_zero() && !f.has_marginal_level() && !g.has_marginal_level() {
+        return overlay_on(eng, Overlay::Add, f, g);
+    }
     let [f, g] = crate::apply::extend::on_one(eng, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
     eng.limits().check_stop()?;
     let mut result = match (f.is_zero(), g.is_zero()) {
         (true, _) => g,
         (false, true) => f,
-        (false, false) if !f.has_marginal_level() && !g.has_marginal_level() => {
-            return overlay_on(eng, Overlay::Add, f, g);
-        }
         (false, false) => {
             if f.weight_table().is_some() {
                 return Err(OperationError::IncompatibleWeights);
