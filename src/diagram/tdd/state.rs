@@ -141,7 +141,10 @@ impl LevelStorage {
         }
         let walk = || self.levels.iter().map(TddLevel::live_pairs_closed).sum();
         let total = self.summary.pairs.read(walk);
-        debug_assert_eq!(total, walk(), "a kept pair total differs from the levels'");
+        // Not `walk`: keeping the levels' counts here only in a debug build
+        // would let it keep the total through edits that a release build
+        // forgets it at.
+        debug_assert_eq!(total, self.levels.iter().map(TddLevel::live_pairs).sum::<usize>(), "a kept pair total differs from the levels'");
         total
     }
 
