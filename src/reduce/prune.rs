@@ -1430,7 +1430,7 @@ fn move_node(level: &mut TddLevel, i: usize, left: impl Fn(u32) -> u32, right: i
 /// (`on_spine`) that the conjunction with a clause rebuilt in `levels`: the
 /// output level's nodes but the output `out` at level `out_vtree`, then,
 /// top-down, a spine level's nodes its parent no longer names. Returns the
-/// output's new index.
+/// output's new index, the nodes dropped and the parent pairs read.
 ///
 /// A rebuilt level names every node of its spine children but at `top`,
 /// the highest level with both children on the spine, whose children are
@@ -1452,8 +1452,9 @@ pub(crate) fn drop_clause_orphans(
     on_spine: &[bool],
     top: Option<(VtreeIdx, [bool; 2])>,
     (out_vtree, out): (VtreeIdx, u32),
-) -> Result<u32, OperationError> {
+) -> Result<(u32, [u64; 2]), OperationError> {
     let lim = eng.limits();
+    let mut tally = [0u64; 2];
     let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
     let PruneScratch {
         marks,
@@ -1475,7 +1476,7 @@ pub(crate) fn drop_clause_orphans(
         let sides = unnamed_sides(lim, vtree, levels, out_vtree, readable, marks, 0..own, own)?;
         grow_to(lim, remap, width, UNREACHED)?;
         new_indices(&marks[..own], width, remap);
-        drop_unmarked(&mut levels[out_vtree.idx()], &marks[..own]);
+        tally[0] += drop_unmarked(&mut levels[out_vtree.idx()], &marks[..own]);
         if sides != [false; 2] {
             lim.try_push(lost, out_vtree)?;
             lim.try_push(lost_sides, sides)?;
@@ -1507,7 +1508,9 @@ pub(crate) fn drop_clause_orphans(
         let stored = parent.stored().expect("a rebuilt level stores its pairs");
         let mut left = Marker::new(0);
         for node in parent.nodes.stored() {
-            for p in stored.of(node) {
+            let pairs = stored.of(node);
+            tally[1] += pairs.len() as u64;
+            for p in pairs {
                 if width[0] != 0 {
                     left.mark(marks, 0, p.left.raw() as usize);
                 }
@@ -1530,7 +1533,7 @@ pub(crate) fn drop_clause_orphans(
                 let sides = unnamed_sides(lim, vtree, levels, c, readable, marks, own[s].clone(), end)?;
                 let new = &mut remap[if s == 0 { 0..width[0] } else { width[0]..width[0] + width[1] }];
                 new_indices(&marks[own[s].clone()], width[s], new);
-                drop_unmarked(&mut levels[c.idx()], &marks[own[s].clone()]);
+                tally[0] += drop_unmarked(&mut levels[c.idx()], &marks[own[s].clone()]);
                 if sides != [false; 2] {
                     lost.push(c);
                     lost_sides.push(sides);
@@ -1547,7 +1550,7 @@ pub(crate) fn drop_clause_orphans(
             _ => nodes.for_each(|i| move_node(parent, i, kept, moved_slot(right_new))),
         }
     }
-    Ok(out)
+    Ok((out, tally))
 }
 
 /// The sides of `t`'s readable children on which dropping the nodes of level
@@ -1630,8 +1633,8 @@ fn grow_to<T: Copy>(lim: &Limits, v: &mut Vec<T>, n: usize, value: T) -> Result<
 }
 
 /// Remove from the stored structural level `level` the nodes whose slots
-/// `own` does not mark, and their pairs.
-fn drop_unmarked(level: &mut TddLevel, own: &[u64]) {
+/// `own` does not mark, and their pairs. Returns the nodes removed.
+fn drop_unmarked(level: &mut TddLevel, own: &[u64]) -> u64 {
     let width = level.slot_count();
     let mut dead = 0usize;
     if !level.pairs.is_empty() {
@@ -1640,6 +1643,7 @@ fn drop_unmarked(level: &mut TddLevel, own: &[u64]) {
     keep_marked(level.nodes.stored_mut(), own);
     level.note_dead_pairs(dead);
     level.compact_pairs_if_stale();
+    (width - level.slot_count()) as u64
 }
 
 /// Where a slot of a structural child, as a raw word, moves when the child

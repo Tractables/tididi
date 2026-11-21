@@ -52,6 +52,34 @@ pub(crate) struct ClauseWork {
     /// The both-relevant type-3 pairs of the node being rebuilt, held back
     /// until its left index changes so the pair list stays sorted.
     t3_buf: Vec<ChildPair>,
+    /// Kept across walks, as the pool keeps the rest.
+    drop_yield: DropYield,
+}
+
+/// The nodes the drop of unnamed nodes has removed against the parent pairs
+/// it read, which decides whether a walk runs it.
+#[derive(Default)]
+struct DropYield {
+    /// Nodes dropped, plus one for each walk that skipped the drop.
+    dropped: u64,
+    read: u64,
+}
+
+impl DropYield {
+    /// Past this many pairs read per node dropped, the drop costs more than
+    /// the later work on the nodes it removes, which the next reduction
+    /// prunes anyway. What a dropped node saves later varies by a hundred
+    /// times between inputs that read 50 pairs per node, so the bound only
+    /// cuts the walks that read hundreds of pairs per node.
+    const MAX_PAIRS_PER_NODE: u64 = 128;
+
+    /// Whether this walk runs the drop. A walk that does not adds one node
+    /// to `dropped`, so a run of skipped walks tries again.
+    fn drops(&mut self) -> bool {
+        let drops = self.dropped * Self::MAX_PAIRS_PER_NODE >= self.read;
+        self.dropped += u64::from(!drops);
+        drops
+    }
 }
 
 impl Buffers for ClauseWork {
@@ -316,17 +344,23 @@ fn rebuild_along_spine(
     let ct_out = work.cd_map[out_base + out_local_in.idx()][0];
     let out_local = if ct_out == NO_PRODUCT {
         ZERO
-    } else if vtree.node(out_vtree).is_leaf() || (levels[out_vtree.idx()].slot_count() == 1 && top.is_none()) {
+    } else if vtree.node(out_vtree).is_leaf()
+        || (levels[out_vtree.idx()].slot_count() == 1 && top.is_none())
+        || !work.drop_yield.drops()
+    {
         NodeIdx(ct_out)
     } else {
-        NodeIdx(crate::reduce::prune::drop_clause_orphans(
+        let (out, [dropped, read]) = crate::reduce::prune::drop_clause_orphans(
             eng,
             vtree,
             &mut levels,
             &work.on_spine,
             top,
             (out_vtree, ct_out),
-        )?)
+        )?;
+        work.drop_yield.dropped += dropped;
+        work.drop_yield.read += read;
+        NodeIdx(out)
     };
 
     // Contract seed: this clause's spine, which is ancestor-closed, so an
