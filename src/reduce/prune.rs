@@ -347,6 +347,27 @@ pub(crate) enum PruneScope {
     BelowRoot,
 }
 
+/// Empty every level of a false diagram, which reaches no node. Levels
+/// already empty keep the certificate.
+#[cold]
+#[inline(never)]
+pub(crate) fn clear_false(tdd: &mut Tdd) {
+    if (0..tdd.levels.len()).all(|t| tdd.levels[t].node_count() == 0) {
+        tdd.dirty.set_loose(Some(Vec::new()));
+        return;
+    }
+    for level in &mut tdd.levels {
+        level.nodes = level.take_nodes();
+        level.pairs.clear();
+        level.ranges.clear();
+        level.dead_pairs = 0;
+    }
+    for t in 0..tdd.levels.len() {
+        tdd.levels.mark_changed(VtreeIdx(t as u32));
+    }
+    tdd.dirty.set_loose(Some(Vec::new()));
+}
+
 /// Remove nodes not reachable from the output.
 ///
 /// Marks reachability top-down, then compacts each level bottom-up, remapping
@@ -375,27 +396,6 @@ pub(crate) enum PruneScope {
 /// refused, and the stop the settle of the loose levels polls for
 /// ([`settle_loose`]). Every one comes before any mutation of `tdd`, so
 /// the diagram is then untouched.
-/// Empty every level of a false diagram, which reaches no node. Levels
-/// already empty keep the certificate.
-#[cold]
-#[inline(never)]
-pub(crate) fn clear_false(tdd: &mut Tdd) {
-    if (0..tdd.levels.len()).all(|t| tdd.levels[t].node_count() == 0) {
-        tdd.dirty.set_loose(Some(Vec::new()));
-        return;
-    }
-    for level in &mut tdd.levels {
-        level.nodes = level.take_nodes();
-        level.pairs.clear();
-        level.ranges.clear();
-        level.dead_pairs = 0;
-    }
-    for t in 0..tdd.levels.len() {
-        tdd.levels.mark_changed(VtreeIdx(t as u32));
-    }
-    tdd.dirty.set_loose(Some(Vec::new()));
-}
-
 pub(crate) fn prune_unreachable(
     eng: &Engine,
     tdd: &mut Tdd,
