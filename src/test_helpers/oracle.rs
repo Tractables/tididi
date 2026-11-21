@@ -282,53 +282,30 @@ pub fn big_to_u128(b: &BigUint) -> u128 {
 /// subject is mid-flight (an accumulator, a shrunk operand) has cause to skip
 /// it.
 ///
-/// A structural diagram gets the fast family
-/// ([`check_all_fast`](crate::test_helpers::check::check_all_fast)): vtree
-/// structure, no false nodes, distinct functions within a level by
-/// random-assignment signature, and implicit levels, all of which hold of an
-/// unminimized result too; a certified diagram is held to canonical form
-/// ([`check_canonicity`](crate::test_helpers::check::check_canonicity)). A diagram with a
-/// marginal level gets the structure and false-node checks and then the
-/// marginal family instead of the signature check: a marginal child
-/// contributes its stored count to a signature rather than anything
-/// structural, so two distinct nodes over summed-out storage can sign
-/// identically (`4 × 1` and `2 × 2`), and a node with a repeated pair over a
-/// marginal subtree signs as one pair over twice the count. What still holds
-/// after summing levels out is the marginal family.
+/// The fast family ([`check_all_fast`](crate::test_helpers::check::check_all_fast))
+/// and, on a diagram with a summed-out level, the weighted leaf column pin:
+/// all of these hold of an unminimized result too.
+/// A certified diagram is held to canonical form
+/// ([`check_canonicity`](crate::test_helpers::check::check_canonicity)). An
+/// uncertified one is not: a test that means canonical form minimizes first,
+/// or asks for it with [`assert_marginal_canonical`].
 pub fn assert_canonical(tdd: &Tdd) {
-    use crate::test_helpers::check::{check_all_fast, check_no_false_nodes, validate_vtree_structure};
-    if tdd.vtree().num_nodes() == 0 {
-        return;
+    use crate::test_helpers::check::{check_all_fast, check_certified, marginal};
+    check_certified(tdd).unwrap_or_else(|e| panic!("assert_canonical: {e}"));
+    check_all_fast(tdd, "assert_canonical");
+    if tdd.has_marginal_level() {
+        marginal::check_leaf_columns_pinned(tdd).unwrap_or_else(|e| panic!("assert_canonical: leaf_columns_pinned: {e}"));
     }
-    crate::test_helpers::check::check_certified(tdd).unwrap_or_else(|e| panic!("assert_canonical: {e}"));
-    if !tdd.has_marginal_level() {
-        check_all_fast(tdd, "assert_canonical");
-        return;
-    }
-    validate_vtree_structure(tdd).unwrap_or_else(|e| panic!("assert_canonical: vtree structure: {e}"));
-    check_no_false_nodes(tdd).unwrap_or_else(|e| panic!("assert_canonical: no_false_nodes: {e}"));
-    crate::test_helpers::check::check_implicit_levels(tdd).unwrap_or_else(|e| panic!("assert_canonical: implicit levels: {e}"));
-    marginal_family(tdd, "assert_canonical");
 }
 
-/// [`assert_canonical`] on a diagram the test expects to have marginalized:
-/// panics first if no level is marginal.
+/// [`assert_canonical`] and canonical form
+/// ([`check_canonicity`](crate::test_helpers::check::check_canonicity)) on a
+/// diagram the test minimized and expects to have marginalized: panics first
+/// if no level is marginal.
 pub fn assert_marginal_canonical(tdd: &Tdd) {
     assert!(tdd.has_marginal_level(), "assert_marginal_canonical: the diagram has no marginal level");
     assert_canonical(tdd);
-}
-
-/// The marginal-form checkers and the leaf column pin, failing under `label`.
-fn marginal_family(tdd: &Tdd, label: &str) {
-    type MarginalCheck = fn(&Tdd) -> Result<(), String>;
-    let checks: [(&str, MarginalCheck); 3] = [
-        ("no_orphan_slots", crate::test_helpers::check::marginal::check_no_orphan_slots),
-        ("marginal_canonical_form", crate::test_helpers::check::marginal::check_marginal_canonical_form),
-        ("leaf_columns_pinned", crate::test_helpers::check::marginal::check_leaf_columns_pinned),
-    ];
-    for (name, check) in checks {
-        check(tdd).unwrap_or_else(|e| panic!("{label}: {name}: {e}"));
-    }
+    crate::test_helpers::check::check_canonicity(tdd, 3).unwrap_or_else(|e| panic!("assert_marginal_canonical: {e}"));
 }
 
 /// Run `build` on an engine whose wall is already in the past, so the first
@@ -619,3 +596,4 @@ pub fn brute_force_pmc(clauses: &[Vec<i32>], n: usize, show: &[usize]) -> BigUin
         .collect();
     BigUint::from(seen.len())
 }
+

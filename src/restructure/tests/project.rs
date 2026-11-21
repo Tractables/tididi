@@ -149,7 +149,7 @@ mod weighted {
 
     use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, TddBuildError, Weights};
     use crate::restructure::EmbedError;
-    use crate::test_helpers::{assert_canonical, compile_clauses, test_cases, vtree_shapes};
+    use crate::test_helpers::{assert_marginal_canonical, compile_clauses, test_cases, vtree_shapes};
     use crate::vtree::{VarId, Vtree, VtreeIdx};
     use crate::{Engine, OperationError, Tdd};
 
@@ -179,13 +179,14 @@ mod weighted {
     }
 
     /// `f` under the weights of its variables with the subtree at `t`
-    /// summed out.
+    /// summed out, minimized.
     fn summed(f: &Tdd, t: VtreeIdx, arithmetic: Arithmetic) -> Tdd {
         let vars: Vec<VarId> = (1..=f.vtree().num_vars()).map(VarId).collect();
         let vtree = weighted(Vtree::clone(f.vtree()), store_over(&vars, arithmetic));
         let engine = Engine::new();
         let (mut g, _) = engine.embed(f, &vtree, |v| v).unwrap();
         engine.marginalize_levels(&mut g, &[t]).unwrap();
+        engine.minimize(&mut g).unwrap();
         g
     }
 
@@ -214,25 +215,19 @@ mod weighted {
         move |v| keep.iter().position(|&k| k == v).map(|i| VarId(i as u32 + 1))
     }
 
-    /// Project `g`, summed out at `t`, onto `keep` and check the result: the
-    /// same value, `t`'s values at its image, and the same value again for
-    /// a conjunction with a clause over the variables outside `t`.
+    /// Project `g`, summed out at `t` and minimized, onto `keep` and check
+    /// the result: canonical form, the same value, `t`'s values at its
+    /// image, and the same value again for a conjunction with a clause over
+    /// the variables outside `t`.
     fn check(g: &Tdd, t: VtreeIdx, keep: &[VarId]) {
         let engine = Engine::new();
         let vtree = g.vtree();
         let local_of = local_in(keep);
         let arithmetic = g.weights().unwrap().arithmetic();
         let into = projected(vtree, keep, keep, arithmetic);
-        // Bounded values summed out may leave twins the oracle flags in the
-        // source already; exact ones are canonical before and after.
-        let exactly = arithmetic == Arithmetic::ExactRational;
-        if exactly {
-            assert_canonical(g);
-        }
+        assert_marginal_canonical(g);
         let p = engine.project_over(g, &into, local_of).unwrap();
-        if exactly {
-            assert_canonical(&p);
-        }
+        assert_marginal_canonical(&p);
         assert_eq!(p.vtree().num_leaves() as usize, keep.len());
         let key = |f: &Tdd| crate::diagram::weight_key(&f.weighted_value().unwrap().expect("weighted"));
         assert!(key(&p) == key(g), "the same value");
@@ -244,7 +239,7 @@ mod weighted {
         }
         assert!(p.level(image).is_weight_marginal(), "t's image holds its values");
         assert_eq!(p.level(image).slot_count(), g.level(t).slot_count());
-        if !exactly {
+        if arithmetic != Arithmetic::ExactRational {
             return;
         }
         let outside: Vec<VarId> = vtree.leaf_bottomup().filter(|&(leaf, _)| !vtree.in_subtree(leaf, t)).map(|(_, v)| v).collect();

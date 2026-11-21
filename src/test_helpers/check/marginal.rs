@@ -82,8 +82,9 @@ fn node_pairs_into(level: &TddLevel, n: usize, out: &mut Vec<ChildPair>) {
 /// Invariant 8: no boundary-parent group remains eligible for pair fusion.
 /// `filter` restricts the check to the named parent levels.
 ///
-/// Bounded-precision arithmetic disables fusion. An exact weighted leaf permits it
-/// only when the whole group's sum is already in its pinned column. A parent
+/// Bounded-precision arithmetic disables fusion. An exact weighted leaf, a
+/// region included, permits it only when the whole group's sum is already in
+/// its column. A parent
 /// with two marginal children is exempt because a sweep on one side can
 /// recreate a group on the other.
 pub fn check_pair_fusion_saturation(tdd: &Tdd, filter: Option<&[VtreeIdx]>) -> Result<(), String> {
@@ -123,10 +124,12 @@ pub fn check_pair_fusion_saturation(tdd: &Tdd, filter: Option<&[VtreeIdx]>) -> R
     Ok(())
 }
 
-/// Decide whether a group's exact sum can be stored without changing a pinned column.
+/// Decide whether a group's exact sum can be stored without changing a pinned
+/// column. Pair fusion mints no value at a weighted leaf, a region included,
+/// so there the sum must already be in the column.
 fn fusion_value_representable(tdd: &Tdd, v: VtreeIdx, refs: &[u32]) -> bool {
     use crate::diagram::{ChildDecoder, ValueRef};
-    if tdd.weights().is_none() || !tdd.vtree.node(v).is_var_leaf() {
+    if tdd.weights().is_none() || !tdd.vtree.node(v).is_leaf() {
         return true;
     }
     let col = tdd.levels[v.idx()].weight_values().expect("weighted marginal leaf has a column");

@@ -86,29 +86,16 @@ pub(crate) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -
     // A region not summed out is read as true over its extent: an
     // indeterminate of its own, drawn from this round's assignment.
     let draw = pos_val.iter().fold(1u64, |a, &p| mod_add(mod_mul(a, 31), p));
-    for t in vtree.regions().filter(|&t| !tdd.level(t).is_marginal()) {
-        signatures[t.idx()][LeafLabel::One as usize] = mod_add(mod_mul(draw, u64::from(t.0) + 2), 1);
+    for t in vtree.regions() {
+        match tdd.level(t).is_marginal() {
+            true => marginal_signatures(tdd, t, &mut signatures[t.idx()]),
+            false => signatures[t.idx()][LeafLabel::One as usize] = mod_add(mod_mul(draw, u64::from(t.0) + 2), 1),
+        }
     }
     for (t, left, right) in vtree.internal_bottomup() {
         let level = tdd.level(t);
-        // Marginal level: each node's signature (and mass) is its stored count
-        // mod p — same value in both passes, independent of the leaf seeding.
-        // A weight-marginal level keeps no integer counts; its per-node value
-        // lives in the level's weight column, and that value is the node's
-        // whole identity, so the signature is a fingerprint of the weight row
-        // (`weight_mod_p`).
         if level.is_marginal() {
-            if let Some(counts) = level.marginal_counts() {
-                let big = level.marginal_counts_big();
-                for (i, &c) in counts.iter().enumerate() {
-                    let big_i = big.and_then(|b| b.get(i));
-                    signatures[t.idx()][i] = count_mod_p(c, big_i);
-                }
-            } else if let Some(values) = level.weight_values() {
-                for (i, value) in values.iter().enumerate() {
-                    signatures[t.idx()][i] = weight_mod_p(value);
-                }
-            }
+            marginal_signatures(tdd, t, &mut signatures[t.idx()]);
             continue;
         }
         let left_view = tdd.level(left).child_decoder();
@@ -129,6 +116,25 @@ pub(crate) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -
     }
 
     signatures
+}
+
+/// The signatures of the slots of `t`, a summed-out level or region: each
+/// slot's stored count mod p. A weight-marginal level keeps no integer
+/// counts; its per-slot value lives in the level's weight column, and that
+/// value is the slot's whole identity, so the signature is a fingerprint of
+/// it (`weight_mod_p`).
+fn marginal_signatures(tdd: &Tdd, t: VtreeIdx, out: &mut [u64]) {
+    let level = tdd.level(t);
+    if let Some(counts) = level.marginal_counts() {
+        let big = level.marginal_counts_big();
+        for (i, &c) in counts.iter().enumerate() {
+            out[i] = count_mod_p(c, big.and_then(|b| b.get(i)));
+        }
+    } else if let Some(values) = level.weight_values() {
+        for (i, value) in values.iter().enumerate() {
+            out[i] = weight_mod_p(value);
+        }
+    }
 }
 
 /// Fingerprint a weight-marginal node's value as a nonzero element of `Z_p`.

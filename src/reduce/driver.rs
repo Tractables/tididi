@@ -126,7 +126,7 @@ impl<'a> Reduction<'a> {
         // that prune and contraction orphaned at the boundary stores are still
         // there.
         if !scanned && self.marginal() {
-            prune_value_slots(self.eng, self.tdd)?;
+            self.prune_slots()?;
         }
         let structural = !self.marginal();
         for level in &mut self.tdd.levels {
@@ -146,7 +146,11 @@ impl<'a> Reduction<'a> {
     /// only merges twins, whose children are the same.
     fn finish(&mut self, structural: bool) -> Result<(), OperationError> {
         self.tdd.close_marked_levels();
+        let before = std::sync::Arc::clone(&self.tdd.vtree);
         self.settle()?;
+        if !structural && !std::sync::Arc::ptr_eq(&before, &self.tdd.vtree) && self.tdd.has_marginal_level() {
+            self.passes_after_trim()?;
+        }
         if self.tdd.vtree.num_nodes() == 0 {
             return Ok(());
         }
@@ -164,6 +168,18 @@ impl<'a> Reduction<'a> {
             super::contract::contract_leaf::assert_no_full_twin_side(self.tdd);
         }
         Ok(())
+    }
+
+    /// Run the passes again, every level owed, on a summed diagram the close
+    /// trimmed onto a smaller projection: the trim can leave a node two pairs
+    /// over the same children, a fusion group no pass has seen.
+    #[cold]
+    #[inline(never)]
+    fn passes_after_trim(&mut self) -> Result<(), OperationError> {
+        let vtree = std::sync::Arc::clone(&self.tdd.vtree);
+        let internal = vtree.internal_bottomup_slice().iter().copied();
+        self.tdd.dirty = crate::diagram::Dirty::default().seeded(&vtree, internal, Some(self.eng))?;
+        self.eng.reduce_plain(self.tdd, ReductionPlan::default())
     }
 
     /// Drop the recorded leaves and the seed's in a closing reduction
@@ -226,6 +242,29 @@ impl<'a> Reduction<'a> {
         Ok(())
     }
 
+    /// The slot prune, and the passes each value merge owes at the merged
+    /// level's parent, until a prune merges no values: the merge repeats
+    /// references there, which can make fusion groups and leaf twins at the
+    /// parent and twins at its other child. Each merged level is also listed
+    /// for the content-twin scan.
+    fn prune_slots(&mut self) -> Result<(), OperationError> {
+        loop {
+            let merged = prune_value_slots(self.eng, self.tdd)?;
+            if merged.is_empty() {
+                return Ok(());
+            }
+            let vtree = std::sync::Arc::clone(&self.tdd.vtree);
+            let parents = merged.iter().filter_map(|&v| vtree.node(VtreeIdx(v)).parent()).map(|p| p.0);
+            for p in parents.clone() {
+                self.tdd.dirty.forget_fused(p);
+            }
+            self.tdd.dirty.requeue(Pass::Contract, parents.clone());
+            self.tdd.dirty.requeue(Pass::LeafContract, parents);
+            self.tdd.dirty.requeue(Pass::ContentTwin, merged);
+            self.contract()?;
+        }
+    }
+
     /// Always scan small or weighted marginal diagrams. Large unweighted
     /// diagrams use the schedule's fourfold growth threshold. Returns whether
     /// a scan ran.
@@ -243,12 +282,12 @@ impl<'a> Reduction<'a> {
 
     /// Each productive round removes at least one node. Its rewrites mark the
     /// levels to revisit; only the first round scans the whole diagram, so
-    /// what the slot prune before it reports is not kept.
+    /// what the slot prune before it marks is not kept.
     // Inlined into `scan_if_due` with link-time optimization, its merge
     // loop compiled to about 3% more instructions on a pedigree network.
     #[inline(never)]
     pub(super) fn content_twins(&mut self) -> Result<(), OperationError> {
-        prune_value_slots(self.eng, self.tdd)?;
+        self.prune_slots()?;
         self.tdd.dirty.clear(Pass::ContentTwin);
         let mut next: Option<rustc_hash::FxHashSet<u32>> = None;
         loop {
@@ -258,10 +297,7 @@ impl<'a> Reduction<'a> {
             if merged == 0 { break; }
             prune_unreachable(self.eng, self.tdd, PruneScope::Whole)?;
             self.contract()?;
-            // A value merge at a marginal level may make its parents' nodes
-            // equal: those boundaries are scanned again.
-            let merged = prune_value_slots(self.eng, self.tdd)?;
-            self.tdd.dirty.requeue(Pass::ContentTwin, merged);
+            self.prune_slots()?;
             next = Some(self.tdd.dirty.take(Pass::ContentTwin).into_iter().collect());
         }
         self.tdd.dirty.clear(Pass::ContentTwin);
