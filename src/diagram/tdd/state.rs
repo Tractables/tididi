@@ -719,12 +719,18 @@ impl Dirty {
         Ok(out)
     }
 
-    /// The lists [`remap`](Self::remap) leaves, in new lists of their exact
-    /// length, the inner pass's with room for
+    /// The lists and records [`remap_keeping`](Self::remap_keeping) leaves,
+    /// in new lists of their exact length, the inner pass's with room for
     /// [`leaf_owes_inner`](Self::leaf_owes_inner) where `owing`; the loose
     /// levels unknown.
-    pub(crate) fn remapped_on(&self, eng: &crate::Engine, map: &[VtreeIdx], owing: bool) -> Result<Self, crate::OperationError> {
-        let mut out = Self::default();
+    pub(crate) fn remapped_on(
+        &self,
+        eng: &crate::Engine,
+        map: &[VtreeIdx],
+        owing: bool,
+        keeps: impl Fn(usize) -> bool,
+    ) -> Result<Self, crate::OperationError> {
+        let mut out = Self { fused: remap_fused(&self.fused, map, keeps), ..Self::default() };
         let owed = if owing { self.lists[Pass::LeafContract as usize].len() } else { 0 };
         for pass in Pass::ALL {
             let from = &self.lists[pass as usize];
@@ -752,21 +758,7 @@ impl Dirty {
                 *entry = map[*entry as usize].0;
             }
         }
-        let fused = std::mem::take(&mut self.fused);
-        for (w, &word) in fused.iter().enumerate() {
-            let mut bits = word;
-            while bits != 0 {
-                let t = w * 64 + bits.trailing_zeros() as usize;
-                bits &= bits - 1;
-                if t < map.len() && keeps(t) {
-                    let to = map[t].idx();
-                    if to / 64 >= self.fused.len() {
-                        self.fused.resize(to / 64 + 1, 0);
-                    }
-                    self.fused[to / 64] |= 1 << (to % 64);
-                }
-            }
-        }
+        self.fused = remap_fused(&self.fused, map, keeps);
     }
 
     /// Drop the leaves from the pass lists, where a remap that sends a
@@ -950,6 +942,27 @@ impl Dirty {
         }
         gate.flush()
     }
+}
+
+/// The records of `fused` that `keeps` names, each moved to its level's index
+/// under `map`.
+fn remap_fused(fused: &[u64], map: &[VtreeIdx], keeps: impl Fn(usize) -> bool) -> Vec<u64> {
+    let mut out: Vec<u64> = Vec::new();
+    for (w, &word) in fused.iter().enumerate() {
+        let mut bits = word;
+        while bits != 0 {
+            let t = w * 64 + bits.trailing_zeros() as usize;
+            bits &= bits - 1;
+            if t < map.len() && keeps(t) {
+                let to = map[t].idx();
+                if to / 64 >= out.len() {
+                    out.resize(to / 64 + 1, 0);
+                }
+                out[to / 64] |= 1 << (to % 64);
+            }
+        }
+    }
+    out
 }
 
 impl Tdd {

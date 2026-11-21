@@ -10,7 +10,7 @@ use std::sync::Arc;
 use super::drive;
 use super::union;
 use super::held::Held;
-use super::view::View;
+use super::view::{keeps_fused, View};
 use super::{conjoin_cow, conjoin_kept, conjoin_onto, recycle, AndRefused, Operands, VtreeMask};
 use crate::restructure::embed::Plan;
 use crate::diagram::{return_levels, try_take_levels, Assembly, ChildPair, Dirty, Tdd, TddNodeId};
@@ -237,9 +237,12 @@ fn join_at_root(
     };
     let mut assembly = Assembly::from_levels(eng, Arc::clone(into), try_take_levels(eng, into.num_nodes())?);
     let levels = assembly.levels_mut();
-    // A moved level owes the reductions it owed in its operand, at its image.
+    // A moved level owes the reductions it owed in its operand, at its image,
+    // and keeps its fusion record there.
     let mut carried = Dirty::default();
-    for (operand, map) in [(f, f_map), (g, g_map)] {
+    let mut fused = [Vec::new(), Vec::new()];
+    for (k, (operand, map)) in [(f, f_map), (g, g_map)].into_iter().enumerate() {
+        let source = Arc::clone(operand.vtree());
         let mut owed = match operand {
             Cow::Owned(mut moved) => {
                 let source = &mut moved.levels[..];
@@ -256,12 +259,17 @@ fn join_at_root(
                 source.dirty.clone_on(eng)?
             }
         };
-        owed.remap(map);
+        owed.remap_keeping(map, keeps_fused(&source, into, map));
+        fused[k] = owed.take_fused();
         carried.merge_under(owed);
     }
     carried.dedup_above(into.num_nodes());
     let root = into.root();
     let local = levels[root.idx()].push_node(lim, &[pair])?;
     let changed = [root];
-    assembly.finish_with(TddNodeId { vtree: root, local }, carried, &[], closed.then_some(&changed[..]))
+    let mut out = assembly.finish_with(TddNodeId { vtree: root, local }, carried, &[], closed.then_some(&changed[..]))?;
+    for kept in fused {
+        out.dirty.restore_fused(kept, &[]);
+    }
+    Ok(out)
 }
