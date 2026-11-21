@@ -1637,7 +1637,8 @@ impl Vtree {
     /// The anchor rank and extent of region `t` of this projection.
     pub(crate) fn region_at(&self, t: VtreeIdx) -> (u32, Extent) {
         let link = self.home.as_ref().expect("a projection");
-        let region = link.regions.iter().find(|region| link.region_node(region) == t).expect("a region");
+        let leaves = link.k() - link.regions.len();
+        let region = t.idx().checked_sub(leaves).and_then(|j| link.regions.get(j)).expect("a region");
         (link.ranks()[region.at as usize], region.extent.clone())
     }
 
