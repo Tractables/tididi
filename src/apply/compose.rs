@@ -198,9 +198,8 @@ impl Engine {
         for f in [&condition, &then_branch, &else_branch] {
             f.require_structure()?;
         }
-        let [condition, mut then_branch, else_branch] =
-            super::extend::on_one(self, [condition, then_branch, else_branch].map(Cow::Owned))?.map(Cow::into_owned);
-        if then_branch.same_levels(&else_branch) {
+        let mut then_branch = then_branch;
+        if std::sync::Arc::ptr_eq(then_branch.vtree(), else_branch.vtree()) && then_branch.same_levels(&else_branch) {
             let minimized = self.minimize(&mut then_branch).map(|()| then_branch);
             return super::exit::outcome(self, minimized.and_then(|f| super::extend::trimmed(self, f)));
         }
@@ -221,7 +220,6 @@ impl Engine {
         super::extend::refuse_other_homes([&f, &g])?;
         f.require_structure()?;
         g.require_structure()?;
-        let [f, g] = super::extend::on_one(self, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
         let mut f = SharedCircuit::new(f, 2);
         let mut g = SharedCircuit::new(g, 2);
         let only_f = overlay_reduced(self, Overlay::AndNot, f.take(self)?, g.take(self)?)?;
