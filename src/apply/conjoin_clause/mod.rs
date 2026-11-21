@@ -325,6 +325,7 @@ fn rebuild_along_spine(
         spare_nodes: &mut Vec::new(),
         spare_pairs: &mut Vec::new(),
         top: None,
+        dropped: false,
     };
     let vtree = Arc::clone(vtree);
     let mut carried = f.take_worklists();
@@ -341,11 +342,11 @@ fn rebuild_along_spine(
         false => carried_loose.filter(|loose| loose.len() < vtree.internal_bottomup_slice().len() / 2),
     };
     for &t in work.spine_internal.iter() {
-        let dropped = rebuild_spine_level(eng, t, &vtree, &mut levels, &mut tables)?;
+        rebuild_spine_level(eng, t, &vtree, &mut levels, &mut tables)?;
         out_nodes += levels[t.idx()].slot_count() as u64;
         lim.level_done(out_nodes)?;
         if let Some(loose) = loose.as_mut() {
-            list_rebuilt(loose, &vtree, t, tables.on_spine, tables.need_dt, dropped);
+            list_rebuilt(loose, &vtree, t, tables.on_spine, tables.need_dt, tables.dropped);
         }
     }
     // A right `d` half skipped beside a left node with no `c` half is mostly
