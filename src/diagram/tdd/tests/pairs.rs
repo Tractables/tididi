@@ -28,7 +28,10 @@ fn pair_count_keeps_each_closed_level_once() {
     let pairs = census(&f);
     assert!(pairs > 0);
     assert_eq!(f.pair_count(), pairs);
-    // Each stored level now keeps its count, and the count reads them.
+    // With no total kept, the count reads each stored level and keeps its
+    // count there, and the next count reads those.
+    f.levels.forget_pair_total();
+    assert_eq!(f.pair_count(), pairs);
     for (level, n) in f.levels.iter().zip(kept(&f)) {
         if level.implicit().is_none() {
             assert_eq!(n, Some(level.live_pairs() as u64));
