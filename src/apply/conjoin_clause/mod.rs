@@ -284,7 +284,15 @@ fn rebuild_along_spine(
     // The clause spine — the Steiner tree of its variables' leaves — and the
     // `need_dt` flag propagated top-down over it.
     work.on_spine.cover(lim, num_nodes)?;
-    build_clause_spine(lim, vtree, clause, &mut work.on_spine, &mut work.spine_internal)?;
+    let top_fork = build_clause_spine(lim, vtree, clause, &mut work.on_spine, &mut work.spine_internal)?;
+    debug_assert_eq!(
+        top_fork,
+        work.spine_internal.iter().rev().copied().find(|&t| {
+            let (left, right) = vtree.children(t);
+            work.on_spine[left.idx()] && work.on_spine[right.idx()]
+        }),
+        "the spine build's topmost fork"
+    );
     work.need_dt.cover(lim, num_nodes)?;
     propagate_need_dt(vtree, &work.spine_internal, &work.on_spine, &mut work.need_dt);
 
@@ -363,7 +371,7 @@ fn rebuild_along_spine(
         .map(|(t, [left, right], pairs)| (t, [left != 0, right * 4 >= pairs && right != 0]))
         .filter(|&(_, sides)| sides != [false; 2]);
     if let Some(loose) = loose.as_mut() {
-        list_rebuilt(loose, &vtree, &work.spine_internal, &work.on_spine, &work.dropped_at);
+        list_rebuilt(loose, &vtree, &work.spine_internal, &work.on_spine, &work.dropped_at, top_fork);
     }
 
     // Output: conjunction of f's output with c_t at the root, which is on
@@ -431,7 +439,7 @@ fn rebuild_along_spine(
 /// their parent level names: the off-spine children of the levels in
 /// `dropped_at`, the root, which may hold products the output is not, and
 /// the internal children of the topmost level with both children on the
-/// spine. A rebuilt child's nodes are its nodes' products, each named where
+/// spine ([`build_clause_spine`]). A rebuilt child's nodes are its nodes' products, each named where
 /// the node it came from was, since a node other than false has a `c_t` or a
 /// `d_t` product and a pair keeps the product of either that the parent
 /// computes; but under a level with both children relevant and no `d_t`, the
@@ -446,6 +454,7 @@ fn list_rebuilt(
     spine_internal: &[VtreeIdx],
     on_spine: &[bool],
     dropped_at: &[VtreeIdx],
+    top_fork: Option<VtreeIdx>,
 ) {
     for &t in dropped_at {
         let (left, right) = vtree.children(t);
@@ -460,11 +469,7 @@ fn list_rebuilt(
         }
     }
     loose.insert(vtree.root().0);
-    let top_fork = spine_internal.iter().rev().find(|&&t| {
-        let (left, right) = vtree.children(t);
-        on_spine[left.idx()] && on_spine[right.idx()]
-    });
-    if let Some(&p) = top_fork {
+    if let Some(p) = top_fork {
         let (left, right) = vtree.children(p);
         for c in [left, right] {
             if !vtree.node(c).is_leaf() {
