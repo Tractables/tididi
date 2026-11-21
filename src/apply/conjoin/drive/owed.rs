@@ -72,7 +72,9 @@ use crate::vtree::{Vtree, VtreeIdx};
 ///
 /// A level under a free one keeps what the operand's entry counted of it
 /// ([`Engine::unnamed_nodes`](crate::Engine::unnamed_nodes)): its nodes and
-/// its parent's pairs are that operand's. Every other level is uncounted.
+/// its parent's pairs are that operand's. So does a level that was moved
+/// untouched or taken free from the operand that its parent was moved
+/// untouched from. Every other level is uncounted.
 pub(super) fn loose_levels(
     vtree: &Vtree,
     run: &ApplyRun<'_, '_>,
@@ -99,9 +101,12 @@ pub(super) fn loose_levels(
         let (left, right) = vtree.children(p);
         let by = run.lists.identity_carrier(p.idx());
         if by != 0 {
+            let carrier = if by == 1 { operands.f } else { operands.g };
             for c in [left, right] {
                 if internal(c) && loose_in(c, by) {
-                    loose.insert(c.0);
+                    let moved_too = run.lists.identity_carrier(c.idx()) == by
+                        || (cone.free_at(c.idx()) && carried_from_f(cone, c.idx()) == (by == 1));
+                    loose.insert_counted(c.0, carrier.unnamed(c.0).filter(|_| moved_too));
                 }
             }
             continue;
