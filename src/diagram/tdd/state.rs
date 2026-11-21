@@ -523,10 +523,18 @@ pub(crate) struct Dirty {
     /// edit hands the levels back ([`take_loose`](Self::take_loose)). A
     /// prune leaves none, and it walks only as much as these levels need.
     loose: Option<Vec<u32>>,
+    /// Whether every level `loose` lists holds such a node, so that a settle
+    /// ([`settle_loose`](crate::reduce::prune::settle_loose)) would keep the
+    /// list as it is. Every write of `loose` but
+    /// [`set_loose_exact`](Self::set_loose_exact) clears it.
+    loose_exact: bool,
     /// A bit for each level at which a pair fusion ran to the end and that
     /// no push has named since: no node there holds two pairs that pair
     /// fusion would fuse. Unknown, as every diagram starts, is no bit set.
-    fused: Vec<u64>,
+    /// A boxed slice, not a `Vec`: `Tdd` holds this struct and is moved by
+    /// value on every operation, and a capacity word would grow each move
+    /// (with `loose_exact`'s padding, by a word).
+    fused: Box<[u64]>,
 }
 
 impl Dirty {
@@ -545,6 +553,7 @@ impl Dirty {
         eng: Option<&crate::Engine>,
     ) -> Result<(), crate::OperationError> {
         self.loose = None;
+        self.loose_exact = false;
         self.forget_fused(level);
         for pass in Pass::ALL {
             match eng {
@@ -642,9 +651,10 @@ impl Dirty {
             }
             _ => None,
         };
+        carried.loose_exact = false;
         // The levels below and above were edited apart; neither side's
         // fusions are known to hold of the levels the two leave together.
-        carried.fused.clear();
+        carried.fused.fill(0);
         *self = carried;
     }
 
@@ -714,8 +724,11 @@ impl Dirty {
             let mut to = Vec::new();
             copy_slice(eng, &mut to, from)?;
             out.loose = Some(to);
+            out.loose_exact = self.loose_exact;
         }
-        copy_slice(eng, &mut out.fused, &self.fused)?;
+        let mut fused = Vec::new();
+        copy_slice(eng, &mut fused, &self.fused)?;
+        out.fused = fused.into_boxed_slice();
         Ok(out)
     }
 
@@ -730,7 +743,7 @@ impl Dirty {
         owing: bool,
         keeps: impl Fn(usize) -> bool,
     ) -> Result<Self, crate::OperationError> {
-        let mut out = Self { fused: remap_fused(&self.fused, map, keeps), ..Self::default() };
+        let mut out = Self { fused: remap_fused(&self.fused, map, keeps).into_boxed_slice(), ..Self::default() };
         let owed = if owing { self.lists[Pass::LeafContract as usize].len() } else { 0 };
         for pass in Pass::ALL {
             let from = &self.lists[pass as usize];
@@ -753,12 +766,13 @@ impl Dirty {
     /// [`remap`](Self::remap), moving the fusion record of each level
     /// `keeps` names to its new index; every other record is dropped.
     pub(crate) fn remap_keeping(&mut self, map: &[VtreeIdx], keeps: impl Fn(usize) -> bool) {
+        self.loose_exact = false;
         for list in self.lists.iter_mut().chain(self.loose.as_mut()) {
             for entry in list.iter_mut() {
                 *entry = map[*entry as usize].0;
             }
         }
-        self.fused = remap_fused(&self.fused, map, keeps);
+        self.fused = remap_fused(&self.fused, map, keeps).into_boxed_slice();
     }
 
     /// Drop the leaves from the pass lists, where a remap that sends a
@@ -798,6 +812,22 @@ impl Dirty {
     #[inline]
     pub(crate) fn set_loose(&mut self, levels: Option<Vec<u32>>) {
         self.loose = levels;
+        self.loose_exact = false;
+    }
+
+    /// [`set_loose`](Self::set_loose) for `levels` each of which holds a node
+    /// its parent level does not name.
+    #[inline]
+    pub(crate) fn set_loose_exact(&mut self, levels: Vec<u32>) {
+        self.loose = Some(levels);
+        self.loose_exact = true;
+    }
+
+    /// Whether the loose levels are known and each holds a node its parent
+    /// level does not name.
+    #[inline]
+    pub(crate) fn loose_is_exact(&self) -> bool {
+        self.loose.as_ref().is_some_and(|loose| self.loose_exact || loose.is_empty())
     }
 
     /// Take the loose levels, leaving them unknown: for an edit that knows
@@ -805,6 +835,7 @@ impl Dirty {
     /// [`set_loose`](Self::set_loose) after its invalidations.
     #[inline]
     pub(crate) fn take_loose(&mut self) -> Option<Vec<u32>> {
+        self.loose_exact = false;
         self.loose.take()
     }
 
@@ -816,6 +847,7 @@ impl Dirty {
             && !loose.contains(&level)
         {
             loose.push(level);
+            self.loose_exact = false;
         }
     }
 
@@ -828,14 +860,14 @@ impl Dirty {
 
     /// The fusion records, taken: for an assembly to hand back to the
     /// levels it carries as they were ([`restore_fused`](Self::restore_fused)).
-    pub(crate) fn take_fused(&mut self) -> Vec<u64> {
+    pub(crate) fn take_fused(&mut self) -> Box<[u64]> {
         std::mem::take(&mut self.fused)
     }
 
     /// Add the records `fused` taken from the diagram this one was assembled
     /// from ([`take_fused`](Self::take_fused)) but at `rebuilt`: every other
     /// level is that diagram's as it left it.
-    pub(crate) fn restore_fused(&mut self, mut fused: Vec<u64>, rebuilt: &[VtreeIdx]) {
+    pub(crate) fn restore_fused(&mut self, mut fused: Box<[u64]>, rebuilt: &[VtreeIdx]) {
         for t in rebuilt {
             Self::clear_fused_bit(&mut fused, t.0);
         }
@@ -853,8 +885,13 @@ impl Dirty {
     /// granted: what is not recorded is fused again, never wrongly skipped.
     pub(crate) fn set_fused(&mut self, eng: &crate::Engine, level: u32) {
         let word = level as usize / 64;
-        if word >= self.fused.len() && eng.limits().try_resize(&mut self.fused, word + 1, 0).is_err() {
-            return;
+        if word >= self.fused.len() {
+            let mut grown = std::mem::take(&mut self.fused).into_vec();
+            let granted = eng.limits().try_resize(&mut grown, word + 1, 0).is_ok();
+            self.fused = grown.into_boxed_slice();
+            if !granted {
+                return;
+            }
         }
         self.fused[word] |= 1 << (level % 64);
     }
@@ -894,10 +931,11 @@ impl Dirty {
         rebuilt: impl Iterator<Item = VtreeIdx>,
         eng: Option<&crate::Engine>,
     ) -> Result<Self, crate::OperationError> {
-        // Which levels an assembly left loose is its own to say; see
-        // `set_loose`.
-        self.loose = None;
-        self.fused.clear();
+        // Which levels an assembly left loose is its own to say (`set_loose`),
+        // except on a vtree with no level below the root.
+        self.loose = (vtree.num_nodes() <= 1).then(Vec::new);
+        self.loose_exact = false;
+        self.fused.fill(0);
         self.seed_rebuilt(rebuilt, eng)?;
         self.dedup_above(vtree.num_nodes());
         Ok(self)

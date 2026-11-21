@@ -67,7 +67,7 @@ impl Tdd {
         // The moved levels keep what `other`'s reductions still owe them, and
         // its pair fusion records; every other level but `t` keeps this
         // diagram's.
-        let mut fused = self.dirty.take_fused();
+        let mut fused = self.dirty.take_fused().into_vec();
         let theirs = other.dirty.take_fused();
         let bit = |words: &[u64], i: usize| words.get(i / 64).is_some_and(|w| w >> (i % 64) & 1 == 1);
         for idx in self.vtree.subtree(right_child).chain([t]) {
@@ -81,7 +81,7 @@ impl Tdd {
             }
         }
         self.dirty.merge_under(other.take_worklists());
-        self.dirty.restore_fused(fused, &[]);
+        self.dirty.restore_fused(fused.into_boxed_slice(), &[]);
         return_levels(eng, std::mem::take(&mut other.levels).into_vec());
     }
 }

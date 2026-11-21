@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use crate::reduce::prune::{PruneScope, Seeds, Select, Start, below_root_walk_applies, few_dropped, keep_marked, FEW_DROPPED, new_indices, prune_walk, prune_complement, settle_loose, UNREACHED};
+use crate::reduce::prune::{PruneScope, Seeds, Select, Start, below_root_walk_applies, few_dropped, keep_marked, FEW_DROPPED, new_indices, prune_walk, prune_complement, seed_list, settle_loose, UNREACHED};
 
 use crate::test_helpers::{compile_clauses, unnamed_levels};
 use super::prune_unreachable;
@@ -16,10 +16,10 @@ use crate::vtree::Vtree;
 fn prune_loose_from_output(eng: &crate::Engine, tdd: &mut crate::Tdd) -> Result<(), crate::OperationError> {
     debug_assert!(below_root_walk_applies(tdd) && !tdd.has_marginal_level());
     let loose = tdd.dirty.loose().expect("the diagram knows its loose levels").to_vec();
-    let loose = settle_loose(eng, tdd, &loose)?;
+    let loose = seed_list(eng, tdd, &loose)?.into_owned();
     let seeds = Seeds::of(eng, tdd, &loose)?;
     tdd.levels.hold_counts(tdd.levels.is_closed());
-    prune_walk(eng, tdd, Some(&seeds.state[..]), Start::Output)?;
+    prune_walk(eng, tdd, Some(seeds.state()), Start::Output)?;
     tdd.dirty.set_loose(Some(Vec::new()));
     Ok(())
 }
@@ -454,12 +454,12 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
     );
 }
 
-/// The seeds of a prune that knows its loose levels give back every byte
-/// they charged: the meter reads the same before they are found and after
-/// they are dropped, on conjunctions whose root is clean and which have a
-/// loose level below the root, so that the levels above it are settled.
+/// The seeds of a prune that knows its loose levels keep no charge beyond
+/// their pool's buffers: found a second time, they leave the meter where the
+/// first left it, on conjunctions whose root is clean and which have a loose
+/// level below the root, so that the levels above it are settled.
 #[test]
-fn the_seeds_give_back_their_charge() {
+fn the_seeds_keep_only_their_pooled_charge() {
     use crate::test_helpers::{Lcg, vtree_shapes};
 
     let eng = &crate::Engine::new();
@@ -481,9 +481,10 @@ fn the_seeds_give_back_their_charge() {
             let loose = settle_loose(eng, &conj, &listed).unwrap();
             let root = conj.vtree.root();
             settled += usize::from(conj.levels[root.idx()].slot_count() == 1 && loose.iter().any(|&t| t != root.0));
+            drop(Seeds::of(eng, &conj, &loose).unwrap());
             let before = eng.limits().meters().in_flight_bytes;
             drop(Seeds::of(eng, &conj, &loose).unwrap());
-            assert_eq!(eng.limits().meters().in_flight_bytes, before, "{name}, case {case}: the seeds kept a charge");
+            assert_eq!(eng.limits().meters().in_flight_bytes, before, "{name}, case {case}: the seeds charged again for buffers their pool holds");
         }
     }
     assert!(settled > 20, "expected seeds found under a clean root, got {settled}");

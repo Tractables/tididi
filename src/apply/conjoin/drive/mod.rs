@@ -684,10 +684,23 @@ fn apply_and_held(
 
     // The operands' loose levels as a prune would settle them, read before
     // the sweep drops the operands' levels.
+    // An exact list is what a settle would keep of it.
     let operand_loose = match (f.dirty().loose(), g.dirty().loose()) {
         (Some(lf), Some(lg)) if plain && !run.passing => Some(Operands {
-            f: settle_loose_in(eng, &vtree, &|t| f.level(t), lf)?,
-            g: settle_loose_in(eng, &vtree, &|t| g.level(t), lg)?,
+            f: match f.dirty().loose_is_exact() {
+                true => {
+                    debug_assert_eq!(settle_loose_in(eng, &vtree, &|t| f.level(t), lf).ok().as_deref(), Some(lf));
+                    lim.try_to_vec(lf)?
+                }
+                false => settle_loose_in(eng, &vtree, &|t| f.level(t), lf)?,
+            },
+            g: match g.dirty().loose_is_exact() {
+                true => {
+                    debug_assert_eq!(settle_loose_in(eng, &vtree, &|t| g.level(t), lg).ok().as_deref(), Some(lg));
+                    lim.try_to_vec(lg)?
+                }
+                false => settle_loose_in(eng, &vtree, &|t| g.level(t), lg)?,
+            },
         }),
         (Some(lf), Some(lg)) if plain => Some(listed_loose(eng, Operands { f: lf, g: lg })?),
         _ => None,

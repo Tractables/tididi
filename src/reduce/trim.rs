@@ -817,6 +817,9 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, dropped: Option<&[Vtr
     for &u in &owes {
         f.invalidate(u);
     }
+    if m == 1 {
+        f.dirty.set_loose(Some(Vec::new()));
+    }
     f.close_marked_levels();
     if canonical && !built && !shape.merged && shape.regrouped.is_empty() {
         f.levels.certify(f.output);

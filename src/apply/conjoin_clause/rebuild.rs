@@ -22,6 +22,16 @@ pub(super) struct ClauseTables<'a> {
     /// allocates no arena per level.
     pub(super) spare_nodes: &'a mut Vec<EncodedNode>,
     pub(super) spare_pairs: &'a mut Vec<ChildPair>,
+    /// Per level, whether the accumulator listed it loose under a spine
+    /// parent; empty where it listed none there.
+    pub(super) listed: &'a [bool],
+    pub(super) bare: &'a mut [bool],
+    /// Whether a level of this clause's spine was recorded in [`bare`] so
+    /// far: until one is, no lookup in it can find one.
+    ///
+    /// [`bare`]: ClauseTables::bare
+    pub(super) any_bare: bool,
+    pub(super) counts: &'a mut Vec<u32>,
 }
 
 /// The child-map offsets and worst-case output pairs per input pair for a
@@ -87,13 +97,16 @@ fn fits_reserve(capacity: usize, need: usize) -> bool {
 }
 
 /// Rebuild one spine level as the conjunction of the accumulator's level with
-/// the clause, filling this level's `cd_map` block.
+/// the clause, filling this level's `cd_map` block. With `loose`, push each
+/// structural internal child left with a node no rebuilt pair names
+/// ([`list_unnamed_children`]).
 pub(super) fn rebuild_spine_level(
     eng: &Engine,
     t: VtreeIdx,
     vtree: &Vtree,
     levels: &mut [TddLevel],
     tables: &mut ClauseTables<'_>,
+    loose: Option<&mut Vec<u32>>,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     let t_idx = t.idx();
@@ -152,7 +165,7 @@ pub(super) fn rebuild_spine_level(
         right_grid_base,
         pair_mult,
     };
-    match (left_rel, right_rel, compute_dt) {
+    let (dropped, dead) = match (left_rel, right_rel, compute_dt) {
         (true, true, true) => {
             rebuild_nodes::<true, true, true>(eng, &old, ctx, level, base, tables)?
         }
@@ -172,7 +185,7 @@ pub(super) fn rebuild_spine_level(
             rebuild_nodes::<false, true, false>(eng, &old, ctx, level, base, tables)?
         }
         (false, false, _) => unreachable!("a spine level has a relevant child"),
-    }
+    };
     let old_value_ref_sides = old.value_ref_sides;
     // A spare the level did not take is freed with `old`.
     old.clear();
@@ -188,13 +201,39 @@ pub(super) fn rebuild_spine_level(
     // marginal clause leaf, `plan_cd_map_bases` a marginal spine level), so
     // the input level's markers carry over exactly.
     level.value_ref_sides = old_value_ref_sides;
+    if let Some(loose) = loose {
+        // The lookups go from cheapest to dearest: a vtree node is read only
+        // for a spine child recorded bare.
+        let bare = |s: VtreeIdx, rel: bool| rel && tables.bare[s.idx()] && !vtree.node(s).is_leaf();
+        let bare_side = match tables.any_bare {
+            true => [bare(left, left_rel), bare(right, right_rel)],
+            false => [false; 2],
+        };
+        let is_bare = dead || bare_side[0] || bare_side[1];
+        tables.bare[t_idx] = is_bare;
+        tables.any_bare |= is_bare;
+        let (children, rel) = ([left, right], [left_rel, right_rel]);
+        let mut read = [false; 2];
+        for side in 0..2 {
+            let listed = !tables.listed.is_empty() && tables.listed[children[side].idx()];
+            read[side] = match rel[side] {
+                true => listed || both_rel && (!compute_dt || bare_side[1 - side]),
+                false => !listed && if compute_dt { bare_side[1 - side] } else { dropped },
+            };
+        }
+        if read != [false; 2] {
+            list_unnamed_children(eng, t, vtree, levels, tables, read, loose)?;
+        }
+    }
     Ok(())
 }
 
 /// Rebuild the nodes with the level's relevant children and complement demand fixed.
 /// The separate frame keeps level setup out of the specialized pair loops.
 /// Each node charges the work clock a unit for each pair it reads and each
-/// pair it writes.
+/// pair it writes. Return whether some node wrote fewer pairs than it read
+/// (with one relevant child and no `d_t`, whether some input pair lost its
+/// only product), and whether some node has no pairs.
 #[inline(never)]
 fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
     eng: &Engine,
@@ -203,7 +242,7 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
     level: &mut TddLevel,
     base: usize,
     tables: &mut ClauseTables<'_>,
-) -> Result<(), OperationError> {
+) -> Result<(bool, bool), OperationError> {
     // The one call site keeps `conjoin_node_with_clause` inlined here.
     // An implicit level's node's pairs are generated into `buf`: a stored
     // node's off its range, and the nodes the description implies, which
@@ -212,6 +251,7 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
     let stored = old.stored();
     let (mut buf, mut cursor) = (Vec::new(), None);
     let mut gate = eng.limits().gate();
+    let (mut dropped, mut dead) = (false, false);
     for i in 0..old.slot_count() {
         let inputs: &[ChildPair] = match (nodes.get(i), stored) {
             (Some(node), Some(s)) => s.of(node),
@@ -226,13 +266,67 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
             // Dead accumulator node: nothing emitted, and this is the one
             // write of its map entry.
             tables.cd_map[base + i] = [NO_PRODUCT, NO_PRODUCT];
+            dead = true;
             continue;
         }
         let written =
             conjoin_node_with_clause::<LEFT, RIGHT, DT>(eng, inputs, ctx, level, base + i, tables)?;
+        dropped |= written < inputs.len();
         gate.poll((inputs.len() + written) as u64)?;
     }
-    gate.flush()
+    gate.flush()?;
+    Ok((dropped, dead))
+}
+
+/// Push to `loose` each structural internal child of the rebuilt spine level
+/// `t` that `read` asks for and that holds a node no pair of `t` names.
+///
+/// [`rebuild_spine_level`] asks only where a child can have such a node,
+/// and records in [`bare`] whether `t` may have a node with neither
+/// product. The rebuild names every product of a node its input pairs
+/// named, unless the sibling's products are missing where a pair needs
+/// them:
+/// - an off-spine child keeps its nodes, so one listed before stays listed;
+///   otherwise it loses a name only where a pair lost every product, which
+///   without `d_t` is some node writing fewer pairs than it read, and with
+///   it needs a sibling node with neither product;
+/// - a spine child listed before may have products that nothing names;
+/// - at a level with both children on the spine, a child's `d_t` products
+///   need a sibling node with a `c_t` product (or, with `d_t`, any), and
+///   its `c_t` products a sibling node with any.
+///
+/// With `d_t`, every pair of a node meets a product on each side unless a
+/// node it names has none, so a node with neither product sits above a
+/// node with no pairs; a clause leaf has a product for every label.
+///
+/// [`bare`]: ClauseTables::bare
+#[inline(never)]
+fn list_unnamed_children(
+    eng: &Engine,
+    t: VtreeIdx,
+    vtree: &Vtree,
+    levels: &[TddLevel],
+    tables: &mut ClauseTables<'_>,
+    mut read: [bool; 2],
+    loose: &mut Vec<u32>,
+) -> Result<(), OperationError> {
+    let lim = eng.limits();
+    let children = <[VtreeIdx; 2]>::from(vtree.children(t));
+    for (read, c) in read.iter_mut().zip(children) {
+        *read &= !vtree.node(c).is_leaf() && !levels[c.idx()].is_marginal();
+    }
+    if read == [false; 2] {
+        return Ok(());
+    }
+    let mut gate = lim.gate();
+    let unnamed = crate::reduce::prune::unnamed_children(lim, (vtree, &|c| &levels[c.idx()]), t, read, tables.counts, &mut gate)?;
+    gate.flush()?;
+    for (c, unnamed) in children.into_iter().zip(unnamed) {
+        if unnamed {
+            lim.try_push(loose, c.0)?;
+        }
+    }
+    Ok(())
 }
 
 /// Emit the node whose pairs sit at `level.pairs[pair_start..]` and return

@@ -220,11 +220,15 @@ fn contract_child(
 /// Take `t1` off the loose levels ([`Dirty::loose`](crate::diagram::Dirty::loose)),
 /// where they are known: its parent level names every node of it.
 fn unlist_loose(tdd: &mut Tdd, t1: VtreeIdx) {
+    let exact = tdd.dirty.loose_is_exact();
     if tdd.dirty.loose().is_some_and(|loose| loose.contains(&t1.0))
         && let Some(mut loose) = tdd.dirty.take_loose()
     {
         loose.retain(|&t| t != t1.0);
-        tdd.dirty.set_loose(Some(loose));
+        match exact {
+            true => tdd.dirty.set_loose_exact(loose),
+            false => tdd.dirty.set_loose(Some(loose)),
+        }
     }
 }
 

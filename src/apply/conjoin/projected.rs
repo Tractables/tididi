@@ -240,7 +240,7 @@ fn join_at_root(
     // A moved level owes the reductions it owed in its operand, at its image,
     // and keeps its fusion record there.
     let mut carried = Dirty::default();
-    let mut fused = [Vec::new(), Vec::new()];
+    let mut fused: [Box<[u64]>; 2] = Default::default();
     for (k, (operand, map)) in [(f, f_map), (g, g_map)].into_iter().enumerate() {
         let source = Arc::clone(operand.vtree());
         let mut owed = match operand {
