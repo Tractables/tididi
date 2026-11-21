@@ -131,6 +131,9 @@ const UNKNOWN_PAIRS: u64 = u64::MAX;
 /// takes it until a close keeps it.
 const LEFT_PAIRS: u64 = 1 << 63;
 
+/// The capacity under which [`TddLevel::shrink_arrays`] leaves an arena.
+const MIN_SHRINK_CAP: usize = 1024;
+
 impl HeldPairs {
     pub(crate) const fn unknown() -> Self {
         HeldPairs(AtomicU64::new(UNKNOWN_PAIRS))
@@ -591,27 +594,36 @@ impl TddLevel {
     /// savings against realloc-copies on levels that are re-grown soon.
     /// Count-marginal levels (already shrunk by `become_marginal`) are skipped.
     ///
-    /// A reduction calls this on every level, most of them small: a length
-    /// is read only for an arena whose capacity is at the floor or over it.
+    /// A reduction calls this on every level, most of them small, so the
+    /// three capacities are compared with the floor before anything else.
     #[inline]
     pub(crate) fn shrink_arrays(&mut self) {
+        if self.pairs.capacity() < MIN_SHRINK_CAP
+            && self.ranges.capacity() < MIN_SHRINK_CAP
+            && self.node_capacity() < MIN_SHRINK_CAP
+        {
+            return;
+        }
+        self.shrink_large_arrays();
+    }
+
+    #[inline(never)]
+    fn shrink_large_arrays(&mut self) {
         if matches!(self.state, LevelState::Counts(_)) {
             return;
         }
-        const MIN_SHRINK_CAP: usize = 1024;
         // cap > (32 / 8) * len  ⟺  8 * cap > 32 * len  ⟺  cap > 4 * len
         const SHRINK_RATIO_EIGHTHS: u64 = 32; // 4×
-        #[inline(always)]
-        fn should_shrink(cap: usize, len: impl FnOnce() -> usize) -> bool {
-            cap >= MIN_SHRINK_CAP && (cap as u64) * 8 > SHRINK_RATIO_EIGHTHS * (len() as u64)
+        fn should_shrink(cap: usize, len: usize) -> bool {
+            cap >= MIN_SHRINK_CAP && (cap as u64) * 8 > SHRINK_RATIO_EIGHTHS * (len as u64)
         }
-        if should_shrink(self.node_capacity(), || self.node_count()) {
+        if should_shrink(self.node_capacity(), self.node_count()) {
             self.shrink_nodes();
         }
-        if should_shrink(self.pairs.capacity(), || self.pairs.len()) {
+        if should_shrink(self.pairs.capacity(), self.pairs.len()) {
             self.pairs.shrink_to_fit();
         }
-        if should_shrink(self.ranges.capacity(), || self.ranges.len()) {
+        if should_shrink(self.ranges.capacity(), self.ranges.len()) {
             self.ranges.shrink_to_fit();
         }
     }
