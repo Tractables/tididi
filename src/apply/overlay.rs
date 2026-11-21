@@ -626,39 +626,52 @@ impl<F: Reads, G: Reads> LevelOverlay<'_, F, G> {
         // The walked operand: `g` for a disjunction, `f` for a difference; a cell
         // is kept when its components in the other operand are not a pair of that
         // operand's output.
-        let mut keep = |xs: &[u32], ys: &[u32], x_part: &[u32], y_part: &[u32], pairs: &mut Vec<ChildPair>| {
-            for &x in xs {
-                let cx = x_part[x as usize];
-                for &y in ys {
-                    let cy = y_part[y as usize];
-                    if cx != ABSENT && cy != ABSENT && s.held.contains(&key(cx, cy)) {
-                        // A cell of both operands: a model `f + g` counts twice.
-                        if op == Overlay::Add {
-                            return Err(OperationError::SharedModel);
-                        }
-                        continue;
-                    }
-                    lim.try_push(pairs, ChildPair::new(EncodedChildRef::from_raw(x), EncodedChildRef::from_raw(y)))?;
-                }
-            }
-            poll.poll((xs.len() * ys.len()) as u64 + 1)
-        };
         match op {
-            Overlay::Or | Overlay::Add => {
-                for p in gl.pairs_of(g_out.idx()) {
-                    keep(lp.of_g(p.left.0), rp.of_g(p.right.0), &lp.f_part, &rp.f_part, &mut s.pairs)?;
-                }
-            }
-            Overlay::AndNot => {
-                for p in fl.pairs_of(f_out.idx()) {
-                    keep(lp.of_f(p.left.0), rp.of_f(p.right.0), &lp.g_part, &rp.g_part, &mut s.pairs)?;
-                }
-            }
+            Overlay::Or | Overlay::Add => walk_cells(gl, g_out, (lp, rp), true, op, &s.held, lim, &mut poll, &mut s.pairs)?,
+            Overlay::AndNot => walk_cells(fl, f_out, (lp, rp), false, op, &s.held, lim, &mut poll, &mut s.pairs)?,
         }
         poll.flush()?;
         crate::diagram::sort_pairs(&mut s.pairs);
         Ok(&s.pairs)
     }
+}
+
+/// The cells of the walked operand's `out`, its nodes' pieces those of `g`
+/// when `of_g`, onto `pairs`: each cell whose components in the other
+/// operand are not a pair of `held`.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn walk_cells(
+    walked: &impl Reads,
+    out: NodeIdx,
+    (lp, rp): (&Pieces, &Pieces),
+    of_g: bool,
+    op: Overlay,
+    held: &FxHashSet<u64>,
+    lim: &Limits,
+    poll: &mut crate::limits::PollGate<'_>,
+    pairs: &mut Vec<ChildPair>,
+) -> Result<(), OperationError> {
+    let (x_part, y_part) = if of_g { (&lp.f_part, &rp.f_part) } else { (&lp.g_part, &rp.g_part) };
+    for p in walked.pairs_of(out.idx()) {
+        let (xs, ys) = if of_g { (lp.of_g(p.left.0), rp.of_g(p.right.0)) } else { (lp.of_f(p.left.0), rp.of_f(p.right.0)) };
+        for &x in xs {
+            let cx = x_part[x as usize];
+            for &y in ys {
+                let cy = y_part[y as usize];
+                if cx != ABSENT && cy != ABSENT && held.contains(&key(cx, cy)) {
+                    // A cell of both operands: a model `f + g` counts twice.
+                    if op == Overlay::Add {
+                        return Err(OperationError::SharedModel);
+                    }
+                    continue;
+                }
+                lim.try_push(pairs, ChildPair::new(EncodedChildRef::from_raw(x), EncodedChildRef::from_raw(y)))?;
+            }
+        }
+        poll.poll((xs.len() * ys.len()) as u64 + 1)?;
+    }
+    Ok(())
 }
 
 /// The two-cell truth table of a leaf label: `(x, ¬x)`.
