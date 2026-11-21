@@ -48,6 +48,11 @@ pub(super) struct SpineCtx {
 /// Return how many pairs the two nodes hold.
 ///
 /// The caller has already put the level's growth mode in place.
+///
+/// Inlined into each node loop: the tracked and untracked loops of a level
+/// shape share one instantiation, which left to itself is outlined and
+/// called per node.
+#[inline(always)]
 pub(super) fn conjoin_node_with_clause<const LEFT: bool, const RIGHT: bool, const DT: bool>(
     eng: &Engine,
     inputs: &[ChildPair],
@@ -229,7 +234,6 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool, const TRAC
     base: usize,
     tables: &mut ClauseTables<'_>,
 ) -> Result<bool, OperationError> {
-    // The one call site keeps `conjoin_node_with_clause` inlined here.
     // An implicit level's node's pairs are generated into `buf`: a stored
     // node's off its range, and the nodes the description implies, which
     // follow none that is stored, in order off the description.
