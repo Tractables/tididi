@@ -30,6 +30,12 @@
 //! A leaf child is read the same way: its pieces are `{⊤}` when both operands
 //! name it as `⊤`, and `{x, ¬x}` otherwise, a `⊤` reference then standing for
 //! both literals.
+//!
+//! Operands on different leaf sets run on the projection on their union,
+//! each read where it is: at a node where an operand has no level of its
+//! own, its nodes are those of the one child holding its leaves, or one node
+//! over the whole space where it has none ([`Placed`]), and no level is
+//! built for it.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -41,8 +47,8 @@ use crate::diagram::{
     Assembly, ChildPair, EncodedChildRef, LeafLabel, NEG_LEAF_IDX, NodeIdx, ONE_LEAF_IDX,
     POS_LEAF_IDX, Tdd, TddLevel, TddNodeId,
 };
-use crate::limits::OperationError;
-use crate::vtree::{Vtree, VtreeIdx};
+use crate::limits::{Limits, OperationError};
+use crate::vtree::{LeafSets, Reading, UnionReader, Vtree, VtreeIdx};
 
 use super::runs::Runs;
 
@@ -186,6 +192,104 @@ pub(super) fn leaf_index(f_level: &TddLevel, g_level: &TddLevel, left: bool) -> 
     usize::from(names_one(f_level, left)) * 2 + usize::from(names_one(g_level, left))
 }
 
+/// An operand's nodes at a node of the vtree the overlay runs on.
+pub(super) trait Reads {
+    type Pairs<'s>: Iterator<Item = ChildPair>
+    where
+        Self: 's;
+    /// How many nodes, indexed from zero.
+    fn width(&self) -> usize;
+    fn pairs_of(&self, a: usize) -> Self::Pairs<'_>;
+    /// An upper bound on the pairs of every node, for a reservation.
+    fn pair_bound(&self) -> usize;
+}
+
+impl Reads for &TddLevel {
+    type Pairs<'s>
+        = crate::diagram::PairsIter<'s>
+    where
+        Self: 's;
+    #[inline]
+    fn width(&self) -> usize {
+        self.slot_count()
+    }
+    #[inline]
+    fn pairs_of(&self, a: usize) -> Self::Pairs<'_> {
+        self.pairs_iter_of_idx(a)
+    }
+    #[inline]
+    fn pair_bound(&self) -> usize {
+        self.live_pairs()
+    }
+}
+
+/// An operand read at a node of the union where it stores no level: free
+/// there, one node over the whole space whose pair names node `0` of both
+/// children (a free internal child's one node, or `One` at a leaf); or
+/// passing, its leaves all under the child `left` (else right), each node
+/// `a` the pair of `a` there and the other child's node `0`.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Placed {
+    pub(super) width: u32,
+    /// The passing child, `None` when free.
+    pub(super) pass_left: Option<bool>,
+    /// For a passing leaf, bit `l` set when the operand names it by label
+    /// `l`; every bit for an internal node.
+    pub(super) labels: u8,
+}
+
+impl Placed {
+    const FREE: Placed = Placed { width: 1, pass_left: None, labels: u8::MAX };
+
+    fn names_one(&self, left: bool) -> bool {
+        match self.pass_left {
+            Some(side) if side == left => self.labels & 1 << ONE_LEAF_IDX.0 != 0,
+            _ => true,
+        }
+    }
+}
+
+impl Reads for Placed {
+    type Pairs<'s> = std::option::IntoIter<ChildPair>;
+    #[inline]
+    fn width(&self) -> usize {
+        self.width as usize
+    }
+    #[inline]
+    fn pairs_of(&self, a: usize) -> Self::Pairs<'_> {
+        let one = EncodedChildRef::from_raw(0);
+        let named = self.labels & 1 << a.min(7) != 0;
+        let a = EncodedChildRef::from_raw(a as u32);
+        named
+            .then(|| match self.pass_left {
+                None => ChildPair::new(one, one),
+                Some(true) => ChildPair::new(a, one),
+                Some(false) => ChildPair::new(one, a),
+            })
+            .into_iter()
+    }
+    #[inline]
+    fn pair_bound(&self) -> usize {
+        self.width as usize
+    }
+}
+
+/// An operand at one node of the vtree the overlay runs on.
+#[derive(Clone, Copy)]
+pub(super) enum Read<'a> {
+    Own(&'a TddLevel),
+    Placed(Placed),
+}
+
+impl Read<'_> {
+    fn names_one(&self, left: bool) -> bool {
+        match self {
+            Read::Own(level) => names_one(level, left),
+            Read::Placed(placed) => placed.names_one(left),
+        }
+    }
+}
+
 /// The pieces of an internal `child`, built by its own visit and taken out of
 /// `built`; `None` for a leaf, whose pieces are one of [`Pieces::leaves`].
 fn take_child(vtree: &Vtree, child: VtreeIdx, built: &mut [Option<Pieces>]) -> Option<Pieces> {
@@ -201,9 +305,9 @@ fn take_child(vtree: &Vtree, child: VtreeIdx, built: &mut [Option<Pieces>]) -> O
 
 /// The two operands' levels at one internal vtree node and the pieces of
 /// their left and right children.
-pub(super) struct LevelOverlay<'a> {
-    pub(super) fl: &'a TddLevel,
-    pub(super) gl: &'a TddLevel,
+pub(super) struct LevelOverlay<'a, F, G> {
+    pub(super) fl: F,
+    pub(super) gl: G,
     pub(super) lp: &'a Pieces,
     pub(super) rp: &'a Pieces,
 }
@@ -211,7 +315,45 @@ pub(super) struct LevelOverlay<'a> {
 /// The overlay of two structural, nonzero diagrams on one internal-rooted
 /// vtree, before its reduction. Weights are the caller's.
 fn overlay_levels(eng: &Engine, op: Overlay, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
-    let vtree = Arc::clone(&f.vtree);
+    overlay_reading(eng, op, &f.vtree, (f.output.local, g.output.local), |t| {
+        (Read::Own(&f.levels[t.idx()]), Read::Own(&g.levels[t.idx()]))
+    })
+}
+
+/// One level of the overlay into `out`: the root's one node when `outs`
+/// names the operands' outputs, `None` when it has no cell; else the level's
+/// pieces into `pieces`.
+fn visit<F: Reads, G: Reads>(
+    step: &LevelOverlay<'_, F, G>,
+    eng: &Engine,
+    op: Overlay,
+    outs: Option<(NodeIdx, NodeIdx)>,
+    out: &mut TddLevel,
+    s: &mut Scratch,
+    pieces: &mut Pieces,
+) -> Result<Option<NodeIdx>, OperationError> {
+    match outs {
+        Some((f_out, g_out)) => {
+            let pairs = step.root_cells(eng, op, f_out, g_out, s)?;
+            match pairs.is_empty() {
+                true => Ok(None),
+                false => out.push_node(eng.limits(), pairs).map(Some),
+            }
+        }
+        None => step.inner_level(eng, op, out, s, pieces).map(|()| None),
+    }
+}
+
+/// The overlay on `vtree`, internal-rooted, of operands with outputs `outs`,
+/// read at each internal node by `read`, before its reduction.
+fn overlay_reading<'a>(
+    eng: &Engine,
+    op: Overlay,
+    vtree: &Arc<Vtree>,
+    outs: (NodeIdx, NodeIdx),
+    read: impl Fn(VtreeIdx) -> (Read<'a>, Read<'a>),
+) -> Result<Tdd, OperationError> {
+    let vtree = Arc::clone(vtree);
     let root = vtree.root();
     let mut assembly = Assembly::new(eng, &vtree)?;
     let mut built: Vec<Option<Pieces>> = Vec::new();
@@ -225,27 +367,33 @@ fn overlay_levels(eng: &Engine, op: Overlay, f: &Tdd, g: &Tdd) -> Result<Tdd, Op
     let mut spare: Vec<Pieces> = Vec::new();
 
     for (t, left, right) in vtree.internal_bottomup() {
-        let (fl, gl) = (&f.levels[t.idx()], &g.levels[t.idx()]);
+        let (fr, gr) = read(t);
+        let leaf_index = |left: bool| usize::from(fr.names_one(left)) * 2 + usize::from(gr.names_one(left));
         let lo = take_child(&vtree, left, &mut built);
         let ro = take_child(&vtree, right, &mut built);
-        let lp = lo.as_ref().unwrap_or(&leaves[leaf_index(fl, gl, true)]);
-        let rp = ro.as_ref().unwrap_or(&leaves[leaf_index(fl, gl, false)]);
-        let step = LevelOverlay { fl, gl, lp, rp };
+        let lp = lo.as_ref().unwrap_or(&leaves[leaf_index(true)]);
+        let rp = ro.as_ref().unwrap_or(&leaves[leaf_index(false)]);
         let levels = assembly.levels_mut();
         let out = &mut levels[t.idx()];
+        let at_root = (t == root).then_some(outs);
+        let mut pieces = spare.pop().unwrap_or_default();
+        pieces.clear();
+        let s = &mut scratch;
+        let p = &mut pieces;
+        let local = match (fr, gr) {
+            (Read::Own(fl), Read::Own(gl)) => visit(&LevelOverlay { fl, gl, lp, rp }, eng, op, at_root, out, s, p),
+            (Read::Own(fl), Read::Placed(gl)) => visit(&LevelOverlay { fl, gl, lp, rp }, eng, op, at_root, out, s, p),
+            (Read::Placed(fl), Read::Own(gl)) => visit(&LevelOverlay { fl, gl, lp, rp }, eng, op, at_root, out, s, p),
+            (Read::Placed(fl), Read::Placed(gl)) => visit(&LevelOverlay { fl, gl, lp, rp }, eng, op, at_root, out, s, p),
+        }?;
         if t == root {
-            let pairs = step.root_cells(eng, op, f.output.local, g.output.local, &mut scratch)?;
-            if pairs.is_empty() {
+            let Some(local) = local else {
                 drop(assembly);
                 return crate::build::constant_on(eng, &vtree, false);
-            }
-            let local = out.push_node(eng.limits(), pairs)?;
+            };
             eng.limits().level_done(out_nodes + 1)?;
             return assembly.finish(TddNodeId { vtree: root, local });
         }
-        let mut pieces = spare.pop().unwrap_or_default();
-        pieces.clear();
-        step.inner_level(eng, op, out, &mut scratch, &mut pieces)?;
         out_nodes += pieces.f_part.len() as u64;
         eng.limits().level_done(out_nodes)?;
         built[t.idx()] = Some(pieces);
@@ -274,13 +422,13 @@ pub(super) struct Scratch {
 /// Fill `owner` with every pair of `level` and the node holding it.
 fn index_owners(
     eng: &Engine,
-    level: &TddLevel,
+    level: &impl Reads,
     owner: &mut FxHashMap<u64, u32>,
 ) -> Result<(), OperationError> {
     owner.clear();
-    eng.limits().reserve_map(owner, level.live_pairs())?;
-    for (n, pairs) in level.internal_inputs_iter() {
-        for p in pairs {
+    eng.limits().reserve_map(owner, level.pair_bound())?;
+    for n in 0..level.width() {
+        for p in level.pairs_of(n) {
             owner.insert(key(p.left.0, p.right.0), n as u32);
         }
     }
@@ -290,14 +438,14 @@ fn index_owners(
 /// Fill `held` with the pairs of `nodes` at `level`.
 fn index_pairs(
     eng: &Engine,
-    level: &TddLevel,
+    level: &impl Reads,
     nodes: impl Iterator<Item = usize>,
     held: &mut FxHashSet<u64>,
 ) -> Result<(), OperationError> {
     held.clear();
     for n in nodes {
-        let pairs = level.pairs_iter_of_idx(n);
-        eng.limits().reserve_set(held, pairs.len())?;
+        let pairs = level.pairs_of(n);
+        eng.limits().reserve_set(held, pairs.size_hint().0)?;
         for p in pairs {
             held.insert(key(p.left.0, p.right.0));
         }
@@ -305,7 +453,7 @@ fn index_pairs(
     Ok(())
 }
 
-impl LevelOverlay<'_> {
+impl<F: Reads, G: Reads> LevelOverlay<'_, F, G> {
     /// Build one internal, non-root level of the overlay into `out` and its
     /// pieces into the empty `pieces`.
     ///
@@ -322,19 +470,19 @@ impl LevelOverlay<'_> {
         s: &mut Scratch,
         pieces: &mut Pieces,
     ) -> Result<(), OperationError> {
-        let &LevelOverlay { fl, gl, lp, rp } = self;
+        let LevelOverlay { fl, gl, lp, rp } = self;
         let lim = eng.limits();
         let mut poll = lim.gate();
         let walk_g = op != Overlay::AndNot;
-        let f_width = fl.slot_count();
-        let g_width = gl.slot_count();
+        let f_width = fl.width();
+        let g_width = gl.width();
         index_owners(eng, gl, &mut s.owner)?;
         pieces.f.begin_exact(lim, f_width)?;
         s.products.clear();
 
         for a in 0..f_width {
             s.tagged.clear();
-            for p in fl.pairs_iter_of_idx(a) {
+            for p in fl.pairs_of(a) {
                 let xs = lp.of_f(p.left.0);
                 let ys = rp.of_f(p.right.0);
                 for &x in xs {
@@ -385,7 +533,7 @@ impl LevelOverlay<'_> {
                     next += 1;
                 }
                 s.pairs.clear();
-                for p in gl.pairs_iter_of_idx(b) {
+                for p in gl.pairs_of(b) {
                     let xs = lp.of_g(p.left.0);
                     let ys = rp.of_g(p.right.0);
                     for &x in xs {
@@ -435,27 +583,17 @@ impl LevelOverlay<'_> {
         g_out: NodeIdx,
         s: &'s mut Scratch,
     ) -> Result<&'s [ChildPair], OperationError> {
-        let &LevelOverlay { fl, gl, lp, rp } = self;
+        let LevelOverlay { fl, gl, lp, rp } = self;
         let lim = eng.limits();
         let mut poll = lim.gate();
         s.pairs.clear();
         // The operand whose pairs a cell is tested against.
-        let excluded = match op {
-            Overlay::Or | Overlay::Add => fl,
-            Overlay::AndNot => gl,
-        };
-        let excluded_out = match op {
-            Overlay::Or | Overlay::Add => f_out,
-            Overlay::AndNot => g_out,
-        };
-        index_pairs(
-            eng,
-            excluded,
-            std::iter::once(excluded_out.idx()),
-            &mut s.held,
-        )?;
+        match op {
+            Overlay::Or | Overlay::Add => index_pairs(eng, fl, std::iter::once(f_out.idx()), &mut s.held)?,
+            Overlay::AndNot => index_pairs(eng, gl, std::iter::once(g_out.idx()), &mut s.held)?,
+        }
         if op != Overlay::AndNot {
-            for p in fl.pairs_iter_of_idx(f_out.idx()) {
+            for p in fl.pairs_of(f_out.idx()) {
                 let xs = lp.of_f(p.left.0);
                 let ys = rp.of_f(p.right.0);
                 for &x in xs {
@@ -475,25 +613,7 @@ impl LevelOverlay<'_> {
         // The walked operand: `g` for a disjunction, `f` for a difference; a cell
         // is kept when its components in the other operand are not a pair of that
         // operand's output.
-        let (walked, walked_out) = match op {
-            Overlay::Or | Overlay::Add => (gl, g_out),
-            Overlay::AndNot => (fl, f_out),
-        };
-        for p in walked.pairs_iter_of_idx(walked_out.idx()) {
-            let (xs, ys, x_part, y_part) = match op {
-                Overlay::Or | Overlay::Add => (
-                    lp.of_g(p.left.0),
-                    rp.of_g(p.right.0),
-                    &lp.f_part,
-                    &rp.f_part,
-                ),
-                Overlay::AndNot => (
-                    lp.of_f(p.left.0),
-                    rp.of_f(p.right.0),
-                    &lp.g_part,
-                    &rp.g_part,
-                ),
-            };
+        let mut keep = |xs: &[u32], ys: &[u32], x_part: &[u32], y_part: &[u32], pairs: &mut Vec<ChildPair>| {
             for &x in xs {
                 let cx = x_part[x as usize];
                 for &y in ys {
@@ -505,13 +625,22 @@ impl LevelOverlay<'_> {
                         }
                         continue;
                     }
-                    lim.try_push(
-                        &mut s.pairs,
-                        ChildPair::new(EncodedChildRef::from_raw(x), EncodedChildRef::from_raw(y)),
-                    )?;
+                    lim.try_push(pairs, ChildPair::new(EncodedChildRef::from_raw(x), EncodedChildRef::from_raw(y)))?;
                 }
             }
-            poll.poll((xs.len() * ys.len()) as u64 + 1)?;
+            poll.poll((xs.len() * ys.len()) as u64 + 1)
+        };
+        match op {
+            Overlay::Or | Overlay::Add => {
+                for p in gl.pairs_of(g_out.idx()) {
+                    keep(lp.of_g(p.left.0), rp.of_g(p.right.0), &lp.f_part, &rp.f_part, &mut s.pairs)?;
+                }
+            }
+            Overlay::AndNot => {
+                for p in fl.pairs_of(f_out.idx()) {
+                    keep(lp.of_f(p.left.0), rp.of_f(p.right.0), &lp.g_part, &rp.g_part, &mut s.pairs)?;
+                }
+            }
         }
         poll.flush()?;
         crate::diagram::sort_pairs(&mut s.pairs);
@@ -569,6 +698,9 @@ pub(crate) fn overlay_on(
     crate::apply::extend::refuse_other_homes([&f, &g])?;
     f.require_structure()?;
     g.require_structure()?;
+    if crate::apply::extend::needed([&f, &g]) && readable(&f) && readable(&g) {
+        return across(eng, op, f, g);
+    }
     let [f, g] = crate::apply::extend::on_one(eng, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
     eng.limits().check_stop()?;
     let mut result = match (f.is_zero(), g.is_zero(), op) {
@@ -580,6 +712,146 @@ pub(crate) fn overlay_on(
         }
         (false, false, _) => overlay_levels(eng, op, &f, &g)?,
     };
+    eng.close(&mut result, &[])?;
+    crate::apply::extend::trimmed(eng, result)
+}
+
+/// Whether the overlay reads `tdd` where it is when the other operand's
+/// leaf set differs: not false, a node, no region or weights.
+fn readable(tdd: &Tdd) -> bool {
+    !tdd.is_zero() && tdd.vtree.num_nodes() != 0 && !tdd.vtree.has_regions() && tdd.weight_table().is_none()
+}
+
+/// `n` copies of `value`, charged.
+fn table<T: Clone>(lim: &Limits, n: usize, value: T) -> Result<Vec<T>, OperationError> {
+    let mut table = Vec::new();
+    lim.try_resize(&mut table, n, value)?;
+    Ok(table)
+}
+
+/// What [`Vtree::leaf_sets_reading`] gives both operands' readings to.
+struct Readings<'l>(&'l Limits, [Vec<Reading>; 2]);
+
+impl UnionReader for Readings<'_> {
+    fn begin(&mut self, k: usize) -> Result<(), OperationError> {
+        self.1 = [table(self.0, 2 * k - 1, Reading::Free)?, table(self.0, 2 * k - 1, Reading::Free)?];
+        Ok(())
+    }
+
+    fn read(&mut self, u: VtreeIdx, [rf, rg]: [Reading; 2]) {
+        self.1[0][u.idx()] = rf;
+        self.1[1][u.idx()] = rg;
+    }
+}
+
+/// The readings on `into` of `inner`, whose leaves are among `into`'s, from
+/// `leaves` ([`Vtree::nested_leaves`]).
+fn nested_readings(lim: &Limits, into: &Vtree, inner: &Vtree, leaves: &[(VtreeIdx, VtreeIdx)]) -> Result<Vec<Reading>, OperationError> {
+    let mut readings = table(lim, into.num_nodes(), Reading::Free)?;
+    for &(s, u) in leaves {
+        readings[u.idx()] = Reading::Own(s);
+    }
+    let mut carried = table(lim, into.num_nodes(), VtreeIdx(0))?;
+    for &(s, u) in leaves {
+        carried[u.idx()] = s;
+    }
+    for (t, l, r) in into.internal_bottomup() {
+        readings[t.idx()] = match (readings[l.idx()], readings[r.idx()]) {
+            (Reading::Free, Reading::Free) => continue,
+            (_, Reading::Free) => {
+                carried[t.idx()] = carried[l.idx()];
+                Reading::Pass(l)
+            }
+            (Reading::Free, _) => {
+                carried[t.idx()] = carried[r.idx()];
+                Reading::Pass(r)
+            }
+            _ => {
+                let s = inner.node(carried[l.idx()]).parent().expect("two carried nodes have a parent");
+                carried[t.idx()] = s;
+                Reading::Own(s)
+            }
+        };
+    }
+    Ok(readings)
+}
+
+/// The labels by which `level` names its leaf child on `left` (else right),
+/// as bits.
+fn leaf_labels(level: &TddLevel, left: bool) -> u8 {
+    let mut labels = 0u8;
+    level.for_each_node_pair(|_, p| labels |= 1 << if left { p.left.0 } else { p.right.0 }.min(7));
+    labels
+}
+
+/// How the overlay reads `f` at each internal node of `into` from its
+/// `readings` there.
+fn reads_of<'a>(lim: &Limits, f: &'a Tdd, into: &Vtree, readings: &[Reading]) -> Result<Vec<Read<'a>>, OperationError> {
+    let mut reads = table(lim, into.num_nodes(), Read::Placed(Placed::FREE))?;
+    let mut carried = table(lim, into.num_nodes(), VtreeIdx(0))?;
+    for (u, reading) in readings.iter().enumerate().filter(|&(u, _)| into.node(VtreeIdx(u as u32)).is_leaf()) {
+        if let Reading::Own(s) = *reading {
+            carried[u] = s;
+        }
+    }
+    for (t, l, _) in into.internal_bottomup() {
+        reads[t.idx()] = match readings[t.idx()] {
+            Reading::Own(s) => {
+                carried[t.idx()] = s;
+                Read::Own(&f.levels[s.idx()])
+            }
+            Reading::Pass(c) => {
+                let s = carried[c.idx()];
+                carried[t.idx()] = s;
+                let (width, labels) = match f.vtree.node(s).parent() {
+                    _ if !f.vtree.node(s).is_leaf() => (f.levels[s.idx()].slot_count() as u32, u8::MAX),
+                    Some(p) => (3, leaf_labels(&f.levels[p.idx()], f.vtree.children(p).0 == s)),
+                    None => (3, 1 << f.output.local.0),
+                };
+                Read::Placed(Placed { width, pass_left: Some(c == l), labels })
+            }
+            Reading::Free => continue,
+        };
+    }
+    Ok(reads)
+}
+
+/// The overlay of operands on different leaf sets, neither false and both
+/// with a node, each read where it is on the projection on their union.
+#[cold]
+fn across(eng: &Engine, op: Overlay, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
+    let lim = eng.limits();
+    let mut readings = Readings(lim, [Vec::new(), Vec::new()]);
+    let mut leaves = Vec::new();
+    let into = match Vtree::leaf_sets_reading(&f.vtree, &g.vtree, Some(&mut readings))? {
+        LeafSets::AInB if g.vtree.nested_leaves(&f.vtree, &mut leaves) => {
+            readings.1[0] = nested_readings(lim, &g.vtree, &f.vtree, &leaves)?;
+            Arc::clone(&g.vtree)
+        }
+        LeafSets::BInA if f.vtree.nested_leaves(&g.vtree, &mut leaves) => {
+            readings.1[1] = nested_readings(lim, &f.vtree, &g.vtree, &leaves)?;
+            Arc::clone(&f.vtree)
+        }
+        LeafSets::Union(into) => into,
+        _ => {
+            let [f, g] = crate::apply::extend::on_one(eng, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
+            return overlay_on(eng, op, f, g);
+        }
+    };
+    lim.check_stop()?;
+    let own = |h: &Tdd| Arc::ptr_eq(&h.vtree, &into);
+    let [rf, rg] = &readings.1;
+    let fr = if own(&f) { Vec::new() } else { reads_of(lim, &f, &into, rf)? };
+    let gr = if own(&g) { Vec::new() } else { reads_of(lim, &g, &into, rg)? };
+    fn at<'a>(h: &'a Tdd, reads: &[Read<'a>], t: VtreeIdx) -> Read<'a> {
+        match reads.get(t.idx()) {
+            Some(&r) => r,
+            None => Read::Own(&h.levels[t.idx()]),
+        }
+    }
+    let mut result = overlay_reading(eng, op, &into, (f.output.local, g.output.local), |t| {
+        (at(&f, &fr, t), at(&g, &gr, t))
+    })?;
     eng.close(&mut result, &[])?;
     crate::apply::extend::trimmed(eng, result)
 }

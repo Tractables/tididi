@@ -106,6 +106,15 @@ impl Case<'_> {
         let (eng, what) = (self.eng, &self.what);
         if got.vtree().on_home() {
             check_trimmed(&got, false).unwrap_or_else(|e| panic!("{op} {what}: {e}"));
+            let mut minimized = got.clone();
+            eng.minimize(&mut minimized).unwrap();
+            let mut base = expected.clone();
+            eng.minimize(&mut base).unwrap();
+            eng.trim(&mut base, &Home::new(Arc::clone(self.home))).unwrap();
+            if base.vtree().num_nodes() == minimized.vtree().num_nodes() && base.vtree().num_nodes() != 0 {
+                let counts = |f: &Tdd| (f.node_count(), f.pair_count());
+                assert_eq!(counts(&minimized), counts(&base), "{op} {what}: node for node");
+            }
         }
         assert!(eng.equivalent(&on_home(eng, &got, self.home), expected).unwrap(), "{op} {what}");
     }
@@ -611,4 +620,76 @@ fn a_conjunction_across_leaf_sets_builds_the_parent_of_a_top_that_is_not_the_roo
             }
         }
     }
+}
+
+/// Each overlay of operands on different leaf sets, read where they are, is
+/// the overlay of the operands placed on their union, node for node, and the
+/// operation on the home.
+#[test]
+fn an_overlay_across_leaf_sets_is_the_overlay_of_the_placed_operands() {
+    use crate::apply::overlay::{overlay_on, Overlay};
+    use std::borrow::Cow;
+    let eng = Engine::new();
+    let mut kinds = [0usize; 5];
+    for seed in 0..1000u64 {
+        let hm = Home::new(rotated_home(2 + (seed % 9) as u32, seed));
+        let home = Arc::clone(hm.vtree());
+        let all = leaf_vars(&home).collect::<Vec<_>>();
+        let mut rng = Lcg::new(seed ^ 0xbb67_ae85);
+        let kind = (seed % 5) as usize;
+        let (f_vars, g_vars) = match kind {
+            0 => all.iter().partition(|_| rng.coin()),
+            1 => {
+                let a = part(&all, &mut rng);
+                let b = part(&a, &mut rng);
+                (a, b)
+            }
+            2 => {
+                let a = part(&all, &mut rng);
+                (part(&a, &mut rng), a)
+            }
+            3 => (part(&all, &mut rng), part(&all, &mut rng)),
+            _ => {
+                let a = part(&all, &mut rng);
+                (a.clone(), a)
+            }
+        };
+        if f_vars.is_empty() || g_vars.is_empty() {
+            continue;
+        }
+        let (f, g) = match seed % 2 == 0 {
+            true => (operand(&eng, &hm, &f_vars, &mut rng), operand(&eng, &hm, &g_vars, &mut rng)),
+            false => (untrimmed(&eng, &hm, &f_vars, &mut rng), untrimmed(&eng, &hm, &g_vars, &mut rng)),
+        };
+        kinds[kind] += 1;
+        for op in [Overlay::Or, Overlay::AndNot, Overlay::Add] {
+            let f = match op {
+                Overlay::Add => eng.and_not(f.clone(), g.clone()).unwrap(),
+                _ => f.clone(),
+            };
+            let what = format!("seed {seed} kind {kind} {op:?} f {:?} g {:?}", leaf_vars(f.vtree()).collect::<Vec<_>>(), leaf_vars(g.vtree()).collect::<Vec<_>>());
+            let got = overlay_on(&eng, op, f.clone(), g.clone()).unwrap();
+            let [pf, pg] = crate::apply::extend::on_one(&eng, [Cow::Owned(f.clone()), Cow::Owned(g.clone())]).unwrap().map(Cow::into_owned);
+            let base = overlay_on(&eng, op, pf, pg).unwrap();
+            assert!(got.node_count() <= base.node_count(), "{what}: more nodes than the placed overlay");
+            let minimized = |t: &Tdd| {
+                let mut t = t.clone();
+                eng.minimize(&mut t).unwrap();
+                (t.node_count(), t.pair_count())
+            };
+            assert_eq!(minimized(&got), minimized(&base), "{what}: node for node");
+            if got.vtree().on_home() {
+                check_trimmed(&got, false).unwrap_or_else(|e| panic!("{what}: {e}"));
+            }
+            let (hf, hg) = (on_home(&eng, &f, &home), on_home(&eng, &g, &home));
+            let expected = match op {
+                Overlay::Or => eng.or(hf, hg),
+                Overlay::AndNot => eng.and_not(hf, hg),
+                Overlay::Add => eng.add(hf, hg),
+            }
+            .unwrap();
+            assert!(eng.equivalent(&on_home(&eng, &got, &home), &expected).unwrap(), "{what}");
+        }
+    }
+    assert!(kinds.iter().all(|&k| k >= 100), "cases by kind {kinds:?}");
 }
