@@ -557,8 +557,10 @@ impl ApplyRun<'_, '_> {
         let walked = available && (big || child_grid_wins);
         let pairs = |l: &TddLevel| (l.pairs.len() + l.node_count()) as u128;
         let rows_win = |sibling: VtreeIdx, max: u64| {
-            let read = live(sibling) + pairs(f_level) + pairs(g_level);
-            walked && u128::from(cells(f.here, g.here)) + u128::from(max) < 2 * read
+            walked && {
+                let read = live(sibling) + pairs(f_level) + pairs(g_level);
+                u128::from(cells(f.here, g.here)) + u128::from(max) < 2 * read
+            }
         };
         SparseGate {
             available,
