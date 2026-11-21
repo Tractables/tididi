@@ -798,9 +798,16 @@ fn settle_marked<'a>(
         }
     }
     gate.flush()?;
+    // Sized to what it keeps, and unallocated when that is nothing: a
+    // conjunction grows the larger operand list into its result's, and
+    // growing an allocation costs more than making one.
+    let stays = |t: &u32| flags[*t as usize][AT];
     let mut kept = Vec::new();
-    lim.reserve(&mut kept, listed.len())?;
-    kept.extend(listed.iter().copied().filter(|&t| flags[t as usize][AT]));
+    let n = listed.iter().filter(|t| stays(t)).count();
+    if n > 0 {
+        lim.reserve_exact(&mut kept, n)?;
+        kept.extend(listed.iter().copied().filter(|t| stays(t)));
+    }
     Ok(Some(kept))
 }
 
