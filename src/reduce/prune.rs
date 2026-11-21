@@ -306,6 +306,30 @@ impl PooledScratch for PruneScratch {
     fn prepare(&mut self) {}
 }
 
+/// The buffers of [`drop_clause_orphans`], pooled apart from the prune's
+/// so a clause walk checks out and parks only these.
+#[derive(Default)]
+pub(crate) struct DropScratch {
+    marks: Vec<u64>,
+    remap: Vec<u32>,
+    /// The levels that lost nodes and are still to be read, with the sides
+    /// to read.
+    lost: Vec<(VtreeIdx, [bool; 2])>,
+}
+
+impl Buffers for DropScratch {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
+        visit(&mut self.marks);
+        visit(&mut self.remap);
+        visit(&mut self.lost);
+    }
+}
+
+impl PooledScratch for DropScratch {
+    /// Never called: the pool is checked out with `checkout_preserving`.
+    fn prepare(&mut self) {}
+}
+
 /// How much of the diagram a prune has to walk.
 pub(crate) enum PruneScope {
     /// Every level, assuming nothing about how the nodes became unreachable.
@@ -1435,7 +1459,7 @@ fn move_node(level: &mut TddLevel, i: usize, left: impl Fn(u32) -> u32, right: i
 /// A rebuilt level names every node of its spine children but at `top`,
 /// the highest level with both children on the spine, whose children are
 /// read on the sides it gives. Below them a level that lost a node is read
-/// on the sides [`unnamed_sides`] gives.
+/// on both sides.
 ///
 /// Charges no work: the walk charged the pairs it built, and the clock
 /// stays where a walk without the drop leaves it.
@@ -1455,17 +1479,14 @@ pub(crate) fn drop_clause_orphans(
 ) -> Result<(u32, [u64; 2]), OperationError> {
     let lim = eng.limits();
     let mut tally = [0u64; 2];
-    let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
-    let PruneScratch {
-        marks,
-        remap,
-        settle_parents: lost,
-        settle_flags: lost_sides,
-        ..
-    } = &mut *scratch;
+    let mut scratch = eng.scratch.reduce.clause_drop.checkout_preserving(eng);
+    let DropScratch { marks, remap, lost } = &mut *scratch;
     lost.clear();
-    lost_sides.clear();
     let readable = |c: VtreeIdx| on_spine[c.idx()] && !vtree.node(c).is_leaf();
+    let readable_sides = |t: VtreeIdx| {
+        let (l, r) = vtree.children(t);
+        [readable(l), readable(r)]
+    };
     let width = levels[out_vtree.idx()].slot_count();
     let own = words(width);
     clear_front(lim, marks, own, 0)?;
@@ -1473,20 +1494,19 @@ pub(crate) fn drop_clause_orphans(
     let out = if all_marked(marks, width) {
         out
     } else {
-        let sides = unnamed_sides(lim, vtree, levels, out_vtree, readable, marks, 0..own, own)?;
+        let sides = readable_sides(out_vtree);
         grow_to(lim, remap, width, UNREACHED)?;
         new_indices(&marks[..own], width, remap);
         tally[0] += drop_unmarked(&mut levels[out_vtree.idx()], &marks[..own]);
         if sides != [false; 2] {
-            lim.try_push(lost, out_vtree)?;
-            lim.try_push(lost_sides, sides)?;
+            lim.try_push(lost, (out_vtree, sides))?;
         }
         remap[out as usize]
     };
     let mut top = top;
     loop {
         let (t, mut sides) = match (lost.pop(), top) {
-            (Some(t), _) => (t, lost_sides.pop().expect("a lost level has its sides")),
+            (Some(lost), _) => lost,
             (None, Some(top)) => top,
             (None, None) => break,
         };
@@ -1505,21 +1525,11 @@ pub(crate) fn drop_clause_orphans(
         let end = base + words(width[1]);
         clear_front(lim, marks, end, 0)?;
         let parent = &levels[t.idx()];
-        let stored = parent.stored().expect("a rebuilt level stores its pairs");
-        let mut left = Marker::new(0);
-        for node in parent.nodes.stored() {
-            let pairs = stored.of(node);
-            tally[1] += pairs.len() as u64;
-            for p in pairs {
-                if width[0] != 0 {
-                    left.mark(marks, 0, p.left.raw() as usize);
-                }
-                if width[1] != 0 {
-                    mark(marks, base, p.right.raw() as usize);
-                }
-            }
-        }
-        left.finish(marks);
+        tally[1] += match width.map(|w| w != 0) {
+            [true, true] => mark_named::<true, true>(parent, marks, base),
+            [true, false] => mark_named::<true, false>(parent, marks, base),
+            _ => mark_named::<false, true>(parent, marks, base),
+        };
         let own = [0..base, base..end];
         let dropped = [0, 1].map(|s| width[s] != 0 && !all_marked(&marks[own[s].clone()], width[s]));
         if dropped == [false, false] {
@@ -1527,16 +1537,14 @@ pub(crate) fn drop_clause_orphans(
         }
         grow_to(lim, remap, width[0] + width[1], UNREACHED)?;
         lim.reserve(lost, 2)?;
-        lim.reserve(lost_sides, 2)?;
         for (s, c) in [l, r].into_iter().enumerate() {
             if dropped[s] {
-                let sides = unnamed_sides(lim, vtree, levels, c, readable, marks, own[s].clone(), end)?;
+                let sides = readable_sides(c);
                 let new = &mut remap[if s == 0 { 0..width[0] } else { width[0]..width[0] + width[1] }];
                 new_indices(&marks[own[s].clone()], width[s], new);
                 tally[0] += drop_unmarked(&mut levels[c.idx()], &marks[own[s].clone()]);
                 if sides != [false; 2] {
-                    lost.push(c);
-                    lost_sides.push(sides);
+                    lost.push((c, sides));
                 }
             }
         }
@@ -1553,71 +1561,30 @@ pub(crate) fn drop_clause_orphans(
     Ok((out, tally))
 }
 
-/// The sides of `t`'s readable children on which dropping the nodes of level
-/// `t` that `marks[own]` leaves unmarked may leave a child slot unnamed: those
-/// where a dropped node names a slot the kept node just before it does not.
-/// Marks those names in the words of `marks` from `at` on.
-///
-/// Any kept node's names stand. The node before a dropped `d` half is most
-/// often its `c` half, which below a level with both children on the spine
-/// names the same children wherever the accumulator node met a `c` half.
-#[allow(clippy::too_many_arguments)]
-fn unnamed_sides(
-    lim: &Limits,
-    vtree: &Vtree,
-    levels: &[TddLevel],
-    t: VtreeIdx,
-    readable: impl Fn(VtreeIdx) -> bool,
-    marks: &mut Vec<u64>,
-    own: std::ops::Range<usize>,
-    at: usize,
-) -> Result<[bool; 2], OperationError> {
-    let (l, r) = vtree.children(t);
-    let width = [l, r].map(|c| if readable(c) { levels[c.idx()].slot_count() } else { 0 });
-    let open = width.map(|w| w != 0);
-    if open == [false; 2] {
-        return Ok(open);
-    }
-    let base = words(width[0]);
-    let end = at + base + words(width[1]);
-    grow_to(lim, marks, end, 0)?;
-    let (front, names) = marks.split_at_mut(at);
-    let names = &mut names[..end - at];
-    names.fill(0);
-    let own = &front[own];
-    let level = &levels[t.idx()];
-    let stored = level.stored().expect("a rebuilt level stores its pairs");
-    let nodes = level.nodes.stored();
-    let is_named = |names: &[u64], base: usize, s: u32| names[base + (s as usize >> 6)] >> (s & 63) & 1 != 0;
-    let mut need = [false; 2];
-    for_each_unmarked(own, level.slot_count(), |d| {
-        if need == open {
-            return;
-        }
-        if let Some(before) = d.checked_sub(1)
-            && own[before >> 6] >> (before & 63) & 1 != 0
-        {
-            for p in stored.of(&nodes[before]) {
-                if open[0] {
-                    mark(names, 0, p.left.raw() as usize);
-                }
-                if open[1] {
-                    mark(names, base, p.right.raw() as usize);
-                }
+/// Mark in `marks` the left (`L`) and the right (`R`, block at word `base`)
+/// child slots the stored level `parent` names. Returns the pairs read.
+fn mark_named<const L: bool, const R: bool>(parent: &TddLevel, marks: &mut [u64], base: usize) -> u64 {
+    let stored = parent.stored().expect("a rebuilt level stores its pairs");
+    let mut left = Marker::new(0);
+    let mut read = 0;
+    for node in parent.nodes.stored() {
+        let pairs = stored.of(node);
+        read += pairs.len();
+        for p in pairs {
+            if L {
+                left.mark(marks, 0, p.left.raw() as usize);
+            }
+            if R {
+                mark(marks, base, p.right.raw() as usize);
             }
         }
-        for p in stored.of(&nodes[d]) {
-            need[0] |= open[0] && !is_named(names, 0, p.left.raw());
-            need[1] |= open[1] && !is_named(names, base, p.right.raw());
-        }
-    });
-    Ok(need)
+    }
+    left.finish(marks);
+    read as u64
 }
 
 /// Set the first `n` entries of `v` to `value`, growing it to `n` if it is
 /// shorter.
-// Never shortened: the prune's marks reuse the entries they find
-// ([`alloc_block`]), and growing them back costs it a zeroing resize.
 fn clear_front<T: Copy>(lim: &Limits, v: &mut Vec<T>, n: usize, value: T) -> Result<(), OperationError> {
     let have = v.len().min(n);
     v[..have].fill(value);
