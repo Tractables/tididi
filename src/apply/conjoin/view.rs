@@ -628,7 +628,7 @@ pub(crate) fn moved_dirty(
         loose.sort_unstable();
         loose
     });
-    carried.remap(placed.0);
+    carried.remap_keeping(placed.0, keeps_fused(source, into, placed.0));
     finish_moved(&mut carried, loose.as_deref(), listed, (source, into), placed, tops);
     carried
 }
@@ -642,7 +642,8 @@ pub(crate) fn copied_dirty(
     plan: &Plan,
     tops: &[VtreeIdx],
 ) -> Result<Dirty, OperationError> {
-    let mut carried = from.remapped_on(eng, &plan.embedding.levels, !tops.is_empty())?;
+    let map = &plan.embedding.levels;
+    let mut carried = from.remapped_on(eng, map, !tops.is_empty(), keeps_fused(source, into, map))?;
     let listed = listed_room(eng, from.loose(), source, !tops.is_empty())?;
     let mut sorted = Vec::new();
     let loose = match from.loose() {
@@ -656,6 +657,20 @@ pub(crate) fn copied_dirty(
     };
     finish_moved(&mut carried, loose, listed, (source, into), (&plan.embedding.levels, |t| plan.is_mirrored(t)), tops);
     Ok(carried)
+}
+
+/// Whether the fusion record (`Dirty::is_fused`) of the internal level `s` of
+/// `source` holds of its image under `map`: where the image's children are
+/// the images of `s`'s, the image is `s`'s level, its sides perhaps swapped,
+/// with the same refs. A pass-through under the image reads the refs into
+/// it through a chain.
+pub(crate) fn keeps_fused<'a>(source: &'a Vtree, into: &'a Vtree, map: &'a [VtreeIdx]) -> impl Fn(usize) -> bool + 'a {
+    move |s| {
+        let s = VtreeIdx(s as u32);
+        let (left, right) = source.children(s);
+        let (a, b) = into.children(map[s.idx()]);
+        (a, b) == (map[left.idx()], map[right.idx()]) || (a, b) == (map[right.idx()], map[left.idx()])
+    }
 }
 
 /// The steps of [`moved_dirty`] after the lists are renamed; `loose` sorted.
