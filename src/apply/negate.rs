@@ -7,7 +7,7 @@
 
 use crate::diagram::{
     Assembly, ChildDecoder, ChildPair, EncodedChildRef, LeafLabel, NEG_LEAF_IDX, NodeIdx,
-    ONE_LEAF_IDX, POS_LEAF_IDX, Tdd, TddLevel, TddNodeId,
+    ONE_LEAF_IDX, POS_LEAF_IDX, Pass, Tdd, TddLevel, TddNodeId,
 };
 
 use crate::Engine;
@@ -101,6 +101,10 @@ pub(crate) fn negate_closed(eng: &Engine, f: Cow<'_, Tdd>) -> Result<Tdd, Operat
             crate::reduce::prune::clear_false(&mut result);
         }
     } else {
+        let owed = [Pass::Contract, Pass::LeafContract].map(|pass| (pass, result.dirty.take(pass)));
+        let mut nodes = Vec::new();
+        eng.limits().reserve_exact(&mut nodes, result.levels.len())?;
+        nodes.extend(result.levels.iter().map(TddLevel::slot_count));
         // The dropped root cells may orphan nodes below the root. Pruning them
         // here walks from the output alone; left in place, the loose levels
         // are unknown and every later prune walks the whole diagram.
@@ -110,6 +114,31 @@ pub(crate) fn negate_closed(eng: &Engine, f: Cow<'_, Tdd>) -> Result<Tdd, Operat
             crate::reduce::prune::PruneScope::BelowRoot,
             crate::reduce::Close::Settle(&[]),
         )?;
+        // The prune lists every level it compacted on every worklist, nearly
+        // the whole diagram. Every level below the root is full and its nodes
+        // disjoint: where the prune took one node from a level, two nodes of
+        // a child whose contexts differed only beside it would share a cell
+        // it covered with a node the prune left. So a level gives its
+        // children new twins, inner or leaf, only where it lost two or more
+        // nodes; with what the complement owed before the prune, those are
+        // the contractions' worklists.
+        let lost = nodes
+            .iter()
+            .zip(result.levels.iter())
+            .enumerate()
+            .filter(|&(_, (&before, level))| before >= level.slot_count() + 2)
+            .map(|(t, _)| t as u32);
+        for (pass, mut list) in owed {
+            for t in lost.clone() {
+                eng.limits().try_push(&mut list, t)?;
+            }
+            result.dirty.restore(pass, list);
+        }
+        #[cfg(debug_assertions)]
+        {
+            let parents: Vec<_> = result.vtree.internal_bottomup().map(|(t, _, _)| t).collect();
+            crate::reduce::contract::debug_assert_no_twins_under(eng, &result, &parents);
+        }
     }
     Ok(result)
 }
@@ -153,6 +182,7 @@ pub(crate) fn complement_on(
     };
     let mut filled = eng.scratch.negate.filled.checkout(eng);
     eng.limits().try_resize(&mut *filled, vtree.num_nodes(), false)?;
+    let mut twinned = Vec::new();
     expand_full(
         eng,
         &vtree,
@@ -162,9 +192,9 @@ pub(crate) fn complement_on(
         },
         canonical,
         closed,
-        &mut filled,
+        (&mut filled, &mut twinned),
     )?;
-    let owed = at_root.then(|| Owed::of(&vtree, owed, canonical, &filled, &levels));
+    let owed = at_root.then(|| Owed::of(&vtree, owed, &twinned, &filled, &levels));
     let (result, old) = complement_full_at_root(
         eng,
         &vtree,
@@ -188,10 +218,10 @@ pub(crate) fn complement_on(
 /// added, and the fill node gives a child's nodes contexts in itself only:
 /// two nodes with equal contexts after it had equal contexts before it,
 /// which the operand, not owing the level, has only for nodes no pair of
-/// the level names. Those are on a child the operand lists loose (any
-/// child, where it does not know them), and the fill names each with every
-/// node of the other child. A level the operand had no node at is owed
-/// too: its fill alone decides its leaf form.
+/// the level names. The fill names each of those with every node of the
+/// other child, so they are twins where a child has two or more of them,
+/// its own fill node among them (`twinned`). A level the operand had no
+/// node at is owed too: its fill alone decides its leaf form.
 struct Owed {
     carried: crate::diagram::Dirty,
     rebuilt: Vec<crate::vtree::VtreeIdx>,
@@ -200,31 +230,20 @@ struct Owed {
 impl Owed {
     fn of(
         vtree: &crate::vtree::Vtree,
-        mut carried: crate::diagram::Dirty,
-        canonical: bool,
+        carried: crate::diagram::Dirty,
+        twinned: &[crate::vtree::VtreeIdx],
         filled: &[bool],
         levels: &[TddLevel],
     ) -> Self {
-        // A canonical operand has every node named; otherwise the operand's
-        // loose levels, read before the seeding forgets them.
-        let loose = if canonical {
-            Some(Vec::new())
-        } else {
-            carried.take_loose()
-        };
-        let may_be_loose = |c: crate::vtree::VtreeIdx| {
-            !vtree.node(c).is_leaf() && loose.as_ref().is_none_or(|l| l.contains(&c.0))
-        };
         let root = vtree.root();
         let mut rebuilt = vec![root];
-        for (t, left, right) in vtree.internal_bottomup() {
-            if t != root
-                && filled[t.idx()]
-                && (may_be_loose(left) || may_be_loose(right) || levels[t.idx()].node_count() == 1)
-            {
-                rebuilt.push(t);
-            }
-        }
+        rebuilt.extend_from_slice(twinned);
+        rebuilt.extend(
+            vtree
+                .internal_bottomup()
+                .map(|(t, _, _)| t)
+                .filter(|&t| t != root && filled[t.idx()] && levels[t.idx()].node_count() == 1),
+        );
         Self { carried, rebuilt }
     }
 }
@@ -463,8 +482,10 @@ fn complement_full_at_root(
 /// node is read off the cells left unmarked. The walk also records, per leaf
 /// child, whether the level refers to it as `One` or as `Pos`/`Neg`, and the
 /// fill is emitted in that same form. `filled[t]` is set for each level `t`
-/// it adds a node to, as the level's last. Each level it visits is left its
-/// live pairs for the close that ends the negation
+/// it adds a node to, as the level's last, and `twinned` lists each level
+/// of an uncertified operand whose fill holds every cell of two or more
+/// nodes of an internal child. Each level it visits is left its live pairs
+/// for the close that ends the negation
 /// ([`TddLevel::leave_live_pairs`]), off the pairs the cover counts. A
 /// borrowed operand's levels are read in `target`'s source and each copied
 /// once into its levels.
@@ -476,9 +497,10 @@ pub(crate) fn expand_full(
     target: &mut Target<'_, '_>,
     canonical: bool,
     closed: bool,
-    filled: &mut [bool],
+    (filled, twinned): (&mut [bool], &mut Vec<crate::vtree::VtreeIdx>),
 ) -> Result<(), OperationError> {
     let scratch = &eng.scratch.negate;
+    let mut common = Vec::new();
     let mut marked = scratch.cover.checkout_preserving(eng);
     let mut cells = scratch.cells.checkout_preserving(eng);
     let marked = &mut *marked;
@@ -592,6 +614,10 @@ pub(crate) fn expand_full(
         );
         if !cells.is_empty() {
             charge_scan(eng, lefts, rights)?;
+            let internal = [!leaf.left_one, !leaf.right_one];
+            if !canonical && cover.unnamed_twins(eng.limits(), cells, internal, &mut common)? {
+                eng.limits().try_push(twinned, t)?;
+            }
             // Written with its room before the cover where the diagram is
             // canonical.
             let level = if canonical {
@@ -1032,6 +1058,45 @@ impl<'a> Cover<'a> {
             marked: &mut self.marked[..],
             cells,
         }
+    }
+
+    /// Whether `cells`, the cells [`missing_into`](Self::missing_into)
+    /// wrote, hold every cell of two or more nodes of a child `internal`
+    /// names. `common` is scratch.
+    fn unnamed_twins(
+        &self,
+        lim: &crate::limits::Limits,
+        cells: &[ChildPair],
+        internal: [bool; 2],
+        common: &mut Vec<u32>,
+    ) -> Result<bool, OperationError> {
+        let (rows, cols) = (self.lefts.len(), self.rights.len());
+        let mut lines = cells.chunk_by(|a, b| a.left == b.left);
+        if internal[0] && cells.len() >= 2 * cols && lines.clone().filter(|row| row.len() == cols).nth(1).is_some() {
+            return Ok(true);
+        }
+        if !internal[1] || cells.len() < 2 * rows {
+            return Ok(false);
+        }
+        // A whole column has a cell in every row: the columns of the first
+        // row that each later row holds too.
+        let Some(first) = lines.next() else { return Ok(false) };
+        common.clear();
+        lim.reserve_exact(common, first.len())?;
+        common.extend(first.iter().map(|p| p.right.raw()));
+        let mut seen = 1;
+        for row in lines {
+            seen += 1;
+            let mut at = row.iter().map(|p| p.right.raw()).peekable();
+            common.retain(|&r| {
+                while at.next_if(|&x| x < r).is_some() {}
+                at.next_if_eq(&r).is_some()
+            });
+            if common.len() < 2 {
+                return Ok(false);
+            }
+        }
+        Ok(seen == rows && common.len() >= 2)
     }
 
     /// Append the unmarked cells to `out`, in ascending `(l, r)` order, a

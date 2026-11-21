@@ -16,7 +16,7 @@ fn expand_full_unmarked(eng: &crate::Engine, tdd: &mut crate::Tdd) -> Result<(),
     let mut filled = vec![false; tdd.vtree.num_nodes()];
     let (canonical, closed) = (tdd.levels.is_canonical(tdd.output), tdd.levels.is_closed());
     let vtree = std::sync::Arc::clone(&tdd.vtree);
-    expand_full(eng, &vtree, &mut Target { levels: &mut tdd.levels, source: None }, canonical, closed, &mut filled)?;
+    expand_full(eng, &vtree, &mut Target { levels: &mut tdd.levels, source: None }, canonical, closed, (&mut filled, &mut Vec::new()))?;
     tdd.levels.forget_left_pairs();
     Ok(())
 }
