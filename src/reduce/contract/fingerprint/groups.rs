@@ -9,11 +9,11 @@ use super::{TwinEntries, probe_fingerprints};
 
 /// Build twin groups for the `child_width` nodes of one level once
 /// `scratch.fingerprints[..child_width]` has a known collision and
-/// `scratch.is_candidate` is marked (`mark_candidates`): counts scatter,
-/// offset prefix sum, signature-entry scatter, grouping by exact signature
-/// equality. Writes groups into `scratch.flat_groups` / `scratch.group_starts`
-/// (which the caller must have cleared) and returns whether any ≥2-member
-/// group exists.
+/// `scratch.is_candidate` is marked (`mark_candidates`): the candidates'
+/// entries gathered in one scatter, placed node by node, and grouped by
+/// exact signature equality. Writes groups into `scratch.flat_groups` /
+/// `scratch.group_starts` (which the caller must have cleared) and returns
+/// whether any ≥2-member group exists.
 pub(super) fn build_twin_groups_after_collision<E: TwinEntries>(
     eng: &Engine,
     entries: &E,
@@ -22,19 +22,24 @@ pub(super) fn build_twin_groups_after_collision<E: TwinEntries>(
 ) -> Result<bool, OperationError> {
     // Only candidates get a materialized signature: equal signatures force
     // equal fingerprints, so a node with a unique fingerprint has no twin, and
-    // skipping it keeps count 0, an empty signature range, and its own
-    // representative without a hash slot. A false-positive fingerprint match
-    // is separated by the exact
-    // signature compare in Pass 1.
+    // skipping it keeps an empty signature range and its own representative
+    // without a hash slot. A false-positive fingerprint match is separated by
+    // the exact signature compare in the grouping.
     materialize_candidate_signatures(eng, entries, child_width, scratch)?;
-
-    // ── Group nodes by signature ──────────────────────────────────────────────
     group_by_hashed_signature(eng, child_width, scratch, E::EMPTY_TWINS)
 }
 
-/// Scatter each twin-candidate node's signature into the flat entry arena,
-/// in the order the entries arrive ([`same_signature`] sorts a slice where
-/// that order matters).
+/// Place each twin-candidate node's signature in `scratch.entries`, its
+/// entries in the order they arrive ([`same_signature`] sorts a slice where
+/// that order matters), with the start of each node's in `scratch.counts`
+/// and their total after the last.
+///
+/// One scatter gathers the candidates' entries beside their nodes; a
+/// counting pass over those alone then places them. A scatter reads every
+/// entry of the level, the candidates' among them, so a second one to count
+/// first would cost more than the gathered records' two passes. Entries
+/// that come node by node are placed in one walk instead
+/// ([`TwinEntries::place_signatures`]).
 fn materialize_candidate_signatures(
     eng: &Engine,
     entries: &impl TwinEntries,
@@ -42,86 +47,49 @@ fn materialize_candidate_signatures(
     scratch: &mut ContractScratch,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
-    let candidate_mass = count_candidate_entries(eng, entries, child_width, scratch)?;
-
-    // ── Pass 2: fill signature entries (scatter-write) ─────────────────────────
-    //
-    // The arena holds exactly `candidate_mass` rows, the entries of the
-    // candidate nodes alone. It is the largest contract allocation, so
-    // `try_resize` turns a refused allocation into `Err(OverBudget)`.
-    lim.try_resize(&mut scratch.entries, candidate_mass, 0u64)?;
-    lim.try_resize(&mut scratch.cursors, child_width, 0u32)?;
-    scratch.cursors[..child_width].copy_from_slice(&scratch.counts[..child_width]);
-
-    entries.for_each(|node, e| {
-        let idx = node as usize;
-        if scratch.is_candidate[idx] {
-            let c = scratch.cursors[idx];
-            scratch.entries[c as usize] = e;
-            scratch.cursors[idx] = c + 1; // ≤ candidate_mass < u32::MAX, checked above
-        }
-    });
-    Ok(())
-}
-
-/// Replace each count in `counts` with the exclusive prefix sum of the
-/// preceding counts, returning the total sum.
-#[inline]
-fn prefix_sum_in_place(counts: &mut [u32]) -> u32 {
-    let mut sum = 0u32;
-    for c in counts.iter_mut() {
-        let here = *c;
-        *c = sum;
-        sum += here;
+    let ContractScratch {
+        is_candidate,
+        candidate_entries,
+        candidate_nodes,
+        counts,
+        entries: signatures,
+        ..
+    } = &mut *scratch;
+    if entries.place_signatures(lim, is_candidate, child_width, counts, signatures)? {
+        return Ok(());
     }
-    sum
-}
-
-/// Count each twin-candidate node's entries and turn the counts into a
-/// prefix-sum offset table in `scratch.counts`, returning the total entry count.
-///
-/// Only reached in the rare twin-present case. `counts` is sized to
-/// `child_width + 1` so the grouping pass can read `sig_offsets[i + 1]` as an
-/// end sentinel without a fallible push. Non-candidate nodes keep count 0.
-fn count_candidate_entries(
-    eng: &Engine,
-    entries: &impl TwinEntries,
-    child_width: usize,
-    scratch: &mut ContractScratch,
-) -> Result<usize, OperationError> {
-    let lim = eng.limits();
-    lim.try_resize(&mut scratch.counts, child_width + 1, 0u32)?;
-    scratch.counts[..child_width].fill(0);
-    // Candidate mass bounds every value the u32 `counts` / `cursors` arrays go
-    // on to hold (each count, offset and write cursor); see the check below.
-    let mut candidate_mass = 0usize;
-    entries.for_each(|node, _| {
-        let idx = node as usize;
-        if scratch.is_candidate[idx] {
-            scratch.counts[idx] += 1;
-            candidate_mass += 1;
-        }
-    });
-    // ── u32 offset boundary (checked, not assumed) ─────────────────────────────
-    //
-    // A level's entry count has no structural u32 cap
-    // (`PairRange::start` and `len` are u64), so refuse the level through
-    // `IndexOverflow` rather than truncate an offset. Checked before the prefix
-    // sum, so no offset is stored; the counts may have wrapped, but nothing
-    // reads them after the bail (the next call re-fills from zero).
+    candidate_entries.clear();
+    candidate_nodes.clear();
+    entries.gather(lim, is_candidate, candidate_nodes, candidate_entries)?;
+    let candidate_mass = candidate_nodes.len();
+    // A level's entry count has no structural u32 cap (`PairRange::start`
+    // and `len` are u64), so refuse the level rather than truncate an
+    // offset.
     if candidate_mass >= u32::MAX as usize {
         return Err(OperationError::IndexOverflow);
     }
-
-    // ── Build offset table (prefix sum of counts) ─────────────────────────────
-    //
-    // Repurpose `counts` in-place as a prefix-sum offset table: after this loop,
-    // sig_offsets[i] = start of node i's signature entries in the flat buffer.
-    // This avoids allocating a separate Vec for offsets.
-    let sig_offsets = &mut scratch.counts;
-    let running = prefix_sum_in_place(&mut sig_offsets[..child_width]);
-    sig_offsets[child_width] = running; // sentinel (pre-allocated above)
-    Ok(candidate_mass)
+    // `counts` is sized to `child_width + 1` so the grouping can read
+    // `counts[i + 1]` as the end of node `i`'s signature.
+    lim.try_resize(counts, child_width + 1, 0u32)?;
+    counts[..child_width].fill(0);
+    for &node in candidate_nodes.iter() {
+        counts[node as usize] += 1;
+    }
+    // Each count becomes the end of its node's slice; the records placed
+    // last to first then leave each at its start, in arrival order.
+    let mut end = 0u32;
+    for c in &mut counts[..child_width] {
+        end += *c;
+        *c = end;
+    }
+    counts[child_width] = end;
+    lim.try_resize(signatures, candidate_mass, 0u64)?;
+    for (&node, &e) in candidate_nodes.iter().zip(candidate_entries.iter()).rev() {
+        let at = &mut counts[node as usize];
+        *at -= 1;
+        signatures[*at as usize] = e;
+    }
+    Ok(())
 }
 
 /// Whether candidates `a` and `b` have equal signatures, as multisets.
@@ -354,6 +322,7 @@ fn group_by_hashed_signature(
     lim.reserve_exact(candidates, wanted)?;
     candidates.extend((0..child_width as u32).filter(|&i| is_candidate[i as usize]));
     let n = candidates.len();
+    lim.try_resize(cursors, n, 0u32)?;
     for (rank, &node) in candidates.iter().enumerate() {
         fingerprints[rank] = fingerprints[node as usize];
     }

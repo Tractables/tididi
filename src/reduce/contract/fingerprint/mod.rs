@@ -114,6 +114,39 @@ pub(super) trait TwinEntries {
     /// The number of entries [`Self::for_each`] yields.
     fn len(&self) -> usize;
 
+    /// Append each entry of every node `keep` flags to `entries`, and its
+    /// node to `nodes`, in the order [`Self::for_each`] yields them.
+    fn gather(
+        &self,
+        lim: &Limits,
+        keep: &[bool],
+        nodes: &mut Vec<u32>,
+        entries: &mut Vec<u64>,
+    ) -> Result<(), OperationError> {
+        let mut gathered = Ok(());
+        self.for_each(|node, e| {
+            if keep[node as usize] && gathered.is_ok() {
+                gathered = lim.try_push(nodes, node).and_then(|()| lim.try_push(entries, e));
+            }
+        });
+        gathered
+    }
+
+    /// Place the signatures of the nodes `keep` flags in one walk, where the
+    /// entries come node by node: `signatures` the entries of each in node
+    /// order, `starts[i]` where node `i`'s begin, `starts[width]` their
+    /// total. `false`, with nothing written, where they do not come so.
+    fn place_signatures(
+        &self,
+        _lim: &Limits,
+        _keep: &[bool],
+        _width: usize,
+        _starts: &mut Vec<u32>,
+        _signatures: &mut Vec<u64>,
+    ) -> Result<bool, OperationError> {
+        Ok(false)
+    }
+
     /// Whether none of the `width` nodes can have a twin: no two nodes share
     /// an entry, and at most one has none where two nodes with none are
     /// twins ([`Self::EMPTY_TWINS`]). `false` when that is not known.
@@ -175,6 +208,30 @@ impl TwinEntries for ContextEntries<'_> {
         self.parent_level.live_pairs()
     }
 
+    /// A parent node at a time, with room for its every pair reserved
+    /// first: each pair is written and kept by moving past it, with no
+    /// branch on whether its node is kept.
+    fn gather(
+        &self,
+        lim: &Limits,
+        keep: &[bool],
+        nodes: &mut Vec<u32>,
+        entries: &mut Vec<u64>,
+    ) -> Result<(), OperationError> {
+        let level = self.parent_level;
+        let all = 0..level.nodes().len();
+        // Forced inline: the walk calls it from two sites, and a call a node
+        // costs more than the pairs of a short node.
+        match self.t1_side {
+            ChildSide::Left => level.try_for_each_node(all, #[inline(always)] |pi, pairs| {
+                gather_node::<true>(lim, keep, pi as u32, pairs, nodes, entries)
+            }),
+            ChildSide::Right => level.try_for_each_node(all, #[inline(always)] |pi, pairs| {
+                gather_node::<false>(lim, keep, pi as u32, pairs, nodes, entries)
+            }),
+        }
+    }
+
     /// Two nodes share a context only where a parent node pairs both with
     /// one sibling ([`repeats_a_sibling`]); a level whose parent nodes never
     /// repeat one, common on grids, then needs no fingerprint.
@@ -189,6 +246,51 @@ impl TwinEntries for ContextEntries<'_> {
         }
         Ok(repeats_a_sibling(self.parent_level, self.t1_side, lim, scratch)?.is_none())
     }
+}
+
+/// [`ContextEntries::gather`] over the `pairs` of parent node `pi`, the
+/// child on the left when `LEFT`.
+#[inline(always)]
+fn gather_node<const LEFT: bool>(
+    lim: &Limits,
+    keep: &[bool],
+    pi: u32,
+    pairs: &[ChildPair],
+    nodes: &mut Vec<u32>,
+    entries: &mut Vec<u64>,
+) -> Result<(), OperationError> {
+    let len = nodes.len();
+    debug_assert_eq!(len, entries.len());
+    if nodes.capacity() - len < pairs.len() || entries.capacity() - len < pairs.len() {
+        grow_room(lim, nodes, pairs.len())?;
+        grow_room(lim, entries, pairs.len())?;
+    }
+    let side = if LEFT { ChildSide::Left } else { ChildSide::Right };
+    let at_nodes = nodes.as_mut_ptr();
+    let at_entries = entries.as_mut_ptr();
+    let mut kept = len;
+    for pair in pairs {
+        let (target, sibling) = split_pair(pair, side);
+        // Safety: `kept` is at most `len` plus the index of `pair`, below
+        // `len + pairs.len()`, within both capacities.
+        unsafe {
+            at_nodes.add(kept).write(target);
+            at_entries.add(kept).write(pack(pi, sibling));
+        }
+        kept += usize::from(keep[target as usize]);
+    }
+    // Safety: the slots from `len` to `kept` were written above.
+    unsafe {
+        nodes.set_len(kept);
+        entries.set_len(kept);
+    }
+    Ok(())
+}
+
+#[cold]
+#[inline(never)]
+fn grow_room<T>(lim: &Limits, v: &mut Vec<T>, n: usize) -> Result<(), OperationError> {
+    lim.reserve(v, n)
 }
 
 /// The pair count of a node of `level` that pairs two nodes of the child
@@ -615,6 +717,43 @@ impl TwinEntries for ContentEntries<'_> {
     fn for_each(&self, mut f: impl FnMut(u32, u64)) {
         self.0
             .for_each_node_pair(|i, pair| f(i as u32, pack(pair.left.0, pair.right.0)));
+    }
+
+    fn place_signatures(
+        &self,
+        lim: &Limits,
+        keep: &[bool],
+        width: usize,
+        starts: &mut Vec<u32>,
+        signatures: &mut Vec<u64>,
+    ) -> Result<bool, OperationError> {
+        lim.try_resize(starts, width + 1, 0u32)?;
+        signatures.clear();
+        let mut end = 0usize;
+        let level = self.0;
+        level.try_for_each_node(0..level.nodes().len(), |i, pairs| {
+            // Below `u32::MAX`, as each start is stored u32-wide.
+            starts[i] = end as u32;
+            if keep[i] {
+                end += pairs.len();
+                if end >= u32::MAX as usize {
+                    return Err(OperationError::IndexOverflow);
+                }
+                if signatures.capacity() - signatures.len() < pairs.len() {
+                    grow_room(lim, signatures, pairs.len())?;
+                }
+                let len = signatures.len();
+                let room = &mut signatures.spare_capacity_mut()[..pairs.len()];
+                for (slot, p) in room.iter_mut().zip(pairs) {
+                    slot.write(pack(p.left.0, p.right.0));
+                }
+                // Safety: the `pairs.len()` slots past `len` were written above.
+                unsafe { signatures.set_len(len + pairs.len()) };
+            }
+            Ok(())
+        })?;
+        starts[level.nodes().len()..=width].fill(end as u32);
+        Ok(true)
     }
 
     fn len(&self) -> usize {
