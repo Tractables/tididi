@@ -122,16 +122,15 @@ pub(crate) fn negate_closed(eng: &Engine, f: Cow<'_, Tdd>) -> Result<Tdd, Operat
         // children new twins, inner or leaf, only where it lost two or more
         // nodes; with what the complement owed before the prune, those are
         // the contractions' worklists.
-        let lost = nodes
-            .iter()
-            .zip(result.levels.iter())
-            .enumerate()
-            .filter(|&(_, (&before, level))| before >= level.slot_count() + 2)
-            .map(|(t, _)| t as u32);
-        for (pass, mut list) in owed {
-            for t in lost.clone() {
-                eng.limits().try_push(&mut list, t)?;
+        let mut lost = Vec::new();
+        for (t, (&before, level)) in nodes.iter().zip(result.levels.iter()).enumerate() {
+            if before >= level.slot_count() + 2 {
+                eng.limits().try_push(&mut lost, t as u32)?;
             }
+        }
+        for (pass, mut list) in owed {
+            eng.limits().reserve_exact(&mut list, lost.len())?;
+            list.extend_from_slice(&lost);
             result.dirty.restore(pass, list);
         }
         #[cfg(debug_assertions)]
