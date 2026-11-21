@@ -825,6 +825,10 @@ const READ_COST: [u64; 3] = [5, 4, 4 * 64];
 /// pair ([`count_named`]). A level with no node holds none, and a level that
 /// cannot be read counts as holding one: one that is not structural
 /// internal, and each child of a `p` that is not.
+// With a second caller it was no longer inlined into the settle's loop over
+// parents, which then cost a quarter more on logic programs of many small
+// diagrams.
+#[inline(always)]
 pub(crate) fn unnamed_children<'a>(
     lim: &Limits,
     (vtree, level_at): (&Vtree, &dyn Fn(VtreeIdx) -> &'a TddLevel),
