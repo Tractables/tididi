@@ -474,12 +474,14 @@ impl PassRows<'_> {
                 for i in 0..self.passing {
                     let row = passed(i);
                     carrier.try_for_each_node::<OperationError>(0..self.width, |_, pairs| {
+                        self.gate.poll(pairs.len() as u64)?;
                         self.cell::<LEFT>(level, map, pairs, i, &row)
                     })?;
                 }
                 Ok(())
             }
             false => carrier.try_for_each_node::<OperationError>(0..self.width, |_, pairs| {
+                self.gate.poll((pairs.len() * self.passing) as u64)?;
                 (0..self.passing).try_for_each(|i| self.cell::<LEFT>(level, map, pairs, i, passed(i)))
             }),
         }
@@ -566,9 +568,22 @@ impl PassRows<'_> {
         i: usize,
         passed: impl Fn(u32) -> u32,
     ) -> Result<(), OperationError> {
-        self.gate.poll(pairs.len() as u64)?;
         if self.literals.is_some_and(|rows| rows >> i & 1 == 0) {
             map.push(NO_PRODUCT);
+            return Ok(());
+        }
+        if let [pair] = pairs {
+            let product = passed(if LEFT { pair.left.raw() } else { pair.right.raw() });
+            if product == NO_PRODUCT {
+                map.push(NO_PRODUCT);
+            } else {
+                map.push(level.nodes.stored().len() as u32);
+                level.nodes.stored_mut().push(EncodedNode::inline(match LEFT {
+                    true => ChildPair::new(NodeIdx(product), pair.right),
+                    false => ChildPair::new(pair.left, NodeIdx(product)),
+                }));
+                self.inline += 1;
+            }
             return Ok(());
         }
         let out = level.pairs.stored_mut();
