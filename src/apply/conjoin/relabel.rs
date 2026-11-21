@@ -532,12 +532,13 @@ impl PassRows<'_> {
             self.gate.poll(pairs.len() as u64)?;
             let side = |pair: &ChildPair| if LEFT { (pair.left.raw(), pair.right) } else { (pair.right.raw(), pair.left) };
             let products = |x: u32| &inverse[2 * offsets[x as usize] as usize..2 * offsets[x as usize + 1] as usize];
-            if let [pair] = pairs {
-                // A child's products are listed in cell order, so by passing
-                // node: each is a cell of its own.
+            // A one-pair node's products sorted by passing node are its cells
+            // in order. A child's list is not always in cell order.
+            if let [pair] = pairs
+                && products(side(pair).0).chunks_exact(2).is_sorted_by_key(|found| found[0])
+            {
                 let (y, other) = side(pair);
                 let found = products(y);
-                debug_assert!(found.chunks_exact(2).is_sorted_by_key(|found| found[0]));
                 lim.reserve(list, found.len() / 2)?;
                 for found in found.chunks_exact(2) {
                     list.push(ProductEntry {
