@@ -409,6 +409,37 @@ fn a_one_pair_level_fits_by_its_words() {
 }
 
 #[test]
+fn a_level_fits_with_its_arena_in_node_order_or_not() {
+    let mut rng = Lcg::new(0x1d1e_0033);
+    for (nodes, per_node) in [(300, 2), (64, 3), (520, 4), (2, 2)] {
+        let pairs = affine(&mut rng, nodes, per_node);
+        let level = level_of(&pairs);
+        assert!(level.stored().unwrap().in_node_order(per_node).is_some());
+        let d = ImplicitLevel::fit(&level).expect("an affine level fits");
+        assert_eq!(described(&d), pairs);
+        // The same nodes, node 1's pairs written before node 0's.
+        let mut swapped = pairs.clone();
+        swapped.swap(0, 1);
+        let mut level = level_of(&swapped);
+        level.nodes.stored_mut().swap(0, 1);
+        assert_eq!(pairs_of(&level), pairs);
+        assert!(level.stored().unwrap().in_node_order(per_node).is_none());
+        let d = ImplicitLevel::fit(&level).expect("an affine level fits wherever its pairs lie");
+        assert_eq!(described(&d), pairs);
+        // In node order, one pair moved.
+        let mut moved = pairs.clone();
+        let i = rng.below(nodes as u64) as usize;
+        moved[i][per_node - 1].1 += 1 + rng.below(3) as i64;
+        let level = level_of(&moved);
+        let stored = level.stored().unwrap();
+        assert!(!d.holds_in_order(stored.of_idx(0), stored.in_node_order(per_node).unwrap()), "node {i} moved");
+        if let Some(d) = ImplicitLevel::fit(&level) {
+            assert_eq!(described(&d), moved, "node {i} moved");
+        }
+    }
+}
+
+#[test]
 fn an_implicit_arena_reads_as_the_stored_one() {
     let mut rng = Lcg::new(0x1d1e_0004);
     for _ in 0..50 {

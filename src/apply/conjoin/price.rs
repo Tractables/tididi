@@ -43,7 +43,7 @@
 //! level they can and check the count against the level built.
 
 use crate::apply::conjoin::held::{Held, Here};
-use crate::limits::{Charged, Limits, OperationError};
+use crate::limits::{Charged, Limits, OperationError, TimeTests};
 use crate::diagram::{ChildPair, ChildSide, EncodedNode, TddLevel};
 use crate::vtree::VtreeIdx;
 use super::{Complete, Passthrough, NO_PRODUCT};
@@ -82,18 +82,28 @@ impl Live<'_> {
     /// Visit each live product as its `f` node and its `g` node.
     #[inline]
     fn each(&self, mut visit: impl FnMut(u32, u32)) {
+        let Ok(()) = self.try_each(|i, j| {
+            visit(i, j);
+            Ok::<(), std::convert::Infallible>(())
+        });
+    }
+
+    /// [`each`](Self::each), ending at the first error `visit` returns.
+    #[inline]
+    fn try_each<E>(&self, mut visit: impl FnMut(u32, u32) -> Result<(), E>) -> Result<(), E> {
         match *self {
             Live::All => unreachable!("a side whose every product is live is not walked"),
-            Live::List(list) => list.iter().for_each(|e| visit(e.f_idx.0, e.g_idx.0)),
+            Live::List(list) => list.iter().try_for_each(|e| visit(e.f_idx.0, e.g_idx.0)),
             Live::Grid { cells, f_width, g_width } => {
                 for i in 0..f_width {
                     let row = &cells[i * g_width..(i + 1) * g_width];
                     for (j, &cell) in row.iter().enumerate() {
                         if cell != NO_PRODUCT {
-                            visit(i as u32, j as u32);
+                            visit(i as u32, j as u32)?;
                         }
                     }
                 }
+                Ok(())
             }
         }
     }
@@ -279,12 +289,19 @@ impl Child {
 /// child; `None` when a pair references past `width`, which no count reads.
 fn histogram<'a>(lim: Option<&'a Limits>, level: &TddLevel, child: Child, width: usize) -> Result<Option<Column<'a, u32>>, OperationError> {
     let mut counts = Column::new(lim, width, 0u32)?;
-    let fits = level.pairs_with_parent().try_for_each(|(_, pair)| {
-        let slot = counts.get_mut(child.of(pair) as usize).ok_or(())?;
-        *slot += 1;
-        Ok::<(), ()>(())
+    let mut tests = TimeTests::new(lim);
+    let walked = level.try_for_each_node(0..level.nodes().len(), |_, pairs| {
+        for &pair in pairs {
+            let slot = counts.get_mut(child.of(pair) as usize).ok_or(None)?;
+            *slot += 1;
+        }
+        tests.after(pairs.len()).map_err(Some)
     });
-    Ok(fits.is_ok().then_some(counts))
+    match walked {
+        Ok(()) => Ok(Some(counts)),
+        Err(None) => Ok(None),
+        Err(Some(e)) => Err(e),
+    }
 }
 
 /// `level`'s pairs grouped by their `key` child: each group, in key order,
@@ -299,11 +316,15 @@ fn grouped<'a>(lim: Option<&'a Limits>, level: &TddLevel, key: Child, counts: &[
     let mut others = Column::new(lim, total, 0u32)?;
     let mut fill = Column::new(lim, counts.len(), 0u64)?;
     fill.copy_from_slice(&starts[..counts.len()]);
-    level.pairs_with_parent().for_each(|(_, pair)| {
-        let k = key.of(pair) as usize;
-        others[fill[k] as usize] = key.other().of(pair);
-        fill[k] += 1;
-    });
+    let mut tests = TimeTests::new(lim);
+    level.try_for_each_node(0..level.nodes().len(), |_, pairs| {
+        for &pair in pairs {
+            let k = key.of(pair) as usize;
+            others[fill[k] as usize] = key.other().of(pair);
+            fill[k] += 1;
+        }
+        tests.after(pairs.len())
+    })?;
     Ok((starts, others))
 }
 
@@ -341,11 +362,12 @@ fn side_sums(side: &Side<'_>, hf: &[u32], hg: &[u32]) -> Option<SideSums> {
 /// where one side's live combinations, a ceiling on the pairs, are at most
 /// `room`: the pairs the level may hold before it is refused, given where
 /// only a refusal reads the count. Scratch is charged to `lim` when it is
-/// given.
+/// given, and the walks test its time rule.
 ///
 /// # Errors
 ///
-/// [`OperationError::OverBudget`] when a charged scratch column is refused.
+/// [`OperationError::OverBudget`] when a charged scratch column is refused,
+/// [`OperationError::Stopped`] when the time rule stops the count.
 fn level_pairs(
     lim: Option<&Limits>,
     f_level: &TddLevel,
@@ -439,25 +461,29 @@ fn cross(
     let columns = first.g_width;
     let cells = grid_cells(second.f_width, columns)?;
     let mut y = Column::new(lim, cells, 0u32)?;
+    // Both walks can run for a minute, past a deadline.
+    let mut tests = TimeTests::new(lim);
     {
         let (g_starts, g_others) = grouped(lim, g_level, first_child.other(), hg)?;
-        second.live.each(|i, j| {
+        second.live.try_each(|i, j| {
             let (from, to) = (g_starts[j as usize] as usize, g_starts[j as usize + 1] as usize);
             let row = &mut y[i as usize * columns..(i as usize + 1) * columns];
             for &column in &g_others[from..to] {
                 row[column as usize] += 1;
             }
-        });
+            tests.after(1 + to - from)
+        })?;
     }
     let (starts, partners) = by_f_node(lim, first)?;
     let second_child = first_child.other();
     let mut count = 0u128;
-    f_level.pairs_with_parent().for_each(|(_, pair)| {
+    f_level.pairs_with_parent().try_for_each(|(_, pair)| {
         let (node, row) = (first_child.of(pair) as usize, second_child.of(pair) as usize);
         let row = &y[row * columns..(row + 1) * columns];
         let met = &partners[starts[node] as usize..starts[node + 1] as usize];
         count += met.iter().map(|&j| u128::from(row[j as usize])).sum::<u128>();
-    });
+        tests.after(1 + met.len())
+    })?;
     Ok(count)
 }
 
@@ -497,7 +523,8 @@ fn counted(pairs: Result<Option<Pairs>, OperationError>) -> Result<Option<Pairs>
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] for a refused level, recorded in the
-/// meters ([`Limits::refuse_level`]), or a refused scratch column.
+/// meters ([`Limits::refuse_level`]), or a refused scratch column;
+/// [`OperationError::Stopped`] when the time rule stops the count.
 /// A count whose own scratch the memory left refused is no count: the level
 /// is then priced without it, and a refusal is always the level's, named.
 pub(super) fn price_dense_level(

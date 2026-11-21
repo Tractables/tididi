@@ -137,6 +137,61 @@ pub(super) trait CellAction<L: ChildLookup, R: ChildLookup> {
     ) -> Result<usize, OperationError> {
         Ok(0)
     }
+
+    /// Whether the row loop offers the action [`whole_rows`](Self::whole_rows):
+    /// a flag apart from [`whole_row`](Self::whole_row)'s, as [`Emit`] offered
+    /// it compiles to a slower row loop (see the row loop's `f_pairs`).
+    const ROW_RUNS: bool = false;
+
+    /// The level's rows from the first, each written as
+    /// [`whole_row`](Self::whole_row) would write it and charged to the gate
+    /// as the row loop charges it, for an action that writes a run of them
+    /// in one loop: the first row it did not write, the row loop going on
+    /// from there. Offered with [`whole_row`](Self::whole_row).
+    #[inline(always)]
+    fn whole_rows(
+        &mut self,
+        _eng: &Engine,
+        _rows: WholeRows<'_, '_, L, R>,
+    ) -> Result<usize, OperationError> {
+        Ok(0)
+    }
+}
+
+/// What [`CellAction::whole_rows`] reads of a level: [`WholeRow`] for every
+/// f row, each row's pairs read with [`f_row`].
+pub(super) struct WholeRows<'a, 'c, L, R> {
+    pub(super) f_level: &'a TddLevel,
+    pub(super) f_width: usize,
+    pub(super) f_described: Option<usize>,
+    pub(super) f_pairs_scratch: &'a mut Vec<ChildPair>,
+    pub(super) views: (crate::diagram::ChildDecoder, crate::diagram::ChildDecoder),
+    /// The row loop's `DENSE`: no row is skipped by its alive masks.
+    pub(super) dense: bool,
+    pub(super) ctx: &'a CellCtx<'c>,
+    /// The slab; on a grid not open whole ([`OPEN_GRID_MAX_CELLS`]), the
+    /// action opens each of its rows as the row loop would.
+    pub(super) node_idx: &'a mut Vec<u32>,
+    pub(super) whole_grid: bool,
+    pub(super) left: &'a L,
+    pub(super) right: &'a R,
+    pub(super) gate: &'a mut crate::limits::PollGate<'c>,
+}
+
+/// Row `i`'s decoded f pairs: the `k` pairs a row of a described level
+/// (`described`, [`described_rows`] into `scratch`), else the level's own.
+#[inline(always)]
+pub(super) fn f_row<'a>(
+    f_level: &'a TddLevel,
+    described: Option<usize>,
+    scratch: &'a mut Vec<ChildPair>,
+    i: usize,
+    (left, right): (crate::diagram::ChildDecoder, crate::diagram::ChildDecoder),
+) -> &'a [ChildPair] {
+    match described {
+        Some(k) => &scratch[i * k..(i + 1) * k],
+        None => f_level.pairs_view_decoded(i, scratch, left, right),
+    }
 }
 
 /// What [`CellAction::whole_row`] reads of a row: [`CellArgs`] without the
@@ -297,13 +352,36 @@ where
         let base = ctx.output_grid_base;
         open_row(slab, base, base + f_width * g_width);
     }
-    for i in 0..f_width {
+    let mut first_row = 0;
+    if A::ROW_RUNS && !by_rows && !cull_left && !cull_right {
+        first_row = action.whole_rows(
+            eng,
+            WholeRows {
+                f_level,
+                f_width,
+                f_described,
+                f_pairs_scratch: &mut *f_pairs_scratch,
+                views: (left_view, right_view),
+                dense: DENSE,
+                ctx,
+                node_idx: &mut *slab,
+                whole_grid,
+                left,
+                right,
+                gate: &mut poll,
+            },
+        )?;
+    }
+    for i in first_row..f_width {
         let row_base = ctx.output_grid_base + if A::DENSE_SLAB { i * g_width } else { 0 };
         if !whole_grid && !extend_slab(slab, row_base, row_base + g_width) {
             mark_dead(&mut slab[row_base..row_base + g_width]);
         }
         let node_idx = &mut slab[..];
 
+        // Not `f_row`: with it, or with `whole_rows` offered to `Emit`, the
+        // row loop of `Emit` took 0.2% more of one program's instructions,
+        // though neither changes what that loop runs.
         let f_pairs = match f_described {
             Some(k) => &f_pairs_scratch[i * k..(i + 1) * k],
             None => f_level.pairs_view_decoded(i, f_pairs_scratch, left_view, right_view),

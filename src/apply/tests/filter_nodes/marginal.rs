@@ -152,8 +152,9 @@ fn copied_and_carried() -> Vec<Tdd> {
     assert!(compared >= 40, "too few operands compared: {compared}");
     // Both are right at every step, and they are the same diagram at every
     // step, compared on the slots their nodes own. The reduction keeps the carried markers and leaves the cleared
-    // ones clear; the next conjunction or marginalization sets them again.
+    // ones clear; the next conjunction sets them again. A marginalization
+    // sets only those of the parents of the levels it made marginal.
     assert_eq!(shapes_differ, [0; 4]);
-    assert_eq!(markers_differ, [compared, 0, 0, 0]);
+    assert_eq!([markers_differ[0], markers_differ[1], markers_differ[3]], [compared, 0, 0]);
     out
 }

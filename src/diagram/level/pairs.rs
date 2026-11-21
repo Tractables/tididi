@@ -172,6 +172,34 @@ impl<'a> StoredPairs<'a> {
         self.of(&self.nodes()[idx])
     }
 
+    /// The arena pairs of the nodes, node after node, where node `i` holds
+    /// the `k` pairs from node 0's first plus `i * k`. Node words are
+    /// compared in runs with no branch inside a run, so that a level read
+    /// whole for a fit takes its nodes' pairs without decoding each node.
+    pub(crate) fn in_node_order(self, k: usize) -> Option<&'a [ChildPair]> {
+        const RUN: usize = 256;
+        let nodes = self.nodes();
+        let NodeKind::Multi { start, .. } = nodes.first()?.kind() else {
+            return None;
+        };
+        let end = (start as usize).checked_add(nodes.len().checked_mul(k)?)?;
+        // Below 2^31, every start a node gets is one a node word holds.
+        if end > 1 << 31 {
+            return None;
+        }
+        let pairs = self.arena.get(start as usize..end)?;
+        let k = k as u32;
+        let mut at = start;
+        let ordered = nodes.chunks(RUN).all(|run| {
+            run.iter().fold(true, |same, n| {
+                let hit = *n == EncodedNode::multi_pair(at, k);
+                at += k;
+                same & hit
+            })
+        });
+        ordered.then_some(pairs)
+    }
+
     /// Call `f` on every pair of the level once, in no node's order, and
     /// return `true`, if the nodes' ranges cover the whole arena; otherwise
     /// return `false` with `f` called on the nodes' own pairs only.
@@ -800,6 +828,17 @@ impl TddLevel {
         match self.implicit() {
             Some(d) => d.pairs(),
             None => self.pair_census().0 as usize,
+        }
+    }
+
+    /// At least the pairs the level's nodes hold, in constant time: a stored
+    /// level's arena and one pair a node, which may hold its pair in its
+    /// words; an implicit level's off its description.
+    #[inline]
+    pub(crate) fn pairs_bound(&self) -> usize {
+        match self.implicit() {
+            Some(d) => d.pairs(),
+            None => self.pairs.stored_vec_len() + self.nodes().len(),
         }
     }
 

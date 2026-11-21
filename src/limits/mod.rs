@@ -30,7 +30,7 @@ use stop::Quiet;
 pub(crate) use growth::PAIR_ELEM_BYTES;
 pub(crate) use growth::{Charged, Transient};
 
-pub(crate) use poll::PollGate;
+pub(crate) use poll::{PollGate, TimeTests, TIME_TEST_PAIRS};
 
 
 /// A cancellation callback receiving the current measurements and poll time.

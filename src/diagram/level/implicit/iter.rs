@@ -225,6 +225,38 @@ impl ImplicitLevel {
             }).is_ok()
     }
 
+    /// Whether `pairs`, node after node, are the pairs of this description,
+    /// `zero` node 0's, where every slot fits a stored side
+    /// ([`slots_fit_sides`](Self::slots_fit_sides)): compared a stretch of
+    /// the cursor at a time, with no branch inside a stretch.
+    pub(super) fn holds_in_order(&self, zero: &[ChildPair], pairs: &[ChildPair]) -> bool {
+        let k = zero.len();
+        if k == 0 || pairs.len() != self.nodes * k {
+            return false;
+        }
+        let first = (self.first.0 as u32, self.first.1 as u32);
+        let mut cursor = self.cursor();
+        let mut i = 0;
+        while i < self.nodes {
+            cursor.first_of(i);
+            let (from, end) = (i - cursor.start, (cursor.start + cursor.places).min(self.nodes));
+            let base = (cursor.base.0.wrapping_sub(first.0), cursor.base.1.wrapping_sub(first.1));
+            let offsets = &cursor.offsets[from..end - cursor.start];
+            let same = pairs[i * k..end * k].chunks_exact(k).zip(offsets).fold(true, |same, (node, &(l, r))| {
+                let by = (base.0.wrapping_add(l), base.1.wrapping_add(r));
+                node.iter().zip(zero).fold(same, |same, (p, z)| {
+                    same & (p.left.raw() == z.left.raw().wrapping_add(by.0))
+                        & (p.right.raw() == z.right.raw().wrapping_add(by.1))
+                })
+            });
+            if !same {
+                return false;
+            }
+            i = end;
+        }
+        true
+    }
+
 }
 
 /// The most pairs [`NodeChunks::fill`] writes at a time, unless a node
@@ -646,7 +678,10 @@ impl<'a> NodeCursor<'a> {
     /// a digit its carry reaches, and one behind read off its digits.
     #[inline(never)]
     fn seek(&mut self, i: usize) -> (i64, i64) {
-        let run = i / self.cycle;
+        // The next run, where a walk in order steps, is found without a
+        // division: a walk of a few nodes a run seeks at every run.
+        let ahead = i.wrapping_sub((self.run + 1) * self.cycle);
+        let run = if ahead < self.cycle { self.run + 1 } else { i / self.cycle };
         if run != self.run {
             if run == self.run + 1 {
                 self.runs.step_counted(self.slow, run);
@@ -658,7 +693,10 @@ impl<'a> NodeCursor<'a> {
             self.run = run;
         }
         let within = i - run * self.cycle;
-        let skip = within - within % self.span;
+        // A stretch is `RUN_PAIRS` places of a lead digit or a whole run of
+        // at most that many.
+        let skip = within & !(RUN_PAIRS - 1);
+        debug_assert_eq!(skip, within - within % self.span);
         self.start = run * self.cycle + skip;
         self.places = self.span.min(self.cycle - skip);
         let (l, r) = self.runs.at;

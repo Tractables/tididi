@@ -403,11 +403,16 @@ impl ImplicitLevel {
         // A level of one pair a node, its pairs inline, compares its nodes'
         // words in runs; any other, or one where they differ, reads them
         // node by node.
-        if (per_node == 1 && fitted.holds_inline(level.nodes.stored())) || fitted.holds(shifted, |i| Some(stored.of_idx(i).iter().map(slots))) {
-            Ok(fitted)
-        } else {
-            Err(None)
-        }
+        let held = (per_node == 1 && fitted.holds_inline(level.nodes.stored()))
+            || if fitted.slots_fit_sides() {
+                match stored.in_node_order(per_node) {
+                    Some(arena) => fitted.holds_in_order(first_pairs, arena),
+                    None => fitted.holds_shifted(first_pairs, |i| stored.of_idx(i)),
+                }
+            } else {
+                fitted.holds(shifted, |i| Some(stored.of_idx(i).iter().map(slots)))
+            };
+        if held { Ok(fitted) } else { Err(None) }
     }
 
     /// The description of the nodes `words`, two or more, each holding one
@@ -595,6 +600,26 @@ impl ImplicitLevel {
         (0..self.nodes).all(|i| {
             let at = cursor.first_of(i);
             node(i).is_some_and(|pairs| pairs.len() == self.per_node && pairs.zip(slots(at)).all(|(s, p)| s == p))
+        })
+    }
+
+    /// [`holds`](Self::holds) on a description whose every slot fits a
+    /// stored side ([`slots_fit_sides`](Self::slots_fit_sides)), node 0's
+    /// pairs `zero` and node `i`'s `node(i)`. Every slot is then below
+    /// 2^31, so a word equals node 0's shifted where the wrapping u32 sum
+    /// does, and a node's words are compared without a branch.
+    fn holds_shifted<'a>(&self, zero: &[ChildPair], mut node: impl FnMut(usize) -> &'a [ChildPair]) -> bool {
+        let mut cursor = self.cursor();
+        let first = (self.first.0 as u32, self.first.1 as u32);
+        (1..self.nodes).all(|i| {
+            let at = cursor.first_of(i);
+            let by = ((at.0 as u32).wrapping_sub(first.0), (at.1 as u32).wrapping_sub(first.1));
+            let pairs = node(i);
+            pairs.len() == zero.len()
+                && pairs.iter().zip(zero).fold(true, |same, (p, z)| {
+                    same & (p.left.raw() == z.left.raw().wrapping_add(by.0))
+                        & (p.right.raw() == z.right.raw().wrapping_add(by.1))
+                })
         })
     }
 

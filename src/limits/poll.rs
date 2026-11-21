@@ -33,6 +33,39 @@ pub(super) const CLOCK_POLLS: u32 = 64;
 /// polls that between them charged less.
 pub(super) const CLOCK_POLL_WORK: u64 = 1 << 16;
 
+/// Pairs a walk reads between two time tests ([`Limits::check_time`]) where
+/// it is charged by nodes, or by nothing: one node can hold hundreds of
+/// millions of pairs.
+pub(crate) const TIME_TEST_PAIRS: usize = 1 << 16;
+
+/// A walk's time tests: one [`Limits::check_time`] each [`TIME_TEST_PAIRS`]
+/// steps, where [`Limits::timed`] held when the walk began, and none
+/// otherwise.
+pub(crate) struct TimeTests<'a> {
+    lim: Option<&'a Limits>,
+    steps: usize,
+}
+
+impl<'a> TimeTests<'a> {
+    pub(crate) fn new(lim: Option<&'a Limits>) -> Self {
+        Self { lim: lim.filter(|lim| lim.timed()), steps: 0 }
+    }
+
+    /// Count `steps` more, and test the time once they reach
+    /// [`TIME_TEST_PAIRS`].
+    #[inline]
+    pub(crate) fn after(&mut self, steps: usize) -> Result<(), OperationError> {
+        if let Some(lim) = self.lim {
+            self.steps += steps;
+            if self.steps >= TIME_TEST_PAIRS {
+                self.steps = 0;
+                lim.check_time()?;
+            }
+        }
+        Ok(())
+    }
+}
+
 /// The last clock reading a cancellation test took, and how many more tests
 /// may answer from it ([`CLOCK_POLLS`], [`CLOCK_POLL_WORK`]).
 #[derive(Clone, Copy, Debug)]
@@ -233,6 +266,41 @@ impl Limits {
     /// the stop callback decides to stop. The units are charged either way.
     pub fn poll_host_work(&self, units: u64) -> Result<(), OperationError> {
         self.poll_now(units)
+    }
+
+    /// Whether a stop rule reads the time or a stop callback is installed:
+    /// read once before a stretch of work that tests the time inside it
+    /// ([`check_time`](Self::check_time)), so that a run with neither takes
+    /// the stretch's untested loop.
+    #[inline]
+    pub(crate) fn timed(&self) -> bool {
+        let stop = self.stop.get();
+        let timed = |at: Option<StopAt>| at.is_some_and(|at| at.time().is_some());
+        timed(stop.unconditional)
+            || timed(stop.after_pairs.map(|(_, at)| at))
+            || self.stop_callback.borrow().is_some()
+    }
+
+    /// Test cancellation with the clock read afresh, and charge nothing: a
+    /// stop point inside a stretch of work whose units a poll after it
+    /// charges, where [`timed`](Self::timed) holds. A work-unit rule sees the
+    /// units the last poll saw.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn check_time(&self) -> Result<(), OperationError> {
+        self.forget_reading();
+        if self.should_stop_now() {
+            return Err(OperationError::Stopped);
+        }
+        Ok(())
+    }
+
+    /// Drop the last clock reading, so that the next test reads the clock:
+    /// after a stretch of work no test cuts, which the polls' units can
+    /// undercount by seconds.
+    #[inline]
+    pub(crate) fn forget_reading(&self) {
+        self.clock.set(ClockReading::NONE);
     }
 
     /// Test cancellation now and report it as an error.

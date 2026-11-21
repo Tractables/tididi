@@ -224,3 +224,30 @@ fn a_callback_sees_a_fresh_instant_every_poll() {
     assert_eq!(seen.len(), 4);
     assert!(seen.iter().all(|&t| t >= start));
 }
+
+/// A time test reads the clock afresh where a poll answers from the last
+/// reading, a forgotten reading makes the next poll read it, and a
+/// work-unit rule alone leaves a walk untimed.
+#[test]
+fn a_time_test_reads_the_clock_afresh() {
+    let deadline = Instant::now();
+    let before = deadline - Duration::from_secs(1);
+    let stale = |lim: &Limits| {
+        lim.clock.set(ClockReading { at: Some(before), polls_left: CLOCK_POLLS, work_at: lim.work_units() });
+    };
+    let lim = Limits::new();
+    let _prior = lim.install(LimitConfig::none().with_deadline(Some(deadline)));
+    assert!(lim.timed());
+    stale(&lim);
+    assert!(!lim.should_stop(), "answered from a reading before the deadline");
+    assert_eq!(lim.check_time(), Err(OperationError::Stopped));
+    stale(&lim);
+    lim.forget_reading();
+    assert!(lim.should_stop());
+
+    let lim = Limits::new();
+    let at = lim.work_units() + 10;
+    let rules = StopRules::default().with_unconditional(Some(StopAt::WorkUnits(at)));
+    let _prior = lim.install(LimitConfig::none().with_stop_rules(rules));
+    assert!(!lim.timed());
+}
