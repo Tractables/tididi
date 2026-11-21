@@ -42,13 +42,11 @@ impl Engine {
         let _op = self.limits().enter()?;
         f.require_structure()?;
         g.require_structure()?;
-        let [f, g] = crate::apply::extend::on_one(self, [Cow::Borrowed(f), Cow::Borrowed(g)])?;
-        if f.is_zero() || std::ptr::eq(&*f, &*g) {
+        crate::apply::extend::refuse_other_homes([f, g])?;
+        if f.is_zero() || std::ptr::eq(f, g) {
             return Ok(true);
         }
-        let f = crate::apply::extend::into_owned(self, f)?;
-        let g = crate::apply::extend::into_owned(self, g)?;
-        Ok(self.and(f, self.negate(g)?)?.is_zero())
+        Ok(self.and(f.try_clone_on(self)?, self.negate(g.try_clone_on(self)?)?)?.is_zero())
     }
 
     /// Run [`Tdd::support`](crate::Tdd::support) using this batch's scratch and resource limits.
