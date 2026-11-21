@@ -414,14 +414,14 @@ pub(super) fn take_pass_level(
     match (passed_left, grid) {
         (true, Some(Grid::Lists)) if sparse => rows.emit_sparse::<true>(lim, level, &mut list, &columns, &inverse)?,
         (false, Some(Grid::Lists)) if sparse => rows.emit_sparse::<false>(lim, level, &mut list, &columns, &inverse)?,
-        (true, None) => rows.emit::<true, _>(level, &mut map, |i| { let x = fixed(i) as usize; move |k| CONJOIN_GRID[k as usize][x] })?,
-        (false, None) => rows.emit::<false, _>(level, &mut map, |i| { let x = fixed(i) as usize; move |k| CONJOIN_GRID[k as usize][x] })?,
-        (true, Some(Grid::Cells)) => rows.emit::<true, _>(level, &mut map, |i| { let b = base(i); move |k| (b + k as usize * sk) as u32 })?,
-        (false, Some(Grid::Cells)) => rows.emit::<false, _>(level, &mut map, |i| { let b = base(i); move |k| (b + k as usize * sk) as u32 })?,
-        (true, Some(Grid::Slab(slab))) => rows.emit::<true, _>(level, &mut map, |i| { let b = base(i); move |k| unsafe { *slab.get_unchecked(b + k as usize * sk) } })?,
-        (false, Some(Grid::Slab(slab))) => rows.emit::<false, _>(level, &mut map, |i| { let b = base(i); move |k| unsafe { *slab.get_unchecked(b + k as usize * sk) } })?,
-        (true, Some(Grid::Lists)) => rows.emit::<true, _>(level, &mut map, |i| { let row = &cols[i * stride..]; move |k| unsafe { *row.get_unchecked(k as usize) } })?,
-        (false, Some(Grid::Lists)) => rows.emit::<false, _>(level, &mut map, |i| { let row = &cols[i * stride..]; move |k| unsafe { *row.get_unchecked(k as usize) } })?,
+        (true, None) => rows.emit::<true, true, _>(level, &mut map, |i| { let x = fixed(i) as usize; move |k| CONJOIN_GRID[k as usize][x] })?,
+        (false, None) => rows.emit::<false, true, _>(level, &mut map, |i| { let x = fixed(i) as usize; move |k| CONJOIN_GRID[k as usize][x] })?,
+        (true, Some(Grid::Cells)) => rows.emit::<true, false, _>(level, &mut map, |i| { let b = base(i); move |k| (b + k as usize * sk) as u32 })?,
+        (false, Some(Grid::Cells)) => rows.emit::<false, false, _>(level, &mut map, |i| { let b = base(i); move |k| (b + k as usize * sk) as u32 })?,
+        (true, Some(Grid::Slab(slab))) => rows.emit::<true, true, _>(level, &mut map, |i| { let b = base(i); move |k| unsafe { *slab.get_unchecked(b + k as usize * sk) } })?,
+        (false, Some(Grid::Slab(slab))) => rows.emit::<false, true, _>(level, &mut map, |i| { let b = base(i); move |k| unsafe { *slab.get_unchecked(b + k as usize * sk) } })?,
+        (true, Some(Grid::Lists)) => rows.emit::<true, true, _>(level, &mut map, |i| { let row = &cols[i * stride..]; move |k| unsafe { *row.get_unchecked(k as usize) } })?,
+        (false, Some(Grid::Lists)) => rows.emit::<false, true, _>(level, &mut map, |i| { let row = &cols[i * stride..]; move |k| unsafe { *row.get_unchecked(k as usize) } })?,
     }
     let (mut gate, inline) = (rows.gate, rows.inline);
     gate.flush()?;
@@ -460,9 +460,10 @@ struct PassRows<'a> {
 impl PassRows<'_> {
     /// Emit every cell into `level` in cell order, `f`'s node major, and
     /// the output node of each cell, or `NO_PRODUCT`, into `map`; `passed(i)`
-    /// maps the passed child's node `c` to its product with passing node `i`.
+    /// maps the passed child's node `c` to its product with passing node `i`,
+    /// which is `NO_PRODUCT` only where `DEAD`.
     #[inline(always)]
-    fn emit<const LEFT: bool, P: Fn(u32) -> u32>(
+    fn emit<const LEFT: bool, const DEAD: bool, P: Fn(u32) -> u32>(
         &mut self,
         level: &mut TddLevel,
         map: &mut Vec<u32>,
@@ -475,7 +476,7 @@ impl PassRows<'_> {
                     let row = passed(i);
                     carrier.try_for_each_node::<OperationError>(0..self.width, |_, pairs| {
                         self.gate.poll(pairs.len() as u64)?;
-                        self.cell::<LEFT>(level, map, pairs, i, &row)
+                        self.cell::<LEFT, DEAD>(level, map, pairs, i, &row)
                     })?;
                 }
                 Ok(())
@@ -483,14 +484,14 @@ impl PassRows<'_> {
             false => carrier.try_for_each_node::<OperationError>(0..self.width, |_, pairs| {
                 self.gate.poll((pairs.len() * self.passing) as u64)?;
                 let ([pair], None) = (pairs, self.literals) else {
-                    return (0..self.passing).try_for_each(|i| self.cell::<LEFT>(level, map, pairs, i, passed(i)));
+                    return (0..self.passing).try_for_each(|i| self.cell::<LEFT, DEAD>(level, map, pairs, i, passed(i)));
                 };
                 let c = if LEFT { pair.left.raw() } else { pair.right.raw() };
                 let nodes = level.nodes.stored_mut();
                 let before = nodes.len();
                 map.extend((0..self.passing).map(|i| {
                     let product = passed(i)(c);
-                    if product == NO_PRODUCT {
+                    if DEAD && product == NO_PRODUCT {
                         return NO_PRODUCT;
                     }
                     nodes.push(EncodedNode::inline(match LEFT {
@@ -600,7 +601,7 @@ impl PassRows<'_> {
 
     /// The cell of passing node `i` with the carrier node of `pairs`.
     #[inline(always)]
-    fn cell<const LEFT: bool>(
+    fn cell<const LEFT: bool, const DEAD: bool>(
         &mut self,
         level: &mut TddLevel,
         map: &mut Vec<u32>,
@@ -614,7 +615,7 @@ impl PassRows<'_> {
         }
         if let [pair] = pairs {
             let product = passed(if LEFT { pair.left.raw() } else { pair.right.raw() });
-            if product == NO_PRODUCT {
+            if DEAD && product == NO_PRODUCT {
                 map.push(NO_PRODUCT);
             } else {
                 map.push(level.nodes.stored().len() as u32);
@@ -628,6 +629,14 @@ impl PassRows<'_> {
         }
         let out = level.pairs.stored_mut();
         let start = out.len();
+        if !DEAD {
+            out.extend(pairs.iter().map(|pair| match LEFT {
+                true => ChildPair::new(NodeIdx(passed(pair.left.raw())), pair.right),
+                false => ChildPair::new(pair.left, NodeIdx(passed(pair.right.raw()))),
+            }));
+            map.push(level.nodes.stored().len() as u32);
+            return level.try_push_multi_by_range(self.width_cap, start, pairs.len());
+        }
         // The level's pairs were reserved for every cell, so the cell's fit;
         // they are written through a local count rather than `Vec::push`,
         // whose length and pointer the loop would reload at each pair.
