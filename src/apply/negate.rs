@@ -192,7 +192,7 @@ pub(crate) fn complement_on(
         },
         canonical,
         closed,
-        (&mut filled, &mut twinned),
+        (&mut filled, &mut twinned, owed.loose()),
     )?;
     let owed = at_root.then(|| Owed::of(&vtree, owed, &twinned, &filled, &levels));
     let (result, old) = complement_full_at_root(
@@ -484,7 +484,8 @@ fn complement_full_at_root(
 /// fill is emitted in that same form. `filled[t]` is set for each level `t`
 /// it adds a node to, as the level's last, and `twinned` lists each level
 /// of an uncertified operand whose fill holds every cell of two or more
-/// nodes of an internal child. Each level it visits is left its live pairs
+/// nodes of an internal child that `loose` does not rule out (any, where
+/// it is `None`). Each level it visits is left its live pairs
 /// for the close that ends the negation
 /// ([`TddLevel::leave_live_pairs`]), off the pairs the cover counts. A
 /// borrowed operand's levels are read in `target`'s source and each copied
@@ -497,7 +498,7 @@ pub(crate) fn expand_full(
     target: &mut Target<'_, '_>,
     canonical: bool,
     closed: bool,
-    (filled, twinned): (&mut [bool], &mut Vec<crate::vtree::VtreeIdx>),
+    (filled, twinned, loose): (&mut [bool], &mut Vec<crate::vtree::VtreeIdx>, Option<&[u32]>),
 ) -> Result<(), OperationError> {
     let scratch = &eng.scratch.negate;
     let mut common = Vec::new();
@@ -614,7 +615,8 @@ pub(crate) fn expand_full(
         );
         if !cells.is_empty() {
             charge_scan(eng, lefts, rights)?;
-            let internal = [!leaf.left_one, !leaf.right_one];
+            let may_be_loose = |c: crate::vtree::VtreeIdx, leaf: bool| !leaf && loose.is_none_or(|l| l.contains(&c.0));
+            let internal = [may_be_loose(left, leaf.left_one), may_be_loose(right, leaf.right_one)];
             if !canonical && cover.unnamed_twins(eng.limits(), cells, internal, &mut common)? {
                 eng.limits().try_push(twinned, t)?;
             }
