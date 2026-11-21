@@ -413,7 +413,7 @@ pub(super) fn open_level_arenas(
 /// a description ([`run_level_rows_single`]).
 fn run_row_loop(
     eng: &Engine,
-    (route, lookups, single_pair, pairs, relay): (Route, PlainLookups, bool, Option<&liveness::PairTable>, bool),
+    (route, lookups, single_pair, relay): (Route, PlainLookups, bool, bool),
     words: Option<(&mut WordScratch, Sides<usize>)>,
     (rows, scratch): (RowLoop<'_>, RowScratch<'_>),
     level: &mut TddLevel,
@@ -421,13 +421,6 @@ fn run_row_loop(
     stream_state: &mut Option<StreamLevelState>,
 ) -> Result<(), OperationError> {
     let cell_ctx = rows.ctx;
-    if let Some(table) = pairs {
-        debug_assert!(
-            route == Route::Dense,
-            "only a masked level is read by pairs"
-        );
-        return run_level_rows_pairs(eng, rows, scratch, table, level, lookups);
-    }
     if let Some((words, f_rows)) = words {
         if let Route::Stream { marginal_children } = route {
             let state = stream_state
@@ -1185,28 +1178,31 @@ pub(super) fn build_level_dense(
             });
         // Nothing folds the level's nodes into counts.
         let relay = stream_state.is_none();
-        run_row_loop(
-            eng,
-            (route, lookups, single_pair, pair_table, relay),
-            words.then_some((&mut *run.words, f_rows)),
-            (
-                rows,
-                RowScratch {
-                    f_pairs: run.f_pairs_scratch,
-                    g_pairs: run.g_pairs_scratch,
-                    node_idx: run.products.arena.slab_vec(),
+        let scratch = RowScratch {
+            f_pairs: run.f_pairs_scratch,
+            g_pairs: run.g_pairs_scratch,
+            node_idx: run.products.arena.slab_vec(),
+        };
+        if let Some(table) = pair_table {
+            debug_assert!(route == Route::Dense, "only a masked level is read by pairs");
+            run_level_rows_pairs(eng, rows, scratch, table, level, lookups)?;
+        } else {
+            run_row_loop(
+                eng,
+                (route, lookups, single_pair, relay),
+                words.then_some((&mut *run.words, f_rows)),
+                (rows, scratch),
+                level,
+                StreamEnv {
+                    left_idx: li,
+                    right_idx: ri,
+                    vtree: sweep.vtree,
+                    cache: run.stream_cache,
+                    ws: sweep.ws,
                 },
-            ),
-            level,
-            StreamEnv {
-                left_idx: li,
-                right_idx: ri,
-                vtree: sweep.vtree,
-                cache: run.stream_cache,
-                ws: sweep.ws,
-            },
-            &mut stream_state,
-        )?;
+                &mut stream_state,
+            )?;
+        }
     }
 
     // Per-level tail: stream commit, live_counts, grid tag, shrink,

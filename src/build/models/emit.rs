@@ -93,7 +93,7 @@ pub(super) fn fill(
     // The levels are canonical as built: seat them with nothing to reduce.
     let levels = emit.assembly.levels_mut();
     let mut tdd = crate::build::seat_canonical(eng, vtree, std::mem::take(levels), output);
-    crate::reduce::settle(eng, &mut tdd, &mut seed)?;
+    crate::reduce::settle(eng, &mut tdd, &mut seed, None)?;
     Ok(tdd)
 }
 
