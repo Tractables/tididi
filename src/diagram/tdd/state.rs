@@ -629,6 +629,20 @@ impl LooseLevels {
         self.unnamed.clear();
     }
 
+    /// Whether a level may be counted.
+    #[inline]
+    pub(crate) fn has_counts(&self) -> bool {
+        !self.unnamed.is_empty()
+    }
+
+    /// Forget what `level` holds, keeping it listed if it is.
+    #[inline]
+    pub(crate) fn forget_count(&mut self, level: u32) {
+        if let Some(held) = self.unnamed.get_mut(level as usize) {
+            *held = None;
+        }
+    }
+
     /// A copy under the operation's allocation budget.
     fn clone_on(&self, lim: &crate::limits::Limits) -> Result<Self, crate::OperationError> {
         Ok(Self { bits: lim.try_to_vec(&self.bits)?, len: self.len, unnamed: lim.try_to_vec(&self.unnamed)? })

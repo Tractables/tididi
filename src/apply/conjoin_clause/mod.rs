@@ -281,7 +281,7 @@ fn rebuild_along_spine(
     work.on_spine.cover(lim, num_nodes)?;
     build_clause_spine(lim, vtree, clause, &mut work.on_spine, &mut work.spine_internal)?;
     work.need_dt.cover(lim, num_nodes)?;
-    propagate_need_dt(vtree, &work.spine_internal, &work.on_spine, &mut work.need_dt);
+    let top_fork = propagate_need_dt(vtree, &work.spine_internal, &work.on_spine, &mut work.need_dt);
 
     // Take ownership of f's levels: off-spine levels pass through as the
     // identity, spine internal levels are rebuilt in place below, and f is
@@ -345,8 +345,14 @@ fn rebuild_along_spine(
         rebuild_spine_level(eng, t, &vtree, &mut levels, &mut tables)?;
         out_nodes += levels[t.idx()].slot_count() as u64;
         lim.level_done(out_nodes)?;
-        if let Some(loose) = loose.as_mut() {
-            list_rebuilt(loose, &vtree, t, tables.on_spine, tables.need_dt, tables.dropped);
+        if tables.dropped
+            && let Some(loose) = loose.as_mut()
+        {
+            let (left, right) = vtree.children(t);
+            let off = if tables.on_spine[left.idx()] { right } else { left };
+            if !vtree.node(off).is_leaf() {
+                loose.insert(off.0);
+            }
         }
     }
     // A right `d` half skipped beside a left node with no `c` half is mostly
@@ -356,6 +362,9 @@ fn rebuild_along_spine(
         .top
         .map(|(t, [left, right], pairs)| (t, [left != 0, right * 4 >= pairs && right != 0]))
         .filter(|&(_, sides)| sides != [false; 2]);
+    if let Some(loose) = loose.as_mut() {
+        list_rebuilt(loose, &vtree, &work.spine_internal, top_fork);
+    }
 
     // Output: conjunction of f's output with c_t at the root, which is on
     // every spine, so its `cd_map` block is filled.
@@ -418,39 +427,38 @@ fn rebuild_along_spine(
     Ok(out)
 }
 
-/// List the levels the rebuild of spine level `t` may leave holding a node
-/// no pair of their parent level names, given whether it dropped a pair of
-/// the other child ([`rebuild_spine_level`]): the root, which may hold
-/// products the output is not, and each internal child that may. A rebuilt
+/// List the levels a clause's rebuild may leave holding a node no pair of
+/// their parent level names, beside the off-spine children of the levels
+/// that dropped a pair ([`ClauseTables::dropped`]), which the rebuild lists:
+/// the root, which may hold products the output is not, and the internal
+/// children of the topmost level with both children on the spine. A rebuilt
 /// child's nodes are its nodes' products, each named where the node it came
 /// from was, since a node other than false has a `c_t` or a `d_t` product and
 /// a pair keeps the product of either that the parent computes; but under a
 /// level with both children relevant and no `d_t`, the type-3 and
 /// `(c_L, d_R)` pairs name a `d_t` product only where the other side's `c_t`
-/// is not false. So a rebuilt child is listed under such a level or where it
-/// was listed, its count forgotten; the other child keeps its nodes and,
-/// unless a pair naming one was dropped, the nodes named, so its entry and
-/// count hold.
+/// is not false, and only the topmost such level computes no `d_t`
+/// ([`propagate_need_dt`]). Every other rebuilt level keeps its entry, its
+/// count forgotten; an off-spine level keeps its nodes and, unless a pair
+/// naming one was dropped, the nodes named, so its entry and count hold.
 fn list_rebuilt(
     loose: &mut crate::diagram::LooseLevels,
     vtree: &crate::vtree::Vtree,
-    t: VtreeIdx,
-    on_spine: &[bool],
-    need_dt: &[bool],
-    dropped: bool,
+    spine_internal: &[VtreeIdx],
+    top_fork: Option<VtreeIdx>,
 ) {
-    if t == vtree.root() {
-        loose.insert(t.0);
+    if loose.has_counts() {
+        for &t in spine_internal {
+            loose.forget_count(t.0);
+        }
     }
-    let (left, right) = vtree.children(t);
-    let fork = on_spine[left.idx()] && on_spine[right.idx()] && !need_dt[t.idx()];
-    for c in [left, right] {
-        let listed = match on_spine[c.idx()] {
-            true => fork || loose.contains(c.0),
-            false => dropped,
-        };
-        if listed && !vtree.node(c).is_leaf() {
-            loose.insert(c.0);
+    loose.insert(vtree.root().0);
+    if let Some(p) = top_fork {
+        let (left, right) = vtree.children(p);
+        for c in [left, right] {
+            if !vtree.node(c).is_leaf() {
+                loose.insert(c.0);
+            }
         }
     }
 }
