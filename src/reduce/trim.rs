@@ -74,14 +74,21 @@ impl Engine {
 /// labels. With a summed-out level `dropped` holds at most the caller's seed
 /// and a diagram whose summed levels are regions or leaves is trimmed by
 /// detection instead; the smooth form, with an internal summed level, stays.
-/// Elsewhere a false `f` has its levels emptied.
+/// Elsewhere a false `f` has its levels emptied. `marginal` is whether `f`
+/// has a marginal level, where the caller knows it: the close before a
+/// settle forgets the cached answer, and reading it scans every level.
 ///
 /// # Errors
 ///
 /// As [`Tdd::trim`]; `f` is then as it was.
 #[inline]
-pub(crate) fn settle(eng: &Engine, f: &mut Tdd, dropped: &mut Vec<VtreeIdx>) -> Result<(), OperationError> {
-    if dropped.is_empty() && !f.has_marginal_level() {
+pub(crate) fn settle(
+    eng: &Engine,
+    f: &mut Tdd,
+    dropped: &mut Vec<VtreeIdx>,
+    marginal: Option<bool>,
+) -> Result<(), OperationError> {
+    if !f.vtree.on_home() || dropped.is_empty() && !marginal.unwrap_or_else(|| f.has_marginal_level()) {
         close_constant(eng, f);
         return Ok(());
     }

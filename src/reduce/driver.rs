@@ -176,7 +176,7 @@ impl<'a> Reduction<'a> {
         }
         #[cfg(debug_assertions)]
         let dropped = oracle::at_entry(self.tdd, &self.recorded, seed, &self.named_one);
-        super::trim::settle(self.eng, self.tdd, &mut self.recorded)?;
+        super::trim::settle(self.eng, self.tdd, &mut self.recorded, self.marginal)?;
         #[cfg(debug_assertions)]
         oracle::at_exit(self.tdd, dropped.as_deref(), &self.named_one);
         Ok(())
