@@ -243,7 +243,9 @@ fn a_summed_out_conjunction_refused_at_each_reserve_gives_the_operands_back() {
     let mut g = build(&eng, &vtree, &[&[2, 5], &[-4, 6], &[7, 8, -2], &[1, -6]]);
     eng.marginalize_levels(&mut g, &[vtree.children(vtree.root()).0]).unwrap();
     assert!(g.has_marginal_level());
-    let expected = eng.and(f.clone(), g.clone()).unwrap();
+    // `equivalent` refuses a summed-out level: the counts stand in for it.
+    let count = |t: &Tdd| Engine::new().model_count(t).unwrap();
+    let expected = count(&eng.and(f.clone(), g.clone()).unwrap());
     let mut refusals = 0;
     for n in 0.. {
         eng.refuse_nth_reserve(n);
@@ -252,10 +254,10 @@ fn a_summed_out_conjunction_refused_at_each_reserve_gives_the_operands_back() {
         eng.limits().grant_every_reserve();
         match outcome {
             Ok(out) if pending => {
-                assert!(eng.equivalent(&out, &expected).unwrap());
+                assert_eq!(count(&out), expected);
                 break;
             }
-            Ok(out) => assert!(eng.equivalent(&out, &expected).unwrap(), "granted at {n}: a different function"),
+            Ok(out) => assert_eq!(count(&out), expected, "granted at {n}: another count"),
             Err(refused) => {
                 assert!(same(&refused.f, &f) && same(&refused.g, &g), "refused at {n}: an operand changed");
                 refusals += 1;
