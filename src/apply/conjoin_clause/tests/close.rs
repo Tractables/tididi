@@ -117,3 +117,28 @@ fn clause_results_list_their_loose_levels() {
     }
     assert_all(failed);
 }
+
+/// Clauses conjoined on a home's projections, which widen at each new
+/// variable, keep their loose levels known: on a small projection the root
+/// alone is half the levels listed.
+#[test]
+fn clauses_on_projections_keep_their_loose_levels() {
+    let eng = Engine::new();
+    let mut rng = crate::test_helpers::Lcg::new(0x1005f);
+    let mut failed = Vec::new();
+    for seed in 0..40u64 {
+        let home = Home::new(Vtree::random(10, seed));
+        let clause = |rng: &mut crate::test_helpers::Lcg| -> Vec<i32> {
+            (0..3).map(|_| (1 + rng.below(10) as i32) * if rng.below(2) == 0 { 1 } else { -1 }).collect()
+        };
+        let mut f = eng.clause(home.vtree(), clause(&mut rng)).unwrap();
+        for i in 0..8 {
+            f = eng.and_clause(f, &clause(&mut rng)).unwrap();
+            if f.dirty.loose().is_none() {
+                failed.push(format!("seed {seed}, clause {i}: no loose levels known"));
+            }
+            failed.extend(check_loose_levels(&f).err().map(|e| format!("seed {seed}, clause {i}: {e}")));
+        }
+    }
+    assert_all(failed);
+}

@@ -398,11 +398,14 @@ fn rebuild_along_spine(
             none.clear();
             Some(none)
         }
-        // Once half the internal levels are listed the list spares a reader
-        // little, and a run of clauses would list every spine again.
-        false => carried_loose.filter(|loose| loose.len() < vtree.internal_bottomup_slice().len() / 2),
+        false => carried_loose,
     };
-    let track = loose.is_some();
+    // Once half the internal levels are listed, finding the levels whose
+    // pairs the rebuild dropped spares a reader little: every level that may
+    // drop one is listed as if it did. Forgetting the list instead left a
+    // diagram on a small projection, whose root alone is half its levels,
+    // and every conjunction with it, with no loose levels known.
+    let track = loose.as_ref().is_some_and(|loose| loose.len() < vtree.internal_bottomup_slice().len() / 2);
     if track {
         lim.reserve(&mut work.dropped_at, work.spine_internal.len())?;
     }
@@ -435,7 +438,8 @@ fn rebuild_along_spine(
         .map(|(t, [left, right], pairs)| (t, [left != 0, right * 4 >= pairs && right != 0]))
         .filter(|&(_, sides)| sides != [false; 2]);
     if let Some(loose) = loose.as_mut() {
-        list_rebuilt(loose, &vtree, &work.spine_internal, &work.on_spine, &work.dropped_at, top_fork);
+        let dropped = track.then_some(&work.dropped_at[..]);
+        list_rebuilt(loose, &vtree, (&work.spine_internal, &work.on_spine, &work.need_dt), dropped, top_fork);
     }
 
     // Output: conjunction of f's output with c_t at the root, which is on
@@ -502,7 +506,9 @@ fn rebuild_along_spine(
 
 /// List the levels a clause's rebuild may leave holding a node no pair of
 /// their parent level names: the off-spine children of the levels in
-/// `dropped_at`, the root, which may hold products the output is not, and
+/// `dropped_at` (untracked, of every level with one child on the spine and
+/// no `d_t`, whose rebuild may drop a pair), the root, which may hold
+/// products the output is not, and
 /// the internal children of the topmost level with both children on the
 /// spine ([`build_clause_spine`]). A rebuilt child's nodes are its nodes' products, each named where
 /// the node it came from was, since a node other than false has a `c_t` or a
@@ -520,12 +526,16 @@ fn rebuild_along_spine(
 fn list_rebuilt(
     loose: &mut crate::diagram::LooseLevels,
     vtree: &crate::vtree::Vtree,
-    spine_internal: &[VtreeIdx],
-    on_spine: &[bool],
-    dropped_at: &[VtreeIdx],
+    (spine_internal, on_spine, need_dt): (&[VtreeIdx], &[bool], &[bool]),
+    dropped_at: Option<&[VtreeIdx]>,
     top_fork: Option<VtreeIdx>,
 ) {
-    for &t in dropped_at {
+    let may_drop = |t: VtreeIdx| {
+        let (left, right) = vtree.children(t);
+        on_spine[left.idx()] != on_spine[right.idx()] && !need_dt[t.idx()]
+    };
+    let untracked = dropped_at.is_none();
+    for &t in dropped_at.unwrap_or(spine_internal).iter().filter(|&&t| !untracked || may_drop(t)) {
         let (left, right) = vtree.children(t);
         let off = if on_spine[left.idx()] { right } else { left };
         if !vtree.node(off).is_leaf() {
