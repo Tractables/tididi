@@ -360,6 +360,9 @@ fn rebuild_along_spine(
     // left with empty levels.
     let out_vtree = f.output.vtree;
     let out_local_in = f.output.local;
+    // The walk changes no level's kind. Only a known summary is carried: a
+    // caller that never reads it would pay a scan of every level per clause.
+    let first_marginal = f.levels.known_first_marginal();
     let mut levels = std::mem::take(&mut f.levels).into_vec();
     // The accumulator's marginal values move to the output along with its levels:
     // a clause carries none of its own, and the output is nothing but the
@@ -462,6 +465,9 @@ fn rebuild_along_spine(
     match loose {
         Some(loose) if exact => out.dirty.set_loose_exact(loose),
         loose => out.dirty.set_loose(loose),
+    }
+    if let Some(first) = first_marginal {
+        out.levels.keep_first_marginal(first);
     }
     #[cfg(debug_assertions)]
     {

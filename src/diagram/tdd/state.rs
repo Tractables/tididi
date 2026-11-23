@@ -42,6 +42,13 @@ impl CachedSize {
     }
 
     fn forget(&mut self) { *self.0.get_mut() = usize::MAX; }
+
+    fn keep(&mut self, value: usize) { *self.0.get_mut() = value; }
+
+    fn known(&self) -> Option<usize> {
+        let held = self.0.load(Relaxed);
+        (held != usize::MAX).then_some(held)
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -125,6 +132,23 @@ impl LevelStorage {
     pub(crate) fn know_no_marginal(&mut self) {
         debug_assert!(!self.levels.iter().any(TddLevel::is_marginal));
         *self.summary.marginal.0.get_mut() = self.levels.len();
+    }
+
+    /// [`first_marginal`](Self::first_marginal) where a read since the last
+    /// mutable access computed it, without the scan of every level.
+    pub(crate) fn known_first_marginal(&self) -> Option<Option<VtreeIdx>> {
+        self.summary.marginal.known().map(|i| (i < self.levels.len()).then_some(VtreeIdx(i as u32)))
+    }
+
+    /// Record [`first_marginal`](Self::first_marginal) as `first`, for a
+    /// caller that read it before mutable accesses that change no level's
+    /// kind.
+    pub(crate) fn keep_first_marginal(&mut self, first: Option<VtreeIdx>) {
+        debug_assert_eq!(
+            first.map(VtreeIdx::idx),
+            self.levels.iter().position(TddLevel::is_marginal),
+        );
+        self.summary.marginal.keep(first.map_or(self.levels.len(), VtreeIdx::idx));
     }
 
     pub(crate) fn node_count(&self) -> usize {

@@ -54,6 +54,38 @@ fn the_adaptive_policy_reaches_the_fresh_policy_s_diagram() {
     assert_same_shape(&fresh, &adaptive, "fresh against adaptive");
 }
 
+/// A sampled scan whose bar any sample clears is the adaptive scan; one whose
+/// bar none clears stops after its sample with the count kept; one on fewer
+/// pairs than its `min_pairs` is the adaptive scan, unsampled.
+#[test]
+fn a_sampled_scan_goes_on_or_stops_at_its_bar() {
+    let eng = Engine::new();
+    let f = edited_marginal_diagram(&eng);
+    let count = f.model_count().unwrap();
+    let mut adaptive = f.clone();
+    eng.reduce(&mut adaptive, ReductionPlan::Full(ContentTwinPolicy::Adaptive(&mut ContentTwinSchedule::default()))).unwrap();
+    let run = |min_yield: f64, min_pairs: usize| {
+        let (mut g, mut schedule) = (f.clone(), ContentTwinSchedule::default());
+        eng.reduce(&mut g, ReductionPlan::Full(ContentTwinPolicy::Sampled { schedule: &mut schedule, min_yield, min_pairs })).unwrap();
+        assert_eq!(g.model_count().unwrap(), count);
+        check_no_orphan_slots(&g).unwrap();
+        (g, schedule.last_sample_yield())
+    };
+    let sampled = |min_yield: f64| {
+        let (g, found) = run(min_yield, 0);
+        (g, found.expect("a sampled scan reports its yield"))
+    };
+    let (unsampled, none) = run(2.0, usize::MAX);
+    assert_eq!(none, None);
+    assert_same_shape(&adaptive, &unsampled, "adaptive against a scan under min_pairs");
+    let (gone_on, found) = sampled(0.0);
+    assert!((0.0..=1.0).contains(&found));
+    assert_same_shape(&adaptive, &gone_on, "adaptive against a sample with no bar");
+    let (stopped, again) = sampled(2.0);
+    assert_eq!(found, again);
+    assert!(stopped.node_count() >= adaptive.node_count());
+}
+
 /// Vtree ((x h) (y1 y2)) with h summed out. Scanning between the two
 /// conjunctions merges h's two classes before x can separate them, and no
 /// rewrite splits them again; without scans both orders meet.

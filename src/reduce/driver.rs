@@ -5,7 +5,7 @@ use crate::diagram::{NodeIdx, Pass, Weights};
 use crate::vtree::{Vtree, VtreeIdx};
 use super::{Close, ReductionPlan, ContentTwinPolicy, ContentTwinSchedule};
 use super::prune::{PruneScope, below_root_walk_applies, prune_complement, prune_unreachable};
-use super::contract::{contract_all_twins, contract_all_twins_known, contract_leaf::contract_leaf_twins};
+use super::contract::{contract_all_twins_known, contract_leaf::contract_leaf_twins};
 use super::contract::content_twin::merge_content_equal_nodes;
 use super::contract::pair_fusion::fuse_pairs_at_parents;
 use super::slot_prune::prune_value_slots;
@@ -25,9 +25,10 @@ pub(super) struct Reduction<'a> {
     /// The leaves leaf contraction found twins at in a closing reduction,
     /// their parents' levels left as they were for the close to drop.
     recorded: Vec<VtreeIdx>,
-    /// Whether the diagram has a marginal level, read at most once: no pass
-    /// changes which levels are marginal, and each read scans every level.
-    marginal: Option<bool>,
+    /// The levels' first marginal level, read at most once: no pass changes
+    /// a level's kind, so it holds across them all, and each read scans
+    /// every level.
+    first_marginal: Option<Option<VtreeIdx>>,
     /// The variables some pair names true at entry.
     #[cfg(debug_assertions)]
     named_one: Vec<crate::vtree::VarId>,
@@ -42,12 +43,13 @@ impl<'a> Reduction<'a> {
             Close::Settle(seed) => Some(seed),
         };
         tdd.levels.hold_counts(tdd.levels.is_closed());
+        let first_marginal = tdd.levels.known_first_marginal();
         Self {
             eng,
             tdd,
             seed,
             recorded: Vec::new(),
-            marginal: None,
+            first_marginal,
             #[cfg(debug_assertions)]
             named_one: Vec::new(),
         }
@@ -58,6 +60,7 @@ impl<'a> Reduction<'a> {
         if self.seed.is_some() {
             self.named_one = oracle::named_one(self.tdd);
         }
+        let vtree = std::sync::Arc::clone(&self.tdd.vtree);
         let done = self.run_passes(plan, scope);
         // A pass that left a level's live pairs for the close at the end
         // (`TddLevel::leave_live_pairs`) may be followed by one refused
@@ -68,6 +71,12 @@ impl<'a> Reduction<'a> {
                 let vtree = &self.tdd.vtree;
                 let parents: Vec<u32> = self.recorded.iter().map(|&leaf| vtree.node(leaf).parent().expect("a recorded leaf has a parent").0).collect();
                 self.tdd.dirty.requeue(Pass::LeafContract, parents);
+            }
+        } else if let Some(first) = self.first_marginal {
+            // A settle that trims the vtree rebuilds the levels, which moves
+            // the first marginal level's index; with none there is none after.
+            if first.is_none() || std::sync::Arc::ptr_eq(&vtree, &self.tdd.vtree) {
+                self.tdd.levels.keep_first_marginal(first);
             }
         }
         done
@@ -85,7 +94,12 @@ impl<'a> Reduction<'a> {
         }
         let policy = match plan {
             ReductionPlan::Contract => {
-                contract_all_twins(self.eng, self.tdd)?;
+                // Read here, not lazily by the sweep, whose first merge
+                // forgets it: the result keeps it for the next reduction.
+                // Read here, not lazily by the sweep, whose first merge
+                // forgets it: the result keeps it for the next reduction.
+                let marginal = self.marginal();
+                contract_all_twins_known(self.eng, self.tdd, Some(marginal))?;
                 self.tdd.close_marked_levels();
                 return self.settle();
             }
@@ -97,7 +111,12 @@ impl<'a> Reduction<'a> {
                 self.tdd.close_marked_levels();
                 return self.settle();
             }
-            ReductionPlan::Full(policy) => policy,
+            ReductionPlan::Full(policy) => {
+                // Read before the passes, which forget it: every full
+                // reduction reads it below.
+                self.marginal();
+                policy
+            }
         };
         #[cfg(debug_assertions)]
         let marginal_before: Vec<_> = self.tdd.levels.iter().map(|l| l.is_marginal()).collect();
@@ -119,8 +138,9 @@ impl<'a> Reduction<'a> {
         self.assert_marginal_flags(&marginal_before, "contract+leaf");
         let scanned = match policy {
             ContentTwinPolicy::Skip => false,
-            ContentTwinPolicy::Fresh => self.scan_if_due(&mut ContentTwinSchedule::default())?,
-            ContentTwinPolicy::Adaptive(schedule) => self.scan_if_due(schedule)?,
+            ContentTwinPolicy::Fresh => self.scan_if_due(&mut ContentTwinSchedule::default(), None)?,
+            ContentTwinPolicy::Adaptive(schedule) => self.scan_if_due(schedule, None)?,
+            ContentTwinPolicy::Sampled { schedule, min_yield, min_pairs } => self.scan_if_due(schedule, Some((min_yield, min_pairs)))?,
         };
         // A content-twin scan ends with the slot prune. Without one, the slots
         // that prune and contraction orphaned at the boundary stores are still
@@ -192,7 +212,7 @@ impl<'a> Reduction<'a> {
         }
         #[cfg(debug_assertions)]
         let dropped = oracle::at_entry(self.tdd, &self.recorded, seed, &self.named_one);
-        super::trim::settle(self.eng, self.tdd, &mut self.recorded, self.marginal)?;
+        super::trim::settle(self.eng, self.tdd, &mut self.recorded, self.first_marginal.map(|first| first.is_some()))?;
         #[cfg(debug_assertions)]
         oracle::at_exit(self.tdd, dropped.as_deref(), &self.named_one);
         Ok(())
@@ -226,7 +246,8 @@ impl<'a> Reduction<'a> {
     }
 
     fn marginal(&mut self) -> bool {
-        *self.marginal.get_or_insert_with(|| self.tdd.has_marginal_level())
+        let levels = &self.tdd.levels;
+        self.first_marginal.get_or_insert_with(|| levels.first_marginal()).is_some()
     }
 
     /// A closing reduction on a home with no summed-out level records the
@@ -267,12 +288,13 @@ impl<'a> Reduction<'a> {
 
     /// Always scan small or weighted marginal diagrams. Large unweighted
     /// diagrams use the schedule's fourfold growth threshold. Returns whether
-    /// a scan ran.
-    fn scan_if_due(&mut self, schedule: &mut ContentTwinSchedule) -> Result<bool, OperationError> {
+    /// a scan, stopped after its sample or not, ran.
+    fn scan_if_due(&mut self, schedule: &mut ContentTwinSchedule, sample: Option<(f64, usize)>) -> Result<bool, OperationError> {
+        schedule.last_sample_yield = None;
         if !self.marginal() { return Ok(false); }
         let before: u64 = self.tdd.levels.iter().map(|l| l.nodes().len() as u64).sum();
         if self.tdd.weight_table().is_some() || before <= CONTENT_SCAN_MAX_NODES || before >= schedule.next_scan_at_nodes {
-            self.content_twins()?;
+            schedule.last_sample_yield = self.content_twins(sample)?;
             let after: u64 = self.tdd.levels.iter().map(|l| l.nodes().len() as u64).sum();
             schedule.next_scan_at_nodes = if after > CONTENT_SCAN_MAX_NODES { before.saturating_mul(4) } else { 0 };
             return Ok(true);
@@ -282,26 +304,34 @@ impl<'a> Reduction<'a> {
 
     /// Each productive round removes at least one node. Its rewrites mark the
     /// levels to revisit; only the first round scans the whole diagram, so
-    /// what the slot prune before it marks is not kept.
+    /// what the slot prune before it marks is not kept. With `sample`'s
+    /// `(min_yield, min_pairs)` on a diagram of at least `min_pairs` pairs
+    /// the first round samples its yield ([`ContentTwinPolicy::Sampled`]);
+    /// a round that stops there is the last. Returns the sample's yield.
     // Inlined into `scan_if_due` with link-time optimization, its merge
     // loop compiled to about 3% more instructions on a pedigree network.
     #[inline(never)]
-    pub(super) fn content_twins(&mut self) -> Result<(), OperationError> {
+    pub(super) fn content_twins(&mut self, sample: Option<(f64, usize)>) -> Result<Option<f64>, OperationError> {
         self.prune_slots()?;
+        let min_yield = sample.and_then(|(min_yield, min_pairs)| (self.tdd.pair_count() >= min_pairs).then_some(min_yield));
         self.tdd.dirty.clear(Pass::ContentTwin);
         let mut next: Option<rustc_hash::FxHashSet<u32>> = None;
+        let mut sampled = None;
         loop {
             self.eng.limits().check_stop()?;
             if next.as_ref().is_some_and(|levels| levels.is_empty()) { break; }
-            let merged = merge_content_equal_nodes(self.eng, self.tdd, next.take())?;
+            let first = next.is_none();
+            let (merged, found) = merge_content_equal_nodes(self.eng, self.tdd, next.take(), min_yield.filter(|_| first))?;
+            sampled = sampled.or(found);
             if merged == 0 { break; }
             prune_unreachable(self.eng, self.tdd, PruneScope::Whole)?;
             self.contract()?;
             self.prune_slots()?;
+            if min_yield.zip(found).is_some_and(|(min, found)| found < min) { break; }
             next = Some(self.tdd.dirty.take(Pass::ContentTwin).into_iter().collect());
         }
         self.tdd.dirty.clear(Pass::ContentTwin);
-        Ok(())
+        Ok(sampled)
     }
 
     #[cfg(debug_assertions)]
