@@ -325,3 +325,39 @@ fn a_key_by_variables_names_the_home_node_where_an_own_index_does_not() {
     }
     assert!(trapped > 20, "{trapped} own nodes numbered apart from their home node");
 }
+
+/// A diagram on a projection whose leaves all sit under the home key has
+/// every value of the key's sibling, so the count is the diagram itself.
+/// That copy is reserved: under a budget of half the copy's bytes the count
+/// is refused rather than copied past the budget.
+#[test]
+fn a_count_that_returns_its_operand_copies_it_within_the_budget() {
+    use crate::limits::LimitConfig;
+    let eng = Engine::new();
+    let home = Home::new(Vtree::balanced(16));
+    let at_home = home.vtree();
+    let key = at_home.children(at_home.root()).0;
+    let kv = vars_under(at_home, key);
+    let mut rng = Lcg::new(7);
+    let clauses: Vec<Vec<i32>> = (0..12)
+        .map(|_| {
+            (0..3)
+                .map(|_| {
+                    let v = kv[rng.below(kv.len() as u64) as usize].0 as i32;
+                    if rng.coin() { v } else { -v }
+                })
+                .collect()
+        })
+        .collect();
+    let mut f = compile_clauses(at_home, &clauses);
+    f.trim(&home).unwrap();
+    assert_eq!(f.vtree().own_at(key), Some(f.vtree().root()));
+    assert!(f.vtree().own_at(at_home.sibling(key)).is_none());
+    let copy = eng.try_clone(&f).unwrap();
+    let bytes = eng.limits().meters().in_flight_bytes;
+    assert!(bytes > 0);
+    let g = eng.at_least_distinct(&f, key, 2).unwrap();
+    assert_eq!(format!("{:?}", g.levels), format!("{:?}", copy.levels));
+    let _budget = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(bytes / 2)));
+    assert_eq!(eng.at_least_distinct(&f, key, 2).unwrap_err(), DistinctError::Operation(OperationError::OverBudget));
+}
