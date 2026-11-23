@@ -393,7 +393,22 @@ pub(super) fn take_pass_level(
     let carrier = if carrier_f { f.level(ti) } else { g.level(ti) };
     let level = &mut run.levels[ti];
     let pre_pairs_cap = level.pairs.capacity();
-    level.reserve_on(lim, wf * wg, wp * carrier.pairs.len() + 1)?;
+    // The sparse cells write at most one pair per listed product of a
+    // carrier pair's passed child, and a node only where one is written: the
+    // dense bounds, every cell and every carrier pair per passing node, run to
+    // gigabytes on wide levels whose lists are short.
+    let (nodes, pairs) = match sparse {
+        true => {
+            let mut listed = 0;
+            carrier.for_each_node_pair(|_, pair| {
+                let y = if passed_left { pair.left.raw() } else { pair.right.raw() } as usize;
+                listed += (columns[y + 1] - columns[y]) as usize;
+            });
+            (listed.min(wf * wg), listed + 1)
+        }
+        false => (wf * wg, wp * carrier.pairs.len() + 1),
+    };
+    level.reserve_on(lim, nodes, pairs)?;
     lim.charge_output_pairs(level.pairs.capacity().saturating_sub(pre_pairs_cap));
     let mut rows = PassRows {
         carrier,
