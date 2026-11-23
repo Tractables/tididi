@@ -625,7 +625,7 @@ fn and_indexed_on(
     let root = vtree.root();
     if vtree.node(root).is_leaf() {
         // One variable: nothing to index.
-        return Ok((eng.and(f.clone(), g.clone())?, IndexedWork::default()));
+        return Ok((eng.and(f, g)?, IndexedWork::default()));
     }
     let mut walk = Walk {
         lim,
