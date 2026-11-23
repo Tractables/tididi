@@ -477,7 +477,7 @@ fn conjoin_kept<'a>(
         }
         fill_free_cow(&mut f, free.f);
         fill_free_cow(&mut g, free.g);
-        return eng.and(Tdd::clone(&f), Tdd::clone(&g)).map_err(|error| AndRefused { error, f, g });
+        return eng.and(Cow::Borrowed(&*f), Cow::Borrowed(&*g)).map_err(|error| AndRefused { error, f, g });
     }
     let vtree = views.f.as_deref().or(views.g.as_deref()).map(|view| Arc::clone(view.vtree()));
     let width = |own: usize, view: &Option<&mut View>| own.max(view.as_deref().map_or(0, View::built_width));
@@ -555,9 +555,9 @@ fn conjoin_kept<'a>(
 }
 
 /// Place each operand of [`conjoin_kept`] that has a view by its plan, free
-/// levels left empty, for the conjunction of weighted or summed-out operands,
-/// which reads no view. Refused, an operand not yet placed comes back as it
-/// was given and a placed one with its free levels built.
+/// levels left empty, for the conjunction of summed-out operands, which
+/// reads no view. Refused, an operand not yet placed comes back as it was
+/// given and a placed one with its free levels built.
 #[cold]
 #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
 fn place_viewed<'a>(
@@ -818,8 +818,8 @@ impl crate::Engine {
     /// A caller that retries after a stop would otherwise clone both operands
     /// before each conjunction. Here the sweep keeps the operands whole until
     /// the result exists, which holds their storage as long as a clone would,
-    /// without the copy. Operands with a weight table or a marginal level are
-    /// cloned first. Each operand is owned or borrowed, at the costs
+    /// without the copy. Operands with a marginal level are both read as
+    /// borrowed ones. Each operand is owned or borrowed, at the costs
     /// [`and`] states; a borrowed one comes back as the borrow. An owned one
     /// comes back as reduced as it was given and with the level counts it
     /// kept ([`Engine::attach_level_counts`]), so what is done with it next

@@ -232,6 +232,40 @@ fn a_forced_chain_is_reached_to_the_root() {
     assert!(eng.equivalent(&again, &expected).unwrap());
 }
 
+/// Owned operands with a summed-out level are read in place, not copied
+/// outside the budget: refused at each reserve in turn, both come back as
+/// given, and the granted conjunction is `and`'s.
+#[test]
+fn a_summed_out_conjunction_refused_at_each_reserve_gives_the_operands_back() {
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(8));
+    let f = build(&eng, &vtree, &[&[5, 6], &[-7, 8], &[6, -8]]);
+    let mut g = build(&eng, &vtree, &[&[2, 5], &[-4, 6], &[7, 8, -2], &[1, -6]]);
+    eng.marginalize_levels(&mut g, &[vtree.children(vtree.root()).0]).unwrap();
+    assert!(g.has_marginal_level());
+    let expected = eng.and(f.clone(), g.clone()).unwrap();
+    let mut refusals = 0;
+    for n in 0.. {
+        eng.refuse_nth_reserve(n);
+        let outcome = eng.and_restoring(f.clone(), g.clone());
+        let pending = eng.limits().refusal_pending();
+        eng.limits().grant_every_reserve();
+        match outcome {
+            Ok(out) if pending => {
+                assert!(eng.equivalent(&out, &expected).unwrap());
+                break;
+            }
+            Ok(out) => assert!(eng.equivalent(&out, &expected).unwrap(), "granted at {n}: a different function"),
+            Err(refused) => {
+                assert!(same(&refused.f, &f) && same(&refused.g, &g), "refused at {n}: an operand changed");
+                refusals += 1;
+            }
+        }
+        assert!(n < 10_000, "never granted");
+    }
+    assert!(refusals > 0, "no refusal point");
+}
+
 #[test]
 fn a_granted_conjunction_matches_and() {
     let eng = Engine::new();
