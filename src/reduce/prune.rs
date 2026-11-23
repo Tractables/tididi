@@ -768,11 +768,25 @@ fn settle_marked<'a>(
     parents.dedup();
     let structural_internal = |t: VtreeIdx| !vtree.node(t).is_leaf() && !level(t).is_marginal();
     let size = |t: &VtreeIdx| structural_internal(*t) as u64 * level_size(level(*t)) as u64;
+    let mut gate = lim.gate();
     if weigh {
         let [read_rate, walk_rate, per_level] = READ_COST;
         let root = vtree.root();
+        let all_reads = read_rate * parents.iter().filter(|&&p| p != root).map(size).sum::<u64>();
+        // A listed child of the root every node of which the root names
+        // loses no node, and the walk enters it only on the way to a level
+        // under it. The root is read for that only where it costs no more
+        // than the reads it decides: on a compile its one node can hold
+        // millions of pairs.
+        let mut loose_child = [true; 2];
+        if structural_internal(root) && read_rate * size(&root) <= all_reads {
+            let (left, right) = vtree.children(root);
+            let sides = [flags[left.idx()][AT], flags[right.idx()][AT]];
+            loose_child = unnamed_children(lim, (vtree, level), root, sides, counts, &mut gate)?;
+        }
         let fixed = |t: VtreeIdx| match vtree.node(t).parent() {
-            Some(p) => p == root || !structural_internal(p) || !structural_internal(t),
+            Some(p) if p == root => loose_child[(vtree.children(root).1 == t) as usize],
+            Some(p) => !structural_internal(p) || !structural_internal(t),
             None => true,
         };
         // The levels above one that stays listed, which the walk enters
@@ -790,7 +804,6 @@ fn settle_marked<'a>(
         }
         // The walk is summed only until it passes every read: on a deep
         // vtree the paths up to the root are long.
-        let all_reads = read_rate * parents.iter().filter(|&&p| p != root).map(size).sum::<u64>();
         let mut walk = 0;
         'walk: for &t in listed {
             let t = VtreeIdx(t);
@@ -836,11 +849,11 @@ fn settle_marked<'a>(
                     .map(size)
                     .sum::<u64>();
             if walk <= reads {
+                gate.flush()?;
                 return Ok(None);
             }
         }
     }
-    let mut gate = lim.gate();
     for &p in parents.iter() {
         let (left, right) = vtree.children(p);
         if p != vtree.root() && !flags[left.idx()][UNDER] && !flags[right.idx()][UNDER] {
@@ -882,10 +895,13 @@ fn settle_marked<'a>(
 /// reads seldom stop much before a parent's last pair, so [`settle_listed`]
 /// reads only where the walk across the levels above those listed would
 /// cost more than reading their parents. A listed level no read can drop (a
-/// child of the root, or one that cannot be read) is left out with the
-/// levels above it, which the walk enters anyway, and so is every listed
-/// level under it: on model-counting compiles the walk enters the levels
-/// under a listed child of the root whatever the reads drop. The rates are
+/// child of the root that holds a node the root does not name, or one that
+/// cannot be read) is left out with the levels above it, which the walk
+/// enters anyway, and so is every listed level under it: on model-counting
+/// compiles the walk enters the levels under such a child of the root
+/// whatever the reads drop. A listed child of the root that loses no node is
+/// weighed as any level, as on logic programs the reads under it can spare
+/// the walk its whole path. The rates are
 /// fitted to instruction counts: a read of a stored level whole costs about
 /// 11 instructions a slot or pair, and the walk's marks across it about 19.
 const READ_COST: [u64; 3] = [4, 5, 5 * 64];
