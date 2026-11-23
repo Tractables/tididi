@@ -393,6 +393,7 @@ fn rebuild_along_spine(
             &work.on_spine,
             top,
             (out_vtree, ct_out),
+            loose.as_deref_mut(),
         )?;
         work.drop_yield.dropped += dropped;
         work.drop_yield.read += read;
@@ -448,6 +449,10 @@ fn rebuild_along_spine(
 /// `d_t` (`propagate_need_dt`). Every other rebuilt level keeps its entry,
 /// its count forgotten; an off-spine level keeps its nodes and, unless a pair
 /// naming one was dropped, the nodes named, so its entry and count hold.
+/// The drop of unnamed nodes after it
+/// ([`drop_clause_orphans`](crate::reduce::prune::drop_clause_orphans))
+/// then unlists the levels it clears and lists the off-spine levels it may
+/// leave loose.
 fn list_rebuilt(
     loose: &mut crate::diagram::LooseLevels,
     vtree: &crate::vtree::Vtree,

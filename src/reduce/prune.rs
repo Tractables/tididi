@@ -21,7 +21,7 @@
 
 use crate::diagram::{
     ChildDecoder, ChildKept, ChildPair, ChildSide, EncodedChildRef, EncodedNode, ImplicitLevel,
-    NodeIdx, NodeKind, StoreRoom, Tdd, TddLevel, slots_below,
+    LooseLevels, NodeIdx, NodeKind, StoreRoom, Tdd, TddLevel, slots_below,
 };
 
 use crate::Engine;
@@ -1573,6 +1573,11 @@ fn move_node(level: &mut TddLevel, i: usize, left: impl Fn(u32) -> u32, right: i
 /// read on the sides it gives. Below them a level that lost a node is read
 /// on both sides.
 ///
+/// With `loose`, the levels the drop read leave the list, and so does the
+/// root when it holds the output; an internal off-spine child of a level
+/// that lost a node joins it, as a node only the lost one named is named by
+/// none.
+///
 /// Charges no work: the walk charged the pairs it built, and the clock
 /// stays where a walk without the drop leaves it.
 ///
@@ -1588,6 +1593,7 @@ pub(crate) fn drop_clause_orphans(
     on_spine: &[bool],
     top: Option<(VtreeIdx, [bool; 2])>,
     (out_vtree, out): (VtreeIdx, u32),
+    mut loose: Option<&mut LooseLevels>,
 ) -> Result<(u32, [u64; 2]), OperationError> {
     let lim = eng.limits();
     let mut tally = [0u64; 2];
@@ -1598,6 +1604,16 @@ pub(crate) fn drop_clause_orphans(
     let readable_sides = |t: VtreeIdx| {
         let (l, r) = vtree.children(t);
         [readable(l), readable(r)]
+    };
+    let list_lost = |loose: &mut Option<&mut LooseLevels>, t: VtreeIdx| {
+        if let Some(loose) = loose {
+            let (l, r) = vtree.children(t);
+            for c in [l, r] {
+                if !on_spine[c.idx()] && !vtree.node(c).is_leaf() {
+                    loose.insert(c.0);
+                }
+            }
+        }
     };
     let width = levels[out_vtree.idx()].slot_count();
     let own = words(width);
@@ -1610,11 +1626,17 @@ pub(crate) fn drop_clause_orphans(
         grow_to(lim, remap, width, UNREACHED)?;
         new_indices(&marks[..own], width, remap);
         tally[0] += drop_unmarked(&mut levels[out_vtree.idx()], &marks[..own]);
+        list_lost(&mut loose, out_vtree);
         if sides != [false; 2] {
             lim.try_push(lost, (out_vtree, sides))?;
         }
         remap[out as usize]
     };
+    if out_vtree == vtree.root()
+        && let Some(loose) = loose.as_deref_mut()
+    {
+        loose.remove(out_vtree.0);
+    }
     let mut top = top;
     loop {
         let (t, mut sides) = match (lost.pop(), top) {
@@ -1644,6 +1666,13 @@ pub(crate) fn drop_clause_orphans(
         };
         let own = [0..base, base..end];
         let dropped = [0, 1].map(|s| width[s] != 0 && !all_marked(&marks[own[s].clone()], width[s]));
+        if let Some(loose) = loose.as_deref_mut() {
+            for (s, c) in [l, r].into_iter().enumerate() {
+                if width[s] != 0 {
+                    loose.remove(c.0);
+                }
+            }
+        }
         if dropped == [false, false] {
             continue;
         }
@@ -1655,6 +1684,7 @@ pub(crate) fn drop_clause_orphans(
                 let new = &mut remap[if s == 0 { 0..width[0] } else { width[0]..width[0] + width[1] }];
                 new_indices(&marks[own[s].clone()], width[s], new);
                 tally[0] += drop_unmarked(&mut levels[c.idx()], &marks[own[s].clone()]);
+                list_lost(&mut loose, c);
                 if sides != [false; 2] {
                     lost.push((c, sides));
                 }
