@@ -105,7 +105,7 @@ fn unreached(t: &Tdd) -> Result<bool, String> {
         .filter(|&v| !vtree.node(VtreeIdx(v as u32)).is_leaf() && !t.levels[v].is_marginal())
         .any(|v| reach[v].iter().any(|&r| !r));
     match t.dirty.loose() {
-        Some([]) if any => Err("a node the output does not reach, and no level listed loose".into()),
+        Some(loose) if loose.is_empty() && any => Err("a node the output does not reach, and no level listed loose".into()),
         _ => Ok(any),
     }
 }

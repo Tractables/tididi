@@ -60,31 +60,36 @@ pub(crate) struct ClauseWork {
     widen_map: Vec<VtreeIdx>,
     /// A widening's nodes that are no image, children first.
     widen_fresh: Vec<(VtreeIdx, crate::vtree::Reading)>,
-    /// What a walk that knows the accumulator's loose levels takes, boxed:
-    /// the pool moves this struct on every checkout, and past 256 bytes
-    /// each move takes memcpy's long path.
-    loose: Option<Box<LooseWork>>,
+    /// Kept across walks, as the pool keeps the rest.
+    drop_yield: DropYield,
+    /// The spine levels whose rebuild dropped a pair naming a node of their
+    /// off-spine child ([`ClauseTables::dropped_at`]).
+    dropped_at: Vec<VtreeIdx>,
 }
 
-/// The part of a [`ClauseWork`] that lists the loose levels a rebuild
-/// leaves.
+/// The nodes the drop of unnamed nodes has removed against the parent pairs
+/// it read, which decides whether a walk runs it.
 #[derive(Default)]
-struct LooseWork {
-    /// Per level, whether the accumulator listed it loose under a spine
-    /// parent.
-    listed: MarkBuffer,
-    /// Per spine level with `d_t`, whether a node at it or at a spine level
-    /// under it may have neither product.
-    bare: Vec<bool>,
-    /// The counts a read of a rebuilt level's pairs for unnamed children takes.
-    counts: Vec<u32>,
+struct DropYield {
+    /// Nodes dropped, plus one for each walk that skipped the drop.
+    dropped: u64,
+    read: u64,
 }
 
-impl Buffers for LooseWork {
-    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
-        self.listed.buffers(visit);
-        visit(&mut self.bare);
-        visit(&mut self.counts);
+impl DropYield {
+    /// Past this many pairs read per node dropped, the drop costs more than
+    /// the later work on the nodes it removes, which the next reduction
+    /// prunes anyway. What a dropped node saves later varies by a hundred
+    /// times between inputs that read 50 pairs per node, so the bound only
+    /// cuts the walks that read hundreds of pairs per node.
+    const MAX_PAIRS_PER_NODE: u64 = 128;
+
+    /// Whether this walk runs the drop. A walk that does not adds one node
+    /// to `dropped`, so a run of skipped walks tries again.
+    fn drops(&mut self) -> bool {
+        let drops = self.dropped * Self::MAX_PAIRS_PER_NODE >= self.read;
+        self.dropped += u64::from(!drops);
+        drops
     }
 }
 
@@ -100,9 +105,7 @@ impl Buffers for ClauseWork {
         visit(&mut self.widen_added);
         visit(&mut self.widen_map);
         visit(&mut self.widen_fresh);
-        if let Some(loose) = &mut self.loose {
-            loose.buffers(visit);
-        }
+        visit(&mut self.dropped_at);
     }
 }
 
@@ -112,14 +115,12 @@ impl PooledScratch for ClauseWork {
     fn prepare(&mut self) {
         self.on_spine.debug_assert_clear();
         self.need_dt.debug_assert_clear();
-        if let Some(loose) = &self.loose {
-            loose.listed.debug_assert_clear();
-        }
         self.spine_internal.clear();
         self.dt_pairs.clear();
         self.t3_buf.clear();
         self.widen_added.clear();
         self.widen_fresh.clear();
+        self.dropped_at.clear();
     }
 
     /// The marks are cleared on every exit, an error's too, so the parked
@@ -127,9 +128,6 @@ impl PooledScratch for ClauseWork {
     fn retain(&mut self, lim: &crate::limits::Limits) -> usize {
         self.on_spine.unmark_all();
         self.need_dt.unmark_all();
-        if let Some(loose) = &mut self.loose {
-            loose.listed.unmark_all();
-        }
         self.release_oversized(lim)
     }
 }
@@ -340,6 +338,7 @@ fn rebuild_along_spine(
     clause: &[(Literal, VtreeIdx)],
 ) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
+    let canonical = f.levels.is_canonical(f.output);
     let vtree = &f.vtree;
     let num_nodes = vtree.num_nodes();
     // Only a test fixture puts the output below the root; the walk would read
@@ -351,7 +350,15 @@ fn rebuild_along_spine(
     // The clause spine — the Steiner tree of its variables' leaves — and the
     // `need_dt` flag propagated top-down over it.
     work.on_spine.cover(lim, num_nodes)?;
-    build_clause_spine(lim, vtree, clause, &mut work.on_spine, &mut work.spine_internal)?;
+    let top_fork = build_clause_spine(lim, vtree, clause, &mut work.on_spine, &mut work.spine_internal)?;
+    debug_assert_eq!(
+        top_fork,
+        work.spine_internal.iter().rev().copied().find(|&t| {
+            let (left, right) = vtree.children(t);
+            work.on_spine[left.idx()] && work.on_spine[right.idx()]
+        }),
+        "the spine build's topmost fork"
+    );
     work.need_dt.cover(lim, num_nodes)?;
     propagate_need_dt(vtree, &work.spine_internal, &work.on_spine, &mut work.need_dt);
 
@@ -381,37 +388,28 @@ fn rebuild_along_spine(
 
     fill_leaf_maps(clause, &work.level_base, &work.need_dt, &mut work.cd_map);
 
+    let vtree = Arc::clone(vtree);
+    let mut carried = f.take_worklists();
+    let fused = carried.take_fused();
+    let carried_loose = carried.take_loose();
+    let mut loose = match canonical {
+        true => {
+            let mut none = carried_loose.unwrap_or_default();
+            none.clear();
+            Some(none)
+        }
+        // Once half the internal levels are listed the list spares a reader
+        // little, and a run of clauses would list every spine again.
+        false => carried_loose.filter(|loose| loose.len() < vtree.internal_bottomup_slice().len() / 2),
+    };
+    let track = loose.is_some();
+    if track {
+        lim.reserve(&mut work.dropped_at, work.spine_internal.len())?;
+    }
     // Rebuild each spine internal level bottom-up. Children's maps are fully
     // written before any parent reads them. The stop axis and the output cap
     // are checked after each level, the cap against the rebuilt levels' nodes.
     let mut out_nodes = 0u64;
-    // The accumulator's loose levels stand where the parent level is off the
-    // spine, and at an off-spine child of a spine level, whose nodes the
-    // rebuild only drops names of. The rebuild lists a spine child itself.
-    let exact = f.dirty.loose_is_exact();
-    let mut loose = f.dirty.take_loose();
-    let mut spare_counts = Vec::new();
-    let (listed, bare, counts): (&[bool], &mut [bool], _) = match &mut loose {
-        Some(list) => {
-            let lw = &mut **work.loose.get_or_insert_with(Default::default);
-            lim.try_resize(&mut lw.bare, num_nodes, false)?;
-            if !list.is_empty() {
-                lw.listed.cover(lim, num_nodes)?;
-                let (on_spine, listed) = (&work.on_spine, &mut lw.listed);
-                list.retain(|&c| {
-                    let c = VtreeIdx(c);
-                    if !vtree.node(c).parent().is_some_and(|p| on_spine[p.idx()]) {
-                        return true;
-                    }
-                    listed.mark(c);
-                    !on_spine[c.idx()]
-                });
-            }
-            let listed: &[bool] = if lw.listed.is_clear() { &[] } else { &lw.listed };
-            (listed, &mut lw.bare, &mut lw.counts)
-        }
-        None => (&[], &mut [], &mut spare_counts),
-    };
     let mut tables = ClauseTables {
         cd_map: &mut work.cd_map,
         level_base: &work.level_base,
@@ -421,25 +419,49 @@ fn rebuild_along_spine(
         dt_pairs: &mut work.dt_pairs,
         spare_nodes: &mut Vec::new(),
         spare_pairs: &mut Vec::new(),
-        listed,
-        bare,
-        any_bare: false,
-        counts,
+        top: None,
+        dropped_at: &mut work.dropped_at,
     };
     for &t in work.spine_internal.iter() {
-        rebuild_spine_level(eng, t, vtree, &mut levels, &mut tables, loose.as_mut())?;
+        rebuild_spine_level(eng, t, &vtree, &mut levels, &mut tables, track)?;
         out_nodes += levels[t.idx()].slot_count() as u64;
         lim.level_done(out_nodes)?;
+    }
+    // A right `d` half skipped beside a left node with no `c` half is mostly
+    // named by another pair unless the skips are a good share of the pairs:
+    // below one in four, few such reads dropped a node.
+    let top = tables
+        .top
+        .map(|(t, [left, right], pairs)| (t, [left != 0, right * 4 >= pairs && right != 0]))
+        .filter(|&(_, sides)| sides != [false; 2]);
+    if let Some(loose) = loose.as_mut() {
+        list_rebuilt(loose, &vtree, &work.spine_internal, &work.on_spine, &work.dropped_at, top_fork);
     }
 
     // Output: conjunction of f's output with c_t at the root, which is on
     // every spine, so its `cd_map` block is filled.
     let out_base = work.level_base[out_vtree.idx()];
     let ct_out = work.cd_map[out_base + out_local_in.idx()][0];
-    let out_local = if ct_out != NO_PRODUCT {
+    let out_local = if ct_out == NO_PRODUCT {
+        ZERO
+    } else if vtree.node(out_vtree).is_leaf()
+        || (levels[out_vtree.idx()].slot_count() == 1 && top.is_none())
+        || !work.drop_yield.drops()
+    {
         NodeIdx(ct_out)
     } else {
-        ZERO
+        let (out, [dropped, read]) = crate::reduce::prune::drop_clause_orphans(
+            eng,
+            &vtree,
+            &mut levels,
+            &work.on_spine,
+            top,
+            (out_vtree, ct_out),
+            loose.as_deref_mut(),
+        )?;
+        work.drop_yield.dropped += dropped;
+        work.drop_yield.read += read;
+        NodeIdx(out)
     };
 
     // Contract seed: this clause's spine, which is ancestor-closed, so an
@@ -449,9 +471,6 @@ fn rebuild_along_spine(
     // is also all the walk changed, and so all the seat closes.
     // The pair fusion records (`Dirty::is_fused`) off the spine are the
     // accumulator's too.
-    let vtree = Arc::clone(vtree);
-    let mut carried = f.take_worklists();
-    let fused = carried.take_fused();
     let mut out = diagram::Assembly::from_levels(eng, vtree, levels).finish_with(
         TddNodeId {
             vtree: out_vtree,
@@ -462,13 +481,10 @@ fn rebuild_along_spine(
         Some(&work.spine_internal[..]),
     )?;
     out.dirty.restore_fused(fused, &work.spine_internal);
-    match loose {
-        Some(loose) if exact => out.dirty.set_loose_exact(loose),
-        loose => out.dirty.set_loose(loose),
-    }
     if let Some(first) = first_marginal {
         out.levels.keep_first_marginal(first);
     }
+    out.dirty.restore_loose(loose);
     #[cfg(debug_assertions)]
     {
         let recorded: Vec<VtreeIdx> = (0..out.vtree.num_nodes() as u32)
@@ -482,6 +498,54 @@ fn rebuild_along_spine(
         );
     }
     Ok(out)
+}
+
+/// List the levels a clause's rebuild may leave holding a node no pair of
+/// their parent level names: the off-spine children of the levels in
+/// `dropped_at`, the root, which may hold products the output is not, and
+/// the internal children of the topmost level with both children on the
+/// spine ([`build_clause_spine`]). A rebuilt child's nodes are its nodes' products, each named where
+/// the node it came from was, since a node other than false has a `c_t` or a
+/// `d_t` product and a pair keeps the product of either that the parent
+/// computes; but under a level with both children relevant and no `d_t`, the
+/// type-3 and `(c_L, d_R)` pairs name a `d_t` product only where the other
+/// side's `c_t` is not false, and only the topmost such level computes no
+/// `d_t` (`propagate_need_dt`). Every other rebuilt level keeps its entry,
+/// its count forgotten; an off-spine level keeps its nodes and, unless a pair
+/// naming one was dropped, the nodes named, so its entry and count hold.
+/// The drop of unnamed nodes after it
+/// ([`drop_clause_orphans`](crate::reduce::prune::drop_clause_orphans))
+/// then unlists the levels it clears and lists the off-spine levels it may
+/// leave loose.
+fn list_rebuilt(
+    loose: &mut crate::diagram::LooseLevels,
+    vtree: &crate::vtree::Vtree,
+    spine_internal: &[VtreeIdx],
+    on_spine: &[bool],
+    dropped_at: &[VtreeIdx],
+    top_fork: Option<VtreeIdx>,
+) {
+    for &t in dropped_at {
+        let (left, right) = vtree.children(t);
+        let off = if on_spine[left.idx()] { right } else { left };
+        if !vtree.node(off).is_leaf() {
+            loose.insert(off.0);
+        }
+    }
+    if loose.has_counts() {
+        for &t in spine_internal {
+            loose.forget_count(t.0);
+        }
+    }
+    loose.insert(vtree.root().0);
+    if let Some(p) = top_fork {
+        let (left, right) = vtree.children(p);
+        for c in [left, right] {
+            if !vtree.node(c).is_leaf() {
+                loose.insert(c.0);
+            }
+        }
+    }
 }
 
 /// Conjoin `clause` into `f` under `eng`'s limits. The implementation behind

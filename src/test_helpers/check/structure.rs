@@ -150,7 +150,7 @@ pub fn check_loose_levels(tdd: &Tdd) -> Result<(), String> {
     for (p, left, right) in vtree.internal_bottomup() {
         let level = &tdd.levels[p.idx()];
         for (c, on_left) in [(left, true), (right, false)] {
-            if vtree.node(c).is_leaf() || tdd.levels[c.idx()].is_marginal() || loose.contains(&c.0) {
+            if vtree.node(c).is_leaf() || tdd.levels[c.idx()].is_marginal() || loose.contains(c.0) {
                 continue;
             }
             let decoder = tdd.levels[c.idx()].child_decoder();

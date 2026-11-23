@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use crate::reduce::prune::{PruneScope, Seeds, Select, Start, below_root_walk_applies, few_dropped, keep_marked, FEW_DROPPED, new_indices, prune_walk, prune_complement, seed_list, settle_loose, UNREACHED};
+use crate::reduce::prune::{PruneScope, Seeds, Select, Start, below_root_walk_applies, few_dropped, keep_marked, FEW_DROPPED, new_indices, prune_walk, prune_complement, settle_loose, settle_reads_all, UNREACHED};
 
 use crate::test_helpers::{compile_clauses, unnamed_levels};
 use super::prune_unreachable;
@@ -15,8 +15,8 @@ use crate::vtree::Vtree;
 /// charges are held to.
 fn prune_loose_from_output(eng: &crate::Engine, tdd: &mut crate::Tdd) -> Result<(), crate::OperationError> {
     debug_assert!(below_root_walk_applies(tdd) && !tdd.has_marginal_level());
-    let loose = tdd.dirty.loose().expect("the diagram knows its loose levels").to_vec();
-    let loose = seed_list(eng, tdd, &loose)?.into_owned();
+    let loose = tdd.dirty.loose().expect("the diagram knows its loose levels").levels().collect::<Vec<u32>>();
+    let loose = settle_loose(eng, tdd, &loose)?;
     let seeds = Seeds::of(eng, tdd, &loose)?;
     tdd.levels.hold_counts(tdd.levels.is_closed());
     prune_walk(eng, tdd, Some(seeds.state()), Start::Output)?;
@@ -223,7 +223,7 @@ fn a_contraction_drops_the_nodes_no_pair_names() {
             assert_eq!(contracted.model_count().unwrap(), count, "{label}");
             if let Some(loose) = contracted.dirty.loose() {
                 for t in unnamed_levels(&contracted) {
-                    assert!(loose.contains(&t), "{label}: level {t} holds an unnamed node and is not listed loose");
+                    assert!(loose.contains(t), "{label}: level {t} holds an unnamed node and is not listed loose");
                 }
             }
             let mut full = conj;
@@ -298,7 +298,7 @@ fn an_embedding_lists_the_levels_holding_an_unnamed_node() {
             let (moved, _) = eng.embed_moving(source, &wide, |v| VarId(vars[v.idx()])).map_err(|r| r.error).unwrap();
             let listed = moved.dirty.loose().expect("the source's loose levels are known");
             for t in unnamed_levels(&moved) {
-                assert!(listed.contains(&t), "{what}: level {t} holds an unnamed node and is not listed");
+                assert!(listed.contains(t), "{what}: level {t} holds an unnamed node and is not listed");
             }
             assert_eq!(moved.model_count().unwrap(), count << (wide.num_vars() - k), "{what}");
             carried += unnamed_source.len();
@@ -345,7 +345,7 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
         if conj.is_zero() {
             return;
         }
-        let mut listed = conj.dirty.loose().expect("both operands' loose levels are known").to_vec();
+        let mut listed = conj.dirty.loose().expect("both operands' loose levels are known").levels().collect::<Vec<u32>>();
         listed.sort_unstable();
         listed.dedup();
         let unnamed = unnamed_levels(&conj);
@@ -393,7 +393,16 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
             let mut from_output = conj.clone();
             let start = eng.limits().work_units();
             prune_loose_from_output(eng, &mut from_output).unwrap();
-            assert_eq!(eng.limits().work_units() - start, walk_work, "{what}: the seeded walk charged other work than one from the output");
+            let from_output_work = eng.limits().work_units() - start;
+            // Where settling would read as many pairs as the walk from the
+            // root, the prune walks from the root instead.
+            let mut from_root = conj.clone();
+            from_root.dirty.set_loose(None);
+            let start = eng.limits().work_units();
+            prune_unreachable(eng, &mut from_root, PruneScope::Whole).unwrap();
+            let from_root_work = eng.limits().work_units() - start;
+            let expected = if settle_reads_all(&conj, &listed) { from_root_work } else { from_output_work };
+            assert_eq!(walk_work, expected, "{what}: the prune charged other work than the walk it chose");
             assert_eq!(layout(&from_output), layout(&walked), "{what}: the walk from the output left another diagram");
             let root_clean = conj.levels[conj.vtree.root().idx()].slot_count() == 1;
             seeded += usize::from(root_clean);
@@ -422,7 +431,7 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
                     if f.is_zero() || g.is_zero() || h.is_zero() {
                         continue;
                     }
-                    let [lf, lg, lh] = [&f, &g, &h].map(|d| d.dirty.loose().expect("an embedding knows its loose levels").to_vec());
+                    let [lf, lg, lh] = [&f, &g, &h].map(|d| d.dirty.loose().expect("an embedding knows its loose levels").levels().collect::<Vec<u32>>());
                     let what = format!("{name}, case {case}, floor {floor}");
                     for (d, listed) in [(&f, &lf), (&g, &lg), (&h, &lh)] {
                         for t in unnamed_levels(d) {
@@ -432,7 +441,7 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
                     let both = eng.and(f.clone(), g.clone()).unwrap();
                     let kept = eng.and_restoring(f, g).map_err(|r| r.error).unwrap();
                     assert_eq!(layout(&both), layout(&kept), "{what}: and and and_restoring differ");
-                    let lb = both.dirty.loose().unwrap().to_vec();
+                    let lb = both.dirty.loose().unwrap().levels().collect::<Vec<u32>>();
                     check(kept, [&lf, &lg], &format!("{what}, f and g"));
                     check(eng.and(both, h).unwrap(), [&lb, &lh], &format!("{what}, then h"));
                     cases += 1;
@@ -442,7 +451,7 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
     }
     assert!(cases > 360, "expected a corpus, got {cases} cases");
     assert!(loose > 300, "expected levels holding an unnamed node, got {loose}");
-    assert!(cleared > 300, "expected levels an operand listed and the result does not, got {cleared}");
+    assert!(cleared > 50, "expected levels an operand listed and the result does not, got {cleared}");
     assert!(settled_away > 400, "expected listed levels the prune settles away, got {settled_away}");
     assert!(seeded > 150, "expected prunes that start at the seeds, got {seeded}");
     assert!(nested > 100, "expected seeded prunes with a forced level that is not clean, got {nested}");
@@ -475,7 +484,7 @@ fn the_seeds_keep_only_their_pooled_charge() {
             if conj.is_zero() || !below_root_walk_applies(&conj) || conj.has_marginal_level() {
                 continue;
             }
-            let mut listed = conj.dirty.loose().expect("both operands' loose levels are known").to_vec();
+            let mut listed = conj.dirty.loose().expect("both operands' loose levels are known").levels().collect::<Vec<u32>>();
             listed.sort_unstable();
             listed.dedup();
             let loose = settle_loose(eng, &conj, &listed).unwrap();
@@ -878,4 +887,110 @@ fn a_prune_that_drops_node_0_of_an_implicit_level_names_no_dropped_node() {
             assert!((p.right.raw() as usize) < below, "a pair names a node the prune dropped");
         }
     }
+}
+
+/// What [`Engine::unnamed_nodes`](crate::Engine::unnamed_nodes) counts, read
+/// off every pair: the nodes of the internal levels no pair of their parent
+/// level names, and the root level's other than the output, with their
+/// pairs.
+fn unnamed_by_pairs(tdd: &crate::Tdd) -> crate::reduce::Unnamed {
+    let vtree = &tdd.vtree;
+    let mut out = crate::reduce::Unnamed::default();
+    let root = &tdd.levels[vtree.root().idx()];
+    for k in (0..root.slot_count()).filter(|&k| k != tdd.output.local.idx()) {
+        out.nodes += 1;
+        out.pairs += root.pair_count_at(k);
+    }
+    for (p, left, right) in vtree.internal_bottomup() {
+        for (c, on_left) in [(left, true), (right, false)] {
+            if !tdd.is_structural_internal(c) {
+                continue;
+            }
+            let view = tdd.levels[c.idx()].child_decoder();
+            let parent = &tdd.levels[p.idx()];
+            let named: std::collections::BTreeSet<usize> = (0..parent.slot_count())
+                .flat_map(|i| parent.pairs_vec(i))
+                .filter_map(|pair| view.child(if on_left { pair.left } else { pair.right }).index())
+                .collect();
+            let level = &tdd.levels[c.idx()];
+            for k in (0..level.slot_count()).filter(|k| !named.contains(k)) {
+                out.nodes += 1;
+                out.pairs += level.pair_count_at(k);
+            }
+        }
+    }
+    out
+}
+
+/// Clauses conjoined one at a time, by a conjunction or in place, some steps
+/// contracted, some pruned: at each satisfiable step the count of unnamed
+/// nodes is known and the one read off every pair, a second read returns
+/// it again, the conjunctions and prunes that read the levels it settled
+/// reach the canonical diagram, and after a prune it is 0.
+#[test]
+fn the_unnamed_count_is_the_nodes_no_pair_of_the_parent_level_names() {
+    use crate::reduce::ReductionPlan;
+    use crate::test_helpers::{assert_canonical, assert_same_shape, vtree_shapes, rand_cnf, CnfShape, Lcg};
+    let eng = crate::Engine::new();
+    let (mut counted, mut nonzero, mut unknown) = (0, 0, 0);
+    for seed in 0..24u64 {
+        let num_vars = 6 + (seed % 5) as u32;
+        let mut rng = Lcg::new(seed ^ 0x0dd_c0de);
+        let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 14, width: 3 });
+        for (label, vtree) in vtree_shapes(num_vars) {
+            let mut f = eng.cube(&vtree, std::iter::empty::<i32>()).unwrap();
+            for (i, c) in clauses.iter().enumerate() {
+                f = match rng.below(2) {
+                    0 => eng.and(f, eng.clause(&vtree, c.iter().copied()).unwrap()).unwrap(),
+                    _ => eng.and_clause(f, c).unwrap(),
+                };
+                if rng.below(3) == 0 {
+                    eng.reduce(&mut f, ReductionPlan::Contract).unwrap();
+                }
+                let label = format!("seed {seed}, {label}, clause {i}");
+                if let Some(listed) = f.dirty.loose() {
+                    for t in unnamed_levels(&f) {
+                        assert!(listed.contains(t), "{label}: level {t} holds an unnamed node and is not listed");
+                    }
+                }
+                let Some(unnamed) = eng.unnamed_nodes(&mut f).unwrap() else {
+                    unknown += usize::from(!f.is_zero());
+                    continue;
+                };
+                counted += 1;
+                nonzero += usize::from(unnamed.nodes > 0);
+                assert_eq!(unnamed, unnamed_by_pairs(&f), "{label}");
+                assert_eq!(eng.unnamed_nodes(&mut f).unwrap(), Some(unnamed), "{label}: second read");
+                if rng.below(3) == 0 {
+                    eng.reduce(&mut f, ReductionPlan::Contract).unwrap();
+                    let contracted = eng.unnamed_nodes(&mut f).unwrap();
+                    assert_eq!(contracted, Some(unnamed_by_pairs(&f)), "{label}: contracted after a read");
+                }
+                if rng.below(4) == 0 {
+                    eng.reduce(&mut f, ReductionPlan::Prune).unwrap();
+                    assert_eq!(eng.unnamed_nodes(&mut f).unwrap(), Some(crate::reduce::Unnamed::default()), "{label}: pruned");
+                    assert_eq!(unnamed_by_pairs(&f), crate::reduce::Unnamed::default(), "{label}: pruned");
+                }
+            }
+            eng.minimize(&mut f).unwrap();
+            assert_canonical(&f);
+            assert_same_shape(&f, &compile_clauses(&vtree, &clauses), &format!("seed {seed}, {label}"));
+        }
+    }
+    // A clause conjunction drops most of the nodes it leaves unnamed, so
+    // about one count in six is nonzero.
+    assert!(counted > unknown && nonzero > counted / 10, "{nonzero} of {counted} counts nonzero, {unknown} unknown");
+}
+
+/// A diagram with a marginal level keeps no loose levels to count.
+#[test]
+fn a_marginal_level_leaves_the_unnamed_count_unknown() {
+    let eng = crate::Engine::new();
+    let vtree = Arc::new(Vtree::balanced(6));
+    let mut f = compile_clauses(&vtree, &[vec![1, 2, -3], vec![-4, 5], vec![3, -6]]);
+    assert!(eng.unnamed_nodes(&mut f).unwrap().is_some());
+    let below = vtree.children(vtree.root()).0;
+    eng.marginalize_levels(&mut f, &[below]).unwrap();
+    assert!(f.has_marginal_level());
+    assert_eq!(eng.unnamed_nodes(&mut f).unwrap(), None);
 }

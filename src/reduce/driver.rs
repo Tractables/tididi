@@ -124,7 +124,7 @@ impl<'a> Reduction<'a> {
         // node is reachable: a walk would read nothing, yet be charged as one
         // from the output.
         let pruned = !self.tdd.is_zero()
-            && self.tdd.dirty.loose().is_some_and(<[u32]>::is_empty)
+            && self.tdd.dirty.loose().is_some_and(|loose| loose.is_empty())
             && below_root_walk_applies(self.tdd)
             && !self.marginal()
             && self.tdd.levels[self.tdd.vtree.root().idx()].slot_count() == 1;

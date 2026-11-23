@@ -21,10 +21,11 @@
 
 use crate::diagram::{
     ChildDecoder, ChildKept, ChildPair, ChildSide, EncodedChildRef, EncodedNode, ImplicitLevel,
-    NodeIdx, NodeKind, StoreRoom, Tdd, TddLevel, slots_below,
+    LooseLevels, NodeIdx, NodeKind, StoreRoom, Tdd, TddLevel, slots_below,
 };
 
 use crate::Engine;
+use super::Unnamed;
 
 use crate::execution::pool::{Buffers, PoolGuard, PooledScratch, Scratch};
 use crate::limits::{Limits, OperationError, PollGate, TimeTests, Transient};
@@ -267,6 +268,12 @@ pub(crate) struct PruneScratch {
     /// ([`slots_from_output`]).
     entered: Vec<bool>,
     from_output: Vec<VtreeIdx>,
+    /// [`settle_loose`]'s flags per level and the parents it reads.
+    settle_flags: Vec<[bool; 2]>,
+    settle_parents: Vec<VtreeIdx>,
+    /// [`settle_loose`]'s count of the pairs that name each slot of the
+    /// children it reads ([`count_named`]).
+    settle_counts: Vec<u32>,
     /// Marks a byte per slot, those a walk sets in a level's children
     /// before it packs them into bits ([`mark_sides`]).
     bytes: Vec<u8>,
@@ -285,6 +292,9 @@ impl Buffers for PruneScratch {
         visit(&mut self.visits);
         visit(&mut self.entered);
         visit(&mut self.from_output);
+        visit(&mut self.settle_flags);
+        visit(&mut self.settle_parents);
+        visit(&mut self.settle_counts);
         visit(&mut self.bytes);
         visit(&mut self.chain);
         visit(&mut self.row);
@@ -297,33 +307,27 @@ impl PooledScratch for PruneScratch {
     fn prepare(&mut self) {}
 }
 
-/// [`settle_loose`]'s buffers, apart from the prune's: a prune whose list
-/// needs no settle checks out only its own, and each checkout moves its
-/// buffers by value.
+/// The buffers of [`drop_clause_orphans`], pooled apart from the prune's
+/// so a clause walk checks out and parks only these.
 #[derive(Default)]
-pub(crate) struct SettleScratch {
-    /// The flags per level and the parents it reads.
-    flags: Vec<[bool; 4]>,
-    parents: Vec<VtreeIdx>,
-    /// The levels flagged above the ones it is given.
-    touched: Vec<VtreeIdx>,
-    /// The count of the pairs that name each slot of the children it reads
-    /// ([`count_named`]).
-    counts: Vec<u32>,
+pub(crate) struct DropScratch {
+    marks: Vec<u64>,
+    remap: Vec<u32>,
+    /// The levels that lost nodes and are still to be read, with the sides
+    /// to read.
+    lost: Vec<(VtreeIdx, [bool; 2])>,
 }
 
-impl Buffers for SettleScratch {
+impl Buffers for DropScratch {
     fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
-        visit(&mut self.flags);
-        visit(&mut self.parents);
-        visit(&mut self.touched);
-        visit(&mut self.counts);
+        visit(&mut self.marks);
+        visit(&mut self.remap);
+        visit(&mut self.lost);
     }
 }
 
-impl PooledScratch for SettleScratch {
-    /// Never called: [`settle_listed`] checks out with
-    /// `checkout_preserving`, as its flags stay clear between calls.
+impl PooledScratch for DropScratch {
+    /// Never called: the pool is checked out with `checkout_preserving`.
     fn prepare(&mut self) {}
 }
 
@@ -380,8 +384,7 @@ pub(crate) fn clear_false(tdd: &mut Tdd) {
 /// from — an output below the root, a leaf or marginal root level — walks the
 /// whole diagram instead. A `Whole` scope on a structural diagram that knows
 /// its loose levels ([`Dirty::loose`](crate::diagram::Dirty::loose)) walks
-/// down through the levels above them, settled first while that pays
-/// ([`seed_list`]), and
+/// down through the levels above them, as [`settle_loose`] leaves them, and
 /// the levels that lose a node, starting below the levels it knows are all
 /// reached ([`Seeds`]): where the output is the root level's only node, the
 /// levels with no loose level on their path from the root. A level the walk
@@ -409,7 +412,12 @@ pub(crate) fn prune_unreachable(
     let below_root = matches!(scope, PruneScope::BelowRoot) && below_root_walk_applies(tdd);
     let seeded = match tdd.dirty.loose() {
         Some(loose) if !below_root && below_root_walk_applies(tdd) && !tdd.has_marginal_level() => {
-            Some(Seeds::of(eng, tdd, &seed_list(eng, tdd, loose)?)?)
+            let listed = loose.to_vec_on(eng.limits())?;
+            match loose.all_counted() {
+                true => Some(Seeds::of(eng, tdd, &listed)?),
+                false if settle_reads_all(tdd, &listed) => None,
+                false => Some(Seeds::of(eng, tdd, &settle_loose(eng, tdd, &listed)?)?),
+            }
         }
         _ => None,
     };
@@ -430,30 +438,29 @@ pub(crate) fn prune_unreachable(
     Ok(())
 }
 
-/// The list a prune seeds its walk from ([`Seeds::of`]): `tdd`'s loose
-/// levels `loose`, as they are when exact, and otherwise settled
-/// ([`settle_loose`]) where its reads can pay ([`READ_COST`]).
-pub(super) fn seed_list<'a>(
-    eng: &Engine,
-    tdd: &Tdd,
-    loose: &'a [u32],
-) -> Result<std::borrow::Cow<'a, [u32]>, OperationError> {
-    if tdd.dirty.loose_is_exact() {
-        debug_assert_eq!(settle_loose(eng, tdd, loose).ok().as_deref(), Some(loose), "an exact list settles to itself");
-        return Ok(std::borrow::Cow::Borrowed(loose));
-    }
-    let level = |t: VtreeIdx| &tdd.levels[t.idx()];
-    settle_listed(eng, &tdd.vtree, &level, loose, true)
+/// Whether settling or counting `listed` may read as many pairs as a walk
+/// from the root reads: then the walk costs less than the read and the
+/// seeded walk after it. The bound counts a parent once for each listed
+/// child.
+pub(super) fn settle_reads_all(tdd: &Tdd, listed: &[u32]) -> bool {
+    let bound = |t: VtreeIdx| tdd.levels[t.idx()].pairs_bound();
+    let read: usize = listed
+        .iter()
+        .filter_map(|&t| tdd.vtree.node(VtreeIdx(t)).parent())
+        .map(bound)
+        .sum();
+    let mut left = read;
+    (0..tdd.vtree.num_nodes() as u32).all(|t| match left.checked_sub(bound(VtreeIdx(t))) {
+        Some(rest) => {
+            left = rest;
+            true
+        }
+        None => false,
+    })
 }
 
-/// A level's slots and arena pairs: what a read of its pairs or a walk
-/// across it is taken to cost.
-fn level_size(level: &TddLevel) -> usize {
-    level.slot_count() + level.pairs.len()
-}
-
-/// A level the walk must enter whatever it finds: a parent of a listed
-/// loose level, or a level above one.
+/// A level the walk must enter whatever it finds: a parent of a loose
+/// level, as [`settle_loose`] leaves them, or a level above one.
 const FORCED: u8 = 1;
 /// A level every node of which the output reaches, known without a walk:
 /// the root, when the output is its only node, and a level that is not
@@ -519,8 +526,8 @@ impl PooledScratch for SeedScratch {
 }
 
 impl<'l> Seeds<'l> {
-    /// The seeds of `tdd`, whose loose levels are `loose`, settled
-    /// ([`settle_loose`]) or not. The output is the root, as the walk below the root
+    /// The seeds of `tdd`, whose loose levels are `loose`, as [`settle_loose`]
+    /// leaves them. The output is the root, as the walk below the root
     /// needs ([`below_root_walk_applies`]).
     pub(super) fn of(
         eng: &'l Engine,
@@ -694,67 +701,19 @@ pub(crate) fn settle_loose_in<'a>(
     level: &dyn Fn(VtreeIdx) -> &'a TddLevel,
     listed: &[u32],
 ) -> Result<Vec<u32>, OperationError> {
-    settle_listed(eng, vtree, level, listed, false).map(std::borrow::Cow::into_owned)
-}
-
-/// Per level, in [`settle_listed`]'s flags: whether it stays listed,
-/// whether a level strictly under it stays listed (set on the levels above
-/// each one that stays, up to the first set already, whose own levels above
-/// are set), whether it is above a level listed, and whether it is under a
-/// listed level that no read can drop ([`READ_COST`]).
-const AT: usize = 0;
-const UNDER: usize = 1;
-const ABOVE: usize = 2;
-const BELOW: usize = 3;
-
-/// [`settle_loose_in`], which with `weigh` reads no level, and keeps the list
-/// as it is, unless the reads can pay ([`READ_COST`]).
-fn settle_listed<'a, 'l>(
-    eng: &Engine,
-    vtree: &Vtree,
-    level: &dyn Fn(VtreeIdx) -> &'a TddLevel,
-    listed: &'l [u32],
-    weigh: bool,
-) -> Result<std::borrow::Cow<'l, [u32]>, OperationError> {
     if listed.is_empty() {
-        return Ok(std::borrow::Cow::Borrowed(listed));
+        return Ok(Vec::new());
     }
     let lim = eng.limits();
-    let mut scratch = eng.scratch.reduce.settle.checkout_preserving(eng);
-    let SettleScratch { counts, flags, parents, touched } = &mut *scratch;
-    // The flags are clear between calls: each clears the levels it set, the
-    // listed ones and those above them, where clearing them all would cost
-    // a prune of a small diagram on a large vtree the vtree's size.
-    let n = vtree.num_nodes();
-    if flags.len() < n {
-        lim.try_resize(flags, n, [false; 4])?;
-    }
-    debug_assert!(flags.iter().all(|f| *f == [false; 4]), "a settle left a level flagged");
-    touched.clear();
-    let settled = settle_marked(lim, vtree, level, listed, weigh, flags, parents, touched, counts);
-    for &t in listed.iter().chain(touched.iter().map(|t| &t.0)) {
-        flags[t as usize] = [false; 4];
-    }
-    Ok(settled?.map_or(std::borrow::Cow::Borrowed(listed), std::borrow::Cow::Owned))
-}
-
-/// [`settle_listed`] in its cleared buffers: `None` where it keeps the list
-/// as it is.
-#[allow(clippy::too_many_arguments)]
-fn settle_marked<'a>(
-    lim: &Limits,
-    vtree: &Vtree,
-    level: &dyn Fn(VtreeIdx) -> &'a TddLevel,
-    listed: &[u32],
-    weigh: bool,
-    flags: &mut [[bool; 4]],
-    parents: &mut Vec<VtreeIdx>,
-    touched: &mut Vec<VtreeIdx>,
-    counts: &mut Vec<u32>,
-) -> Result<Option<Vec<u32>>, OperationError> {
-    for &t in listed {
-        flags[t as usize][AT] = true;
-    }
+    // The prune's scratch, which a prune checks out after this returns: a
+    // read clears the block of marks it takes.
+    let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
+    let PruneScratch {
+        settle_counts: counts,
+        settle_flags: flags,
+        settle_parents: parents,
+        ..
+    } = &mut *scratch;
     // The listed levels' parents, bottom-up, so that every level under a
     // parent's children is settled before the parent is read.
     parents.clear();
@@ -766,145 +725,53 @@ fn settle_marked<'a>(
     );
     parents.sort_unstable_by_key(|&p| vtree.topo_pos(p));
     parents.dedup();
-    let structural_internal = |t: VtreeIdx| !vtree.node(t).is_leaf() && !level(t).is_marginal();
-    let size = |t: &VtreeIdx| structural_internal(*t) as u64 * level_size(level(*t)) as u64;
-    let mut gate = lim.gate();
-    if weigh {
-        let [read_rate, walk_rate, per_level] = READ_COST;
-        let root = vtree.root();
-        let all_reads = read_rate * parents.iter().filter(|&&p| p != root).map(size).sum::<u64>();
-        // A listed child of the root every node of which the root names
-        // loses no node, and the walk enters it only on the way to a level
-        // under it. The root is read for that only where it costs no more
-        // than the reads it decides: on a compile its one node can hold
-        // millions of pairs.
-        let mut loose_child = [true; 2];
-        if structural_internal(root) && read_rate * size(&root) <= all_reads {
-            let (left, right) = vtree.children(root);
-            let sides = [flags[left.idx()][AT], flags[right.idx()][AT]];
-            loose_child = unnamed_children(lim, (vtree, level), root, sides, counts, &mut gate)?;
-        }
-        let fixed = |t: VtreeIdx| match vtree.node(t).parent() {
-            Some(p) if p == root => loose_child[(vtree.children(root).1 == t) as usize],
-            Some(p) => !structural_internal(p) || !structural_internal(t),
-            None => true,
-        };
-        // The levels above one that stays listed, which the walk enters
-        // whatever the reads find.
-        for &t in listed {
-            if !fixed(VtreeIdx(t)) {
-                continue;
-            }
-            let mut up = vtree.node(VtreeIdx(t)).parent();
-            while let Some(u) = up.filter(|u| !flags[u.idx()][ABOVE]) {
-                lim.try_push(touched, u)?;
-                flags[u.idx()][ABOVE] = true;
-                up = vtree.node(u).parent();
-            }
-        }
-        // The walk is summed only until it passes every read: on a deep
-        // vtree the paths up to the root are long.
-        let mut walk = 0;
-        'walk: for &t in listed {
-            let t = VtreeIdx(t);
-            if fixed(t) {
-                continue;
-            }
-            let (from, mut path) = (touched.len(), 0);
-            let mut up = vtree.node(t).parent();
-            let below = loop {
-                let Some(u) = up else { break false };
-                if flags[u.idx()][AT] && fixed(u) || flags[u.idx()][BELOW] {
-                    break true;
-                }
-                if flags[u.idx()][ABOVE] {
-                    break false;
-                }
-                lim.try_push(touched, u)?;
-                flags[u.idx()][ABOVE] = true;
-                path += walk_rate * size(&u) + per_level;
-                up = vtree.node(u).parent();
-            };
-            if below {
-                flags[t.idx()][BELOW] = true;
-                for &u in &touched[from..] {
-                    flags[u.idx()][BELOW] = true;
-                }
-                continue;
-            }
-            walk += path;
-            if walk > all_reads {
-                break 'walk;
-            }
-        }
-        if walk <= all_reads {
-            let read = |c: VtreeIdx| flags[c.idx()][AT] && !flags[c.idx()][BELOW] && !fixed(c);
-            let reads = read_rate
-                * parents
-                    .iter()
-                    .filter(|&&p| {
-                        let (l, r) = vtree.children(p);
-                        p != root && (read(l) || read(r))
-                    })
-                    .map(size)
-                    .sum::<u64>();
-            if walk <= reads {
-                gate.flush()?;
-                return Ok(None);
-            }
-        }
+    settle_under(lim, (vtree, level), listed, parents, flags, counts)
+}
+
+/// The settle of `listed` that reads the children of each of `parents`,
+/// bottom-up.
+fn settle_under<'a>(
+    lim: &Limits,
+    (vtree, level): (&Vtree, &dyn Fn(VtreeIdx) -> &'a TddLevel),
+    listed: &[u32],
+    parents: &[VtreeIdx],
+    flags: &mut Vec<[bool; 2]>,
+    counts: &mut Vec<u32>,
+) -> Result<Vec<u32>, OperationError> {
+    // Per level, whether it stays listed (`AT`) and whether a level strictly
+    // under it stays listed (`UNDER`): set on the levels above each one that
+    // stays, up to the first set already, whose own levels above are set.
+    const AT: usize = 0;
+    const UNDER: usize = 1;
+    flags.clear();
+    lim.try_resize(flags, vtree.num_nodes(), [false; 2])?;
+    for &t in listed {
+        flags[t as usize][AT] = true;
     }
-    for &p in parents.iter() {
+    let mut gate = lim.gate();
+    for &p in parents {
         let (left, right) = vtree.children(p);
         if p != vtree.root() && !flags[left.idx()][UNDER] && !flags[right.idx()][UNDER] {
             let sides = [flags[left.idx()][AT], flags[right.idx()][AT]];
-            let stays = unnamed_children(lim, (vtree, level), p, sides, counts, &mut gate)?;
+            let (stays, _) = unnamed_children(lim, (vtree, level), p, sides, counts, &mut gate)?;
             flags[left.idx()][AT] = stays[0];
             flags[right.idx()][AT] = stays[1];
         }
         if flags[left.idx()][AT] || flags[right.idx()][AT] {
             let mut up = Some(p);
             while let Some(t) = up.filter(|t| !flags[t.idx()][UNDER]) {
-                if !flags[t.idx()][ABOVE] {
-                    lim.try_push(touched, t)?;
-                }
                 flags[t.idx()][UNDER] = true;
                 up = vtree.node(t).parent();
             }
         }
     }
     gate.flush()?;
-    // Sized to what it keeps, and unallocated when that is nothing: a
-    // conjunction grows the larger operand list into its result's, and
-    // growing an allocation costs more than making one.
-    let stays = |t: &u32| flags[*t as usize][AT];
-    let mut kept = Vec::new();
-    let n = listed.iter().filter(|t| stays(t)).count();
-    if n > 0 {
-        lim.reserve_exact(&mut kept, n)?;
-        kept.extend(listed.iter().copied().filter(|t| stays(t)));
-    }
-    Ok(Some(kept))
+    Ok(listed
+        .iter()
+        .copied()
+        .filter(|&t| flags[t as usize][AT])
+        .collect())
 }
-
-/// What a settle's reads and the walk they may spare are taken to cost, in
-/// a level's slots and arena pairs ([`level_size`]): a read of a parent
-/// costs `READ_COST[0]` a slot or pair, and the walk `READ_COST[1]` a slot
-/// or pair and `READ_COST[2]` a level it enters. Every read that drops a
-/// level spares the walk at most its parent and the levels above, and the
-/// reads seldom stop much before a parent's last pair, so [`settle_listed`]
-/// reads only where the walk across the levels above those listed would
-/// cost more than reading their parents. A listed level no read can drop (a
-/// child of the root that holds a node the root does not name, or one that
-/// cannot be read) is left out with the levels above it, which the walk
-/// enters anyway, and so is every listed level under it: on model-counting
-/// compiles the walk enters the levels under such a child of the root
-/// whatever the reads drop. A listed child of the root that loses no node is
-/// weighed as any level, as on logic programs the reads under it can spare
-/// the walk its whole path. The rates are
-/// fitted to instruction counts: a read of a stored level whole costs about
-/// 11 instructions a slot or pair, and the walk's marks across it about 19.
-const READ_COST: [u64; 3] = [4, 5, 5 * 64];
 
 /// Which of the children of level `p` that `sides` asks for, left and right,
 /// hold a node no pair of `p` names, reading `p`'s pairs in one pass until
@@ -912,21 +779,22 @@ const READ_COST: [u64; 3] = [4, 5, 5 * 64];
 /// pair ([`count_named`]). A level with no node holds none, and a level that
 /// cannot be read counts as holding one: one that is not structural
 /// internal, and each child of a `p` that is not.
-// With a second caller it was no longer inlined into the settle's loop over
-// parents, which then cost a quarter more on logic programs of many small
-// diagrams.
-#[inline(always)]
-pub(crate) fn unnamed_children<'a>(
+///
+/// Also the width of each side's block in `counts`, the left one's first, 0
+/// for a side not read. A side read that holds an unnamed node was read to
+/// the end, so its block's zeros below the child's node count are exactly
+/// those nodes.
+fn unnamed_children<'a>(
     lim: &Limits,
     (vtree, level_at): (&Vtree, &dyn Fn(VtreeIdx) -> &'a TddLevel),
     p: VtreeIdx,
     sides: [bool; 2],
     counts: &mut Vec<u32>,
     gate: &mut PollGate<'_>,
-) -> Result<[bool; 2], OperationError> {
+) -> Result<([bool; 2], [usize; 2]), OperationError> {
     let structural_internal = |t: VtreeIdx| !vtree.node(t).is_leaf() && !level_at(t).is_marginal();
     if sides == [false; 2] || !structural_internal(p) {
-        return Ok(sides);
+        return Ok((sides, [0; 2]));
     }
     let (left, right) = vtree.children(p);
     let children = [left, right];
@@ -957,7 +825,75 @@ pub(crate) fn unnamed_children<'a>(
         [false, true] => count_named::<false, true>(level, [l, r], gate)?,
         [false, false] => [true; 2],
     };
-    Ok([unread[0] || !named[0], unread[1] || !named[1]])
+    Ok(([unread[0] || !named[0], unread[1] || !named[1]], width))
+}
+
+/// [`settle_loose`] read to the end: each level of `listed` that holds a
+/// node no pair of its parent level names, or cannot be read, with the
+/// nodes it holds no pair names and their pairs ([`Engine::unnamed_nodes`]);
+/// a level that cannot be read, and the root level, are given none. The
+/// output is at the root and no level is marginal. Unlike the settle, a
+/// level whose parent is the root or under a level that stays listed is read
+/// too, each parent's pairs in one pass, one unit of work a pair.
+pub(crate) fn count_unnamed(
+    eng: &Engine,
+    tdd: &Tdd,
+    listed: &[u32],
+) -> Result<Vec<(u32, Unnamed)>, OperationError> {
+    let (vtree, lim) = (&tdd.vtree, eng.limits());
+    let level_at = |t: VtreeIdx| &tdd.levels[t.idx()];
+    let root = vtree.root();
+    let mut held: Vec<(u32, Unnamed)> = Vec::new();
+    if listed.contains(&root.0) && level_at(root).node_count() > 1 {
+        lim.try_push(&mut held, (root.0, Unnamed::default()))?;
+    }
+    if listed.is_empty() {
+        return Ok(held);
+    }
+    let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
+    let PruneScratch {
+        settle_counts: counts,
+        settle_flags: flags,
+        settle_parents: parents,
+        ..
+    } = &mut *scratch;
+    flags.clear();
+    lim.try_resize(flags, vtree.num_nodes(), [false; 2])?;
+    for &t in listed {
+        flags[t as usize][0] = true;
+    }
+    parents.clear();
+    lim.reserve(parents, listed.len())?;
+    parents.extend(listed.iter().filter_map(|&t| vtree.node(VtreeIdx(t)).parent()));
+    parents.sort_unstable_by_key(|p| p.0);
+    parents.dedup();
+    lim.reserve(&mut held, listed.len())?;
+    let mut gate = lim.gate();
+    for &p in parents.iter() {
+        let children = <[VtreeIdx; 2]>::from(vtree.children(p));
+        let sides = children.map(|c| flags[c.idx()][0]);
+        let (stays, width) = unnamed_children(lim, (vtree, &level_at), p, sides, counts, &mut gate)?;
+        let mut base = 0;
+        for k in 0..2 {
+            if stays[k] {
+                let mut unnamed = Unnamed::default();
+                if width[k] > 0 {
+                    let level = level_at(children[k]);
+                    for (s, _) in counts[base..base + width[k] - 1].iter().enumerate().filter(|&(_, &n)| n == 0) {
+                        unnamed.nodes += 1;
+                        unnamed.pairs += level.pair_count_at(s);
+                    }
+                }
+                held.push((children[k].0, unnamed));
+            }
+            base += width[k];
+        }
+    }
+    gate.flush()?;
+    for &t in listed {
+        flags[t as usize][0] = false;
+    }
+    Ok(held)
 }
 
 /// Count in `blocks`, a count a node, the pairs of `level` that name each
@@ -1638,24 +1574,222 @@ fn move_sides(
     left: impl Fn(u32) -> u32,
     right: impl Fn(u32) -> u32,
 ) {
-    marked(own).for_each(|i| {
-        let kind = level.nodes.stored()[i].kind();
-        match kind {
-            NodeKind::Inline(_) => {
-                let node = &mut level.nodes.stored_mut()[i];
-                node.a = left(node.a);
-                node.b = right(node.b);
-            }
-            _ => {
-                if let Some(range) = level.arena_range(kind) {
-                    for pair in &mut level.pairs.stored_mut()[range] {
-                        pair.left = EncodedChildRef::from_raw(left(pair.left.raw()));
-                        pair.right = EncodedChildRef::from_raw(right(pair.right.raw()));
-                    }
+    marked(own).for_each(|i| move_node(level, i, &left, &right));
+}
+
+/// Move the left and the right side of every pair of `level`'s node `i`
+/// through `left` and `right`.
+#[inline(always)]
+fn move_node(level: &mut TddLevel, i: usize, left: impl Fn(u32) -> u32, right: impl Fn(u32) -> u32) {
+    let kind = level.nodes.stored()[i].kind();
+    match kind {
+        NodeKind::Inline(_) => {
+            let node = &mut level.nodes.stored_mut()[i];
+            node.a = left(node.a);
+            node.b = right(node.b);
+        }
+        _ => {
+            if let Some(range) = level.arena_range(kind) {
+                for pair in &mut level.pairs.stored_mut()[range] {
+                    pair.left = EncodedChildRef::from_raw(left(pair.left.raw()));
+                    pair.right = EncodedChildRef::from_raw(right(pair.right.raw()));
                 }
             }
         }
-    });
+    }
+}
+
+/// Drop the nodes nothing names from the levels of the clause spine
+/// (`on_spine`) that the conjunction with a clause rebuilt in `levels`: the
+/// output level's nodes but the output `out` at level `out_vtree`, then,
+/// top-down, a spine level's nodes its parent no longer names. Returns the
+/// output's new index, the nodes dropped and the parent pairs read.
+///
+/// A rebuilt level names every node of its spine children but at `top`,
+/// the highest level with both children on the spine, whose children are
+/// read on the sides it gives. Below them a level that lost a node is read
+/// on both sides.
+///
+/// With `loose`, the levels the drop read leave the list, and so does the
+/// root when it holds the output; an internal off-spine child of a level
+/// that lost a node joins it, as a node only the lost one named is named by
+/// none.
+///
+/// Charges no work: the walk charged the pairs it built, and the clock
+/// stays where a walk without the drop leaves it.
+///
+/// # Errors
+///
+/// Returns `Err(OperationError::OverBudget)` if the marks or the new indices
+/// cannot grow; a level read before keeps its drop.
+#[inline(never)]
+pub(crate) fn drop_clause_orphans(
+    eng: &Engine,
+    vtree: &Vtree,
+    levels: &mut [TddLevel],
+    on_spine: &[bool],
+    top: Option<(VtreeIdx, [bool; 2])>,
+    (out_vtree, out): (VtreeIdx, u32),
+    mut loose: Option<&mut LooseLevels>,
+) -> Result<(u32, [u64; 2]), OperationError> {
+    let lim = eng.limits();
+    let mut tally = [0u64; 2];
+    let mut scratch = eng.scratch.reduce.clause_drop.checkout_preserving(eng);
+    let DropScratch { marks, remap, lost } = &mut *scratch;
+    lost.clear();
+    let readable = |c: VtreeIdx| on_spine[c.idx()] && !vtree.node(c).is_leaf();
+    let readable_sides = |t: VtreeIdx| {
+        let (l, r) = vtree.children(t);
+        [readable(l), readable(r)]
+    };
+    let list_lost = |loose: &mut Option<&mut LooseLevels>, t: VtreeIdx| {
+        if let Some(loose) = loose {
+            let (l, r) = vtree.children(t);
+            for c in [l, r] {
+                if !on_spine[c.idx()] && !vtree.node(c).is_leaf() {
+                    loose.insert(c.0);
+                }
+            }
+        }
+    };
+    let width = levels[out_vtree.idx()].slot_count();
+    let own = words(width);
+    clear_front(lim, marks, own, 0)?;
+    mark(marks, 0, out as usize);
+    let out = if all_marked(marks, width) {
+        out
+    } else {
+        let sides = readable_sides(out_vtree);
+        grow_to(lim, remap, width, UNREACHED)?;
+        new_indices(&marks[..own], width, remap);
+        tally[0] += drop_unmarked(&mut levels[out_vtree.idx()], &marks[..own]);
+        list_lost(&mut loose, out_vtree);
+        if sides != [false; 2] {
+            lim.try_push(lost, (out_vtree, sides))?;
+        }
+        remap[out as usize]
+    };
+    if out_vtree == vtree.root()
+        && let Some(loose) = loose.as_deref_mut()
+    {
+        loose.remove(out_vtree.0);
+    }
+    let mut top = top;
+    loop {
+        let (t, mut sides) = match (lost.pop(), top) {
+            (Some(lost), _) => lost,
+            (None, Some(top)) => top,
+            (None, None) => break,
+        };
+        if let Some((at, top_sides)) = top
+            && at == t
+        {
+            sides = [sides[0] | top_sides[0], sides[1] | top_sides[1]];
+            top = None;
+        }
+        let (l, r) = vtree.children(t);
+        let width = [(l, 0), (r, 1)].map(|(c, s)| if sides[s] && readable(c) { levels[c.idx()].slot_count() } else { 0 });
+        if width == [0, 0] {
+            continue;
+        }
+        let base = words(width[0]);
+        let end = base + words(width[1]);
+        clear_front(lim, marks, end, 0)?;
+        let parent = &levels[t.idx()];
+        tally[1] += match width.map(|w| w != 0) {
+            [true, true] => mark_named::<true, true>(parent, marks, base),
+            [true, false] => mark_named::<true, false>(parent, marks, base),
+            _ => mark_named::<false, true>(parent, marks, base),
+        };
+        let own = [0..base, base..end];
+        let dropped = [0, 1].map(|s| width[s] != 0 && !all_marked(&marks[own[s].clone()], width[s]));
+        if let Some(loose) = loose.as_deref_mut() {
+            for (s, c) in [l, r].into_iter().enumerate() {
+                if width[s] != 0 {
+                    loose.remove(c.0);
+                }
+            }
+        }
+        if dropped == [false, false] {
+            continue;
+        }
+        grow_to(lim, remap, width[0] + width[1], UNREACHED)?;
+        lim.reserve(lost, 2)?;
+        for (s, c) in [l, r].into_iter().enumerate() {
+            if dropped[s] {
+                let sides = readable_sides(c);
+                let new = &mut remap[if s == 0 { 0..width[0] } else { width[0]..width[0] + width[1] }];
+                new_indices(&marks[own[s].clone()], width[s], new);
+                tally[0] += drop_unmarked(&mut levels[c.idx()], &marks[own[s].clone()]);
+                list_lost(&mut loose, c);
+                if sides != [false; 2] {
+                    lost.push((c, sides));
+                }
+            }
+        }
+        let (left_new, right_new) = remap.split_at(width[0]);
+        let parent = &mut levels[t.idx()];
+        let kept = |s: u32| s;
+        let nodes = 0..parent.slot_count();
+        match dropped {
+            [true, true] => nodes.for_each(|i| move_node(parent, i, moved_slot(left_new), moved_slot(right_new))),
+            [true, false] => nodes.for_each(|i| move_node(parent, i, moved_slot(left_new), kept)),
+            _ => nodes.for_each(|i| move_node(parent, i, kept, moved_slot(right_new))),
+        }
+    }
+    Ok((out, tally))
+}
+
+/// Mark in `marks` the left (`L`) and the right (`R`, block at word `base`)
+/// child slots the stored level `parent` names. Returns the pairs read.
+fn mark_named<const L: bool, const R: bool>(parent: &TddLevel, marks: &mut [u64], base: usize) -> u64 {
+    let stored = parent.stored().expect("a rebuilt level stores its pairs");
+    let mut left = Marker::new(0);
+    let mut read = 0;
+    for node in parent.nodes.stored() {
+        let pairs = stored.of(node);
+        read += pairs.len();
+        for p in pairs {
+            if L {
+                left.mark(marks, 0, p.left.raw() as usize);
+            }
+            if R {
+                mark(marks, base, p.right.raw() as usize);
+            }
+        }
+    }
+    left.finish(marks);
+    read as u64
+}
+
+/// Set the first `n` entries of `v` to `value`, growing it to `n` if it is
+/// shorter.
+fn clear_front<T: Copy>(lim: &Limits, v: &mut Vec<T>, n: usize, value: T) -> Result<(), OperationError> {
+    let have = v.len().min(n);
+    v[..have].fill(value);
+    grow_to(lim, v, n, value)
+}
+
+/// Grow `v` to `n` entries of `value` if it is shorter.
+fn grow_to<T: Copy>(lim: &Limits, v: &mut Vec<T>, n: usize, value: T) -> Result<(), OperationError> {
+    if v.len() < n {
+        lim.try_resize(v, n, value)?;
+    }
+    Ok(())
+}
+
+/// Remove from the stored structural level `level` the nodes whose slots
+/// `own` does not mark, and their pairs. Returns the nodes removed.
+fn drop_unmarked(level: &mut TddLevel, own: &[u64]) -> u64 {
+    let width = level.slot_count();
+    let mut dead = 0usize;
+    if !level.pairs.is_empty() {
+        for_each_unmarked(own, width, |i| dead += level.arena_pairs_at(i));
+    }
+    keep_marked(level.nodes.stored_mut(), own);
+    level.note_dead_pairs(dead);
+    level.compact_pairs_if_stale();
+    (width - level.slot_count()) as u64
 }
 
 /// Where a slot of a structural child, as a raw word, moves when the child

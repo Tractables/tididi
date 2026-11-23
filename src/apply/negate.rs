@@ -497,7 +497,7 @@ pub(crate) fn expand_full(
     target: &mut Target<'_, '_>,
     canonical: bool,
     closed: bool,
-    (filled, twinned, loose): (&mut [bool], &mut Vec<crate::vtree::VtreeIdx>, Option<&[u32]>),
+    (filled, twinned, loose): (&mut [bool], &mut Vec<crate::vtree::VtreeIdx>, Option<&crate::diagram::LooseLevels>),
 ) -> Result<(), OperationError> {
     let scratch = &eng.scratch.negate;
     let mut common = Vec::new();
@@ -614,7 +614,7 @@ pub(crate) fn expand_full(
         );
         if !cells.is_empty() {
             charge_scan(eng, lefts, rights)?;
-            let may_be_loose = |c: crate::vtree::VtreeIdx, leaf: bool| !leaf && loose.is_none_or(|l| l.contains(&c.0));
+            let may_be_loose = |c: crate::vtree::VtreeIdx, leaf: bool| !leaf && loose.is_none_or(|l| l.contains(c.0));
             let internal = [may_be_loose(left, leaf.left_one), may_be_loose(right, leaf.right_one)];
             if !canonical && cover.unnamed_twins(eng.limits(), cells, internal, &mut common)? {
                 eng.limits().try_push(twinned, t)?;

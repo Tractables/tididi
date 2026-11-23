@@ -227,10 +227,6 @@ pub(super) struct SweepLists {
     pub(super) twin_free: Vec<VtreeIdx>,
     /// The stack of a walk down a region (`region::constant_true`).
     pub(super) stack: Vec<VtreeIdx>,
-    /// `drive::owed::loose_levels`' flags by level, all zero between
-    /// conjunctions, and the levels it set them at.
-    pub(super) loose_in: Vec<u8>,
-    pub(super) loose_touched: Vec<u32>,
     /// The levels a conjunction that is not plain built structural over a
     /// marginal child, bottom-up: the inlining of marginal references visits
     /// only these.
@@ -345,8 +341,6 @@ impl SweepLists {
         visit(&mut self.owed_twins);
         visit(&mut self.twin_free);
         visit(&mut self.stack);
-        visit(&mut self.loose_in);
-        visit(&mut self.loose_touched);
         visit(&mut self.inline_at);
     }
 }

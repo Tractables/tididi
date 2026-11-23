@@ -878,10 +878,8 @@ pub(super) fn find_twin_groups(
                 Screen::Alike => true,
                 Screen::Named => {
                     // A level the diagram does not list loose has every node
-                    // named. The list is scanned, which costs a search that
-                    // reads few pairs more than the search itself: read it
-                    // here only.
-                    let loose = tdd.dirty.loose().is_none_or(|loose| loose.contains(&t1.0));
+                    // named.
+                    let loose = tdd.dirty.may_be_loose(t1.0);
                     match (loose, parent_level.stored()) {
                         (true, Some(stored)) => {
                             mark_named(stored, t1_side, width, lim, &mut scratch.twin_named)?;

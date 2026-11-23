@@ -46,7 +46,6 @@ use super::*;
 use super::identity::init_leaf_identity_over;
 use super::price::{built_pairs, price_dense_level, refuse_past_cap};
 use crate::Engine;
-use crate::reduce::prune::settle_loose_in;
 
 /// What one sweep carries beside its [`ApplyRun`]: the vtree, the
 /// marginalization schedule, and the weight store the marginal levels write to.
@@ -491,9 +490,6 @@ fn give_back(
 
 /// What [`apply_and_core`] returns: the conjunction, or only its model count
 /// when the root was counted instead of built.
-// Returned once per conjunction and unpacked at once: boxing the diagram
-// would add an allocation to every conjunction.
-#[expect(clippy::large_enum_variant)]
 pub(crate) enum Conjoined {
     Built(Tdd),
     Counted(num_bigint::BigUint),
@@ -691,30 +687,6 @@ fn apply_and_held(
 
     apply_leaf_levels(eng, &mut run)?;
 
-    // The operands' loose levels as a prune would settle them, read before
-    // the sweep drops the operands' levels.
-    // An exact list is what a settle would keep of it.
-    let operand_loose = match (f.dirty().loose(), g.dirty().loose()) {
-        (Some(lf), Some(lg)) if plain && !run.passing => Some(Operands {
-            f: match f.dirty().loose_is_exact() {
-                true => {
-                    debug_assert_eq!(settle_loose_in(eng, &vtree, &|t| f.level(t), lf).ok().as_deref(), Some(lf));
-                    lim.try_to_vec(lf)?
-                }
-                false => settle_loose_in(eng, &vtree, &|t| f.level(t), lf)?,
-            },
-            g: match g.dirty().loose_is_exact() {
-                true => {
-                    debug_assert_eq!(settle_loose_in(eng, &vtree, &|t| g.level(t), lg).ok().as_deref(), Some(lg));
-                    lim.try_to_vec(lg)?
-                }
-                false => settle_loose_in(eng, &vtree, &|t| g.level(t), lg)?,
-            },
-        }),
-        (Some(lf), Some(lg)) if plain => Some(listed_loose(eng, Operands { f: lf, g: lg })?),
-        _ => None,
-    };
-
     let canon_leaves = super::leaf_seed::seed_output_leaves(
         f,
         g,
@@ -811,7 +783,13 @@ fn apply_and_held(
         // contraction's worklists.
         run.lists.as_operand.sort_unstable();
         run.lists.outer_held.sort_unstable();
-        let loose = operand_loose.map(|ops| owed::loose_levels(&vtree, &mut run, g.reached(), ops));
+        // The operands' loose levels are carried unread, with their counts:
+        // a prune reads the result's once, where reading them here would
+        // read them again at each conjunction.
+        let loose = match (f.dirty().loose(), g.dirty().loose()) {
+            (Some(lf), Some(lg)) => Some(owed::loose_levels(&vtree, &run, g.reached(), Operands { f: lf, g: lg })),
+            _ => None,
+        };
         owed::split_built(&vtree, &mut run, g.reached());
         loose
     } else {
@@ -862,7 +840,7 @@ fn apply_and_held(
                     out.levels.know_pairs_beside(carried, cone.built);
                 }
                 if let Some(loose) = loose {
-                    out.dirty.set_loose(Some(loose));
+                    out.dirty.restore_loose(Some(Box::new(loose)));
                     out.dirty.dedup_above(num_nodes);
                 }
                 #[cfg(debug_assertions)]
@@ -1012,15 +990,3 @@ fn dead_conjunction(eng: &Engine, mut assembly: diagram::Assembly<'_>, root: Vtr
     Ok(out)
 }
 
-/// Each operand's loose levels as listed: at a view's pass-throughs the
-/// levels read are not the operand's, so a prune does not settle them.
-#[cold]
-fn listed_loose(eng: &Engine, listed: Operands<&[u32]>) -> Result<Operands<Vec<u32>>, OperationError> {
-    let copy = |list: &[u32]| -> Result<Vec<u32>, OperationError> {
-        let mut out = Vec::new();
-        eng.limits().reserve_exact(&mut out, list.len())?;
-        out.extend_from_slice(list);
-        Ok(out)
-    };
-    Ok(Operands { f: copy(listed.f)?, g: copy(listed.g)? })
-}

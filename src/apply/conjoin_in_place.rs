@@ -585,15 +585,7 @@ fn and_in_place_kernel(
     // unnamed by their parent level, read before any edit forgets them.
     let mut loose: Option<Vec<u32>> = match f.levels.is_canonical(f.output) {
         true => Some(Vec::new()),
-        false => match f.dirty.loose() {
-            Some(listed) => {
-                let mut copy = Vec::new();
-                lim.reserve_exact(&mut copy, listed.len())?;
-                copy.extend_from_slice(listed);
-                Some(copy)
-            }
-            None => None,
-        },
+        false => f.dirty.loose().map(|listed| listed.to_vec_on(lim)).transpose()?,
     };
 
     // The products where `g` branches: every original node of `f` there.

@@ -81,32 +81,11 @@ fn or_cube_on_a_home_ends_trimmed() {
     assert_all(failed);
 }
 
-/// A level listed loose that every node of its parent level names all of.
-fn listed_but_named(f: &Tdd) -> Option<u32> {
-    let vtree = f.vtree();
-    f.dirty.loose()?.iter().copied().find(|&c| {
-        let c = crate::vtree::VtreeIdx(c);
-        let Some(p) = vtree.node(c).parent() else { return false };
-        if vtree.node(c).is_leaf() || f.levels[c.idx()].is_marginal() {
-            return false;
-        }
-        let on_left = vtree.children(p).0 == c;
-        let mut named = vec![false; f.levels[c.idx()].slot_count()];
-        let level = &f.levels[p.idx()];
-        for node in level.nodes().iter() {
-            for pair in level.pairs_iter_of(&node) {
-                named[(if on_left { pair.left } else { pair.right }).0 as usize] = true;
-            }
-        }
-        !named.contains(&false)
-    })
-}
-
 /// A literal on a home, a diagram trimmed to one leaf, a clause and clauses
-/// conjoined into it know their loose levels, and list exactly the levels
-/// with a node their parent level does not name.
+/// conjoined into it list every level with a node their parent level does
+/// not name.
 #[test]
-fn clause_results_list_exactly_their_loose_levels() {
+fn clause_results_list_their_loose_levels() {
     let eng = Engine::new();
     let mut rng = crate::test_helpers::Lcg::new(0x1005e);
     let clause = |rng: &mut crate::test_helpers::Lcg| -> Vec<i32> {
@@ -132,12 +111,6 @@ fn clause_results_list_exactly_their_loose_levels() {
             results.push(("and_clause", f.clone()));
         }
         for (what, got) in results {
-            if !got.dirty.loose_is_exact() {
-                failed.push(format!("seed {seed}, {what}: loose levels not known exact"));
-            }
-            if let Some(c) = listed_but_named(&got) {
-                failed.push(format!("seed {seed}, {what}: level {c} listed loose with every node named"));
-            }
             let check = if got.vtree().is_on(&home) { check_trimmed(&got, false) } else { check_loose_levels(&got) };
             failed.extend(check.err().map(|e| format!("seed {seed}, {what}: {e}")));
         }

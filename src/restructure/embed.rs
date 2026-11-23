@@ -348,7 +348,7 @@ impl Engine {
         let canonical = tdd.levels.is_canonical(tdd.output);
         let (mut result, plan) = place_moving(self, tdd, into, map, Free::Build)?;
         // A literal chain whose reader names one literal is listed loose.
-        if canonical && result.dirty.loose().is_some_and(<[u32]>::is_empty) {
+        if canonical && result.dirty.loose().is_some_and(|loose| loose.is_empty()) {
             result.certify_built();
         }
         Ok((result, plan.embedding))
@@ -1301,7 +1301,7 @@ pub(crate) fn moved_loose(
     source: &Vtree,
     into: &Vtree,
     (images, mirrored): (&[VtreeIdx], impl Fn(VtreeIdx) -> bool),
-    loose: &[u32],
+    loose: &crate::diagram::LooseLevels,
     literal_tops: &[VtreeIdx],
     out: &mut Vec<u32>,
 ) {
@@ -1322,7 +1322,7 @@ pub(crate) fn moved_loose(
             }
             let named_whole = match source.node(from).is_leaf() {
                 true => literal_tops.binary_search(&top).is_err(),
-                false => loose.binary_search(&from.0).is_err(),
+                false => !loose.contains(from.0),
             };
             if !named_whole {
                 out.push(top.0);

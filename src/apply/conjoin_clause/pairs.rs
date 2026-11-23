@@ -7,9 +7,13 @@ use super::*;
 /// Inner loop for the both-relevant pair-accumulation step.
 ///
 /// Accumulates `c_t` pairs of types 1/2/3 directly onto `level.pairs` and
-/// `d_t` pairs into the tables' `dt_pairs`. The caller records
-/// `level.pairs.len()` and clears `t3_buf` and `dt_pairs` before the call,
-/// and emits the node afterwards.
+/// `d_t` pairs into the tables' `dt_pairs`. Without `d_t` it counts in the
+/// tables' `top` its input pairs and, per side, the places where it may have
+/// named a `d` half in no pair: on the left, the runs of pairs on one left
+/// node that skipped its `d` half and named it in none; on the right, the
+/// skips. The caller
+/// records `level.pairs.len()` and clears `t3_buf` and `dt_pairs` before the
+/// call, and emits the node afterwards.
 pub(super) fn build_both_rel_pairs<const DT: bool>(
     eng: &Engine,
     inputs: &[ChildPair],
@@ -27,11 +31,19 @@ pub(super) fn build_both_rel_pairs<const DT: bool>(
     let clause_t3_buf = &mut *tables.t3_buf;
     let clause_dt_pairs = &mut *tables.dt_pairs;
     let mut prev_left = u32::MAX;
+    let mut unnamed = [0usize; 2];
+    // Without `d_t`: whether the run of pairs on the current left skipped
+    // its `d` half, and whether it named it.
+    let mut run = [false; 2];
     for p in inputs {
         if p.left.0 != prev_left {
             level.pairs.stored_mut().extend_from_slice(clause_t3_buf);
             clause_t3_buf.clear();
             prev_left = p.left.0;
+            if !DT {
+                unnamed[0] += usize::from(run[0] & !run[1]);
+                run = [false; 2];
+            }
         }
         let [l_ct, l_dt] = cd_map[left_grid_base + p.left.raw() as usize];
         let [r_ct, r_dt] = cd_map[right_grid_base + p.right.raw() as usize];
@@ -48,15 +60,22 @@ pub(super) fn build_both_rel_pairs<const DT: bool>(
                     EncodedChildRef::from_raw(r_dt),
                 ));
             }
+        } else if !DT && r_dt != NO_PRODUCT {
+            unnamed[1] += 1;
         }
-        if l_dt != NO_PRODUCT && r_ct != NO_PRODUCT {
-            lim.try_push(
-                clause_t3_buf,
-                ChildPair::new(
-                    EncodedChildRef::from_raw(l_dt),
-                    EncodedChildRef::from_raw(r_ct),
-                ),
-            )?;
+        if l_dt != NO_PRODUCT {
+            if r_ct != NO_PRODUCT {
+                lim.try_push(
+                    clause_t3_buf,
+                    ChildPair::new(
+                        EncodedChildRef::from_raw(l_dt),
+                        EncodedChildRef::from_raw(r_ct),
+                    ),
+                )?;
+                run[1] = true;
+            } else if !DT {
+                run[0] = true;
+            }
         }
         if DT && l_dt != NO_PRODUCT && r_dt != NO_PRODUCT {
             lim.try_push(
@@ -69,6 +88,12 @@ pub(super) fn build_both_rel_pairs<const DT: bool>(
         }
     }
     level.pairs.stored_mut().extend_from_slice(clause_t3_buf);
+    unnamed[0] += usize::from(run[0] & !run[1]);
+    if !DT && let Some((_, sides, pairs)) = &mut tables.top {
+        sides[0] += unnamed[0];
+        sides[1] += unnamed[1];
+        *pairs += inputs.len();
+    }
     Ok(())
 }
 

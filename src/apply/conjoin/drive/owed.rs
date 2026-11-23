@@ -7,13 +7,13 @@
 use crate::apply::conjoin::held::Held;
 use super::super::setup::{ApplyRun, Operands, VtreeMask};
 use super::region::carried_from_f;
-use crate::diagram::TddLevel;
+use crate::diagram::{LooseLevels, TddLevel};
 use crate::vtree::{Vtree, VtreeIdx};
 
 /// The internal levels below the root of a plain conjunction's result that
 /// may hold a node no pair of their parent level names, given the operands'
-/// own such levels, as [`settle_loose`](crate::reduce::prune::settle_loose)
-/// leaves them, and which operand each level the sweep carried as an
+/// own such levels ([`Dirty::loose`](crate::diagram::Dirty::loose)), and
+/// which operand each level the sweep carried as an
 /// identity level came from
 /// ([`SweepLists::identity_carrier`](super::super::setup::SweepLists::identity_carrier));
 /// the result took each free level from the operand [`carried_from_f`]
@@ -75,111 +75,56 @@ use crate::vtree::{Vtree, VtreeIdx};
 /// `g`; a level the sweep stopped short of is free in `g`, and taken from
 /// `f`, with what it holds.
 ///
-/// The list is written into the allocation of the larger operand list, grown
-/// once to the most it can hold. It lists each level once.
+/// A level under a free one keeps what the operand's entry counted of it
+/// ([`Engine::unnamed_nodes`](crate::Engine::unnamed_nodes)): its nodes and
+/// its parent's pairs are that operand's. So does a level that was moved
+/// untouched or taken free from the operand that its parent was moved
+/// untouched from. Every other level is uncounted.
 ///
 /// [`Cone::chain`]: super::super::setup::Cone::chain
 pub(super) fn loose_levels(
     vtree: &Vtree,
-    run: &mut ApplyRun<'_, '_>,
-    chain: &[VtreeIdx],
-    operands: Operands<Vec<u32>>,
-) -> Vec<u32> {
-    let mut table = std::mem::take(&mut run.lists.loose_in);
-    if table.len() < vtree.num_nodes() {
-        table.resize(vtree.num_nodes(), 0);
-    }
-    let mut touched = std::mem::take(&mut run.lists.loose_touched);
-    let loose = loose_levels_in(vtree, run, chain, operands, &mut table, &mut touched);
-    for t in touched.drain(..) {
-        table[t as usize] = 0;
-    }
-    run.lists.loose_in = table;
-    run.lists.loose_touched = touched;
-    loose
-}
-
-/// [`loose_levels`] in `loose_in`, a table of zeros, of which the entries
-/// it sets are listed in `touched`.
-fn loose_levels_in(
-    vtree: &Vtree,
     run: &ApplyRun<'_, '_>,
     chain: &[VtreeIdx],
-    operands: Operands<Vec<u32>>,
-    loose_in: &mut [u8],
-    touched: &mut Vec<u32>,
-) -> Vec<u32> {
-    // Which operand has each level loose: 1 for `f`, 2 for `g`, as
-    // `identity_carrier` names them; `LISTED` once a level under a free one
-    // is listed; `CHAIN` at a level of the chain the sweep built.
-    const LISTED: u8 = 4;
-    const CHAIN: u8 = 8;
-    touched.reserve(operands.f.len() + operands.g.len() + chain.len());
-    for (list, by) in [(&operands.f, 1), (&operands.g, 2)] {
-        for &t in list {
-            loose_in[t as usize] |= by;
-        }
-        touched.extend_from_slice(list);
-    }
-    for &t in chain {
-        loose_in[t.idx()] |= CHAIN;
-        touched.push(t.0);
-    }
+    operands: Operands<&LooseLevels>,
+) -> LooseLevels {
+    let loose_in = |c: VtreeIdx, by: u8| match by {
+        1 => operands.f.contains(c.0),
+        _ => operands.g.contains(c.0),
+    };
     let internal = |t: VtreeIdx| !vtree.node(t).is_leaf();
     let cone = run.cone;
-    // Whether the result lists the level `c` of the list of the operand
-    // `by` names because its parent is free and was taken from that operand.
-    let under_free = |c: u32, by: u8, loose_in: &mut [u8]| {
-        let c = VtreeIdx(c);
-        let from = |p: VtreeIdx| match carried_from_f(cone, p.idx()) {
-            true => 1,
-            false => 2,
-        };
-        let listed = internal(c)
-            && loose_in[c.idx()] & LISTED == 0
-            && vtree
-                .node(c)
+    let taken_free = |t: VtreeIdx| cone.free_at(t.idx()) && !chain.contains(&t);
+    let mut loose = LooseLevels::over(vtree.num_nodes());
+    for (by, list) in [(1, operands.f), (2, operands.g)] {
+        for (c, unnamed) in list.entries() {
+            let under_free = vtree
+                .node(VtreeIdx(c))
                 .parent()
-                .is_some_and(|p| cone.free_at(p.idx()) && loose_in[p.idx()] & CHAIN == 0 && from(p) == by);
-        if listed {
-            loose_in[c.idx()] |= LISTED;
-        }
-        listed
-    };
-    let Operands {
-        f: f_list,
-        g: g_list,
-    } = operands;
-    let ((mut loose, by), (other, other_by)) = match f_list.capacity() >= g_list.capacity() {
-        true => ((f_list, 1), (g_list, 2)),
-        false => ((g_list, 2), (f_list, 1)),
-    };
-    loose.retain(|&c| under_free(c, by, loose_in));
-    // At most the other list's levels under a free one, and the two
-    // children of each level built.
-    loose.reserve(other.len() + 2 * (cone.built.len() + chain.len()));
-    for &c in &other {
-        if under_free(c, other_by, loose_in) {
-            loose.push(c);
+                .is_some_and(|p| taken_free(p) && (carried_from_f(cone, p.idx()) == (by == 1)));
+            if under_free && internal(VtreeIdx(c)) {
+                loose.insert_counted(c, unnamed);
+            }
         }
     }
-    let under_free_levels = loose.len();
     for levels in [cone.built, chain] {
         for &p in levels {
             let (left, right) = vtree.children(p);
             let by = run.lists.identity_carrier(p.idx());
             if by != 0 {
-                loose.extend(
-                    [left, right]
-                        .into_iter()
-                        .filter(|&c| internal(c) && loose_in[c.idx()] & by != 0)
-                        .map(|c| c.0),
-                );
+                let carrier = if by == 1 { operands.f } else { operands.g };
+                for c in [left, right] {
+                    if internal(c) && loose_in(c, by) {
+                        let moved_too = run.lists.identity_carrier(c.idx()) == by
+                            || (taken_free(c) && carried_from_f(cone, c.idx()) == (by == 1));
+                        loose.insert_counted(c.0, carrier.unnamed(c.0).filter(|_| moved_too));
+                    }
+                }
                 continue;
             }
             let built = !run.levels[p.idx()].nodes().is_empty();
             let tight_in = |c: VtreeIdx, by: u8, widths: &[usize]| {
-                loose_in[c.idx()] & by == 0 || (widths[c.idx()] == 1 && built)
+                !loose_in(c, by) || (widths[c.idx()] == 1 && built)
             };
             let kills_none = |s: VtreeIdx| match internal(s) {
                 true => {
@@ -203,7 +148,7 @@ fn loose_levels_in(
                     } else {
                         &run.g_widths[..]
                     };
-                    loose_in[c.idx()] & by == 0 && run.levels[c.idx()].node_count() == widths[c.idx()]
+                    !loose_in(c, by) && run.levels[c.idx()].node_count() == widths[c.idx()]
                 })
             };
             for (c, s) in [(left, right), (right, left)] {
@@ -218,20 +163,9 @@ fn loose_levels_in(
                     super::super::note_held_tight();
                     continue;
                 }
-                loose.push(c.0);
+                loose.insert(c.0);
             }
         }
-    }
-    // In the order of the levels' parents bottom-up, the left child first,
-    // as a walk of every level lists them: the levels under the free ones
-    // are sorted into those under the levels of the cone, which are in that
-    // order already.
-    if under_free_levels > 0 {
-        loose.sort_by_key(|&c| {
-            let c = VtreeIdx(c);
-            let p = vtree.node(c).parent().expect("a listed level has a parent");
-            (vtree.topo_pos(p), vtree.children(p).1 == c)
-        });
     }
     loose
 }

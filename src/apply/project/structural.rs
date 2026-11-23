@@ -249,7 +249,7 @@ pub(super) fn exists_leaves_structural(
     // (`Dirty::loose`), where that is known: none after the prune. The sweep
     // adds none, so the prune after it walks only as far as these and the
     // levels that lose a node.
-    let loose = tdd.dirty.loose().map(|l| lim.try_to_vec(l)).transpose()?;
+    let loose = tdd.dirty.loose().map(|l| l.to_vec_on(lim)).transpose()?;
     let vtree = std::sync::Arc::clone(&tdd.vtree);
     let role = roles(&mut work, &vtree, targets)?;
 

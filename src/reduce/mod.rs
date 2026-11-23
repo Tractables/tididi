@@ -23,8 +23,8 @@ use crate::value::slots::RefSlotScratch;
 pub(crate) struct ReduceScratch {
     /// `prune_unreachable`'s marks, new indices and walk.
     prune: Pool<self::prune::PruneScratch>,
-    /// The prune's settle of a loose list.
-    settle: Pool<self::prune::SettleScratch>,
+    /// `drop_clause_orphans`'s marks, new indices and levels to read.
+    clause_drop: Pool<self::prune::DropScratch>,
     /// The prune's seeds, held across its walk.
     seeds: Pool<self::prune::SeedScratch>,
     /// `prune_value_slots`'s per-store slot bookkeeping.
@@ -41,7 +41,7 @@ pub(crate) struct ReduceScratch {
 impl Pools for ReduceScratch {
     fn pools(&self, visit: &mut dyn FnMut(&dyn Drain)) {
         visit(&self.prune);
-        visit(&self.settle);
+        visit(&self.clause_drop);
         visit(&self.seeds);
         visit(&self.slot_prune_slots);
         visit(&self.slot_prune_remap);
@@ -143,6 +143,21 @@ pub(crate) enum Close<'a> {
     Settle(&'a [crate::vtree::VtreeIdx]),
 }
 
+/// The nodes a prune may remove that a diagram knows of without a walk
+/// ([`Engine::unnamed_nodes`]): those no node of their parent level names,
+/// and the root level's other than the output, with the pairs they hold.
+/// None of them is reached from the output, and there are none exactly when
+/// a prune removes nothing; the nodes reached only through them are not
+/// counted.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Unnamed {
+    /// The nodes.
+    pub nodes: usize,
+    /// Their pairs.
+    pub pairs: usize,
+}
+
 use crate::Engine;
 use self::prune::PruneScope;
 use crate::limits::OperationError;
@@ -167,6 +182,61 @@ impl Engine {
     /// [`reduce`](Self::reduce) without the closing step.
     pub(crate) fn reduce_plain(&self, f: &mut Tdd, plan: ReductionPlan<'_>) -> Result<(), OperationError> {
         self.reduce_scoped(f, plan, PruneScope::Whole, Close::Plain)
+    }
+
+    /// The nodes of `f` no node of their parent level names ([`Unnamed`]),
+    /// where `f` keeps the levels that may hold one: after a conjunction
+    /// without summing out, a prune or a contraction, and while no edit
+    /// forgot them. `None` where it does not, on a diagram with a marginal
+    /// level, on one whose output is not at the root, and where the read
+    /// may read as many pairs as a prune's walk from the root, which a prune
+    /// then takes.
+    ///
+    /// A read reads the parent levels of the levels not counted since they
+    /// last changed, one unit of work a pair, and keeps each level's count
+    /// for the next read, and the levels found holding such a node for the
+    /// next prune or conjunction; a conjunction without summing out keeps
+    /// the counts of the levels it takes from an operand with their parent.
+    ///
+    /// # Errors
+    ///
+    /// `OverBudget` if the scratch the read takes is refused, and the stop
+    /// the read polls for; `f` is unchanged then.
+    pub fn unnamed_nodes(&self, f: &mut Tdd) -> Result<Option<Unnamed>, OperationError> {
+        let Some(loose) = f.dirty.loose() else {
+            return Ok(None);
+        };
+        if f.is_zero() || f.is_one() || f.has_marginal_level() || !prune::below_root_walk_applies(f) {
+            return Ok(None);
+        }
+        let uncounted: Vec<u32> = loose.entries().filter(|e| e.1.is_none()).map(|e| e.0).collect();
+        if !uncounted.is_empty() {
+            if prune::settle_reads_all(f, &uncounted) {
+                return Ok(None);
+            }
+            let held = prune::count_unnamed(self, f, &uncounted)?;
+            let loose = f.dirty.loose_levels_mut().expect("listed above");
+            for (t, unnamed) in held {
+                loose.insert_counted(t, Some(unnamed));
+            }
+            for t in uncounted {
+                if loose.unnamed(t).is_none() {
+                    loose.remove(t);
+                }
+            }
+        }
+        let mut unnamed = Unnamed::default();
+        let root = &f.levels[f.vtree.root().idx()];
+        for k in (0..root.node_count()).filter(|&k| k != f.output.local.idx()) {
+            unnamed.nodes += 1;
+            unnamed.pairs += root.pair_count_at(k);
+        }
+        for (_, held) in f.dirty.loose().expect("listed above").entries() {
+            let held = held.expect("counted above");
+            unnamed.nodes += held.nodes;
+            unnamed.pairs += held.pairs;
+        }
+        Ok(Some(unnamed))
     }
 
     /// Run the selected reduction passes under this engine's resource limits.

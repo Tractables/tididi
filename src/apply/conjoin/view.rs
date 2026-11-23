@@ -22,7 +22,7 @@ use std::sync::Arc;
 use crate::Engine;
 use crate::diagram::{
     return_levels,
-    finish_sides_remap, plan_sides_remap, ChildPair, ChildSide, Dirty, EncodedChildRef, NodeIdx, Sides, Tdd, TddLevel,
+    finish_sides_remap, plan_sides_remap, ChildPair, ChildSide, Dirty, EncodedChildRef, LooseLevels, NodeIdx, Sides, Tdd, TddLevel,
     TddNodeId, ValueRef,
 };
 use crate::limits::{Limits, OperationError};
@@ -602,7 +602,7 @@ pub(crate) fn reserve_moved(eng: &Engine, carried: &mut Dirty, source: &Vtree, c
     listed_room(eng, carried.loose(), source, chains)
 }
 
-fn listed_room(eng: &Engine, loose: Option<&[u32]>, source: &Vtree, chains: bool) -> Result<Vec<u32>, OperationError> {
+fn listed_room(eng: &Engine, loose: Option<&LooseLevels>, source: &Vtree, chains: bool) -> Result<Vec<u32>, OperationError> {
     let mut listed = Vec::new();
     if loose.is_some_and(|loose| !loose.is_empty() || chains) {
         // `moved_loose` lists at most the two children of each image of an
@@ -624,10 +624,7 @@ pub(crate) fn moved_dirty(
     placed: (&[VtreeIdx], impl Fn(VtreeIdx) -> bool),
     tops: &[VtreeIdx],
 ) -> Dirty {
-    let loose = carried.take_loose().map(|mut loose| {
-        loose.sort_unstable();
-        loose
-    });
+    let loose = carried.take_loose();
     carried.remap_keeping(placed.0, keeps_fused(source, into, placed.0));
     finish_moved(&mut carried, loose.as_deref(), listed, (source, into), placed, tops);
     carried
@@ -645,17 +642,7 @@ pub(crate) fn copied_dirty(
     let map = &plan.embedding.levels;
     let mut carried = from.remapped_on(eng, map, !tops.is_empty(), keeps_fused(source, into, map))?;
     let listed = listed_room(eng, from.loose(), source, !tops.is_empty())?;
-    let mut sorted = Vec::new();
-    let loose = match from.loose() {
-        Some(loose) if !loose.is_sorted() => {
-            eng.limits().reserve_exact(&mut sorted, loose.len())?;
-            sorted.extend_from_slice(loose);
-            sorted.sort_unstable();
-            Some(&sorted[..])
-        }
-        loose => loose,
-    };
-    finish_moved(&mut carried, loose, listed, (source, into), (&plan.embedding.levels, |t| plan.is_mirrored(t)), tops);
+    finish_moved(&mut carried, from.loose(), listed, (source, into), (&plan.embedding.levels, |t| plan.is_mirrored(t)), tops);
     Ok(carried)
 }
 
@@ -673,10 +660,10 @@ pub(crate) fn keeps_fused<'a>(source: &'a Vtree, into: &'a Vtree, map: &'a [Vtre
     }
 }
 
-/// The steps of [`moved_dirty`] after the lists are renamed; `loose` sorted.
+/// The steps of [`moved_dirty`] after the lists are renamed.
 fn finish_moved(
     carried: &mut Dirty,
-    loose: Option<&[u32]>,
+    loose: Option<&LooseLevels>,
     mut listed: Vec<u32>,
     (source, into): (&Vtree, &Vtree),
     placed: (&[VtreeIdx], impl Fn(VtreeIdx) -> bool),

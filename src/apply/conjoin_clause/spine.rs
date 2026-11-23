@@ -64,11 +64,6 @@ impl MarkBuffer {
         );
     }
 
-    /// Whether no flag is set.
-    pub(super) fn is_clear(&self) -> bool {
-        self.set.is_empty()
-    }
-
     /// Replay the log, so every flag is false again.
     pub(super) fn unmark_all(&mut self) {
         for &t in &self.set {
@@ -80,20 +75,26 @@ impl MarkBuffer {
 
 /// Build the clause spine: mark every ancestor (inclusive) of each clause
 /// leaf in `on_spine`, and list the spine's internal levels children first in
-/// `spine_internal`, which starts empty.
+/// `spine_internal`, which starts empty. Returns the topmost level with both
+/// children on the spine: each such level is where a later leaf's path meets
+/// the spine marked so far.
 pub(super) fn build_clause_spine(
     lim: &crate::limits::Limits,
     vtree: &crate::vtree::Vtree,
     clause: &[(Literal, VtreeIdx)],
     on_spine: &mut MarkBuffer,
     spine_internal: &mut Vec<VtreeIdx>,
-) -> Result<(), OperationError> {
+) -> Result<Option<VtreeIdx>, OperationError> {
     let mut gate = lim.gate();
+    let mut top_fork: Option<VtreeIdx> = None;
     for &(_, leaf) in clause {
         let mut cur = leaf;
         loop {
             gate.poll(1)?;
             if !on_spine.mark(cur) {
+                if top_fork.is_none_or(|f| vtree.topo_pos(f) < vtree.topo_pos(cur)) {
+                    top_fork = Some(cur);
+                }
                 break;
             }
             if !vtree.node(cur).is_leaf() {
@@ -109,7 +110,8 @@ pub(super) fn build_clause_spine(
     // Two units a level, what the order walk this sort replaced charged, so
     // work budgets callers tuned against it stay where they were.
     gate.poll(2 * spine_internal.len() as u64)?;
-    gate.flush()
+    gate.flush()?;
+    Ok(top_fork)
 }
 
 /// Propagate `need_dt` top-down over the spine: a level needs the complement
