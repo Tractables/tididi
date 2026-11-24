@@ -229,8 +229,8 @@ impl<'a> Reduction<'a> {
     /// twins alike. The one class per level whose residual was true dies at
     /// the root and is all the prune removes: with `old`, the old output's
     /// slot beside its complement, the prune reads and drops only those
-    /// nodes ([`prune_complement`]). `shrink` trims the level arrays as a
-    /// full reduction does.
+    /// nodes ([`prune_complement`]). The level arrays are then trimmed as a
+    /// full reduction trims them.
     pub(super) fn certify_complement(&mut self, old: Option<NodeIdx>) -> Result<(), OperationError> {
         let _op = self.eng.limits().enter()?;
         match old {
