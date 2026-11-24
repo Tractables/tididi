@@ -8,6 +8,7 @@ use pyo3::types::{PyBytes, PyDict};
 use num_bigint::BigUint;
 use num_rational::BigRational;
 use tididi::{Engine, OperationError, Tdd};
+use tididi::limits::LimitConfig;
 use crate::domain::{self, PyLimits, PyLiteral, PyVtree};
 use crate::operations;
 
@@ -29,19 +30,19 @@ impl PyCircuit {
     pub fn take(&mut self) -> PyResult<Tdd> { self.circuit.take().ok_or_else(consumed) }
 
     /// Call after validating operation arguments; only execution errors consume the circuit.
-    fn transform(&mut self, py: Python<'_>, limits: Option<&PyLimits>,
+    fn transform(&mut self, py: Python<'_>, canonical: bool, limits: Option<&PyLimits>,
         operation: impl FnOnce(&Engine, Tdd) -> Result<Tdd, OperationError> + Send) -> PyResult<Self> {
         let limits = domain::config(limits)?;
         let f = self.take()?;
         let vtree = Arc::clone(f.vtree());
-        operations::run(py, &vtree, limits, move |engine| operation(engine, f)).map(Self::new)
+        operations::produce(py, &vtree, limits, canonical, move |engine| operation(engine, f))
     }
 
-    fn quantify(&mut self, py: Python<'_>, variables: Vec<u32>, limits: Option<&PyLimits>,
+    fn quantify(&mut self, py: Python<'_>, variables: Vec<u32>, canonical: bool, limits: Option<&PyLimits>,
         operation: fn(&Engine, Tdd, &[tididi::vtree::VarId]) -> Result<Tdd, OperationError>) -> PyResult<Self> {
         let vars = domain::variable_ids(&variables)?;
         domain::check_variables(self.get()?.vtree(), vars.iter().copied())?;
-        self.transform(py, limits, move |e, f| operation(e, f, &vars))
+        self.transform(py, canonical, limits, move |e, f| operation(e, f, &vars))
     }
 }
 
@@ -78,89 +79,88 @@ impl PyCircuit {
         Err(PyTypeError::new_err("a Circuit has no Python truth value; use is_sat(), and use &, |, ~ for Boolean operations"))
     }
     fn __and__(slf: Py<Self>, other: Py<Self>, py: Python<'_>) -> PyResult<Self> {
-        operations::and_(py, slf, other, None)
+        operations::and_(py, slf, other, false, None)
     }
     fn __or__(slf: Py<Self>, other: Py<Self>, py: Python<'_>) -> PyResult<Self> {
-        operations::or_(py, slf, other, None)
+        operations::or_(py, slf, other, false, None)
     }
     fn __xor__(slf: Py<Self>, other: Py<Self>, py: Python<'_>) -> PyResult<Self> {
-        operations::xor(py, slf, other, None)
+        operations::xor(py, slf, other, false, None)
     }
-    fn __invert__(&mut self, py: Python<'_>) -> PyResult<Self> { self.negate(py, None) }
+    fn __invert__(&mut self, py: Python<'_>) -> PyResult<Self> { self.negate(py, false, None) }
 
     /// Complement this circuit, consuming it. Equivalent to ~circuit, with optional limits.
-    /// The complement of a minimized circuit is minimized; of any other it is not.
-    #[pyo3(signature = (*, limits=None))]
-    fn negate(&mut self, py: Python<'_>, limits: Option<&PyLimits>) -> PyResult<Self> {
-        self.transform(py, limits, Engine::negate)
+    /// The complement of a minimized circuit is minimized; of any other it is not, unless canonical is true.
+    #[pyo3(signature = (*, canonical=false, limits=None))]
+    fn negate(&mut self, py: Python<'_>, canonical: bool, limits: Option<&PyLimits>) -> PyResult<Self> {
+        self.transform(py, canonical, limits, Engine::negate)
     }
 
     /// Substitute the given literal values, consuming this circuit.
     /// Repeated literals are ignored; opposite signs for one variable produce false.
     /// Assigned variables become free in the resulting function's counting universe.
     /// To count assignments consistent with evidence, use counter() instead.
-    /// The result is not minimized; minimize() makes it canonical.
-    #[pyo3(signature = (literals, *, limits=None))]
-    fn condition(&mut self, py: Python<'_>, literals: &Bound<'_, PyAny>, limits: Option<&PyLimits>) -> PyResult<Self> {
+    /// The result is not minimized; canonical=True or minimize() makes it canonical.
+    #[pyo3(signature = (literals, *, canonical=false, limits=None))]
+    fn condition(&mut self, py: Python<'_>, literals: &Bound<'_, PyAny>, canonical: bool, limits: Option<&PyLimits>) -> PyResult<Self> {
         let literals = domain::read_literals(literals)?;
         domain::check_variables(self.get()?.vtree(), literals.iter().map(|l| l.var))?;
-        self.transform(py, limits, move |e, f| e.condition(f, literals))
+        self.transform(py, canonical, limits, move |e, f| e.condition(f, literals))
     }
 
     /// Existentially quantify variables, consuming this circuit.
     /// Quantified variables remain free in the vtree; use projected_model_count to count distinct projections.
-    /// The result is not minimized; minimize() makes it canonical.
-    #[pyo3(signature = (variables, *, limits=None))]
-    fn exists(&mut self, py: Python<'_>, variables: Vec<u32>, limits: Option<&PyLimits>) -> PyResult<Self> {
-        self.quantify(py, variables, limits, Engine::exists_vars)
+    /// The result is not minimized; canonical=True or minimize() makes it canonical.
+    #[pyo3(signature = (variables, *, canonical=false, limits=None))]
+    fn exists(&mut self, py: Python<'_>, variables: Vec<u32>, canonical: bool, limits: Option<&PyLimits>) -> PyResult<Self> {
+        self.quantify(py, variables, canonical, limits, Engine::exists_vars)
     }
 
     /// Universally quantify variables, consuming this circuit: the result holds where every value of them satisfies it.
     /// Quantified variables remain free in the vtree.
-    /// The result is minimized unless no variable is given.
-    #[pyo3(signature = (variables, *, limits=None))]
-    fn forall(&mut self, py: Python<'_>, variables: Vec<u32>, limits: Option<&PyLimits>) -> PyResult<Self> {
-        self.quantify(py, variables, limits, Engine::forall_vars)
+    /// The result is minimized unless no variable is given and canonical is false.
+    #[pyo3(signature = (variables, *, canonical=false, limits=None))]
+    fn forall(&mut self, py: Python<'_>, variables: Vec<u32>, canonical: bool, limits: Option<&PyLimits>) -> PyResult<Self> {
+        self.quantify(py, variables, canonical, limits, Engine::forall_vars)
     }
 
     /// Simultaneously rename variables using a dict {source: target}, consuming this circuit.
     /// Swaps and cycles are simultaneous; several sources may map to the same target.
     /// The vtree and its counting universe stay unchanged.
-    /// The result is not minimized; minimize() makes it canonical.
-    #[pyo3(signature = (mapping, *, limits=None))]
-    fn rename(&mut self, py: Python<'_>, mapping: &Bound<'_, PyDict>, limits: Option<&PyLimits>) -> PyResult<Self> {
+    /// The result is not minimized; canonical=True or minimize() makes it canonical.
+    #[pyo3(signature = (mapping, *, canonical=false, limits=None))]
+    fn rename(&mut self, py: Python<'_>, mapping: &Bound<'_, PyDict>, canonical: bool, limits: Option<&PyLimits>) -> PyResult<Self> {
         let pairs = mapping.iter().map(|(a, b)| Ok((domain::variable_id(a.extract()?)?, domain::variable_id(b.extract()?)?)))
             .collect::<PyResult<Vec<_>>>()?;
         domain::check_variables(self.get()?.vtree(), pairs.iter().flat_map(|&(a, b)| [a, b]))?;
-        self.transform(py, limits, move |e, f| e.rename_vars(f, &pairs))
+        self.transform(py, canonical, limits, move |e, f| e.rename_vars(f, &pairs))
     }
 
     /// Minimize and return this circuit, consuming the old wrapper.
     /// The result is canonical for its vtree; its Boolean function is unchanged.
     #[pyo3(signature = (*, limits=None))]
     fn minimize(&mut self, py: Python<'_>, limits: Option<&PyLimits>) -> PyResult<Self> {
-        self.transform(py, limits, |e, mut f| { e.minimize(&mut f)?; Ok(f) })
+        self.transform(py, true, limits, |_, f| Ok(f))
     }
 
-    /// Insert cubes, then remove cubes, returning a minimized circuit and consuming this one.
+    /// Insert cubes, then remove cubes, consuming this circuit.
     /// Each cube is an iterable of signed integers or Literal values. Omitted variables
     /// are free; an empty cube matches every assignment. Contradictory cubes change nothing.
-    /// Limits apply to each update and to the final minimization separately.
-    #[pyo3(signature = (*, insert=None, remove=None, limits=None))]
-    fn update(&mut self, py: Python<'_>, insert: Option<&Bound<'_, PyAny>>, remove: Option<&Bound<'_, PyAny>>, limits: Option<&PyLimits>) -> PyResult<Self> {
+    /// The result is not minimized; canonical=True or minimize() makes it canonical.
+    #[pyo3(signature = (*, insert=None, remove=None, canonical=false, limits=None))]
+    fn update(&mut self, py: Python<'_>, insert: Option<&Bound<'_, PyAny>>, remove: Option<&Bound<'_, PyAny>>, canonical: bool, limits: Option<&PyLimits>) -> PyResult<Self> {
         let read = |rows: Option<&Bound<'_, PyAny>>| -> PyResult<Vec<Vec<tididi::Literal>>> {
             rows.map(|rows| rows.try_iter()?.map(|r| domain::read_literals(&r?)).collect()).unwrap_or_else(|| Ok(Vec::new()))
         };
         let insert = read(insert)?;
         let remove = read(remove)?;
         domain::check_variables(self.get()?.vtree(), insert.iter().chain(&remove).flatten().map(|l| l.var))?;
-        self.transform(py, limits, move |e, mut f| {
+        self.transform(py, canonical, limits, move |e, mut f| {
             {
                 let mut batch = e.maintain(&mut f)?;
                 for row in insert { batch.insert_model(row)?; }
                 for row in remove { batch.remove_model(row)?; }
             }
-            e.minimize(&mut f)?;
             Ok(f)
         })
     }
@@ -272,22 +272,26 @@ impl PyCircuit {
         Ok(PyBytes::new(py, &bytes))
     }
     /// Load serialized circuit bytes onto an existing vtree.
-    /// The circuit is read as not minimized, even if it was saved minimized; minimize() makes it
-    /// canonical.
+    /// The circuit is read as not minimized, even if it was saved minimized; canonical=True or
+    /// minimize() makes it canonical.
     #[staticmethod]
-    fn from_bytes(vtree: &PyVtree, mut data: &[u8]) -> PyResult<Self> {
-        tididi::io::read_tdd(&mut data, &vtree.0).map(Self::new).map_err(domain::value_error)
+    #[pyo3(signature = (vtree, data, *, canonical=false))]
+    fn from_bytes(py: Python<'_>, vtree: &PyVtree, mut data: &[u8], canonical: bool) -> PyResult<Self> {
+        let f = tididi::io::read_tdd(&mut data, &vtree.0).map_err(domain::value_error)?;
+        operations::produce(py, &vtree.0, LimitConfig::none(), canonical, |_| Ok(f))
     }
     /// Write this circuit to a path, leaving it usable. Save its vtree separately.
     fn save(&self, path: PathBuf) -> PyResult<()> {
         tididi::io::save_tdd(self.get()?, path).map_err(io_error)
     }
     /// Read a circuit file onto an existing vtree.
-    /// The circuit is read as not minimized, even if it was saved minimized; minimize() makes it
-    /// canonical.
+    /// The circuit is read as not minimized, even if it was saved minimized; canonical=True or
+    /// minimize() makes it canonical.
     #[staticmethod]
-    fn load(vtree: &PyVtree, path: PathBuf) -> PyResult<Self> {
-        tididi::io::load_tdd(path, &vtree.0).map(Self::new).map_err(io_error)
+    #[pyo3(signature = (vtree, path, *, canonical=false))]
+    fn load(py: Python<'_>, vtree: &PyVtree, path: PathBuf, canonical: bool) -> PyResult<Self> {
+        let f = tididi::io::load_tdd(path, &vtree.0).map_err(io_error)?;
+        operations::produce(py, &vtree.0, LimitConfig::none(), canonical, |_| Ok(f))
     }
     /// Return Graphviz DOT for inspecting this circuit.
     fn to_dot(&self) -> PyResult<String> { tididi::io::tdd_to_dot(self.get()?).map_err(domain::value_error) }

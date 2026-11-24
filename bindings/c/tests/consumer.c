@@ -233,7 +233,47 @@ static void weighted_evaluator(void) {
     ok(tididi_circuit_free(restored)); ok(tididi_circuit_free(f)); tididi_vtree_free(v);
 }
 
+static bool same_bytes(TididiCircuit *f, TididiCircuit *g) {
+    TididiBytes *a = NULL, *b = NULL; ok(tididi_to_bytes(f, &a)); ok(tididi_to_bytes(g, &b));
+    bool same = tididi_bytes_len(a) == tididi_bytes_len(b)
+        && memcmp(tididi_bytes_data(a), tididi_bytes_data(b), tididi_bytes_len(a)) == 0;
+    tididi_bytes_free(a); tididi_bytes_free(b); return same;
+}
+/* x1 | (x3 & x4), built as (x1 & x2) | (x1 & ~x2) | (x3 & x4) so that or leaves it unminimized. */
+static TididiCircuit *unminimized(TididiVtree *v, const TididiLimits *limits) {
+    int64_t c1[] = {1, 2}, c2[] = {1, -2}, c3[] = {3, 4};
+    TididiCircuit *a = NULL, *b = NULL, *c = NULL, *ab = NULL, *f = NULL;
+    ok(tididi_cube(v, c1, 2, &a, NULL)); ok(tididi_cube(v, c2, 2, &b, NULL)); ok(tididi_cube(v, c3, 2, &c, NULL));
+    ok(tididi_or(a, b, &ab, NULL)); ok(tididi_or(ab, c, &f, limits));
+    TididiCircuit *handles[] = {a, b, c, ab};
+    for (size_t i = 0; i < sizeof(handles) / sizeof(*handles); ++i) ok(tididi_circuit_free(handles[i]));
+    return f;
+}
+static void canonical_option(void) {
+    TididiVtree *v = NULL; ok(tididi_vtree_balanced(4, &v));
+    TididiLimits canonical = tididi_limits_default(); canonical.canonical = true;
+    TididiLimits plain = tididi_limits_default();
+    CHECK(!plain.canonical);
+    TididiCircuit *built = unminimized(v, NULL), *off = unminimized(v, &plain), *on = unminimized(v, &canonical);
+    TididiCircuit *copy = NULL, *minimized = NULL, *again = NULL;
+    CHECK(same_bytes(built, off) && !same_bytes(built, on));
+    ok(tididi_copy(built, &copy)); ok(tididi_minimize(copy, &minimized, NULL));
+    CHECK(same_bytes(on, minimized));
+    ok(tididi_minimize(on, &again, &canonical));
+    CHECK(same_bytes(again, minimized));
+    uint32_t three = 3; TididiCircuit *f = unminimized(v, NULL), *g = NULL, *h = NULL;
+    ok(tididi_copy(f, &h)); ok(tididi_exists(f, &three, 1, &g, &canonical));
+    TididiCircuit *e = NULL, *em = NULL; ok(tididi_exists(h, &three, 1, &e, NULL)); ok(tididi_minimize(e, &em, NULL));
+    CHECK(same_bytes(g, em));
+    uint64_t n = 0;
+    failure(tididi_model_count(g, &n, &canonical), TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
+    ok(tididi_model_count(g, &n, &plain)); CHECK(n == 12);
+    TididiCircuit *handles[] = {built, off, on, copy, minimized, again, f, g, h, e, em};
+    for (size_t i = 0; i < sizeof(handles) / sizeof(*handles); ++i) ok(tididi_circuit_free(handles[i]));
+    tididi_vtree_free(v);
+}
+
 int main(void) {
-    weighted_evaluator();conditioning();ownership();multi_operand_preflight();queries();big_counts_and_rows();counters_and_persistence();evaluation();
+    canonical_option();weighted_evaluator();conditioning();ownership();multi_operand_preflight();queries();big_counts_and_rows();counters_and_persistence();evaluation();
     puts("C ownership, queries, exact arithmetic, callbacks and persistence passed.");return 0;
 }

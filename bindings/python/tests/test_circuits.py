@@ -385,3 +385,51 @@ def test_weighted_evaluator_ownership_validation_and_retry():
     assert restored.model_count() == 3
     with pytest.raises(RuntimeError):
         e.value()
+
+
+def _unminimized(v):
+    return td.or_(td.or_(td.cube(v, [1, 2]), td.cube(v, [1, -2])), td.cube(v, [3, 4]))
+
+
+_PRODUCERS = {
+    "literal": lambda v, path, **kw: td.literal(v, 1, **kw),
+    "cube": lambda v, path, **kw: td.cube(v, [1, -3], **kw),
+    "clause": lambda v, path, **kw: td.clause(v, [1, -3, 4], **kw),
+    "from_models": lambda v, path, **kw: td.from_models(v, [1, 2], [(True, False), (False, True)], **kw),
+    "and_": lambda v, path, **kw: td.and_(td.clause(v, [1, 2]), td.clause(v, [3, 4]), **kw),
+    "or_": lambda v, path, **kw: td.or_(td.cube(v, [1, 2]), td.cube(v, [1, -2]), **kw),
+    "xor": lambda v, path, **kw: td.xor(td.clause(v, [1, 2]), td.clause(v, [2, 3]), **kw),
+    "ite": lambda v, path, **kw: td.ite(td.literal(v, 1), td.clause(v, [2, 3]), td.cube(v, [3, 4]), **kw),
+    "or_many": lambda v, path, **kw: td.or_many([td.cube(v, [1, 2]), td.cube(v, [-1, 3]), td.cube(v, [4])], **kw),
+    "and_exists": lambda v, path, **kw: td.and_exists(td.clause(v, [1, 2]), td.clause(v, [-2, 3]), [2], **kw),
+    "negate": lambda v, path, **kw: _unminimized(v).negate(**kw),
+    "condition": lambda v, path, **kw: _unminimized(v).condition([-4], **kw),
+    "exists": lambda v, path, **kw: _unminimized(v).exists([3], **kw),
+    "forall": lambda v, path, **kw: _unminimized(v).forall([1], **kw),
+    "rename": lambda v, path, **kw: _unminimized(v).rename({1: 3, 3: 1}, **kw),
+    "update": lambda v, path, **kw: _unminimized(v).update(insert=[[-1, -2, -3]], remove=[[1, 2]], **kw),
+    "from_bytes": lambda v, path, **kw: td.Circuit.from_bytes(v, _unminimized(v).to_bytes(), **kw),
+    "load": lambda v, path, **kw: td.Circuit.load(v, path, **kw),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_PRODUCERS))
+def test_canonical_keyword_is_the_call_then_minimize(name, tmp_path):
+    v = td.Vtree.balanced(4)
+    path = tmp_path / "circuit.tdd"
+    _unminimized(v).save(path)
+    produce = _PRODUCERS[name]
+    as_built = produce(v, path)
+    assert produce(v, path, canonical=False).to_bytes() == as_built.to_bytes()
+    canonical = produce(v, path, canonical=True)
+    assert canonical.to_bytes() == as_built.copy().minimize().to_bytes()
+    assert canonical.copy().minimize().to_bytes() == canonical.to_bytes()
+    assert canonical.equivalent(as_built)
+
+
+def test_canonical_keyword_changes_an_unminimized_result():
+    v = td.Vtree.balanced(4)
+    as_built = _PRODUCERS["or_"](v, None)
+    canonical = _PRODUCERS["or_"](v, None, canonical=True)
+    assert (canonical.node_count(), canonical.pair_count()) < (as_built.node_count(), as_built.pair_count())
+    assert canonical.equivalent(as_built)

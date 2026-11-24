@@ -1,14 +1,15 @@
 use std::ffi::c_char;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tididi::{Engine, Literal, Vtree};
+use tididi::{Engine, Literal, Tdd, Vtree};
 use tididi::limits::LimitConfig;
 use tididi::vtree::VarId;
 use crate::*;
 
 /// A shared vtree handle. Circuits retain the vtree after this handle is freed.
 pub struct TididiVtree(Arc<Vtree>);
-/// Per-operation limits. Pass NULL for unlimited work or initialize with tididi_limits_default.
+/// Per-operation limits and options. Pass NULL for unlimited work and no options, or initialize with
+/// tididi_limits_default.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct TididiLimits {
@@ -18,24 +19,43 @@ pub struct TididiLimits {
     pub output_nodes: u64,
     /// Cooperative timeout in seconds; -1 means unlimited. Other values must be finite and nonnegative.
     pub timeout_seconds: f64,
+    /// Whether a call that returns a circuit minimizes it, within the same limits, so that the result is
+    /// canonical. False leaves the result as the operation built it. Calls that return no circuit
+    /// reject true.
+    pub canonical: bool,
 }
 /// Return unlimited limits. Modify fields before passing their address to an operation.
 #[unsafe(no_mangle)]
 pub extern "C" fn tididi_limits_default() -> TididiLimits {
-    TididiLimits { memory_bytes: u64::MAX, output_nodes: u64::MAX, timeout_seconds: -1.0 }
+    TididiLimits { memory_bytes: u64::MAX, output_nodes: u64::MAX, timeout_seconds: -1.0, canonical: false }
 }
 pub(crate) unsafe fn limits(value: *const TididiLimits) -> Result<LimitConfig> {
-    let Some(value) = (unsafe { value.as_ref() }) else { return Ok(LimitConfig::none()); };
+    let options = unsafe { options(value)? };
+    if options.canonical { return Err(invalid("canonical applies only to calls that return a circuit")); }
+    Ok(options.config)
+}
+pub(crate) struct Options { pub config: LimitConfig, pub canonical: bool }
+pub(crate) unsafe fn options(value: *const TididiLimits) -> Result<Options> {
+    let Some(value) = (unsafe { value.as_ref() }) else { return Ok(Options { config: LimitConfig::none(), canonical: false }); };
     let deadline = if value.timeout_seconds == -1.0 { None } else {
         let duration = Duration::try_from_secs_f64(value.timeout_seconds).map_err(invalid)?;
         Some(Instant::now().checked_add(duration).ok_or_else(|| invalid("timeout is too large"))?)
     };
-    Ok(LimitConfig::none().with_memory_budget_bytes((value.memory_bytes != u64::MAX).then_some(value.memory_bytes))
-        .with_output_node_cap((value.output_nodes != u64::MAX).then_some(value.output_nodes)).with_deadline(deadline))
+    let config = LimitConfig::none().with_memory_budget_bytes((value.memory_bytes != u64::MAX).then_some(value.memory_bytes))
+        .with_output_node_cap((value.output_nodes != u64::MAX).then_some(value.output_nodes)).with_deadline(deadline);
+    Ok(Options { config, canonical: value.canonical })
 }
 pub(crate) fn run<T>(vtree: &Arc<Vtree>, config: LimitConfig,
     f: impl FnOnce(&Engine) -> std::result::Result<T, tididi::OperationError>) -> Result<T> {
     vtree.context().with_limits(config, f).map_err(Into::into)
+}
+pub(crate) fn produce(vtree: &Arc<Vtree>, options: Options,
+    f: impl FnOnce(&Engine) -> std::result::Result<Tdd, tididi::OperationError>) -> Result<Tdd> {
+    run(vtree, options.config, |e| {
+        let mut result = f(e)?;
+        if options.canonical { e.minimize(&mut result)?; }
+        Ok(result)
+    })
 }
 pub(crate) fn variable(value: u32) -> Result<VarId> {
     if value == 0 { Err(invalid("variable IDs begin at 1")) } else { Ok(VarId(value)) }

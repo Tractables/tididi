@@ -27,14 +27,22 @@ Breaking changes:
   says whether it sets, keeps or gives up the certificate
   (`Tdd::is_canonical`); `forall_vars` returns a certified result,
   because it minimizes the projection it complements. A caller that wants
-  a canonical result asks on the result: `Engine::minimize` (Python
-  `Circuit.minimize`, C `tididi_minimize`), or `Engine::reduce` with a
-  plan for part of the work. No setting minimizes every result, and no
-  query minimizes its intermediates. The C struct `TididiLimits` keeps its
-  0.2.0 layout.
+  a canonical result asks for it: in Rust on the result, with
+  `Engine::minimize`, or `Engine::reduce` with a plan for part of the
+  work; in Python with the keyword `canonical=True` on every operation
+  that returns a new circuit, readers included (`Circuit.minimize`
+  stays); in C with a new last field `canonical` of `TididiLimits`, which
+  every call that returns a circuit reads and every other call rejects
+  when set (`tididi_minimize` stays). The struct's layout differs from
+  0.2.0; initialize it with `tididi_limits_default`. Either binding form
+  runs the operation, then the minimization, under the same limits. No setting
+  minimizes every result, and no query minimizes its intermediates.
   `Tdd::equivalent`, `Tdd::implies` and
   `Tdd::is_zero` are exact either way; `Tdd::is_one` is exact on a
   minimized diagram.
+- Python `Circuit.update` and C `tididi_update` no longer minimize their
+  result; pass `canonical=True` (C: `TididiLimits.canonical`) for the
+  previous behavior.
 - `Engine::negate_with`, `Tdd::negate_with`,
   `Engine::and_exists_with_reduction` and `Engine::filter_nodes_with` are
   removed. Call the operation, then `Engine::reduce` with the plan.

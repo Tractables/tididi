@@ -27,7 +27,7 @@ Change the set
 --------------
 
 Insert the all-permissions row, then remove read-and-write without sharing.
-An update consumes the old circuit and returns a minimized replacement.
+An update consumes the old circuit and returns its replacement.
 
 .. literalinclude:: ../examples/tables.c
    :language: c

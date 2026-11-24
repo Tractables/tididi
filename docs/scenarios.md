@@ -224,19 +224,19 @@ A partial cube edits all matching assignments; an empty cube matches all.
 
 Rust uses packed rows and a maintenance batch that edits a diagram in place.
 Python accepts Boolean rows and `update(insert=..., remove=...)`, consuming
-the old wrapper and returning its minimized replacement. The language-specific
+the old wrapper and returning its replacement. The language-specific
 storage and ownership explanations must match these different interfaces.
 
 C takes row-major Boolean bytes and arrays of signed-literal cubes. Like Python,
-its update consumes the old circuit and returns a minimized replacement.
+its update consumes the old circuit and returns a replacement.
 
 ### Instances
 
-- [Rust walkthrough](examples/tables.md) <!-- reviewed: 9ef8ad0d32dd0187d0136fdd88c94fa2b604d71abbdb12cda8a74070da563f3f -->
-- [Rust program](../examples/tables.rs) <!-- reviewed: 96b6a3d9ae912ebd88700613c7eefc5844b27b0b13b2d036ddc4959af8b79cb8 -->
-- [Python walkthrough and program](../bindings/python/examples/04_tables.py) <!-- reviewed: dbc98d8e11b63d057e7342fa6749cf9c52cb09fab96d416f932b5b47d652b5d6 -->
-- [C tables](../bindings/c/docs/tables.rst) <!-- reviewed: 218aea5f39680c7479c6526ad8416a3ea0e00f25a1928dc72644bd91d6a0b1b5 -->
-- [C program tables](../bindings/c/examples/tables.c) <!-- reviewed: 740e508e413b467b7b10d527d4808f3b5ea5aa1e153278afcf480fbc8a347d91 -->
+- [Rust walkthrough](examples/tables.md) <!-- reviewed: d0597f1e3e07e618c4c1781ac70daab24b53d8b90098f7efbc19fe2f19f636ad -->
+- [Rust program](../examples/tables.rs) <!-- reviewed: 662a8c84723a5619bfe42102eeca0200204e591cdb9bca8db3ee7194add7e5ed -->
+- [Python walkthrough and program](../bindings/python/examples/04_tables.py) <!-- reviewed: 3a358eef789da12a8173714649e12263c3d8a071704ff18ab4fbf065bb0ba9fb -->
+- [C tables](../bindings/c/docs/tables.rst) <!-- reviewed: 02649c6a1dc387ef940247df81b252c0d4d42cdb3ea006426fc6992ae0d21c68 -->
+- [C program tables](../bindings/c/examples/tables.c) <!-- reviewed: ad3db11e7216fe796f90ccdce18b3ca147fa5886e09297f572368918901d60f9 -->
 
 ## Persistence
 

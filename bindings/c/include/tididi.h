@@ -101,7 +101,8 @@ typedef struct TididiNodeSizes TididiNodeSizes;
 typedef struct TididiVtree TididiVtree;
 
 /**
- * Per-operation limits. Pass NULL for unlimited work or initialize with tididi_limits_default.
+ * Per-operation limits and options. Pass NULL for unlimited work and no options, or initialize with
+ * tididi_limits_default.
  */
 typedef struct TididiLimits {
   /**
@@ -116,6 +117,12 @@ typedef struct TididiLimits {
    * Cooperative timeout in seconds; -1 means unlimited. Other values must be finite and nonnegative.
    */
   double timeout_seconds;
+  /**
+   * Whether a call that returns a circuit minimizes it, within the same limits, so that the result is
+   * canonical. False leaves the result as the operation built it. Calls that return no circuit
+   * reject true.
+   */
+  bool canonical;
 } TididiLimits;
 
 /**
@@ -298,7 +305,7 @@ struct TididiError *tididi_cube(const struct TididiVtree *tree,
 
 /**
  * Disjoin signed literals. An empty clause is false.
- * The result is not minimized; tididi_minimize makes it canonical.
+ * The result is not minimized; TididiLimits.canonical or tididi_minimize makes it canonical.
  */
 struct TididiError *tididi_clause(const struct TididiVtree *tree,
                                   const int64_t *values,
@@ -308,7 +315,7 @@ struct TididiError *tididi_clause(const struct TididiVtree *tree,
 
 /**
  * Conjoin two circuits, consuming both. Preflight errors preserve inputs; execution failures consume them.
- * The result is not minimized; tididi_minimize makes it canonical.
+ * The result is not minimized; TididiLimits.canonical or tididi_minimize makes it canonical.
  */
 struct TididiError *tididi_and(struct TididiCircuit *left,
                                struct TididiCircuit *right,
@@ -317,7 +324,7 @@ struct TididiError *tididi_and(struct TididiCircuit *left,
 
 /**
  * Disjoin two circuits, consuming both. Operands must be distinct handles sharing one vtree.
- * The result is not minimized; tididi_minimize makes it canonical.
+ * The result is not minimized; TididiLimits.canonical or tididi_minimize makes it canonical.
  */
 struct TididiError *tididi_or(struct TididiCircuit *left,
                               struct TididiCircuit *right,
@@ -326,7 +333,7 @@ struct TididiError *tididi_or(struct TididiCircuit *left,
 
 /**
  * Exclusive-or two circuits, consuming both.
- * The result is not minimized; tididi_minimize makes it canonical.
+ * The result is not minimized; TididiLimits.canonical or tididi_minimize makes it canonical.
  */
 struct TididiError *tididi_xor(struct TididiCircuit *left,
                                struct TididiCircuit *right,
@@ -335,7 +342,7 @@ struct TididiError *tididi_xor(struct TididiCircuit *left,
 
 /**
  * Complement a circuit, consuming it.
- * The complement of a minimized circuit is minimized; of any other it is not.
+ * The complement of a minimized circuit is minimized; of any other it is not, unless TididiLimits.canonical is set.
  */
 struct TididiError *tididi_negate(struct TididiCircuit *value,
                                   struct TididiCircuit **out,
@@ -351,7 +358,7 @@ struct TididiError *tididi_minimize(struct TididiCircuit *value,
 /**
  * Substitute literal values, consuming the circuit. Repeats are ignored; opposite signs produce false.
  * Substituted variables remain free in the counting universe; use a counter to count under observations.
- * The result is not minimized; tididi_minimize makes it canonical.
+ * The result is not minimized; TididiLimits.canonical or tididi_minimize makes it canonical.
  */
 struct TididiError *tididi_condition(struct TididiCircuit *value,
                                      const int64_t *assignments,
@@ -361,7 +368,7 @@ struct TididiError *tididi_condition(struct TididiCircuit *value,
 
 /**
  * Existentially quantify variables, consuming the circuit. They remain free in the vtree's counting universe.
- * The result is not minimized; tididi_minimize makes it canonical.
+ * The result is not minimized; TididiLimits.canonical or tididi_minimize makes it canonical.
  */
 struct TididiError *tididi_exists(struct TididiCircuit *value,
                                   const uint32_t *vars,
@@ -371,7 +378,7 @@ struct TididiError *tididi_exists(struct TididiCircuit *value,
 
 /**
  * Universally quantify variables, consuming the circuit: the result holds where every value of them satisfies it. They remain free in the vtree's counting universe.
- * The result is minimized unless no variable is given.
+ * The result is minimized unless no variable is given and TididiLimits.canonical is unset.
  */
 struct TididiError *tididi_forall(struct TididiCircuit *value,
                                   const uint32_t *vars,
@@ -381,7 +388,7 @@ struct TididiError *tididi_forall(struct TididiCircuit *value,
 
 /**
  * Conjoin then quantify in one call, consuming both inputs. Equivalent to and followed by exists.
- * The result is not minimized; tididi_minimize makes it canonical.
+ * The result is not minimized; TididiLimits.canonical or tididi_minimize makes it canonical.
  */
 struct TididiError *tididi_and_exists(struct TididiCircuit *left,
                                       struct TididiCircuit *right,
@@ -393,7 +400,7 @@ struct TididiError *tididi_and_exists(struct TididiCircuit *left,
 /**
  * Rename from[i] to to[i] simultaneously, consuming the circuit. Swaps and cycles are simultaneous.
  * Each source occurs once; several sources may share a target. The vtree stays unchanged.
- * The result is not minimized; tididi_minimize makes it canonical.
+ * The result is not minimized; TididiLimits.canonical or tididi_minimize makes it canonical.
  */
 struct TididiError *tididi_rename(struct TididiCircuit *value,
                                   const uint32_t *from,
@@ -404,7 +411,7 @@ struct TididiError *tididi_rename(struct TididiCircuit *value,
 
 /**
  * Union a nonempty array of distinct circuit handles, consuming every payload.
- * The result is not minimized; tididi_minimize makes it canonical.
+ * The result is not minimized; TididiLimits.canonical or tididi_minimize makes it canonical.
  */
 struct TididiError *tididi_or_many(struct TididiCircuit *const *values,
                                    size_t len,
@@ -414,7 +421,7 @@ struct TididiError *tididi_or_many(struct TididiCircuit *const *values,
 /**
  * Build if-then-else, consuming three distinct circuit handles sharing one vtree.
  * The result is not minimized unless both branches hold the same levels, as copies do;
- * tididi_minimize makes it canonical.
+ * TididiLimits.canonical or tididi_minimize makes it canonical.
  */
 struct TididiError *tididi_ite(struct TididiCircuit *condition,
                                struct TididiCircuit *yes,
@@ -436,8 +443,8 @@ struct TididiError *tididi_from_models(const struct TididiVtree *tree,
                                        const struct TididiLimits *config);
 
 /**
- * Insert cubes, then remove cubes; consume the old circuit and return its minimized replacement.
- * Contradictory cubes change nothing. Limits apply to individual updates and final minimization.
+ * Insert cubes, then remove cubes, consuming the old circuit. Contradictory cubes change nothing.
+ * The result is not minimized; TididiLimits.canonical or tididi_minimize makes it canonical.
  */
 struct TididiError *tididi_update(struct TididiCircuit *value,
                                   const struct TididiCube *insert,
