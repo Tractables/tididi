@@ -338,8 +338,7 @@ fn random_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, used: &[u32], rng
         eng.expand_variables(&f, &expansion).map_err(|e| format!("{e:?}"))
     });
     a.run("rotation_search_with", || {
-        let mut config = RotationSearchConfig::default();
-        config.max_inner_pairs = 64;
+        let config = RotationSearchConfig { max_inner_pairs: 64, ..Default::default() };
         mutate(&f, &|t| eng.rotation_search_with(t, &mut MinimizePairs, &mut crate::restructure::search::Greedy, &config).map(drop))
     });
     let home_internal: Vec<VtreeIdx> = home.bottomup().filter(|&i| !home.node(i).is_leaf()).collect();
