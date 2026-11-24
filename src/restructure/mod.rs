@@ -22,7 +22,6 @@ mod distinct;
 pub(crate) mod placement;
 mod project;
 mod tag;
-mod splice;
 mod transport;
 pub(crate) mod target;
 #[cfg(test)]

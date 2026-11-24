@@ -26,8 +26,6 @@ use super::*;
 /// line marked `unpredicted` was found by this test, not by an audit.
 const EXPECTED_OPEN: &[(&str, &str)] = &[
     ("and_onto a wider vtree [fixed]", "a target wider than the union"),
-    ("splice_subtree_unchecked [fixed]", "operands padded by the safety contract"),
-    ("splice_subtree_unchecked below the root of a home [fixed]", "the pass-through level above the merge level"),
     ("embed onto the home", "a variable of the home the operand does not use"),
     ("embed_moving onto the home", "a variable of the home the operand does not use"),
     ("embed_over the home", "a variable of the home the operand does not use"),
@@ -484,33 +482,6 @@ fn fixed_cases(a: &mut Audit, eng: &Engine) {
 
     a.case = "prefix_fold, sums every store makes on day 0 only".into();
     a.run("prefix_fold [fixed]", prefix_fold_case);
-
-    a.case = "splice of x1 into x8 at the root of balanced(8)".into();
-    a.run("splice_subtree_unchecked [fixed]", || {
-        let vtree = Arc::new(Vtree::balanced(8));
-        let mut f = crate::literal(&vtree, 1)?;
-        f.minimize()?;
-        let mut right = crate::literal(&vtree, 8)?;
-        right.minimize()?;
-        // Safety: both on `vtree` and unweighted, each one pair at the root
-        // whose other side is true.
-        unsafe { f.splice_subtree_unchecked(eng, right, vtree.root()) };
-        Ok::<_, OperationError>(f)
-    });
-
-    a.case = "splice of x1 and x2 at (x1 x2) on the home ((x1 x2) x3)".into();
-    a.run("splice_subtree_unchecked below the root of a home [fixed]", || {
-        let leaf = |v| Vtree::leaf(VarId(v));
-        let home = Home::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap());
-        let all = Arc::clone(home.vtree());
-        let t = all.children(all.root()).0;
-        let mut f = eng.embed(&eng.literal(&all, 1)?, &all, |v| v).unwrap().0;
-        let right = eng.embed(&eng.literal(&all, 2)?, &all, |v| v).unwrap().0;
-        // Safety: both on `all` and unweighted, each one pair at `t` whose
-        // other side is true.
-        unsafe { f.splice_subtree_unchecked(eng, right, t) };
-        Ok::<_, OperationError>(f)
-    });
 }
 
 struct Sum;

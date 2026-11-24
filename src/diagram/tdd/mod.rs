@@ -96,9 +96,9 @@ use super::primitives::{LEAF_WIDTH, ONE_LEAF_IDX, TddNodeId, TRUE, ZERO};
 pub struct Tdd {
     /// The vtree the diagram is decomposed along. Operands of a binary
     /// operation must share it (`Arc::ptr_eq`). Read it with
-    /// [`vtree`](Self::vtree). It changes only through
-    /// [`reseat_vtree_unchecked`](Self::reseat_vtree_unchecked) and the vtree
-    /// search, [`rotation_search`](Self::rotation_search), which edits it in place.
+    /// [`vtree`](Self::vtree). It changes only through a reseat onto an
+    /// allocation of the same layout and the vtree search,
+    /// [`rotation_search`](Self::rotation_search), which edits it in place.
     pub(crate) vtree: Arc<Vtree>,
     /// One level per vtree node: `levels[t.idx()]` is the level of `t`
     /// ([`level`](Self::level)).
@@ -299,32 +299,12 @@ fn debug_check_reseat_on_home(from: &Vtree, onto: &Vtree) {
 impl Tdd {
     /// Replace the vtree allocation without rebuilding any diagram level.
     ///
-    /// This can reunite diagrams whose independent subtrees share a vtree that
-    /// another operation rotated. It does not rewrite stored nodes or remap child references.
-    ///
     /// # Safety
     ///
-    /// The replacement must have the same node count and root index. Every
-    /// stored level must remain valid at its current index: its references must
-    /// name live nodes or marginal values in the replacement's child levels,
-    /// and weighted columns must retain their interpretation. Leaf variables
-    /// must retain their meaning wherever the diagram depends on them. The
-    /// resulting diagram must satisfy all [`TddBuilder`](crate::diagram::TddBuilder)
-    /// invariants, including determinism. A topology change is permitted only
-    /// where the diagram's stored structure remains valid under it.
-    /// Invalid references can cause out-of-bounds reads in later operations.
-    ///
-    /// For a diagram on a home ([`Vtree::home`]), the replacement must be on
-    /// a home too, with a link to it that is valid for the replacement's own
-    /// shape, and must carry the same variable at every leaf index. No level
-    /// is written, so the result then names a leaf true, or sits on leaves it
-    /// does not use, exactly when the diagram did.
-    ///
-    /// # Panics
-    ///
-    /// Debug builds check that the node count is unchanged and, for a diagram
-    /// on a home, the two conditions above.
-    pub unsafe fn reseat_vtree_unchecked(&mut self, vtree: &Arc<Vtree>) {
+    /// The replacement has the same nodes at the same indices with the same
+    /// variables, and, for a diagram on a home, is on a home too with a link
+    /// valid for its own shape. Debug builds check this.
+    pub(crate) unsafe fn reseat_vtree_unchecked(&mut self, vtree: &Arc<Vtree>) {
         debug_assert_eq!(
             self.vtree.num_nodes(), vtree.num_nodes(),
             "reseat_vtree_unchecked onto a tree of a different size leaves levels unaddressable",
