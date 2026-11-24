@@ -67,10 +67,12 @@ use super::overlay::{ABSENT, LevelOverlay, Overlay, Pieces, Scratch, leaf_index,
 /// Uses the shared vtree's execution context automatically.
 ///
 /// Both operands are consumed on success and on error. The result has the
-/// operands' summed-out levels and keeps their weights. Without a summed-out
-/// level it is not minimized; [`Engine::minimize`], or an engine with
-/// [`canonical_results`](crate::limits::LimitConfig::with_canonical_results), certifies it. With one it is
-/// minimized, never certified.
+/// operands' summed-out levels and keeps their weights. Of two satisfiable
+/// operands without a summed-out level it is not minimized;
+/// [`Engine::minimize`], or an engine with
+/// [`canonical_results`](crate::limits::LimitConfig::with_canonical_results), certifies it. With a false
+/// operand or a summed-out level it is minimized, and certified only where
+/// no level is summed out.
 ///
 /// ```
 /// use std::sync::Arc;

@@ -37,7 +37,7 @@ pub enum FilterOutcome {
     Unchanged,
     /// The operand without the removed nodes.
     Filtered {
-        /// The rebuilt diagram, after the requested reduction.
+        /// The rebuilt diagram, not reduced.
         tdd: Tdd,
         /// What the sweep removed.
         stats: FilterStats,

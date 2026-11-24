@@ -7,9 +7,14 @@ Breaking changes:
 - No operation minimizes its result by default. Each one ends with its own
   kernel and the close it needs (levels in closed form, a constant on the
   empty projection, the leaves it named true dropped); its documentation
-  says what it returns. `LimitConfig::with_canonical_results(true)` makes
-  every operation minimize its result, so that it is certified canonical
-  unless it holds a summed-out level. `Tdd::equivalent`, `Tdd::implies` and
+  says what it returns; `forall_vars` returns a certified canonical result,
+  because it minimizes the projection it complements.
+  `LimitConfig::with_canonical_results(true)` makes the Boolean operations
+  minimize their results, so that each is certified canonical unless it
+  holds a summed-out level; `Engine::and_onto`, `Engine::and_restoring` of
+  structural operands, and the restructuring operations, `marginalize`,
+  `trim`, model edits, builders and readers do not read it.
+  `Tdd::equivalent`, `Tdd::implies` and
   `Tdd::is_zero` are exact either way; `Tdd::is_one` is exact on a
   minimized diagram.
 - `Engine::negate_with`, `Tdd::negate_with`,
@@ -20,7 +25,8 @@ Breaking changes:
 
 - `Engine::and_filter_products` is removed. Conjoin, then restrict to the
   care constraint with `Engine::restrict_to_care`: the result agrees with
-  the filtered product under that constraint and is canonical.
+  the filtered product under that constraint, and `Engine::minimize` makes
+  it canonical.
 - `Engine::from_models_direct` is removed. `Engine::from_models` builds the
   same diagram.
 - `Tdd::restrict_to_care` and `Engine::restrict_to_care` borrow `care` and

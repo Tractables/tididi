@@ -313,9 +313,9 @@ impl Tdd {
     ///
     /// Consumes the diagram on success and error, retaining its vtree and weights.
     /// A repeated variable is quantified once. An empty slice returns the operand
-    /// unchanged. The result is not minimized: [`minimize`](Self::minimize), or
-    /// an engine with [`canonical_results`](crate::limits::LimitConfig::with_canonical_results),
-    /// certifies it. The quantified
+    /// unchanged. Otherwise the result is certified canonical
+    /// ([`is_canonical`](Self::is_canonical)): the projection of the complement
+    /// is minimized, and complementing it keeps the certificate. The quantified
     /// variables remain free in the unchanged vtree, so divide the result's full
     /// model count by `2^k` to count over the remaining variables, where `k` is
     /// the number of distinct quantified variables.
@@ -1128,14 +1128,16 @@ impl Tdd {
     /// [`rotation_search`](Self::rotation_search) searches other tree shapes.
     /// Counting, satisfiability and witness queries accept nonminimal diagrams;
     /// minimize when canonical form or removal of redundant storage is needed.
-    /// Operations such as [`and`](crate::and), [`or`](crate::or),
-    /// [`xor`](crate::xor), [`and_exists`](crate::and_exists),
-    /// [`condition`](Self::condition), [`exists_vars`](Self::exists_vars) and
-    /// [`rename_vars`](Self::rename_vars) leave their result unminimized unless
-    /// the engine's limits set
-    /// [`canonical_results`](crate::limits::LimitConfig::with_canonical_results);
-    /// each operation's documentation says whether it keeps the certificate of
-    /// [`is_canonical`](Self::is_canonical) operands.
+    /// Unless the engine's limits set
+    /// [`canonical_results`](crate::limits::LimitConfig::with_canonical_results),
+    /// an operation minimizes its result only where its documentation says
+    /// so: [`and`](crate::and), [`and_clause`](Self::and_clause),
+    /// [`or`](crate::or), [`xor`](crate::xor), [`ite`](crate::ite),
+    /// [`and_exists`](crate::and_exists), [`condition`](Self::condition),
+    /// [`exists_vars`](Self::exists_vars) and
+    /// [`rename_vars`](Self::rename_vars) do not, [`negate`](Self::negate)
+    /// keeps the certificate of a certified operand, and
+    /// [`forall_vars`](Self::forall_vars) returns a certified result.
     ///
     /// On a [`Home`](crate::vtree::Home) or one of its projections, with no
     /// summed-out level, a variable the minimization finds the diagram does
