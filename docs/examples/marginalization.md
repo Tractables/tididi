@@ -97,8 +97,9 @@ storage. That query needs the original circuit, which still distinguishes them.
 
 For independent options that are each enabled with probability 1/2, either
 server has a backup with probability 3/4. The combined probability is 9/16.
-Copy the structural diagram onto a vtree that carries those weights
-([`Vtree::with_weights`](crate::Vtree::with_weights)) **before** marginalizing:
+Build the rules again on a vtree of the same shape that carries those weights
+([`Vtree::with_weights`](crate::Vtree::with_weights)), and marginalize that
+copy:
 
 ```rust,ignore,{class=tested-example}
 use num_rational::BigRational;
@@ -109,7 +110,8 @@ let weights = RationalWeights::from_literals(&vec![
     LiteralWeights { negative: half.clone(), positive: half }; 4
 ]);
 let weighted_vtree = Arc::new(Vtree::balanced(4).with_weights(Weights::new(weights, Arithmetic::ExactRational))?);
-let (mut weighted, _) = rules.embed(&weighted_vtree, |v| v)?;
+let mut weighted = Tdd::clause(&weighted_vtree, [local_a, remote_a])?
+    & Tdd::clause(&weighted_vtree, [local_b, remote_b])?;
 println!("Probability before: {}", weighted.weighted_value()?.unwrap().into_rational());
 weighted.marginalize_levels(&[server_a])?;
 println!("Probability after: {}", weighted.weighted_value()?.unwrap().into_rational());

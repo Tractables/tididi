@@ -86,11 +86,11 @@ fn leaf_set_pairs(home: &Vtree, rng: &mut Lcg) -> Vec<(Vec<VarId>, Vec<VarId>)> 
 }
 
 /// `f` on `home`, placed independently of the code under test.
-fn on_home(eng: &Engine, f: &Tdd, home: &Arc<Vtree>) -> Tdd {
+fn on_home(f: &Tdd, home: &Arc<Vtree>) -> Tdd {
     if f.vtree().num_nodes() == 0 {
         return if f.is_one() { Tdd::one(home) } else { Tdd::zero(home) };
     }
-    eng.embed(f, home, |v| v).unwrap().0
+    crate::test_helpers::embedded(f, home, |v| v).unwrap().0
 }
 
 struct Case<'a> {
@@ -116,7 +116,7 @@ impl Case<'_> {
                 assert_eq!(counts(&minimized), counts(&base), "{op} {what}: node for node");
             }
         }
-        assert!(eng.equivalent(&on_home(eng, &got, self.home), expected).unwrap(), "{op} {what}");
+        assert!(eng.equivalent(&on_home(&got, self.home), expected).unwrap(), "{op} {what}");
     }
 
     /// `f` as it was given, after an operation that borrowed it.
@@ -124,7 +124,7 @@ impl Case<'_> {
         assert!(Arc::ptr_eq(f.vtree(), before.vtree()), "{op} {}: vtree changed", self.what);
         assert_eq!(f.pair_count(), before.pair_count(), "{op} {}", self.what);
         let (eng, home) = (self.eng, self.home);
-        assert!(eng.equivalent(&on_home(eng, f, home), &on_home(eng, before, home)).unwrap(), "{op} {}", self.what);
+        assert!(eng.equivalent(&on_home(f, home), &on_home(before, home)).unwrap(), "{op} {}", self.what);
     }
 }
 
@@ -133,7 +133,7 @@ impl Case<'_> {
 #[allow(clippy::too_many_lines)]
 fn check_operations(case: &Case<'_>, f: &Tdd, g: &Tdd, h: &Tdd, rng: &mut Lcg) {
     let (eng, home) = (case.eng, case.home);
-    let (hf, hg, hh) = (on_home(eng, f, home), on_home(eng, g, home), on_home(eng, h, home));
+    let (hf, hg, hh) = (on_home(f, home), on_home(g, home), on_home(h, home));
     let (f0, g0) = (f.clone(), g.clone());
 
     case.check("and", eng.and(f, g).unwrap(), &eng.and(&hf, &hg).unwrap());
@@ -221,7 +221,7 @@ fn check_operations(case: &Case<'_>, f: &Tdd, g: &Tdd, h: &Tdd, rng: &mut Lcg) {
         if got.vtree().home().is_some() {
             check_trimmed(&got, false).unwrap_or_else(|e| panic!("restrict_to_care {}: {e}", case.what));
         }
-        let restricted = eng.and(on_home(eng, &got, home), care_home).unwrap();
+        let restricted = eng.and(on_home(&got, home), care_home).unwrap();
         assert!(eng.equivalent(&restricted, &expected).unwrap(), "restrict_to_care {}", case.what);
     }
 
@@ -369,11 +369,11 @@ fn a_conjunction_with_one_leaf_set_inside_the_other_is_the_conjunction_on_the_ho
             continue;
         }
         nested += 1;
-        let expected = eng.and(on_home(&eng, &f, &home), on_home(&eng, &g, &home)).unwrap();
+        let expected = eng.and(on_home(&f, &home), on_home(&g, &home)).unwrap();
         for out in [eng.and(f.clone(), &g), eng.and(&g, f.clone()), eng.and(f.clone(), g.clone())] {
             let out = out.unwrap();
             assert!(Arc::ptr_eq(out.vtree(), f.vtree()) || out.vtree().num_nodes() == 0, "{}", case.what);
-            assert!(eng.equivalent(&on_home(&eng, &out, &home), &expected).unwrap(), "{}", case.what);
+            assert!(eng.equivalent(&on_home(&out, &home), &expected).unwrap(), "{}", case.what);
         }
     }
     assert!(nested >= 100, "{nested} of 300 seeds nested");
@@ -394,10 +394,10 @@ fn a_conjunction_with_a_literal_inside_an_equivalence_keeps_its_cone() {
         }
         for lit in [x, -x, y, -y] {
             let g = Tdd::clause(&Vtree::projection(&hm, [VarId(lit.unsigned_abs())]).unwrap(), [lit]).unwrap();
-            let expected = eng.and(on_home(&eng, &f, &home), on_home(&eng, &g, &home)).unwrap();
+            let expected = eng.and(on_home(&f, &home), on_home(&g, &home)).unwrap();
             let out = eng.and(f.clone(), &g).unwrap();
             assert!(Arc::ptr_eq(out.vtree(), f.vtree()), "seed {seed} literal {lit}");
-            assert!(eng.equivalent(&on_home(&eng, &out, &home), &expected).unwrap(), "seed {seed} literal {lit}");
+            assert!(eng.equivalent(&on_home(&out, &home), &expected).unwrap(), "seed {seed} literal {lit}");
             assert_eq!(eng.model_count(&out).unwrap(), num_bigint::BigUint::from(1u32) << (vars.len() - 2), "seed {seed} literal {lit}");
         }
     }
@@ -444,10 +444,10 @@ fn nested_cases(case: impl Fn(&Tdd, &Tdd) -> bool) -> usize {
         }
         picked += 1;
         let what = format!("seed {seed} f {f_vars:?} g {inner:?}");
-        let expected = eng.and(on_home(&eng, &f, &home), on_home(&eng, &g, &home)).unwrap();
+        let expected = eng.and(on_home(&f, &home), on_home(&g, &home)).unwrap();
         let out = eng.and(f.clone(), &g).unwrap();
         assert!(Arc::ptr_eq(out.vtree(), f.vtree()) || out.vtree().num_nodes() == 0, "{what}");
-        assert!(eng.equivalent(&on_home(&eng, &out, &home), &expected).unwrap(), "{what}");
+        assert!(eng.equivalent(&on_home(&out, &home), &expected).unwrap(), "{what}");
         assert_eq!(eng.model_count(&out).unwrap(), eng.model_count(&expected).unwrap(), "{what}");
     }
     picked
@@ -512,10 +512,10 @@ fn a_conjunction_reads_two_nodes_at_the_top_level_of_g() {
         assert_eq!(g.level(root).slot_count(), 2);
         cases += 1;
         let what = format!("seed {seed} f {f_vars:?} g {a:?} {b:?}");
-        let expected = eng.and(on_home(&eng, &f, &home), on_home(&eng, &g, &home)).unwrap();
+        let expected = eng.and(on_home(&f, &home), on_home(&g, &home)).unwrap();
         let out = eng.and(f.clone(), &g).unwrap();
         assert!(Arc::ptr_eq(out.vtree(), f.vtree()) || out.vtree().num_nodes() == 0, "{what}");
-        assert!(eng.equivalent(&on_home(&eng, &out, &home), &expected).unwrap(), "{what}");
+        assert!(eng.equivalent(&on_home(&out, &home), &expected).unwrap(), "{what}");
         assert_eq!(eng.model_count(&out).unwrap(), eng.model_count(&expected).unwrap(), "{what}");
     }
     assert!(cases >= 20, "{cases} cases");
@@ -531,7 +531,7 @@ fn check_union(eng: &Engine, hm: &Home, f: &Tdd, g: &Tdd, trimmed: bool, what: &
     merged.sort_unstable();
     merged.dedup();
     let union = Vtree::projection(hm, merged.iter().copied()).unwrap();
-    let expected = eng.and(on_home(eng, f, home), on_home(eng, g, home)).unwrap();
+    let expected = eng.and(on_home(f, home), on_home(g, home)).unwrap();
     let mut placed = crate::apply::conjoin::conjoin_onto(eng, f.into(), g.into(), &union, false)
         .map_err(|r| r.error)
         .unwrap();
@@ -540,7 +540,7 @@ fn check_union(eng: &Engine, hm: &Home, f: &Tdd, g: &Tdd, trimmed: bool, what: &
     for (i, out) in outs.into_iter().enumerate() {
         let out = out.unwrap();
         let what = format!("{what} call {i}");
-        assert!(eng.equivalent(&on_home(eng, &out, home), &expected).unwrap(), "{what}");
+        assert!(eng.equivalent(&on_home(&out, home), &expected).unwrap(), "{what}");
         assert_eq!(eng.model_count(&out).unwrap(), eng.model_count(&expected).unwrap(), "{what}");
         if out.vtree().num_nodes() == 0 {
             assert!(out.is_zero(), "{what}");
@@ -681,14 +681,14 @@ fn an_overlay_across_leaf_sets_is_the_overlay_of_the_placed_operands() {
             if got.vtree().on_home() {
                 check_trimmed(&got, false).unwrap_or_else(|e| panic!("{what}: {e}"));
             }
-            let (hf, hg) = (on_home(&eng, &f, &home), on_home(&eng, &g, &home));
+            let (hf, hg) = (on_home(&f, &home), on_home(&g, &home));
             let expected = match op {
                 Overlay::Or => eng.or(hf, hg),
                 Overlay::AndNot => eng.and_not(hf, hg),
                 Overlay::Add => eng.add(hf, hg),
             }
             .unwrap();
-            assert!(eng.equivalent(&on_home(&eng, &got, &home), &expected).unwrap(), "{what}");
+            assert!(eng.equivalent(&on_home(&got, &home), &expected).unwrap(), "{what}");
         }
     }
     assert!(kinds.iter().all(|&k| k >= 100), "cases by kind {kinds:?}");

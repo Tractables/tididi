@@ -2,122 +2,32 @@
 //!
 //! Move each part's levels to their grafted indices, then join part roots and
 //! free-variable leaves with one pair per new level. Whole-level moves preserve
-//! local node indices. Canonical parts introduce no structural twins. For
-//! marginal parts the assembly canonicalizes weighted leaf references, inlines
-//! small marginal references, then prunes or reduces.
+//! local node indices. Canonical parts introduce no structural twins.
 
-use super::{GraftError, placement::MovePlacement};
+use super::{ExpandError, placement::MovePlacement};
 
 use crate::Engine;
 use std::sync::Arc;
 
-use crate::vtree::{GraftLayout, VarId, Vtree, VtreeIdx};
+use crate::vtree::{VarId, Vtree};
 
-use crate::diagram::{NodeIdx, Tdd, TddBuildError, Weights, ONE_LEAF_IDX};
+use crate::diagram::{NodeIdx, Tdd, ONE_LEAF_IDX};
 
-impl Tdd {
-    /// The conjunction of `parts`, diagrams compiled in their own local
-    /// variable spaces over variable sets that are pairwise disjoint once
-    /// renamed, as one diagram on [`Vtree::graft_over`] of their vtrees.
-    ///
-    /// Each `(tdd, local_to_global)` is renamed through its map on the way in,
-    /// and the id space is `num_vars`, which must hold every renamed id.
-    /// `free_vars` are variables no part mentions; the result is unconstrained
-    /// in them, so each doubles the model count. Built structurally in
-    /// `O(total nodes)`: no apply runs, and the result is canonical when every
-    /// part is. The parts' levels are moved, which is why `parts` is taken by
-    /// value; a part's integer marginal levels move with it. The
-    /// [`GraftLayout`] comes back so a caller holding per-part side tables keyed
-    /// by vtree index can relocate them.
-    ///
-    /// `into` weighs the grafted vtree ([`Vtree::with_weights`]): each
-    /// weighted part's per-level values move with it under the level's
-    /// grafted index. The table must cover every renamed and free variable;
-    /// a marginalized part must use the same arithmetic and literal weights
-    /// under its rename. Pass `None` for an unweighted graft. Stored integer
-    /// counts cannot be reweighted, and stored weights cannot be discarded.
-    /// `parts` is consumed; `eng` supplies level storage. Attaching a marginal
-    /// root below a new parent runs a prune under the engine's limits. The
-    /// assembly charges its level storage to the limits and a refusal comes
-    /// back as [`GraftError::Operation`]; it does not poll the work clock.
-    ///
-    /// # Errors
-    ///
-    /// [`GraftError::Vtree`] if variable sets overlap or there are no parts or
-    /// free variables; [`GraftError::VariableOutOfRange`] if a renamed or free
-    /// variable is outside `1..=num_vars`;
-    /// [`GraftError::MissingVariableMapping`] for an incomplete map and
-    /// [`GraftError::DestinationWeights`] for missing destination weights. [`GraftError::PartWeights`] identifies a part whose
-    /// stored values cannot use the destination. Inputs are checked before
-    /// moving levels or taking the false-result shortcut.
-    pub fn graft_over(
-        eng: &Engine,
-        parts: Vec<(Tdd, Vec<VarId>)>,
-        free_vars: &[VarId],
-        num_vars: u32,
-        into: Option<Weights>,
-    ) -> Result<(Tdd, GraftLayout), GraftError> {
-        let _op = eng.limits().enter()?;
-        for (part, (tdd, map)) in parts.iter().enumerate() {
-            for (_, variable) in tdd.vtree.leaf_bottomup() {
-                if map.get(variable.idx()).is_none() {
-                    return Err(GraftError::MissingVariableMapping { part, variable });
-                }
-            }
-        }
-        let (parts, maps): (Vec<Tdd>, Vec<Vec<VarId>>) = parts.into_iter().unzip();
-        graft_impl(eng, parts, |k, local| maps[k][local.idx()], free_vars, num_vars, into)
-    }
-}
-
-impl Engine {
-    /// [`Tdd::graft_over`] of parts already over disjoint variables, without
-    /// weights, on [`Vtree::graft`] of their vtrees.
-    pub(crate) fn graft(&self, parts: Vec<Tdd>, spine_vars: &[VarId]) -> Result<Tdd, GraftError> {
-        let num_vars = crate::vtree::graft::graft_id_space(parts.iter().map(|t| &*t.vtree), spine_vars);
-        graft_impl(self, parts, |_, v| v, spine_vars, num_vars, None)
-            .map(|(tdd, _)| tdd)
-    }
-}
-
-
-/// The one graft: [`Engine::graft`] with the identity rename, [`graft_over`](Tdd::graft_over)
-/// with the per-part maps.
-fn graft_impl(
-    eng: &Engine,
-    mut parts: Vec<Tdd>,
-    rename: impl Fn(usize, VarId) -> VarId,
-    spine_vars: &[VarId],
-    num_vars: u32,
-    into: Option<Weights>,
-) -> Result<(Tdd, GraftLayout), GraftError> {
+/// The conjunction of `parts`, structural unweighted diagrams over pairwise
+/// disjoint variables, and of nothing over `spine_vars`, on [`Vtree::graft`]
+/// of their vtrees, built from the parts' levels with one pair per new level.
+pub(crate) fn graft(eng: &Engine, mut parts: Vec<Tdd>, spine_vars: &[VarId]) -> Result<Tdd, ExpandError> {
     let _op = eng.limits().enter()?;
     let n_parts = parts.len();
-    let rename = &rename;
-    for variable in parts.iter().enumerate()
-        .flat_map(|(k, part)| part.vtree.leaf_bottomup().map(move |(_, local)| rename(k, local)))
-        .chain(spine_vars.iter().copied())
-    {
-        if variable.0 == 0 || variable.0 > num_vars {
-            return Err(GraftError::VariableOutOfRange { variable, num_vars });
-        }
-    }
+    let num_vars = crate::vtree::graft::graft_id_space(parts.iter().map(|t| &*t.vtree), spine_vars);
     let vtrees: Vec<&Vtree> = parts.iter().map(|t| &*t.vtree).collect();
-    let (grafted_vtree, layout) = Vtree::graft_over(&vtrees, rename, spine_vars, num_vars)?;
-    let grafted_vtree = match into {
-        Some(weights) => grafted_vtree.with_weights(weights).map_err(GraftError::DestinationWeights)?,
-        None => grafted_vtree,
-    };
+    let (grafted_vtree, layout) = Vtree::graft_over(&vtrees, |_, v| v, spine_vars, num_vars)?;
     let grafted_arc: Arc<Vtree> = Arc::new(grafted_vtree);
-    for (part, tdd) in parts.iter().enumerate() {
-        check_part_weights(tdd, grafted_arc.weights(), |local| rename(part, local))
-            .map_err(|source| GraftError::PartWeights { part, source })?;
-    }
 
     // A ⊥ part makes the conjunction ⊥; the chain below would name the `ZERO`
     // sentinel as a child.
     if parts.iter().any(Tdd::is_zero) {
-        return Ok((crate::build::constant_zero_padded(eng, &grafted_arc), layout));
+        return Ok(crate::build::constant_zero_padded(eng, &grafted_arc));
     }
 
     let canonical = parts.iter().all(Tdd::is_canonical);
@@ -152,34 +62,9 @@ fn graft_impl(
     } else {
         NodeIdx(0)
     };
-    placement.check_weights().map_err(GraftError::DestinationWeights)?;
-    let mut result = placement.finish(output_local, &[])?;
-    if canonical && !result.has_marginal_level() {
+    let mut result = placement.finish(output_local)?;
+    if canonical {
         result.certify_built();
     }
-    Ok((result, layout))
+    Ok(result)
 }
-
-/// Require a destination interpretation for every marginal value that a part will carry across.
-pub(super) fn check_part_weights(part: &Tdd, destination: Option<&Weights>, rename: impl Fn(VarId) -> VarId) -> Result<(), TddBuildError> {
-    for (index, level) in part.levels.iter().enumerate() {
-        let level_index = VtreeIdx(index as u32);
-        if destination.is_none() && level.is_weight_marginal() {
-            return Err(TddBuildError::WeightedLevelWithoutStore { level: level_index });
-        }
-        if destination.is_some() && level.is_marginal() && !level.is_weight_marginal() {
-            return Err(TddBuildError::CountLevelWithWeights { level: level_index });
-        }
-    }
-    if part.has_marginal_level()
-        && let (Some(source), Some(destination)) = (part.weight_table(), destination)
-        && !source.compatible_after_rename(destination, part.vtree.leaf_bottomup().map(|(_, var)| (var, rename(var))))
-    {
-        return Err(TddBuildError::IncompatibleWeights);
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-#[path = "tests/graft/mod.rs"]
-mod tests;

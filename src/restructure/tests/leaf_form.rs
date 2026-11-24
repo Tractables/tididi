@@ -17,7 +17,7 @@ fn subset(n: u32, rng: &mut Lcg) -> Vec<u32> {
 fn embedding_projection_and_conjunction_keep_one_leaf_form() {
     let eng = &Engine::new();
     let mut rng = Lcg::new(0x51ce_0f0e);
-    let (mut embedded, mut projected, mut on_projections) = (0, 0, 0);
+    let (mut embedded, mut on_projections) = (0, 0);
     for n in [3u32, 5, 7] {
         let wider = vtree_shapes(n + 2);
         for (name, vtree) in vtree_shapes(n) {
@@ -31,17 +31,10 @@ fn embedding_projection_and_conjunction_keep_one_leaf_form() {
                 assert_one_form(&f, "input");
                 assert_one_form(&eng.and(&f, &g).unwrap(), &format!("and on {name}"));
                 for (into_name, into) in &wider {
-                    if let Ok((e, _)) = eng.embed(&f, into, |v| VarId(v.0 + 1)) {
+                    if let Ok((e, _)) = crate::test_helpers::embedded(&f, into, |v| VarId(v.0 + 1)) {
                         assert_one_form(&e, &format!("embed {name} into {into_name}"));
                         embedded += 1;
                     }
-                }
-                let keep = subset(n, &mut rng);
-                if !keep.is_empty() {
-                    let local = |v: VarId| keep.iter().position(|&k| k == v.0).map(|i| VarId(i as u32 + 1));
-                    let p = eng.project_to_vars(&f, local, keep.len() as u32).unwrap();
-                    assert_one_form(&p, &format!("project {name} to {keep:?}"));
-                    projected += 1;
                 }
                 let (a, b) = (subset(n, &mut rng), subset(n, &mut rng));
                 if a.is_empty() || b.is_empty() {
@@ -56,5 +49,5 @@ fn embedding_projection_and_conjunction_keep_one_leaf_form() {
             }
         }
     }
-    assert!(embedded > 0 && projected > 0 && on_projections > 0);
+    assert!(embedded > 0 && on_projections > 0);
 }

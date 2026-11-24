@@ -35,8 +35,8 @@ pub(crate) fn operand(eng: &Engine, home: &Home, vars: &[VarId], rng: &mut Lcg) 
     f
 }
 
-pub(crate) fn on_home(eng: &Engine, f: &Tdd, home: &Arc<Vtree>) -> Tdd {
-    eng.embed(f, home, |v| v).unwrap().0
+pub(crate) fn on_home(f: &Tdd, home: &Arc<Vtree>) -> Tdd {
+    crate::test_helpers::embedded(f, home, |v| v).unwrap().0
 }
 
 /// `f`, on `home` or a projection of it, with the same levels on
@@ -57,8 +57,8 @@ pub(crate) fn reweighted(f: &Tdd, home: &Home, weighted: &Home) -> Tdd {
 
 /// `f` on a copy of `home`'s tree that is not a home, where the smooth API
 /// sums out by `home`'s node ids.
-pub(crate) fn on_root_copy(eng: &Engine, f: &Tdd, home: &Arc<Vtree>) -> Tdd {
-    on_home(eng, f, &Arc::new(Vtree::clone(home)))
+pub(crate) fn on_root_copy(f: &Tdd, home: &Arc<Vtree>) -> Tdd {
+    on_home(f, &Arc::new(Vtree::clone(home)))
 }
 
 pub(crate) fn weights(n: u32, rng: &mut Lcg) -> RationalWeights {
@@ -191,7 +191,7 @@ fn marginalize_matches_the_smooth_form_on_the_home() {
             home = weighted;
         }
         let home_vtree = Arc::clone(home.vtree());
-        let mut g = on_root_copy(&eng, &f, &home_vtree);
+        let mut g = on_root_copy(&f, &home_vtree);
         let mut before = Vec::new();
         for step in 0..1 + rng.below(2) {
             let hs = targets(&home_vtree, &before, &mut rng);

@@ -156,7 +156,7 @@ fn or_cube_on_a_diagram_an_earlier_call_placed_is_canonical() {
     let placed = [
         ("a false cube", eng.or_cube(f.clone(), &[3, -3, 4]).unwrap()),
         ("a true clause", eng.and_clause(f.clone(), &[3, -3, 4]).unwrap()),
-        ("embed_moving", eng.embed_moving(f, &wide, |v| v).unwrap().0),
+        ("a conjunction with true", eng.and(f, Tdd::one(&wide)).unwrap()),
     ];
     for (how, placed) in placed {
         let got = catch_unwind(AssertUnwindSafe(|| eng.or_cube(placed, &[3, 4]).unwrap()));

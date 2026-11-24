@@ -76,8 +76,8 @@ fn leaf_vars(f: &Tdd) -> Vec<VarId> {
     f.vtree().leaf_bottomup().map(|(_, var)| var).collect()
 }
 
-fn on_home(eng: &Engine, f: &Tdd, home: &Arc<Vtree>) -> Tdd {
-    eng.embed(f, home, |v| v).unwrap().0
+fn on_home(f: &Tdd, home: &Arc<Vtree>) -> Tdd {
+    crate::test_helpers::embedded(f, home, |v| v).unwrap().0
 }
 
 #[test]
@@ -89,7 +89,7 @@ fn and_on_projections_is_and_on_the_home() {
         let mut rng = Lcg::new(seed ^ 0x5bd1_e995);
         for (fv, gv) in leaf_set_pairs(&home, &mut rng) {
             let (f, g) = (cnf_on(&eng, &hm, &fv, &mut rng), cnf_on(&eng, &hm, &gv, &mut rng));
-            let expected = eng.and(on_home(&eng, &f, &home), on_home(&eng, &g, &home)).unwrap();
+            let expected = eng.and(on_home(&f, &home), on_home(&g, &home)).unwrap();
             let (f_vars, g_vars) = (leaf_vars(&f), leaf_vars(&g));
             let union = f_vars.len() + g_vars.iter().filter(|v| !f_vars.contains(v)).count();
             let results = [
@@ -104,7 +104,7 @@ fn and_on_projections_is_and_on_the_home() {
                     assert_eq!(h.vtree().num_leaves() as usize, union, "seed {seed}");
                 }
                 assert_eq!(eng.model_count(&h).unwrap(), eng.model_count(&expected).unwrap(), "seed {seed}");
-                assert!(eng.equivalent(&on_home(&eng, &h, &home), &expected).unwrap(), "seed {seed}");
+                assert!(eng.equivalent(&on_home(&h, &home), &expected).unwrap(), "seed {seed}");
                 eng.minimize(&mut h).unwrap();
                 assert_canonical(&h);
                 assert_eq!(eng.model_count(&h).unwrap(), eng.model_count(&expected).unwrap(), "seed {seed}");
@@ -126,7 +126,7 @@ fn join_at_the_root_carries_what_the_operands_owe() {
         let (l, r) = home.children(home.root());
         let (fv, gv) = (part(&vars_under(&home, l), &mut rng), part(&vars_under(&home, r), &mut rng));
         let (f, g) = (cnf_on(&eng, &hm, &fv, &mut rng), cnf_on(&eng, &hm, &gv, &mut rng));
-        let expected = eng.and(on_home(&eng, &f, &home), on_home(&eng, &g, &home)).unwrap();
+        let expected = eng.and(on_home(&f, &home), on_home(&g, &home)).unwrap();
         // Contraction visits only the levels a diagram owes it.
         let contracted = |mut d: Tdd| {
             eng.reduce_plain(&mut d, ReductionPlan::Contract).unwrap();
@@ -137,7 +137,7 @@ fn join_at_the_root_carries_what_the_operands_owe() {
         for h in [eng.and(f.clone(), g.clone()).unwrap(), eng.and(&f, &g).unwrap()] {
             let h = contracted(h);
             assert_eq!(h.pair_count(), joined_reduced.pair_count(), "seed {seed}");
-            assert!(eng.equivalent(&on_home(&eng, &h, &home), &expected).unwrap(), "seed {seed}");
+            assert!(eng.equivalent(&on_home(&h, &home), &expected).unwrap(), "seed {seed}");
             let mut h = h;
             eng.minimize(&mut h).unwrap();
             assert_canonical(&h);
@@ -169,7 +169,7 @@ fn and_clause_extends_to_the_clause_variables() {
             let fv = part(&all, &mut rng);
             let f = cnf_on(&eng, &hm, &fv, &mut rng);
             let lits = clause(&all, &mut rng);
-            let expected = eng.and_clause(on_home(&eng, &f, &home), &lits).unwrap();
+            let expected = eng.and_clause(on_home(&f, &home), &lits).unwrap();
             let typed: Vec<crate::Literal> = lits.iter().map(|&l| crate::Literal::try_from(l).unwrap()).collect();
             for h in [eng.and_clause(f.clone(), &lits).unwrap(), eng.and_clause(f.clone(), &typed).unwrap()] {
                 assert!(Arc::ptr_eq(h.home().unwrap().vtree(), &home));
@@ -181,7 +181,7 @@ fn and_clause_extends_to_the_clause_variables() {
                     }
                 }
                 assert_eq!(eng.model_count(&h).unwrap(), eng.model_count(&expected).unwrap(), "seed {seed}");
-                assert!(eng.equivalent(&on_home(&eng, &h, &home), &expected).unwrap(), "seed {seed}");
+                assert!(eng.equivalent(&on_home(&h, &home), &expected).unwrap(), "seed {seed}");
             }
         }
     }
@@ -222,7 +222,7 @@ fn reductions_and_counts_run_on_projections() {
         for (fv, gv) in leaf_set_pairs(&home, &mut rng) {
             let (f, g) = (cnf_on(&eng, &hm, &fv, &mut rng), cnf_on(&eng, &hm, &gv, &mut rng));
             let h = eng.and(&f, &g).unwrap();
-            let expected = on_home(&eng, &h, &home);
+            let expected = on_home(&h, &home);
             for plan in [
                 ReductionPlan::Prune,
                 ReductionPlan::Contract,
@@ -233,7 +233,7 @@ fn reductions_and_counts_run_on_projections() {
                 eng.reduce_plain(&mut r, plan).unwrap();
                 assert!(Arc::ptr_eq(r.vtree(), h.vtree()));
                 assert_eq!(eng.model_count(&r).unwrap(), eng.model_count(&h).unwrap(), "seed {seed}");
-                assert!(eng.equivalent(&on_home(&eng, &r, &home), &expected).unwrap(), "seed {seed}");
+                assert!(eng.equivalent(&on_home(&r, &home), &expected).unwrap(), "seed {seed}");
             }
         }
     }
@@ -243,7 +243,7 @@ fn reductions_and_counts_run_on_projections() {
 /// `and` of the operands embedded on a bare copy of the home's root, for
 /// sets that split at the root (the join) and sets that overlap.
 #[test]
-fn and_onto_the_root_is_and_on_a_bare_root() {
+fn a_conjunction_placed_on_the_root_is_and_on_a_bare_root() {
     let eng = Engine::new();
     for seed in 0..60u64 {
         let n = 2 + (seed % 10) as u32;
@@ -269,11 +269,11 @@ fn and_onto_the_root_is_and_on_a_bare_root() {
             if f.vtree().home().is_none() || g.vtree().home().is_none() {
                 continue;
             }
-            let expected = eng.and(on_home(&eng, &f, &bare), on_home(&eng, &g, &bare)).unwrap();
+            let expected = eng.and(on_home(&f, &bare), on_home(&g, &bare)).unwrap();
             for mut h in [eng.and(&f, &g).unwrap(), eng.and(f.clone(), g.clone()).unwrap()] {
                 assert!(Arc::ptr_eq(h.home().unwrap().vtree(), root), "seed {seed}");
                 assert_eq!(eng.model_count(&h).unwrap(), eng.model_count(&expected).unwrap(), "seed {seed}");
-                assert!(eng.equivalent(&on_home(&eng, &h, &bare), &expected).unwrap(), "seed {seed}");
+                assert!(eng.equivalent(&on_home(&h, &bare), &expected).unwrap(), "seed {seed}");
                 eng.minimize(&mut h).unwrap();
                 assert_canonical(&h);
             }

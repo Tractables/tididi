@@ -246,12 +246,12 @@ fn binary(log: &mut Log, eng: &Engine, n: u32, f: &Tdd, g: &Tdd, h: &Tdd, rng: &
     for (name, targets) in [("weighted and", &[][..]), ("weighted and_marginalizing some levels", &targets[..])] {
         log.same(
             name,
-            || eng.and_marginalizing(on_weighted(f, &home, &weighted_home), on_weighted(g, &home, &weighted_home), targets).and_then(|t| exact(&t)),
+            || eng.and_marginalizing(on_weighted(f, &weighted_home), on_weighted(g, &weighted_home), targets).and_then(|t| exact(&t)),
             || Ok::<_, OperationError>(Some(weighted.clone())),
         );
         log.same(
             &format!("{name}, trim"),
-            || eng.and_marginalizing(on_weighted(f, &home, &weighted_home), on_weighted(g, &home, &weighted_home), targets)
+            || eng.and_marginalizing(on_weighted(f, &weighted_home), on_weighted(g, &weighted_home), targets)
                 .and_then(|mut t| { let _ = t.trim(&weighted_home); exact(&t) }),
             || Ok::<_, OperationError>(Some(weighted.clone())),
         );
@@ -398,20 +398,13 @@ fn weights(n: u32, rng: &mut Lcg) -> (Weights, Vec<LiteralWeights<BigRational>>)
     (Weights::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational), literals)
 }
 
-/// `t`, on `home`, copied onto `weighted`, a weighted home of the same
+/// `t`, on a home, copied onto `weighted`, a weighted home of the same
 /// shape: onto its root, or onto its projection on the same variables, whose
 /// node ids are those of `t`'s.
-fn on_weighted(t: &Tdd, home: &Home, weighted: &Home) -> Tdd {
-    let vars: Vec<VarId> = t.vtree().leaf_bottomup().map(|(_, var)| var).collect();
-    let into = if Arc::ptr_eq(t.vtree(), home.vtree()) {
-        Arc::clone(weighted.vtree())
-    } else if vars.is_empty() {
-        Vtree::empty_projection(weighted)
-    } else {
-        Vtree::projection(weighted, vars).unwrap()
-    };
-    assert_eq!(into.num_nodes(), t.vtree().num_nodes());
-    t.embed(&into, |v| v).unwrap().0
+fn on_weighted(t: &Tdd, weighted: &Home) -> Tdd {
+    let (copy, _) = Engine::new().transport(t, weighted, |v| v, 0).unwrap();
+    assert_eq!(copy.vtree().num_nodes(), t.vtree().num_nodes());
+    copy
 }
 
 #[allow(clippy::too_many_lines)]
@@ -509,12 +502,12 @@ fn unary(log: &mut Log, eng: &Engine, home: &Home, n: u32, f: &Tdd, hf: &Tdd, rn
     log.value("evaluate", || f.evaluate(&algebra), weighted.clone());
     let weighted_home = Home::weighted(Vtree::clone(home.vtree()), ws).unwrap();
     let weighted_value = |t: &Tdd| {
-        on_weighted(t, home, &weighted_home).weighted_value().map(|v| v.map(|v| tididi::test_helpers::exact_weight(&v))).map_err(|e| format!("{e:?}"))
+        on_weighted(t, &weighted_home).weighted_value().map(|v| v.map(|v| tididi::test_helpers::exact_weight(&v))).map_err(|e| format!("{e:?}"))
     };
     log.same("weighted_value", || weighted_value(f), || weighted_value(hf));
     let levels: Vec<VtreeIdx> = f.vtree().bottomup().filter(|_| rng.coin()).collect();
     let summed = |weights: bool| -> Result<Tdd, OperationError> {
-        let mut t = if weights { on_weighted(f, home, &weighted_home) } else { f.clone() };
+        let mut t = if weights { on_weighted(f, &weighted_home) } else { f.clone() };
         t.marginalize_levels(&levels)?;
         Ok(t)
     };
@@ -542,7 +535,7 @@ fn unary(log: &mut Log, eng: &Engine, home: &Home, n: u32, f: &Tdd, hf: &Tdd, rn
         log.same(
             name,
             || {
-                let mut w = on_weighted(f, home, &weighted_home);
+                let mut w = on_weighted(f, &weighted_home);
                 if minimized {
                     w.minimize().map_err(|e| format!("{e:?}"))?;
                 }
@@ -635,7 +628,7 @@ fn unary(log: &mut Log, eng: &Engine, home: &Home, n: u32, f: &Tdd, hf: &Tdd, rn
         let mut t = f.clone();
         t.restructure_to(&target, usize::MAX).map(|_| t)
     }, &tf);
-    log.any(n, "embed", || f.embed(home.vtree(), |v| v).map(|r| r.0), &tf);
+    log.any(n, "transport", || eng.transport(f, home, |v| v, 0).map(|r| r.0).map_err(|r| format!("{:?}", r.error)), &tf);
 }
 
 #[test]

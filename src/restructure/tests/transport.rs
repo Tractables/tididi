@@ -1,4 +1,4 @@
-//! `Engine::transport` against `Engine::embed` followed by a trim.
+//! `Engine::transport` against a placement onto the home followed by a trim.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -151,7 +151,7 @@ fn check_against_embed(eng: &Engine, c: &Case, owned: bool) {
         return;
     }
 
-    let (mut expected, _) = eng.embed(f, dest.vtree(), map).unwrap();
+    let (mut expected, _) = crate::test_helpers::embedded(f, dest.vtree(), map).unwrap();
     eng.trim(&mut expected, dest).unwrap();
     assert!(eng.equivalent(&got, &expected).unwrap());
     assert_eq!(got.vtree().num_leaves(), f.vtree().num_leaves());
@@ -212,7 +212,7 @@ fn a_map_that_breaks_the_shape_rotates_as_restructure_to_then_renames() {
         let f = diagram(&eng, &source, false, &mut rng);
         let perm = permutation(n, &mut rng);
         let map = |v: VarId| perm[v.idx()];
-        let embedded = eng.embed(&f, dest.vtree(), map);
+        let embedded = crate::test_helpers::embedded(&f, dest.vtree(), map);
         let (pairs, vtree) = (f.pair_count(), Arc::clone(f.vtree()));
         let owned = eng.transport(f.clone(), &dest, map, 0);
         let borrowed = eng.transport(&f, &dest, map, 0);
@@ -259,7 +259,7 @@ fn a_refused_rotation_hands_back_f_as_it_was() {
     let own = Vtree::projection(&home, kept.map(VarId)).unwrap();
     let eng = Engine::new();
     let f = crate::test_helpers::rand_conj_over(&own, &kept, 8, 3, false, &mut rng);
-    let f = eng.embed(&f, &own, |v| v).unwrap().0;
+    let f = crate::test_helpers::embedded(&f, &own, |v| v).unwrap().0;
     let order = [1, 10, 2, 9, 3, 8, 4, 7, 5, 6].map(VarId);
     let other = Home::new(Vtree::balanced_over(&order).unwrap());
     let (_, stats) = eng.transport(&f, &other, |v| v, usize::MAX).map_err(|r| r.error).unwrap();

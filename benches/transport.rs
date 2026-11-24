@@ -1,6 +1,5 @@
 //! Move a diagram onto projections of a balanced home vtree, `reps` times,
-//! by `Engine::transport` or by `Engine::embed_moving` followed by
-//! `Engine::trim`; `none` builds the diagram only.
+//! by `Engine::transport`; `none` builds the diagram only.
 //!
 //! The home has `h` variables (rounded up to a power of two). The diagram is
 //! the conjunction of `blocks` blocks spread evenly over the home, each
@@ -18,7 +17,7 @@
 //! depend on `h`: the difference of two `reps` counts measures it.
 //!
 //! ```text
-//! cargo bench --bench transport -- <h> <p> <blocks> <none|transport|embed|rotate> [reps] [mirror]
+//! cargo bench --bench transport -- <h> <p> <blocks> <none|transport|rotate> [reps] [mirror]
 //! ```
 //!
 //! Without arguments, as `cargo test` runs it: `1024 4 4 transport 4 mirror`,
@@ -76,12 +75,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         rotate(1024, 4)?;
         args = ["1024", "4", "4", "transport", "4", "mirror"].map(String::from).to_vec();
     }
-    let usage = "usage: transport <h> <p> <blocks> <none|transport|embed|rotate> [reps] [mirror]";
+    let usage = "usage: transport <h> <p> <blocks> <none|transport|rotate> [reps] [mirror]";
     let h: u32 = args.first().ok_or(usage)?.parse::<u32>()?.next_power_of_two();
     let p: u32 = args.get(1).ok_or(usage)?.parse()?;
     let blocks: u32 = args.get(2).ok_or(usage)?.parse()?;
     let mode = args.get(3).map(String::as_str).ok_or(usage)?;
-    if !matches!(mode, "none" | "transport" | "embed" | "rotate") {
+    if !matches!(mode, "none" | "transport" | "rotate") {
         return Err(usage.into());
     }
     let reps: usize = args.get(4).map_or(Ok(1), |r| r.parse())?;
@@ -128,11 +127,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let to = &homes[usize::from(mirror) * ((r + 1) % 2)];
         f = match mode {
             "transport" => eng.transport(f, to, |v| v, 0).map_err(|r| r.error)?.0,
-            "embed" => {
-                let (mut g, _) = eng.embed_moving(f, to.vtree(), |v| v).map_err(|r| r.error)?;
-                eng.trim(&mut g, to)?;
-                g
-            }
             _ => f,
         };
     }

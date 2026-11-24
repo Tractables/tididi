@@ -93,7 +93,7 @@ fn make(eng: &Engine, home: &Home, rng: &mut Lcg) -> Operand {
         _ => all.iter().copied().filter(|_| rng.below(3) == 0).collect(),
     };
     let mut f = operand(eng, home, &used, rng);
-    let smooth = on_home(eng, &f, vtree);
+    let smooth = on_home(&f, vtree);
     let mut before = Vec::new();
     for _ in 0..rng.below(3) {
         let hs = targets(vtree, &before, rng);
@@ -240,7 +240,7 @@ fn and_on_projections_with_regions_matches_the_smooth_form() {
 fn summed_clause(eng: &Engine, home: &Home, lits: &[i32], at: &[VtreeIdx]) -> Operand {
     let own = Vtree::projection(home, lits.iter().map(|l| VarId(l.unsigned_abs()))).unwrap();
     let mut f = Tdd::clause(&own, lits.iter().copied()).unwrap();
-    let smooth = on_home(eng, &f, home.vtree());
+    let smooth = on_home(&f, home.vtree());
     if !at.is_empty() {
         eng.marginalize(&mut f, under(home, at)).unwrap();
     }
@@ -396,7 +396,7 @@ fn pool_case(eng: &Engine, index: u64, wrong: bool, seen: &mut Pool, rng: &mut L
         let used: Vec<VarId> =
             home.vtree().subtree(s).filter(|&t| home.vtree().node(t).is_leaf()).map(|t| home.vtree().leaf_var(t)).filter(|_| rng.below(3) != 0).collect();
         let f = operand(eng, &home, &used, rng);
-        let on = on_home(eng, &f, home.vtree());
+        let on = on_home(&f, home.vtree());
         smooth = Some(match smooth {
             None => on,
             Some(s) => eng.and(s, on).unwrap(),

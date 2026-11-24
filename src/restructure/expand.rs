@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use super::{EmbedError, ExpandError, GraftError};
+use super::ExpandError;
 
 use crate::Engine;
 use crate::diagram::{
@@ -177,11 +177,7 @@ impl Engine {
             parts.push(self.cube(&vtree, expansion.constants.iter().copied())?);
         }
         lim.next_phase()?;
-        self.graft(parts, &expansion.free).map_err(|error| match error {
-            GraftError::Operation(error) => ExpandError::Operation(error),
-            GraftError::Vtree(error) => ExpandError::Vtree(error),
-            error => unreachable!("the checked expansion grafts disjoint structural parts: {error}"),
-        })
+        super::graft::graft(self, parts, &expansion.free)
     }
 }
 
@@ -200,11 +196,8 @@ fn widened_onto_classes(eng: &Engine, tdd: &Tdd, expansion: &VariableExpansion) 
         return Ok(None);
     }
     let into = Vtree::projection(&home, vtree.leaf_bottomup().map(|(_, var)| var).chain(added))?;
-    match eng.embed(tdd, &into, |var| var) {
-        Ok((widened, _)) => Ok(Some(widened)),
-        Err(EmbedError::Operation(error)) => Err(ExpandError::Operation(error)),
-        Err(error) => unreachable!("a projection embeds in a wider projection of its home: {error}"),
-    }
+    let widened = crate::apply::extend::onto(eng, tdd, &into).map_err(ExpandError::Operation)?;
+    Ok(Some(widened.into_owned()))
 }
 
 /// The node a structural reference into a leaf level names.

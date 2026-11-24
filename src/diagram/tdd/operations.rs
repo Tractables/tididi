@@ -1210,13 +1210,15 @@ impl Tdd {
     /// was.
     ///
     /// ```
-    /// use tididi::{Tdd, Vtree};
-    /// use tididi::vtree::{Home, VarId};
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Tdd, Vtree};
+    /// use tididi::vtree::Home;
     ///
+    /// // On a bare root a diagram keeps every leaf; transport keeps them.
+    /// let x2 = Tdd::clause(&Arc::new(Vtree::balanced(4)), [2])?;
     /// let home = Home::new(Vtree::balanced(4));
-    /// let x2 = Tdd::clause(home.vtree(), [1, 2])?.condition_var(VarId(1), false)?;
-    /// assert_eq!(x2.vtree().num_leaves(), 1);
-    /// let (mut f, _) = x2.embed(home.vtree(), |v| v)?;
+    /// let (mut f, _) = Engine::new().transport(&x2, &home, |v| v, 0).map_err(|r| r.error)?;
+    /// assert_eq!(f.vtree().num_leaves(), 4);
     /// let count = f.model_count()?;
     /// assert!(f.trim(&home)?);
     /// assert_eq!(f.vtree().num_leaves(), 1);

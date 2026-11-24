@@ -4,6 +4,23 @@
 
 Breaking changes:
 
+- The placements onto a caller's vtree are removed: `Tdd::embed`,
+  `Engine::embed`, `Engine::embed_mirrored`, `Engine::embed_moving` with
+  `restructure::EmbedRefused`, `Engine::embed_with`,
+  `Engine::embedding_plan`, `Engine::embedding_plan_mirrored`,
+  `Engine::compose_embeddings`,
+  `restructure::EmbeddingPlan`, `Engine::embed_over`, `Engine::and_onto`
+  with `AndOntoRefused`, and `Tdd::graft_over` with
+  `restructure::GraftError`. Diagrams live on projections of a home:
+  `Engine::transport` moves one onto a home under a renaming, and `and`
+  joins operands on different projections of one home. `EmbedError` loses
+  the variants `SourceWeights`, `DestinationWeights` and `Unsummed`.
+- `Engine::project_over`, `Engine::project_to_vars` and
+  `Tdd::project_to_vars` are removed. On a home, `Tdd::exists_vars`
+  followed by `Tdd::minimize` leaves a diagram on the projection of its
+  support. `Vtree::project_to_vars` stays.
+- `Tdd::splice_subtree_unchecked` and `Tdd::reseat_vtree_unchecked` are
+  removed.
 - No operation minimizes its result by default. Each one ends with its own
   kernel and the close it needs (levels in closed form, a constant on the
   empty projection, the leaves it named true dropped); its documentation

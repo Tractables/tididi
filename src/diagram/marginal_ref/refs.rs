@@ -207,57 +207,6 @@ pub(crate) fn finish_refs_remap(tdd: &mut Tdd, plan: RefsRemap, remap: &[u32]) -
     true
 }
 
-/// [`remap_refs_into`] of every child level in `children` through the one
-/// `remap`, all or nothing: the moves of the implicit parents, of both
-/// sides at once where both children are named, are planned and reserved
-/// through `lim` before any reference moves.
-///
-/// # Errors
-///
-/// `Err(OperationError::OverBudget)` when a reservation is refused; nothing
-/// is changed then.
-pub(crate) fn remap_refs_into_all(
-    lim: &Limits,
-    tdd: &mut Tdd,
-    children: &[VtreeIdx],
-    remap: &[u32],
-) -> Result<(), OperationError> {
-    // Each parent once, with the sides on which it reads a child named.
-    let mut parents: Vec<(VtreeIdx, Sides<bool>)> = Vec::new();
-    lim.reserve_exact(&mut parents, children.len())?;
-    for &child in children {
-        let Some(parent) = tdd.vtree.node(child).parent() else { continue };
-        let left = ChildSide::of(&tdd.vtree, parent, child) == ChildSide::Left;
-        parents.push((parent, Sides { left, right: !left }));
-    }
-    parents.sort_unstable_by_key(|&(parent, _)| parent.0);
-    parents.dedup_by(|later, kept| {
-        let same = later.0 == kept.0;
-        if same {
-            kept.1 = Sides { left: kept.1.left || later.1.left, right: kept.1.right || later.1.right };
-        }
-        same
-    });
-    let views = |tdd: &Tdd, parent: VtreeIdx| {
-        let (left, right) = tdd.vtree.children(parent);
-        Sides { left: tdd.levels[left.idx()].child_decoder(), right: tdd.levels[right.idx()].child_decoder() }
-    };
-    let mut planned: Vec<Option<PlannedMove>> = Vec::new();
-    lim.reserve_exact(&mut planned, parents.len())?;
-    for &(parent, moving) in &parents {
-        planned.push(plan_sides_remap(lim, &tdd.levels[parent.idx()], moving, views(tdd, parent), remap)?);
-    }
-    for (&(parent, moving), planned) in parents.iter().zip(planned) {
-        let view = views(tdd, parent);
-        finish_sides_remap(&mut tdd.levels[parent.idx()], planned, moving, view, remap);
-        tdd.levels.mark_changed(parent);
-    }
-    if children.contains(&tdd.output.vtree) && (tdd.output.local.0 as usize) < remap.len() {
-        tdd.output.local = NodeIdx(remap[tdd.output.local.idx()]);
-    }
-    Ok(())
-}
-
 /// The first half of renaming, through `remap`, the children `level` reads
 /// on the `moving` sides, each read through its child's decoder in
 /// `views`: an implicit level's moves planned and reserved, `None` for a

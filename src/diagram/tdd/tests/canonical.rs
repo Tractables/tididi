@@ -132,16 +132,6 @@ mod producers {
         check_certified(t).unwrap_or_else(|e| panic!("{what}: {e}"));
     }
 
-    /// A random vtree on `n` variables, some of them kept, and the vtree
-    /// restricted to those, renumbered `1..=k` in order.
-    fn restriction(n: u32, seed: u64, rng: &mut Lcg) -> Option<(Arc<Vtree>, Arc<Vtree>, Vec<u32>)> {
-        let vtree = Arc::new(Vtree::random(n, seed));
-        let kept: Vec<u32> = (1..=n).filter(|_| rng.coin()).collect();
-        let local_of = |v: VarId| kept.iter().position(|&k| k == v.0).map(|i| VarId(i as u32 + 1));
-        let restricted = Arc::new(vtree.project_to_vars(local_of, kept.len() as u32)?);
-        Some((vtree, restricted, kept))
-    }
-
     /// A minimized diagram on `vtree` over `vars`: a literal one time in
     /// four, else a random CNF.
     fn source(vtree: &Arc<Vtree>, vars: &[u32], rng: &mut Lcg) -> Tdd {
@@ -154,53 +144,6 @@ mod producers {
         };
         Engine::new().minimize(&mut f).unwrap();
         f
-    }
-
-    #[test]
-    fn embeddings_of_certified_diagrams_are_certified() {
-        let eng = Engine::new();
-        let mut moved_certified = 0;
-        for seed in 0..300u64 {
-            let mut rng = Lcg::new(seed ^ 0xe3b);
-            let n = 2 + rng.below(7) as u32;
-            let Some((into, small, kept)) = restriction(n, seed, &mut rng) else { continue };
-            let local: Vec<u32> = (1..=kept.len() as u32).collect();
-            let f = source(&small, &local, &mut rng);
-            let map = |v: VarId| VarId(kept[v.idx()]);
-            let count = f.model_count().unwrap() << (n as usize - kept.len());
-            let (a, _) = f.embed(&into, map).unwrap();
-            certified(&a, &format!("seed {seed}: embed"));
-            assert_eq!(a.model_count().unwrap(), count, "seed {seed}");
-            let plan = eng.embedding_plan(f.vtree(), &into, map).unwrap();
-            certified(&eng.embed_with(&f, &plan).unwrap(), &format!("seed {seed}: embed_with"));
-            certified(&plan.apply(&f).unwrap(), &format!("seed {seed}: plan"));
-            certified(&eng.embed_over(&f, &into, map).unwrap().0, &format!("seed {seed}: embed_over"));
-            let (moved, _) = eng.embed_moving(f.clone(), &into, map).map_err(|r| r.error).unwrap();
-            check_certified(&moved).unwrap_or_else(|e| panic!("seed {seed}: embed_moving: {e}"));
-            moved_certified += usize::from(moved.is_canonical());
-            assert_eq!(moved.model_count().unwrap(), count, "seed {seed}");
-        }
-        assert!(moved_certified > 100, "{moved_certified} moved embeddings certified");
-    }
-
-    #[test]
-    fn projections_onto_kept_variables_are_certified() {
-        let eng = Engine::new();
-        for seed in 0..300u64 {
-            let mut rng = Lcg::new(seed ^ 0x9e1);
-            let n = 2 + rng.below(7) as u32;
-            let Some((vtree, small, kept)) = restriction(n, seed, &mut rng) else { continue };
-            let mut f = rand_conj(&vtree, n, 4, 3, false, &mut rng);
-            if rng.coin() {
-                eng.minimize(&mut f).unwrap();
-            }
-            let local_of = |v: VarId| kept.iter().position(|&k| k == v.0).map(|i| VarId(i as u32 + 1));
-            let g = f.project_to_vars(local_of, kept.len() as u32).unwrap();
-            certified(&g, &format!("seed {seed}: project_to_vars"));
-            let h = eng.project_over(&f, &small, local_of).unwrap();
-            certified(&h, &format!("seed {seed}: project_over"));
-            assert!(eng.equivalent(&g.embed(&small, |v| v).unwrap().0, &h).unwrap(), "seed {seed}");
-        }
     }
 
     #[test]
@@ -218,7 +161,7 @@ mod producers {
             }
             let spine: Vec<VarId> = (0..rng.below(3) as u32).map(|i| VarId(next + i)).collect();
             let count = parts.iter().map(|p| p.model_count().unwrap()).product::<num_bigint::BigUint>() << spine.len();
-            let Ok(g) = Engine::new().graft(parts, &spine) else { continue };
+            let Ok(g) = crate::restructure::graft::graft(&Engine::new(), parts, &spine) else { continue };
             certified(&g, &format!("seed {seed}: graft"));
             assert_eq!(g.model_count().unwrap(), count, "seed {seed}");
         }

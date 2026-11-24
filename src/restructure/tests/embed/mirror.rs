@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use crate::Tdd;
 use crate::test_helpers::{assert_canonical, compile_clauses, test_cases, vtree_shapes};
 use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
 
@@ -53,7 +52,7 @@ fn a_mirrored_copy_is_the_diagram_compiled_on_the_mirrored_tree() {
                     _ => true,
                 };
                 let into = Arc::new(mirrored_shape(&vtree, rename, swap, num_vars));
-                let (g, levels) = f.embed(&into, rename).unwrap();
+                let (g, levels) = crate::test_helpers::embedded(&f, &into, rename).unwrap();
                 assert_canonical(&g);
                 let direct = compile_clauses(&into, &renamed(&clauses, rename));
                 assert!(g.equivalent(&direct).unwrap(), "{name}, mirror set {pick}");
@@ -70,17 +69,4 @@ fn a_mirrored_copy_is_the_diagram_compiled_on_the_mirrored_tree() {
             }
         }
     }
-}
-
-#[test]
-fn a_mirrored_plan_places_like_the_one_shot_call() {
-    let vtree = Arc::new(Vtree::random(5, 7));
-    let clauses = [vec![1, -2], vec![2, 3, -4], vec![-1, 5]];
-    let f = compile_clauses(&vtree, &clauses);
-    let into = Arc::new(mirrored_shape(&vtree, |v| v, |t| t.0.is_multiple_of(3), 5));
-    let plan = crate::restructure::EmbeddingPlan::new(&vtree, &into, |v| v).unwrap();
-    let placed: Tdd = plan.apply(&f).unwrap();
-    let (once, _) = f.embed(&into, |v| v).unwrap();
-    assert!(placed.equivalent(&once).unwrap());
-    assert_eq!(placed.node_count(), once.node_count());
 }

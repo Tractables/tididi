@@ -4,10 +4,7 @@
 //! that improve a [`search::RotationObjective`], and
 //! [`Tdd::rotate_if`](crate::Tdd::rotate_if) applies rotations one
 //! sequence at a time under the caller's own decision.
-//! [`Tdd::graft_over`](crate::Tdd::graft_over) joins diagrams over disjoint variables on
-//! a grafted vtree. [`Tdd::embed`](crate::Tdd::embed) copies one diagram onto a
-//! larger vtree under a renaming of its variables,
-//! [`Engine::transport`](crate::Engine::transport) moves one onto the
+//! [`Engine::transport`](crate::Engine::transport) moves a diagram onto the
 //! projection of a home vtree on its renamed variables, and
 //! [`Tdd::expand_variables`](crate::Tdd::expand_variables) expands each of its
 //! variables into a class of new ones.
@@ -20,7 +17,6 @@ pub(crate) mod expand;
 pub(crate) mod graft;
 mod distinct;
 pub(crate) mod placement;
-mod project;
 mod tag;
 mod transport;
 pub(crate) mod target;
@@ -29,7 +25,6 @@ pub(crate) mod target;
 mod leaf_form_tests;
 
 pub use crate::vtree::graft::Embedding;
-pub use embed::EmbeddingPlan;
 pub use expand::VariableExpansion;
 pub use target::TransportStats;
 
@@ -106,20 +101,6 @@ pub enum EmbedError {
         /// the other order where the match is exact.
         source: VtreeIdx,
     },
-    /// The diagram's stored values cannot be interpreted in the destination:
-    /// a weight-marginal level without a destination store, or a destination
-    /// table that disagrees with the diagram's under the renaming.
-    SourceWeights(TddBuildError),
-    /// The destination weight table does not cover the result's variables or
-    /// columns.
-    DestinationWeights(TddBuildError),
-    /// A projection of a diagram with weighted marginal values drops a
-    /// variable that no marginal level it keeps sums over, which would take
-    /// the variable's weights out of the diagram's value.
-    Unsummed {
-        /// The dropped variable.
-        variable: VarId,
-    },
     /// The destination holds a region the diagram has not summed out, so the
     /// copy has no value to give it. A conjunction with the diagram that
     /// summed the region ([`Engine::and`](crate::Engine::and)) is defined.
@@ -130,16 +111,6 @@ pub enum EmbedError {
     /// An operation the copy runs was refused: a source that has discarded
     /// the structure at a level, a refused allocation, or an armed stop.
     Operation(OperationError),
-}
-
-/// An embedding [`Engine::embed_moving`](crate::Engine::embed_moving)
-/// refused, with the diagram as it was given.
-#[derive(Debug)]
-pub struct EmbedRefused {
-    /// Why the embedding was refused.
-    pub error: EmbedError,
-    /// The diagram, unchanged.
-    pub tdd: crate::Tdd,
 }
 
 /// A transport [`Engine::transport`](crate::Engine::transport) refused, with
@@ -213,9 +184,6 @@ impl std::fmt::Display for EmbedError {
             Self::Vtree(error) => write!(f, "embedding: {error}"),
             Self::VariableOutOfRange { variable, num_vars } => write!(f, "renamed variable {} is outside the variables 1 to {num_vars}", variable.0),
             Self::NotIsomorphic { source } => write!(f, "the destination vtree does not contain the source vtree's shape at node {}", source.idx()),
-            Self::SourceWeights(error) => write!(f, "embedded diagram: {error}"),
-            Self::DestinationWeights(error) => write!(f, "embedding destination: {error}"),
-            Self::Unsummed { variable } => write!(f, "variable {} is dropped outside every marginal level that sums over it", variable.0),
             Self::UnsummedRegion { region } => write!(f, "destination node {} is a region the diagram has not summed out", region.idx()),
             Self::Operation(error) => write!(f, "copying the diagram: {error}"),
         }
@@ -226,9 +194,8 @@ impl std::error::Error for EmbedError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Vtree(error) => Some(error),
-            Self::SourceWeights(error) | Self::DestinationWeights(error) => Some(error),
             Self::Operation(error) => Some(error),
-            Self::VariableOutOfRange { .. } | Self::NotIsomorphic { .. } | Self::Unsummed { .. } | Self::UnsummedRegion { .. } => None,
+            Self::VariableOutOfRange { .. } | Self::NotIsomorphic { .. } | Self::UnsummedRegion { .. } => None,
         }
     }
 }
@@ -238,74 +205,6 @@ impl From<VtreeError> for EmbedError {
 }
 
 impl From<OperationError> for EmbedError {
-    fn from(error: OperationError) -> Self { Self::Operation(error) }
-}
-
-/// Why diagrams could not be joined on a grafted vtree with their structure
-/// and weight interpretation preserved.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum GraftError {
-    /// The renamed variable sets cannot form a vtree.
-    Vtree(VtreeError),
-    /// A part's map has no entry for one of its variables.
-    MissingVariableMapping {
-        /// The part's position in the input vector.
-        part: usize,
-        /// The unmapped local variable.
-        variable: VarId,
-    },
-    /// A renamed or free variable is outside the destination's id space.
-    VariableOutOfRange {
-        /// The destination variable.
-        variable: VarId,
-        /// The largest variable id the destination's id space holds.
-        num_vars: u32,
-    },
-    /// A part's stored values cannot be interpreted in the requested destination.
-    PartWeights {
-        /// The part's position in the input vector.
-        part: usize,
-        /// The inconsistent weight or marginal-level state.
-        source: TddBuildError,
-    },
-    /// The destination weight table does not cover the result's variables or columns.
-    DestinationWeights(TddBuildError),
-    /// An operation the assembly runs was refused: an operand that has
-    /// discarded the structure at a level, a refused allocation, or an armed
-    /// stop.
-    Operation(OperationError),
-}
-
-impl std::fmt::Display for GraftError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Vtree(error) => write!(f, "grafted vtree: {error}"),
-            Self::MissingVariableMapping { part, variable } => write!(f, "part {part} has no mapping for variable {}", variable.0),
-            Self::VariableOutOfRange { variable, num_vars } => write!(f, "grafted variable {} is outside the variables 1 to {num_vars}", variable.0),
-            Self::PartWeights { part, source } => write!(f, "part {part}: {source}"),
-            Self::DestinationWeights(error) => write!(f, "graft destination: {error}"),
-            Self::Operation(error) => write!(f, "assembling the result: {error}"),
-        }
-    }
-}
-
-impl std::error::Error for GraftError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Vtree(error) => Some(error),
-            Self::PartWeights { source, .. } | Self::DestinationWeights(source) => Some(source),
-            Self::Operation(error) => Some(error),
-            Self::MissingVariableMapping { .. } | Self::VariableOutOfRange { .. } => None,
-        }
-    }
-}
-
-impl From<VtreeError> for GraftError {
-    fn from(error: VtreeError) -> Self { Self::Vtree(error) }
-}
-
-impl From<OperationError> for GraftError {
     fn from(error: OperationError) -> Self { Self::Operation(error) }
 }
 

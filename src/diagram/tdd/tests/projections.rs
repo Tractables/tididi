@@ -247,7 +247,7 @@ fn on_home(g: &Tdd, home: &Arc<Vtree>) -> Tdd {
     if Arc::ptr_eq(g.vtree(), home) {
         return g.clone();
     }
-    g.embed(home, |v| v).unwrap().0
+    crate::test_helpers::embedded(&g, home, |v| v).unwrap().0
 }
 
 /// `g` on `home` when it is on a projection of it or on it.
@@ -291,9 +291,8 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
         _ => same_models(x, y, n),
     };
     let same_tdd = |x: &Tdd, y: &Tdd| equiv(x, y);
-    // Every result on a home with no summed-out level is closed; `embed*`,
-    // `project_over`, `project_to_vars` and the readers place on the
-    // caller's vtree and may pad it.
+    // Every result on a home with no summed-out level is closed; the readers
+    // place on the caller's vtree and may pad it.
     let closed = |x: &Tdd, y: &Tdd| {
         if x.vtree().on_home() && !x.has_marginal_level() {
             check_trimmed(x, false).unwrap_or_else(|e| panic!("not closed: {e}"));
@@ -468,15 +467,6 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
     a.check("substitute", || g.clone().substitute(&[(y, &literal_x)]), || f.clone().substitute(&[(y, &literal_x)]), closed);
 
     // Moves between vtrees.
-    a.check("embed", || g.embed(home, |v| v).map(|r| r.0), || Ok::<_, crate::restructure::EmbedError>(f.clone()), same_tdd);
-    a.check("embed_moving", || eng.embed_moving(g.clone(), home, |v| v).map(|r| r.0).map_err(|r| r.error), || Ok(f.clone()), same_tdd);
-    a.check("embed_over", || eng.embed_over(g, home, |v| v).map(|r| r.0), || Ok(f.clone()), same_tdd);
-    a.check(
-        "embedding_plan",
-        || eng.embedding_plan(g.vtree(), home, |v| v).and_then(|plan| eng.embed_with(g, &plan)),
-        || Ok(f.clone()),
-        same_tdd,
-    );
     a.check("transport", || eng.transport(g, &hm, |v| v, 0).map(|r| r.0).map_err(|r| r.error), || Ok(f.clone()), closed);
     a.check(
         "transport_projection",
@@ -484,13 +474,6 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
         || Ok(g.vtree().num_leaves()),
         PartialEq::eq,
     );
-    a.check(
-        "project_over",
-        || eng.project_over(g, home, Some),
-        || Ok(f.clone()),
-        same_tdd,
-    );
-    a.check("project_to_vars", || g.project_to_vars(Some, n), || f.project_to_vars(Some, n), same_tdd);
     let target = Arc::new(Vtree::random(n, rng.below(1000)));
     a.runs("restructure_to", || g.clone().restructure_to(&target, usize::MAX));
 

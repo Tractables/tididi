@@ -474,7 +474,7 @@ fn a_batch_on_a_projection_follows_the_diagram_across_projections() {
     let eng = Engine::new();
     let home = Home::new(Vtree::join(&Vtree::join(&Vtree::leaf(VarId(1)), &Vtree::leaf(VarId(2))).unwrap(), &Vtree::leaf(VarId(3))).unwrap());
     let all = Arc::clone(home.vtree());
-    let on_home = |f: &Tdd| eng.embed(f, &all, |v| v).unwrap().0;
+    let on_home = |f: &Tdd| crate::test_helpers::embedded(f, &all, |v| v).unwrap().0;
     let mut f = eng.literal(&all, 2).unwrap();
     f.trim(&home).unwrap();
     let mut expected = on_home(&f);

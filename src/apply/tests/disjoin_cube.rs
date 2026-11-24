@@ -234,7 +234,7 @@ fn a_cube_on_a_diagram_an_earlier_call_placed_is_valid_and_canonical() {
             let mut want = Tdd::clause(home.vtree(), [x1]).expect("a clause on the home");
             want = eng.or_cube(want, &cube).expect("the disjunction fits");
             want.trim(&home).expect("trim fits");
-            let (mut want, _) = eng.embed_moving(want, got.vtree(), |v| v).expect("the support is in the result's vtree");
+            let (mut want, _) = crate::test_helpers::moved(&eng, want, got.vtree(), |v| v).expect("the support is in the result's vtree");
             want.minimize().expect("minimizing fits");
             got.minimize().expect("minimizing fits");
             assert_same_shape(&got, &want, &what);

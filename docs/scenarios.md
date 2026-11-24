@@ -394,7 +394,7 @@ owns the circuit until finish; unlike Python, freeing the handle ends all checks
 
 ### Instances
 
-- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: 7b3c1bc56d2bdf1a6ffc722321d72c59cb043e746af77a5e0b7f2d5a228179cd -->
+- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: 6b590a76334073214b17a10cac566669cd7f3c637cece505875726b0a731fe89 -->
 - [Python ownership guide](../bindings/python/docs/ownership.rst) <!-- reviewed: 685e0b6279a4115660efab3cb519c70bfca9eac7320a8c905dd5f720637b2723 -->
 - [C ownership](../bindings/c/docs/ownership.rst) <!-- reviewed: 39ab8a8f865680890f676f3022da9389bf6a3c18cdac1c388f3333b4df0757b9 -->
 
@@ -415,7 +415,7 @@ evaluation has its own rational-string interface.
 
 ### Instances
 
-- [Rust API overview](api-guide.md) <!-- reviewed: 648349efb6c2c7010e8def54ba5453688a18deb7d0ccd23068bfe539833b145a -->
+- [Rust API overview](api-guide.md) <!-- reviewed: 02664948972656b8b4b4da2bb92b3d32448ecf2722fd01ee85d37ec7691de78f -->
 - [Python API reference](../bindings/python/docs/api.rst) <!-- reviewed: 619c8cf6bbe3d4b720da766850817f34b4fdf92c866f3c6cd9828cd555fdcd39 -->
 - [C api](../bindings/c/docs/api.rst) <!-- reviewed: a4cc0ac9db6cd02097704bc1e4d3dd2fed3acb087decd2073142fbaf614ea9cc -->
 
@@ -448,8 +448,8 @@ mechanism exists; the glossary at the end is for reference.
 Explain the Rust implementation through storage ownership, level arenas,
 child-reference decoding, reduction passes, scratch and limits. Include unfinished
 output ownership, intermediate product storage, coordinated marginal payloads,
-shared incremental query scheduling for borrowed and owned circuits, reusable
-embedding plans and shared placement assembly, pooled operation workspaces
+shared incremental query scheduling for borrowed and owned circuits, transport onto a home
+and the placement assembly of variable expansion, pooled operation workspaces
 with shared retained-capacity accounting,
 reusable relation layouts, reduction scheduling, checked
 vtree construction and traversal
@@ -462,30 +462,29 @@ there is no separate Python implementation to describe.
 
 ### Instances
 
-- [Rust architecture reference](architecture.md) <!-- reviewed: 6ac4584b60fc45522d923d95ffe37bc8681d5324981e2e8e43263fe32ac6fb2b -->
+- [Rust architecture reference](architecture.md) <!-- reviewed: 586120db376146e7d7f9cc858f613dbb65f1d20658d83f5e02597695d15797d5 -->
 
 ## Reusable components
 
-Build one backup rule L∨R on a two-leaf vtree: 3 choices. Embed it twice in
-a balanced four-leaf destination, mapping (1,2) to (1,2) and (3,4). Each
+Build one backup rule L∨R on a two-leaf home: 3 choices. Transport it twice
+onto a balanced four-leaf home, mapping (1,2) to (1,2) and (3,4). Each
 copy alone has 12 models because the other server's variables are free;
 their conjunction has 9. Add ¬(R_A∧R_B) to represent shared remote capacity,
 leaving 5 choices. The borrowed source still has 3 models.
 
 Introduce the application, the local rule, the variable mapping, then the
-connecting constraint. Explain matching variable grouping and destination
-identity at placement, and that the copy reads the destination vtree's weights,
-before suggesting evaluation.
-Distinguish graft for components already using disjoint variable identifiers.
-Then reuse a prepared placement for server B, comparing L∨R (12 models over
-the destination) with L∧¬R (4); server A remains free in both.
-This lesson is Rust-only: the bindings do not yet expose embedding or grafting.
+connecting constraint. Explain matching variable grouping up to mirrors, the
+rotation bound for a home that groups otherwise, and that the copy reads the
+home's weights, before suggesting evaluation.
+Then reuse the same placement for server B, comparing L∨R (12 models over
+the home) with L∧¬R (4); server A remains free in both.
+This lesson is Rust-only: the bindings do not yet expose transport.
 Do not invent a language counterpart that rebuilds the rule instead of reusing it.
 
 ### Instances
 
-- [Rust walkthrough](examples/composition.md) <!-- reviewed: ce7db591ff8aacbc4b376bc40df7e03d01482fffe1b1268f3d3836a193cc1770 -->
-- [Rust program](../examples/composition.rs) <!-- reviewed: ecacee74a0ffad8632d95f0bd001e14d3f1b6c4c80b52fb060a478dd08a63252 -->
+- [Rust walkthrough](examples/composition.md) <!-- reviewed: 1fd27e3151c5f93fc0d532bed0e31e79fcc2e1b79b6a32c887c0fd53f6d565a9 -->
+- [Rust program](../examples/composition.rs) <!-- reviewed: 10ec94bac5cba9f32e18c558a07c56d21d1b2e6dd7875b3fea9399c55f701544 -->
 
 ## Care sets
 
@@ -516,9 +515,9 @@ stays 9, while the original projected onto B has 3 choices. Observing R_B in
 the summarized circuit gives 6; observing R_A raises MarginalLevel. Keeping the
 original allows observing both remote options, giving 4 configurations.
 
-For the weighted version, copy the structural circuit onto a vtree of the same
-shape that carries independent probability-1/2 weights in exact rational
-arithmetic, then marginalize A.
+For the weighted version, build the rules again on a vtree of the same shape
+that carries independent probability-1/2 weights in exact rational arithmetic,
+then marginalize A.
 The weighted value stays 9/16. Change every probability to 1/3 and evaluate the
 original: 25/81. Evaluating the summarized circuit with a new algebra is refused
 because assignments were discarded. Do not suggest that changing a weight table
@@ -528,5 +527,5 @@ currently expose structural evaluation, not marginalization or weighted vtrees.
 
 ### Instances
 
-- [Rust walkthrough](examples/marginalization.md) <!-- reviewed: 4406bcdb7635b73ef98da1a599cc587c83e3f15bde49dbc9f0569796fb051556 -->
-- [Rust program](../examples/marginalization.rs) <!-- reviewed: 22ee902ae81d2cc653ab1fb2928c5ece90cee0e645228d218daa3acb342dfb61 -->
+- [Rust walkthrough](examples/marginalization.md) <!-- reviewed: a6e0970b7b4203be5e734150d0668aec9008e0876f625c0343ad4f1f3061254a -->
+- [Rust program](../examples/marginalization.rs) <!-- reviewed: 201e65083fe27d51b96601ff1a9428d221aecec91ca3907ce3488e2a86811caa -->

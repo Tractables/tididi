@@ -256,8 +256,7 @@ fn restricted(rng: &mut crate::test_helpers::Lcg, wide: &Arc<Vtree>) -> (Vec<u32
 }
 
 /// A diagram over a random few of the variables of `wide`, compiled on
-/// `wide` restricted to them and minimized, then placed on `wide` by
-/// `embed_moving`: an operand as the evidence walk makes them.
+/// `wide` restricted to them and minimized, then moved onto `wide`.
 fn placed(eng: &crate::Engine, rng: &mut crate::test_helpers::Lcg, wide: &Arc<Vtree>) -> crate::Tdd {
     use crate::test_helpers::{CnfShape, compile_clauses_on, rand_cnf};
     use crate::vtree::VarId;
@@ -265,7 +264,7 @@ fn placed(eng: &crate::Engine, rng: &mut crate::test_helpers::Lcg, wide: &Arc<Vt
     let k = vars.len() as u32;
     let mut f = compile_clauses_on(eng, &small, &rand_cnf(rng, k, CnfShape { clauses: k as usize, width: 4 }));
     eng.minimize(&mut f).unwrap();
-    eng.embed_moving(f, wide, |v| VarId(vars[v.idx()])).map_err(|r| r.error).unwrap().0
+    crate::test_helpers::moved(&eng, f, wide, |v| VarId(vars[v.idx()])).unwrap().0
 }
 
 /// An embedding lists every level of its result that holds a node no pair
@@ -295,7 +294,7 @@ fn an_embedding_lists_the_levels_holding_an_unnamed_node() {
             let what = format!("{name}, case {case}");
             let unnamed_source = unnamed_levels(&source);
             let count = source.model_count().unwrap();
-            let (moved, _) = eng.embed_moving(source, &wide, |v| VarId(vars[v.idx()])).map_err(|r| r.error).unwrap();
+            let (moved, _) = crate::test_helpers::moved(&eng, source, &wide, |v| VarId(vars[v.idx()])).unwrap();
             let listed = moved.dirty.loose().expect("the source's loose levels are known");
             for t in unnamed_levels(&moved) {
                 assert!(listed.contains(t), "{what}: level {t} holds an unnamed node and is not listed");

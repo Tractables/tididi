@@ -55,7 +55,7 @@ fn same_queries(f: &Tdd, g: &Tdd, n: u32, rng: &mut Lcg, label: &str) {
     let algebra = ws.algebra().clone();
     assert_eq!(f.evaluate(&algebra).unwrap(), g.evaluate(&algebra).unwrap(), "{label}: evaluation");
     let weighted = Arc::new(Vtree::clone(f.vtree()).with_weights(ws).unwrap());
-    let (fw, gw) = (f.embed(&weighted, |v| v).unwrap().0, g.embed(&weighted, |v| v).unwrap().0);
+    let (fw, gw) = (crate::test_helpers::embedded(&f, &weighted, |v| v).unwrap().0, crate::test_helpers::embedded(&g, &weighted, |v| v).unwrap().0);
     let value = |t: &Tdd| exact_weight(&t.weighted_value().unwrap().unwrap());
     assert_eq!(value(&fw), value(&gw), "{label}: weighted value");
 }
@@ -79,7 +79,7 @@ fn trimmed_copies_answer_as_the_original() {
 
         if g.vtree().num_nodes() > 0 {
             assert!(g.vtree().is_on(&hm), "{label}: another home");
-            let (back, _) = g.embed(&home, |v| v).unwrap();
+            let (back, _) = crate::test_helpers::embedded(&g, &home, |v| v).unwrap();
             assert!(equiv(&f, &back), "{label}: the embedded copy is another function");
         }
 
@@ -195,7 +195,7 @@ fn merged_nodes_and_leaves_named_by_both_literals() {
     assert_eq!(g.vtree().num_nodes(), 3);
     assert_eq!(g.level(g.vtree().root()).slot_count(), 1);
     assert_eq!(g.model_count().unwrap(), 8u32.into());
-    assert!(equiv(&f, &g.embed(&home, |v| v).unwrap().0));
+    assert!(equiv(&f, &crate::test_helpers::embedded(&g, &home, |v| v).unwrap().0));
 
     // (x1 ∨ ¬x1) beside true: x1 is named by both literals, and goes in a
     // second round.
@@ -345,7 +345,7 @@ fn in_place_against_rebuild(seed: u64, seen: &mut [usize; 6]) {
     assert_eq!(g.is_zero(), h.is_zero(), "{label}: false");
     assert_eq!(g.is_one(), h.is_one(), "{label}: true");
     if g.vtree().num_nodes() > 0 {
-        let back = |t: &Tdd| t.embed(&home, |v| v).unwrap().0;
+        let back = |t: &Tdd| crate::test_helpers::embedded(&t, &home, |v| v).unwrap().0;
         assert!(equiv(&back(&g), &back(&h)), "{label}: another function than the rebuild's");
         assert!(equiv(&back(&g), &f), "{label}: another function");
     }

@@ -89,7 +89,7 @@ fn weighted_unit_value(eng: &Engine, vtree: &Arc<Vtree>, f: &Tdd) -> BigRational
         RationalWeights::unit(vtree.num_leaves() as usize),
         Arithmetic::ExactRational,
     )).unwrap());
-    let mut w = f.embed(&weighted, |v| v).unwrap().0;
+    let mut w = crate::test_helpers::embedded(&f, &weighted, |v| v).unwrap().0;
     marginalize_closure(eng, &mut w).expect("no wall is installed in a test");
     exact_weight(
         &w.weighted_value()

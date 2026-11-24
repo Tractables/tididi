@@ -70,8 +70,6 @@ values into the function instead.
 [`Tdd::exists_vars`](crate::Tdd::exists_vars) eliminates variables by allowing
 either value and [`Tdd::forall_vars`](crate::Tdd::forall_vars) by requiring
 both; [`and_exists`](crate::and_exists) conjoins and eliminates in one operation.
-[`Tdd::project_to_vars`](crate::Tdd::project_to_vars) also removes the
-eliminated variables from the vtree, and
 [`Engine::project_to_subtree`](crate::Engine::project_to_subtree) keeps one
 subtree's variables. [`Tdd::rename_vars`](crate::Tdd::rename_vars) renames
 variables simultaneously; [`Tdd::substitute`](crate::Tdd::substitute) replaces
@@ -140,14 +138,11 @@ For more specialized control:
 | Encode nodes as clauses for a SAT solver | [`Tdd::encode_cnf`](crate::Tdd::encode_cnf), [`ClauseSink`](crate::cnf::ClauseSink) |
 | Find the encoded nodes the solver proves impossible | [`Tdd::probe_nodes`](crate::Tdd::probe_nodes), [`SatOracle`](crate::cnf::SatOracle) |
 | Replace structure with counts or weighted values | [`Tdd::marginalize_levels`](crate::Tdd::marginalize_levels); [worked example](crate::guide::examples::marginalization) |
-| Conjoin diagrams over disjoint variables | [`Tdd::graft_over`](crate::Tdd::graft_over) |
-| Place a circuit on a larger vtree under a renaming | [`Tdd::embed`](crate::Tdd::embed); [reusable components](crate::guide::examples::composition) |
+| Place a circuit on a home under a renaming | [`Engine::transport`](crate::Engine::transport); [reusable components](crate::guide::examples::composition) |
 | Move a circuit onto another vtree over the same variables | [`Tdd::restructure_to`](crate::Tdd::restructure_to) |
 | Expand each variable into a class of new variables | [`Tdd::expand_variables`](crate::Tdd::expand_variables), [`Vtree::expand_leaves`](crate::Vtree::expand_leaves) |
 | Build a vtree from its leaf order and the depths between leaves | [`Vtree::from_in_order`](crate::Vtree::from_in_order) |
-| Place a diagram with summed-out levels | [`Engine::embed_over`](crate::Engine::embed_over) |
-| Drop the variables a diagram has summed out from its vtree | [`Engine::project_over`](crate::Engine::project_over) |
-| Conjoin or place by moving levels, getting the operands back on refusal | [`Engine::and_restoring`](crate::Engine::and_restoring), [`Engine::embed_moving`](crate::Engine::embed_moving) |
+| Conjoin by moving levels, getting the operands back on refusal | [`Engine::and_restoring`](crate::Engine::and_restoring) |
 | Conjoin a small constraint into a large diagram's own levels | [`Engine::and_in_place`](crate::Engine::and_in_place), [`Engine::and_in_place_loose`](crate::Engine::and_in_place_loose), [`Engine::and_cube`](crate::Engine::and_cube) |
 | Conjoin with, or sum against, a large diagram through an index of its pairs | [`PairIndex`](crate::diagram::PairIndex), [`Engine::and_indexed`](crate::Engine::and_indexed), [`Engine::sum_indexed`](crate::Engine::sum_indexed) |
 | Pair each node of a level with a code | [`Engine::tag_level`](crate::Engine::tag_level) |

@@ -77,7 +77,7 @@ fn embed_places_a_summed_leaf_of_a_home_root() {
     crate::marginal::marginalize_levels(&eng, &mut f, &[x]).unwrap();
     let count = f.model_count().unwrap();
     let into = Arc::new(Vtree::balanced(2));
-    let (placed, _) = eng.embed_moving(f, &into, |v| v).map_err(|refused| refused.error).unwrap();
+    let (placed, _) = crate::test_helpers::moved(&eng, f, &into, |v| v).unwrap();
     assert_eq!(placed.model_count().unwrap(), count);
 }
 

@@ -6,7 +6,7 @@ use num_rational::BigRational;
 use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
 use tididi::io::{read_tdd, write_tdd};
 
-use tididi::vtree::VarId;
+use tididi::vtree::{Home, VarId};
 use tididi::{Engine, Vtree};
 
 use super::support::*;
@@ -78,8 +78,8 @@ fn named_roots_and_weight_metadata_survive_a_fresh_context() {
         }
         assert_eq!(restored_weights, weights);
         let algebra = RationalWeights::from_literals(&restored_weights);
-        let restored_weighted = Arc::new(Vtree::clone(&restored_tree)
-            .with_weights(Weights::new(algebra.clone(), Arithmetic::ExactRational)).unwrap());
+        let restored_weighted = Home::weighted(Vtree::clone(&restored_tree),
+            Weights::new(algebra.clone(), Arithmetic::ExactRational)).unwrap();
         let mut restored_roots = BTreeMap::new();
         for (name, bytes) in &encoded_roots {
             let diagram = read_tdd(&mut Cursor::new(bytes), &restored_tree).unwrap();
@@ -94,7 +94,7 @@ fn named_roots_and_weight_metadata_survive_a_fresh_context() {
             );
             let expected_mass = weighted_sum(expected, &weights).0;
             assert_eq!(diagram.evaluate(&algebra).unwrap(), expected_mass);
-            let (weighted, _) = engine.embed(&diagram, &restored_weighted, |v| v).unwrap();
+            let (weighted, _) = engine.transport(&diagram, &restored_weighted, |v| v, 0).unwrap();
             assert_eq!(
                 engine
                     .weighted_value(&weighted)
@@ -117,10 +117,10 @@ fn named_roots_and_weight_metadata_survive_a_fresh_context() {
         let named_query = engine
             .xor(
                 engine
-                    .literal(&restored_weighted, tididi::Literal::pos(names["rain"]))
+                    .literal(restored_weighted.vtree(), tididi::Literal::pos(names["rain"]))
                     .unwrap(),
                 engine
-                    .literal(&restored_weighted, tididi::Literal::pos(names["sensor"]))
+                    .literal(restored_weighted.vtree(), tididi::Literal::pos(names["sensor"]))
                     .unwrap(),
             )
             .unwrap();

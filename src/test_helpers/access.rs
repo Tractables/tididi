@@ -180,9 +180,56 @@ pub(crate) fn padded(f: Tdd, vtree: &std::sync::Arc<Vtree>) -> Tdd {
         return f;
     }
     let canonical = f.levels.is_canonical(f.output);
-    let mut padded = f.embed(vtree, |v| v).expect("a vtree of the same home holding the diagram's leaves").0;
+    let mut padded = embedded(&f, vtree, |v| v).expect("a vtree of the same home holding the diagram's leaves").0;
     if canonical {
         Engine::new().minimize_plain(&mut padded).unwrap();
     }
     padded
+}
+
+/// A copy of `f`, a structural diagram, on `into`, which holds its shape
+/// under `map`: each source level at its image, a pass-through level where
+/// renamed variables lie on one side only, a true level where none lie, the
+/// pass-throughs over a leaf pruned, every internal level owing the
+/// contraction passes, certified where `f` was; with where each level went.
+pub(crate) fn embedded(
+    f: &Tdd,
+    into: &std::sync::Arc<Vtree>,
+    map: impl Fn(crate::vtree::VarId) -> crate::vtree::VarId,
+) -> Result<(Tdd, crate::restructure::Embedding), crate::restructure::EmbedError> {
+    use crate::restructure::embed::{place_by, Free, Plan};
+    let eng = Engine::new();
+    f.require_structure()?;
+    let plan = Plan::build(&eng, f.vtree(), into, map, true, Free::Build)?;
+    let mut result = place_by(&eng, std::borrow::Cow::Borrowed(f), into, &plan, Free::Build).map_err(|(e, _)| e)?;
+    if f.is_zero() || f.is_one() {
+        return Ok((result, plan.embedding));
+    }
+    result.dirty = crate::diagram::Dirty::default().seeded(into, into.internal_bottomup_slice().iter().copied(), Some(&eng))?;
+    if plan.pass_throughs(into).any(|&t| {
+        let (left, right) = into.children(t);
+        into.node(if plan.is_free(left) { right } else { left }).is_leaf()
+    }) {
+        eng.reduce_plain(&mut result, crate::reduce::ReductionPlan::Prune)?;
+    }
+    if f.levels.is_canonical(f.output) {
+        result.certify_built();
+    }
+    Ok((result, plan.embedding))
+}
+
+/// `f` moved onto `into`, which holds its shape under `map`, free levels
+/// built, certified where `f` was and nothing is listed loose.
+pub(crate) fn moved(
+    eng: &Engine,
+    f: Tdd,
+    into: &std::sync::Arc<Vtree>,
+    map: impl Fn(crate::vtree::VarId) -> crate::vtree::VarId,
+) -> Result<(Tdd, crate::restructure::Embedding), crate::restructure::EmbedError> {
+    let canonical = f.levels.is_canonical(f.output);
+    let (mut result, plan) = crate::restructure::embed::place_moving(eng, f, into, map, crate::restructure::embed::Free::Build)?;
+    if canonical && result.dirty.loose().is_some_and(|loose| loose.is_empty()) {
+        result.certify_built();
+    }
+    Ok((result, plan.embedding))
 }

@@ -322,7 +322,7 @@ fn place_on(eng: &Engine, f: Tdd, into: &Arc<Vtree>) -> Result<Tdd, OperationErr
     }
     match crate::restructure::embed::place_moving(eng, f, into, |var| var, crate::restructure::embed::Free::Build) {
         Ok((extended, _)) => Ok(extended),
-        Err(refused) => Err(match refused.error {
+        Err(error) => Err(match error {
             crate::restructure::EmbedError::Operation(error) => error,
             _ => OperationError::VtreeMismatch,
         }),

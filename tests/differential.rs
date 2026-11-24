@@ -41,13 +41,13 @@
 //!   minimizes to the diagram conjoining and then summing the child out
 //!   minimizes to, on the default sparse route and on one every level takes.
 //! - [`weighted_composition_matches_enumeration`] — restriction retains the input
-//!   weights and grafting preserves weighted values through renaming and marginalization.
+//!   weights.
 //! - [`a_tight_budget_refuses_rather_than_panics`] — under a byte budget too
 //!   small for the work, every entry point returns or refuses, and the engine
 //!   still answers correctly once the budget is lifted.
-//! - [`projections_match_enumeration`] — projection onto a set of variables,
-//!   onto a subtree, and the distinct-count threshold under a subtree each
-//!   answer the quantified truth table.
+//! - [`projections_match_enumeration`] — projection onto a subtree and the
+//!   distinct-count threshold under a subtree each answer the quantified truth
+//!   table.
 //! - [`marginal_evaluations_match_enumeration`] — an algebra that values
 //!   counts evaluates a diagram with levels summed out, by values and by
 //!   columns, to the enumerated count, and the values at the root's children
@@ -729,7 +729,19 @@ fn xxh64(data: &[u8]) -> u64 {
 /// `f` copied onto a twin of its vtree that carries `weights`.
 fn weighted_twin(f: &Tdd, weights: Weights) -> Tdd {
     let vtree = Arc::new(Vtree::clone(f.vtree()).with_weights(weights).unwrap());
-    f.embed(&vtree, |v| v).unwrap().0
+    read_onto(f, &vtree)
+}
+
+/// `g` copied onto `f`'s vtree, a twin of its own.
+fn beside(g: &Tdd, f: &Tdd) -> Tdd {
+    read_onto(g, f.vtree())
+}
+
+/// `f` written and read back onto `vtree`, a tree of its vtree's shape.
+fn read_onto(f: &Tdd, vtree: &Arc<Vtree>) -> Tdd {
+    let mut bytes = Vec::new();
+    tididi::io::write_tdd_binary(&mut bytes, f).unwrap();
+    tididi::io::read_tdd_binary(&mut bytes.as_slice(), vtree).unwrap()
 }
 
 /// Weighted counting against the weighted sum over the truth table, exactly in
@@ -834,7 +846,7 @@ fn assert_weighted_sum(tdd: &Tdd, want: &BigRational, magnitude: &BigRational) {
     }
 }
 
-/// Restrict under the operand's weights, then graft a renamed marginal part and a free variable.
+/// Restrict under the operand's weights.
 fn weighted_composition_matches_enumeration(case: &Case) {
     let w = weighted_case(case);
     let eng = Engine::new();
@@ -844,10 +856,10 @@ fn weighted_composition_matches_enumeration(case: &Case) {
     let care_truth = diagram_truth(&care, case.num_vars);
     for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
         step("weighted restriction against enumeration");
-        let mut source = weighted_twin(&w.f, Weights::new(RationalWeights::from_literals(&w.weights), arithmetic));
+        let source = weighted_twin(&w.f, Weights::new(RationalWeights::from_literals(&w.weights), arithmetic));
         assert_canonical(&source);
-        let care = care.embed(source.vtree(), |v| v).unwrap().0;
-        let mut restricted = eng.restrict_to_care(source.clone(), &care).unwrap().into_tdd();
+        let care = beside(&care, &source);
+        let mut restricted = eng.restrict_to_care(source, &care).unwrap().into_tdd();
         restricted.minimize().unwrap();
         assert_canonical(&restricted);
         let truth = diagram_truth(&restricted, case.num_vars);
@@ -856,19 +868,6 @@ fn weighted_composition_matches_enumeration(case: &Case) {
         }
         let (want, magnitude) = weighted_sum(&truth, &w.weights);
         assert_weighted_sum(&restricted, &want, &magnitude);
-
-        step("weighted graft against enumeration");
-        let targets = if case.seed & 1 == 0 { vec![case.vtree.root()] } else { w.targets.clone() };
-        eng.marginalize_levels(&mut source, &targets).unwrap();
-        source.minimize().unwrap();
-        assert_canonical(&source);
-        let map: Vec<VarId> = (1..=case.num_vars).rev().map(VarId).collect();
-        let mut global: Vec<_> = w.weights.iter().rev().cloned().collect();
-        global.push(LiteralWeights { negative: BigRational::from_integer(2.into()), positive: BigRational::from_integer(3.into()) });
-        let (grafted, _) = Tdd::graft_over(&eng, vec![(source, map)], &[VarId(case.num_vars + 1)], case.num_vars + 1,
-            Some(Weights::new(RationalWeights::from_literals(&global), arithmetic))).unwrap();
-        assert_canonical(&grafted);
-        assert_weighted_sum(&grafted, &(&w.want * BigRational::from_integer(5.into())), &(&w.magnitude * BigRational::from_integer(5.into())));
     }
 }
 
@@ -1004,9 +1003,8 @@ fn exists_outside(tf: &[bool], keep: u32) -> Vec<bool> {
     (0..tf.len()).map(|mask| seen[mask & keep as usize]).collect()
 }
 
-/// Projection onto drawn sets of variables, keeping their ids; projection onto
-/// each subtree; and for each node but the root and each threshold `m` up to
-/// three, the assignments under the node with at least `m` distinct
+/// Projection onto each subtree; and for each node but the root and each
+/// threshold `m` up to three, the assignments under the node with at least `m` distinct
 /// assignments under its sibling that extend to a model.
 fn projections_match_enumeration(case: &Case) {
     let n = case.num_vars;
@@ -1014,16 +1012,6 @@ fn projections_match_enumeration(case: &Case) {
     let eng = Engine::new();
     let f = compile(case);
     let tf = diagram_truth(&f, n);
-
-    let mut rng = Lcg::new(case.seed ^ 0x9e0_7ec7);
-    for _ in 0..3 {
-        let keep = (rng.next_u64() as u32 & ((1 << n) - 1)) | (1 << rng.below(u64::from(n)));
-        step("projection onto variables");
-        let p = f.project_to_vars(|v| ((keep >> (v.0 - 1)) & 1 == 1).then_some(v), n).unwrap();
-        assert_canonical(&p);
-        assert_eq!(p.vtree().num_leaves(), keep.count_ones(), "the projection's leaves");
-        assert_truth(&diagram_truth(&p, n), &exists_outside(&tf, keep), n, "projection onto variables");
-    }
 
     for key in vtree.bottomup() {
         let Some(parent) = vtree.node(key).parent() else { continue };
@@ -1508,7 +1496,7 @@ fn streaming_marginalization_matches_enumeration(case: &Case) {
     let w = weighted_case(case);
     for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
         let f = weighted_twin(&left, Weights::new(RationalWeights::from_literals(&w.weights), arithmetic));
-        let g = right.embed(f.vtree(), |v| v).unwrap().0;
+        let g = beside(&right, &f);
         let mut result = eng.and_marginalizing(f, g, &targets).unwrap();
         result.minimize().unwrap();
         assert_canonical(&result);

@@ -175,7 +175,6 @@ fn extend_one<'a>(eng: &Engine, f: Cow<'a, Tdd>, into: &Arc<Vtree>) -> Result<Co
 pub(crate) fn operation_error(error: EmbedError) -> OperationError {
     match error {
         EmbedError::Operation(error) => error,
-        EmbedError::SourceWeights(_) | EmbedError::DestinationWeights(_) => OperationError::IncompatibleWeights,
         _ => OperationError::VtreeMismatch,
     }
 }

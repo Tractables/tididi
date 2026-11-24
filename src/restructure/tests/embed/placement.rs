@@ -81,7 +81,7 @@ fn a_whole_subtree_image_matches_a_direct_build() {
     let big = Arc::new(Vtree::join(&image, &Vtree::balanced_over(&free).unwrap()).unwrap());
     assert_eq!(big.num_leaves(), 12);
 
-    let (embedded, levels) = f.embed(&big, |v| VarId(v.0 + 4)).unwrap();
+    let (embedded, levels) = crate::test_helpers::embedded(&f, &big, |v| VarId(v.0 + 4)).unwrap();
     assert_at_fixpoint(&embedded);
     assert!(embedded.equivalent(&fixture(&big, [5, 6, 7, 8])).unwrap());
     // Nine models over four variables, times the eight variables left free.
@@ -98,7 +98,7 @@ fn leaves_spread_along_a_spine_match_a_direct_build() {
 
     let big = Arc::new(Vtree::linear(10));
     let positions = [2u32, 4, 7, 9];
-    let (embedded, levels) = f.embed(&big, |v| VarId(positions[v.idx()])).unwrap();
+    let (embedded, levels) = crate::test_helpers::embedded(&f, &big, |v| VarId(positions[v.idx()])).unwrap();
     assert_at_fixpoint(&embedded);
     assert!(embedded.equivalent(&fixture(&big, [2, 4, 7, 9])).unwrap());
     // Nine models over four variables, times the six variables left free.
@@ -125,8 +125,8 @@ fn two_placements_of_one_relation_conjoin() {
     r.minimize().unwrap();
 
     let big = Arc::new(Vtree::linear(3));
-    let (first, _) = r.embed(&big, |v| v).unwrap();
-    let (second, _) = r.embed(&big, |v| VarId(v.0 + 1)).unwrap();
+    let (first, _) = crate::test_helpers::embedded(&r, &big, |v| v).unwrap();
+    let (second, _) = crate::test_helpers::embedded(&r, &big, |v| VarId(v.0 + 1)).unwrap();
     assert_at_fixpoint(&first);
     assert_at_fixpoint(&second);
 
@@ -143,7 +143,7 @@ fn a_false_diagram_embeds_to_false() {
     let small = Arc::new(Vtree::balanced(2));
     let f = Tdd::zero(&small);
     let big = Arc::new(Vtree::balanced(6));
-    let (embedded, levels) = f.embed(&big, |v| VarId(v.0 + 2)).unwrap();
+    let (embedded, levels) = crate::test_helpers::embedded(&f, &big, |v| VarId(v.0 + 2)).unwrap();
     assert_canonical(&embedded);
     assert!(embedded.is_zero());
     assert!(Arc::ptr_eq(embedded.vtree(), &big));
@@ -157,7 +157,7 @@ fn a_one_variable_diagram_embeds() {
     let f = crate::literal(&small, -1).unwrap();
     assert_canonical(&f);
     let big = Arc::new(Vtree::linear(4));
-    let (embedded, levels) = f.embed(&big, |_| VarId(3)).unwrap();
+    let (embedded, levels) = crate::test_helpers::embedded(&f, &big, |_| VarId(3)).unwrap();
     assert_at_fixpoint(&embedded);
     assert!(
         embedded
@@ -181,7 +181,7 @@ fn a_constant_true_diagram_embeds() {
         )
         .unwrap(),
     );
-    let (embedded, _) = f.embed(&big, |v| v).unwrap();
+    let (embedded, _) = crate::test_helpers::embedded(&f, &big, |v| v).unwrap();
     assert_at_fixpoint(&embedded);
     assert_eq!(embedded.model_count().unwrap(), 32u32.into());
 }
@@ -207,7 +207,7 @@ fn every_shape_embeds_beside_the_variables_it_leaves_free() {
 
             let image = renamed_shape(&small, rename, 2 * num_vars);
             let big = Arc::new(Vtree::join(&image, &Vtree::balanced_over(&free).unwrap()).unwrap());
-            let (embedded, levels) = f.embed(&big, rename).unwrap();
+            let (embedded, levels) = crate::test_helpers::embedded(&f, &big, rename).unwrap();
 
             assert_at_fixpoint(&embedded);
             let expected = compile_clauses(&big, &renamed);

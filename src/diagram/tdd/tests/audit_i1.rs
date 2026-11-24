@@ -25,10 +25,6 @@ use super::*;
 /// The producers whose results name a leaf `One` today, with the reason. A
 /// line marked `unpredicted` was found by this test, not by an audit.
 const EXPECTED_OPEN: &[(&str, &str)] = &[
-    ("embed onto the home", "a variable of the home the operand does not use"),
-    ("embed_moving onto the home", "a variable of the home the operand does not use"),
-    ("embed_over the home", "a variable of the home the operand does not use"),
-    ("embed_with a plan onto the home", "a variable of the home the operand does not use"),
 ];
 
 /// Producers whose results on a home are also held to [`check_trimmed`]:
@@ -299,8 +295,6 @@ fn random_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, n: u32, rng: &mut
     });
     let rename: Vec<(VarId, VarId)> = if x == y { Vec::new() } else { vec![(x, y), (y, x)] };
     a.run("rename_vars", || f.clone().rename_vars(&rename));
-    a.run("project_over", || eng.project_over(&f, home, Some));
-    a.run("project_to_vars", || f.project_to_vars(Some, n));
     a.run("filter_nodes_with(Prune)", || match crate::apply::with_plan::filter_nodes_with(eng, &f, |_| rng_keep(), ReductionPlan::Prune)? {
         FilterOutcome::Unchanged => Ok(f.clone()),
         FilterOutcome::Filtered { tdd, .. } | FilterOutcome::Unsatisfiable { tdd, .. } => Ok::<_, OperationError>(tdd),
@@ -347,10 +341,6 @@ fn random_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, n: u32, rng: &mut
     let (fw, gw) = (reseated(&f, &weighted), reseated(&g, &weighted));
     a.run("and, weighted", || eng.and(&fw, &gw));
     a.run("or, weighted", || eng.or(fw.clone(), gw.clone()));
-    a.run("embed onto the home", || f.embed(home, |v| v).map(|r| r.0));
-    a.run("embed_moving onto the home", || eng.embed_moving(f.clone(), home, |v| v).map(|r| r.0).map_err(|r| r.error));
-    a.run("embed_over the home", || eng.embed_over(&f, home, |v| v).map(|r| r.0));
-    a.run("embed_with a plan onto the home", || eng.embedding_plan(f.vtree(), home, |v| v).and_then(|plan| eng.embed_with(&f, &plan)));
 }
 
 thread_local! {

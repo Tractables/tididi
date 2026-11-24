@@ -12,7 +12,6 @@ use num_bigint::BigUint;
 use num_rational::BigRational;
 use tididi::diagram::{Arithmetic, ChildPair, LiteralWeights, RationalWeights, TddNodeId, Weights, POS_LEAF_IDX};
 use tididi::vtree::{Home, VarId, Vtree, VtreeIdx};
-use tididi::restructure::EmbedError;
 use tididi::{Engine, OperationError, Tdd};
 
 struct Rng(u64);
@@ -193,30 +192,11 @@ fn entries_on_a_diagram_with_a_region_do_not_panic() {
 /// refused by every entry that builds the copy whole, naming the region;
 /// conjoined with the diagram that summed the region, it answers.
 #[test]
-fn a_placement_onto_a_region_the_diagram_has_not_summed_is_refused() {
+fn a_conjunction_with_a_variable_a_region_summed_out_commutes() {
     quiet();
     let eng = Engine::new();
     let (home, f) = with_a_region();
-    let into = Arc::clone(f.vtree());
-    let region = into.bottomup().find(|&t| into.node(t).is_region()).unwrap();
     let x3 = Tdd::clause(&Vtree::projection(&home, [VarId(3)]).unwrap(), [3]).unwrap();
-    let one = Tdd::one(&Vtree::projection(&home, [VarId(3)]).unwrap());
-    let mut wrong = Vec::new();
-    let mut expect = |name: &str, call: &mut dyn FnMut() -> Result<(), EmbedError>| {
-        match catch_unwind(AssertUnwindSafe(call)) {
-            Ok(Err(EmbedError::UnsummedRegion { region: r })) if r == region => {}
-            Ok(outcome) => wrong.push(format!("{name}: {outcome:?}")),
-            Err(e) => wrong.push(format!("{name}: {}", text(&*e))),
-        }
-    };
-    expect("embed_over", &mut || eng.embed_over(&x3, &into, |v| v).map(drop));
-    expect("embed_over true", &mut || eng.embed_over(&one, &into, |v| v).map(drop));
-    expect("embed", &mut || eng.embed(&x3, &into, |v| v).map(drop));
-    expect("Tdd::embed", &mut || x3.embed(&into, |v| v).map(drop));
-    expect("embed_moving", &mut || eng.embed_moving(x3.clone(), &into, |v| v).map(drop).map_err(|r| r.error));
-    expect("embedding_plan", &mut || eng.embedding_plan(x3.vtree(), &into, |v| v).map(drop));
-    eprintln!("{}", wrong.join("\n"));
-    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     let both = eng.and(&x3, &f).unwrap();
     assert_eq!(both.model_count().unwrap(), eng.and(&f, &x3).unwrap().model_count().unwrap());
 }

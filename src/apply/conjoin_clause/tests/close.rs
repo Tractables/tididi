@@ -18,7 +18,7 @@ fn trimmed(home: &Home, mut f: Tdd) -> Tdd {
 }
 
 fn closed(eng: &Engine, home: &Home, got: &Tdd, expected: &Tdd) -> Result<(), String> {
-    let on_home = |f: &Tdd| eng.embed(f, home.vtree(), |v| v).unwrap().0;
+    let on_home = |f: &Tdd| crate::test_helpers::embedded(f, home.vtree(), |v| v).unwrap().0;
     if !eng.equivalent(&on_home(got), &on_home(expected)).unwrap() {
         return Err("a different function".into());
     }

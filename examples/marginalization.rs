@@ -39,7 +39,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         LiteralWeights { negative: half.clone(), positive: half }; 4
     ]);
     let weighted_vtree = Arc::new(Vtree::balanced(4).with_weights(Weights::new(weights, Arithmetic::ExactRational))?);
-    let (mut weighted, _) = rules.embed(&weighted_vtree, |v| v)?;
+    let mut weighted = Tdd::clause(&weighted_vtree, [local_a, remote_a])?
+        & Tdd::clause(&weighted_vtree, [local_b, remote_b])?;
     println!("Probability before: {}", weighted.weighted_value()?.unwrap().into_rational());
     weighted.marginalize_levels(&[server_a])?;
     println!("Probability after: {}", weighted.weighted_value()?.unwrap().into_rational());

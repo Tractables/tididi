@@ -71,7 +71,7 @@ fn minimize_after_embed_onto_a_home() {
         let f = rand_conj(&small, 4, 1 + rng.below(4), 3, false, &mut rng);
         let home = Home::new(Vtree::balanced(8));
         let shift = 4 * rng.below(2) as u32;
-        let (mut placed, _) = eng.embed(&f, home.vtree(), |v| VarId(v.0 + shift)).unwrap();
+        let (mut placed, _) = crate::test_helpers::embedded(&f, home.vtree(), |v| VarId(v.0 + shift)).unwrap();
         let before = placed.clone();
         eng.minimize(&mut placed).unwrap();
         assert!(eng.xor(placed, before).unwrap().is_zero(), "seed {seed}");
@@ -188,9 +188,6 @@ fn projections_and_counts_of_a_diagram_its_quantification_narrows() {
     let home = Home::new(Vtree::balanced(2));
     let f = eng.xor(eng.literal(home.vtree(), 1).unwrap(), eng.literal(home.vtree(), 2).unwrap()).unwrap();
     assert_eq!(leaf_vars(&f), [VarId(1), VarId(2)]);
-    let kept = eng.project_to_vars(&f, |v| (v == VarId(2)).then_some(VarId(1)), 1).unwrap();
-    assert_eq!(kept.vtree().num_leaves(), 1, "the projection stays on the vtree it was asked for");
-    assert_eq!(kept.model_count().unwrap(), 2u32.into(), "x xor y is true over y");
     assert_eq!(eng.projected_model_count(&f, &[VarId(2)]).unwrap(), 2u32.into());
 }
 

@@ -11,15 +11,15 @@ Run `cargo run --example composition`.
 
 ## Build one component
 
-The component has just two variables, L = 1 and R = 2:
+The component has just two variables, L = 1 and R = 2, on a
+[home](crate::vtree::Home) of its own:
 
 ```rust,ignore,{class=tested-example}
-use std::sync::Arc;
-use tididi::{literal, Tdd, Vtree};
-use tididi::vtree::VarId;
+use tididi::{literal, Engine, Tdd, Vtree};
+use tididi::vtree::{Home, VarId};
 
-let component_vtree = Arc::new(Vtree::balanced(2));
-let backup = Tdd::clause(&component_vtree, [1, 2])?;
+let component = Home::new(Vtree::balanced(2));
+let backup = Tdd::clause(component.vtree(), [1, 2])?;
 println!("Choices for one server: {}", backup.model_count()?);
 ```
 
@@ -39,14 +39,15 @@ in a balanced vtree:
 | Local, 1 | L_A, 1 | L_B, 3 |
 | Remote, 2 | R_A, 2 | R_B, 4 |
 
-[`embed`](crate::Tdd::embed) copies a circuit into a destination vtree under a
-variable mapping. Here the first placement keeps the variable numbers, and the
-second adds two:
+[`transport`](crate::Engine::transport) moves a circuit onto the home of the
+complete model under a variable mapping. Here the first placement keeps the
+variable numbers, and the second adds two:
 
 ```rust,ignore,{class=tested-example}
-let vtree = Arc::new(Vtree::balanced(4));
-let (server_a, _) = backup.embed(&vtree, |var| var)?;
-let (server_b, _) = backup.embed(&vtree, |var| VarId(var.0 + 2))?;
+let engine = Engine::new();
+let home = Home::new(Vtree::balanced(4));
+let (server_a, _) = engine.transport(&backup, &home, |var| var, 0).map_err(|r| r.error)?;
+let (server_b, _) = engine.transport(&backup, &home, |var| VarId(var.0 + 2), 0).map_err(|r| r.error)?;
 println!("Server A rule over both servers: {}", server_a.model_count()?);
 ```
 
@@ -56,9 +57,9 @@ Output:
 Server A rule over both servers: 12
 ```
 
-The first copy represents **L_A ∨ R_A**, leaving L_B and R_B free. Its count is
-therefore 3 × 2 × 2 = 12. Both copies share the destination `vtree`, so we can
-combine them with the usual Boolean operators. The result represents
+The first copy represents **L_A ∨ R_A**, leaving L_B and R_B free. Its count
+is over the home's variables, therefore 3 × 2 × 2 = 12. Both copies are on the
+same home, so we can combine them with the usual Boolean operators. The result represents
 **(L_A ∨ R_A) ∧ (L_B ∨ R_B)**:
 
 ```rust,ignore,{class=tested-example}
@@ -76,12 +77,12 @@ Each server has three choices, giving 3 × 3 = 9 combinations.
 
 ## Connect the components
 
-The capacity constraint is **¬(R_A ∧ R_B)**. Build it on the same destination
-vtree and conjoin it with the two server rules:
+The capacity constraint is **¬(R_A ∧ R_B)**. Build it on the same home and
+conjoin it with the two server rules:
 
 ```rust,ignore,{class=tested-example}
-let remote_a = literal(&vtree, 2)?;
-let remote_b = literal(&vtree, 4)?;
+let remote_a = literal(home.vtree(), 2)?;
+let remote_b = literal(home.vtree(), 4)?;
 let shared_capacity = !(remote_a & remote_b);
 let system = independent & shared_capacity;
 println!("Choices with shared capacity: {}", system.model_count()?);
@@ -96,36 +97,30 @@ Reusable component still available: 3
 ```
 
 Four of the nine combinations use remote storage for both servers; excluding
-them leaves five. Embedding borrowed `backup`, so the original component remains
+them leaves five. Transport borrowed `backup`, so the original component remains
 available for another placement.
 
 ## Choose the destination grouping
 
-Embedding preserves the component's variable grouping and left-to-right order.
-Our destination gives each copy its own matching two-leaf subtree. More general
-placements can leave gaps for extra variables, provided the destination restricted
-to the mapped variables still matches the source vtree; see the
-[`embed` contract](crate::Tdd::embed). Weights belong to a vtree: the copy reads
-the destination's, so weigh the destination for the complete model.
-
-If independently built components use disjoint variable identifiers, or are
-renamed apart, [`graft_over`](crate::Tdd::graft_over) can conjoin them while
-constructing a combined vtree.
-Embedding is useful when you choose that shared destination in advance, including
-when different components need to refer to the same variable.
+Transport keeps the component's variable grouping where the home restricted to
+the mapped variables has it, and mirrors a node whose children the mapping puts
+in the other order. Our home gives each copy its own matching two-leaf subtree.
+A home that groups the variables otherwise needs rotations, which the last
+argument bounds; with 0 such a placement is refused. Weights belong to a home:
+the copy reads the destination's, so weigh the home for the complete model.
 
 ## Reuse a placement as rules change
 
 Suppose server B must now use local storage only: **L ∧ ¬R**. Its variables
-still occupy the same positions. An [`EmbeddingPlan`](crate::restructure::EmbeddingPlan)
-lets us prepare that placement once and apply it to successive rules:
+still occupy the same positions, so the same placement applies to successive
+rules:
 
 ```rust,ignore,{class=tested-example}
-use tididi::restructure::EmbeddingPlan;
-let place_b = EmbeddingPlan::new(&component_vtree, &vtree, |var| VarId(var.0 + 2))?;
-let local_only = Tdd::cube(&component_vtree, [1, -2])?;
-let original_b = place_b.apply(&backup)?;
-let updated_b = place_b.apply(&local_only)?;
+let place_b = |rule: &Tdd| engine.transport(rule, &home, |var| VarId(var.0 + 2), 0)
+    .map(|(placed, _)| placed).map_err(|r| r.error);
+let local_only = Tdd::cube(component.vtree(), [1, -2])?;
+let original_b = place_b(&backup)?;
+let updated_b = place_b(&local_only)?;
 println!("Server B choices before and after: {} -> {}",
     original_b.model_count()?, updated_b.model_count()?);
 ```
@@ -137,8 +132,6 @@ Server B choices before and after: 12 -> 4
 ```
 
 Server B now has one choice, while server A's two variables remain free.
-[`EmbeddingPlan::then`](crate::restructure::EmbeddingPlan::then) composes
-placements when a component is nested inside a larger system.
 
 The [complete program](https://github.com/Tractables/tididi/blob/v0.2.0/examples/composition.rs)
 builds and connects both server models.

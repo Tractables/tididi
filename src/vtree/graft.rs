@@ -5,8 +5,7 @@ use super::{VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
 
 /// Where each node of a source vtree landed in a destination vtree.
 ///
-/// `Tdd::embed` returns one beside its result, and a [`GraftLayout`] holds
-/// one per part. Index it by a node of the source vtree to find the node of
+/// A [`GraftLayout`] holds one per part. Index it by a node of the source vtree to find the node of
 /// the destination that took its place, which is the level holding that
 /// source level's copy in the result. Use this map to relocate side tables
 /// keyed by source vtree index.
@@ -84,8 +83,7 @@ impl Vtree {
     /// Join independent subtrees and single-variable leaves under one
     /// left-linear spine: `subtrees[0]` is the leftmost piece, each later
     /// subtree and then each `spine_vars` leaf is attached to a new root on
-    /// the right, in the order given. A diagram over the result is what
-    /// [`crate::Tdd::graft_over`] builds from diagrams over the pieces.
+    /// the right, in the order given.
     ///
     /// ```text
     /// graft([S0, S1], [x]):        ∘

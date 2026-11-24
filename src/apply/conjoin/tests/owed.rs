@@ -155,7 +155,7 @@ fn a_carried_level_is_loose_only_where_its_carrier_had_it() {
     let wide = Arc::new(Vtree::balanced(8));
     let mut small = eng.clause(&pair, [1, -2]).unwrap();
     eng.minimize(&mut small).unwrap();
-    let (g, _) = eng.embed_moving(small, &wide, |v| VarId(v.0 + 6)).map_err(|r| r.error).unwrap();
+    let (g, _) = crate::test_helpers::moved(&eng, small, &wide, |v| VarId(v.0 + 6)).unwrap();
     let clauses = [vec![1, 2], vec![-2, 3], vec![3, -4, 5], vec![-1, 6], vec![4, -5, -6]];
     let f = compile_clauses(&wide, &clauses);
     assert!(f.dirty.loose().is_some_and(|l| l.is_empty()));

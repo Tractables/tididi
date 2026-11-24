@@ -1,26 +1,20 @@
 //! Place levels and connect their roots after an operation validates its layout.
 //!
-//! [`MovePlacement`] owns the destination storage while an operation fills
-//! it: it moves whole parts, levels and weight columns alike, or copies the
-//! levels of a source that stays as it is, keeps local node indices through
-//! the transfer and prunes what the new joins leave unused.
+//! [`MovePlacement`] owns the destination storage while the graft fills it:
+//! it moves whole parts and keeps local node indices through the transfer.
 
 use std::sync::Arc;
 
 use crate::{Engine, OperationError};
 use crate::diagram::{
     Assembly, ChildPair, ChildSide, EncodedNode, ImplicitLevel, MarginalStorage, NodeIdx, Tdd,
-    TddBuildError, TddLevel, TddNodeId, WeightValue, LEAF_WIDTH, ONE_LEAF_IDX, floor,
+    TddLevel, TddNodeId, LEAF_WIDTH, ONE_LEAF_IDX, floor,
     stored_levels_forced, try_take_levels,
 };
 use crate::limits::Limits;
 use crate::execution::pool::PoolGuard;
 use crate::vtree::{Vtree, VtreeIdx};
 
-/// Drop the nodes the joins made in `result` that nothing refers to.
-fn prune(eng: &Engine, result: &mut Tdd) -> Result<(), OperationError> {
-    eng.reduce_plain(result, crate::reduce::ReductionPlan::Prune)
-}
 
 /// The true reference for an unconstrained child already placed bottom-up.
 #[inline]
@@ -171,13 +165,6 @@ pub(super) struct MovePlacement<'a> {
     eng: &'a Engine,
     vtree: &'a Arc<Vtree>,
     assembly: Assembly<'a>,
-    /// Whether a join sits over a marginal level, which is what leaves
-    /// references to repair.
-    prune: bool,
-    /// Whether a pass-through sits over a marginal level. Its nodes are told
-    /// apart by value slots alone, and slots the prune merges leave twins
-    /// behind, which a contraction after it removes.
-    contract: bool,
     changed: Changed<'a>,
 }
 
@@ -186,7 +173,7 @@ impl<'a> MovePlacement<'a> {
         let changed = Changed::new(eng, vtree)?;
         let levels = try_take_levels(eng, vtree.num_nodes())?;
         let assembly = Assembly::from_levels(eng, Arc::clone(vtree), levels);
-        Ok(Self { eng, vtree, assembly, prune: false, contract: false, changed })
+        Ok(Self { eng, vtree, assembly, changed })
     }
 
     /// Move every level through a checked placement map.
@@ -204,127 +191,17 @@ impl<'a> MovePlacement<'a> {
         }
     }
 
-    /// Make an internal level marginal with no values: a level under a
-    /// marginal parent, whose values the parent's subsume.
-    pub(super) fn subsume(&mut self, at: VtreeIdx) {
-        self.changed.push(at);
-        let levels = self.assembly.levels_mut();
-        MarginalStorage::new(&mut levels[at.idx()]).install_weights(Vec::new());
-    }
-
-    /// Multiply every value of a weight-marginal level by `factor`.
-    pub(super) fn scale(&mut self, at: VtreeIdx, factor: &WeightValue) {
-        let levels = self.assembly.levels_mut();
-        if let Some(values) = levels[at.idx()].weight_values_mut() {
-            for value in values.iter_mut() {
-                *value = value.mul(factor);
-            }
-        }
-    }
-
-    /// The true reference for an unconstrained child already placed bottom-up.
-    #[inline]
-    pub(super) fn true_node(&self, child: VtreeIdx) -> NodeIdx {
-        true_node(self.vtree, child)
-    }
-
-    /// Lift all references from one child through a join with a free sibling.
-    /// Hands back a join's refusal.
-    pub(super) fn pass_through(&mut self, at: VtreeIdx, free_side: ChildSide) -> Result<(), OperationError> {
-        let through = PassThrough::new(self.vtree, at, free_side, |c| self.assembly.level(c).slot_count());
-        self.prune |= through.carries_leaf;
-        self.contract |= self.assembly.level(through.carries).is_marginal();
-        let (l, r) = self.vtree.children(at);
-        if through.carries_leaf
-            || through.width == 0
-            || self.assembly.level(l).is_marginal()
-            || self.assembly.level(r).is_marginal()
-        {
-            for (left, right) in through.pairs() {
-                self.join(at, left, right)?;
-            }
-            return Ok(());
-        }
-        self.changed.push(at);
-        through.build(self.eng.limits(), &mut self.assembly.levels_mut()[at.idx()])
-    }
-
-    /// Whether the placed level at `at` is summed out.
-    pub(super) fn is_marginal(&self, at: VtreeIdx) -> bool {
-        self.assembly.level(at).is_marginal()
-    }
-
-    /// Lift a leaf child through a join with a free sibling, one node per
-    /// label of `labels` in that order: the labels the level reading the
-    /// lifted references names, which determinism keeps within `{One}` or
-    /// within `{Pos, Neg}`. A node per label of the leaf would put `One` and
-    /// a literal on one level. Hands back a join's refusal.
-    pub(super) fn pass_over_leaf(&mut self, at: VtreeIdx, free_side: ChildSide, labels: &[NodeIdx]) -> Result<(), OperationError> {
-        let (left, right) = self.vtree.children(at);
-        let one = true_node(self.vtree, free_side.pick(left, right));
-        for &label in labels {
-            let (l, r) = free_side.pick((one, label), (label, one));
-            self.join(at, l, r)?;
-        }
-        Ok(())
-    }
-
-    /// The first reference the level at `at` holds on `side`, if it holds
-    /// any.
-    pub(super) fn first_ref(&self, at: VtreeIdx, side: ChildSide) -> Option<NodeIdx> {
-        first_ref(self.assembly.level(at), side)
-    }
-
-    /// Add a connecting node, recording any marginal boundary it introduces.
-    /// Its storage grows through the engine's limits; a refusal is handed
-    /// back, for the caller to undo the placement.
+    /// Add a connecting node. Its storage grows through the engine's limits;
+    /// a refusal is handed back, for the caller to undo the placement.
     #[inline]
     pub(super) fn join(&mut self, at: VtreeIdx, left: NodeIdx, right: NodeIdx) -> Result<NodeIdx, OperationError> {
-        let (l, r) = self.vtree.children(at);
-        self.prune |= self.assembly.level(l).is_marginal() || self.assembly.level(r).is_marginal();
         self.changed.push(at);
         self.assembly.levels_mut()[at.idx()].push_node(self.eng.limits(), &[ChildPair::new(left, right)])
     }
 
-    /// Check that the destination store covers every placed level's column.
-    pub(super) fn check_weights(&mut self) -> Result<(), TddBuildError> {
-        let vtree = self.vtree;
-        let levels = self.assembly.levels_mut();
-        match vtree.weights() {
-            Some(weights) => weights.check_levels(vtree, levels),
-            None => Ok(()),
-        }
-    }
-
-    /// Seat the chosen root reference and repair the boundaries introduced
-    /// here, `literal_tops` the tops of the chains [`pass_over_leaf`](Self::pass_over_leaf)
-    /// built as `Pos` and `Neg`, whose readers name them as leaf labels
-    /// until then. Call [`check_weights`](Self::check_weights) first.
-    pub(super) fn finish(self, local: NodeIdx, literal_tops: &[VtreeIdx]) -> Result<Tdd, OperationError> {
+    /// Seat the chosen root reference.
+    pub(super) fn finish(self, local: NodeIdx) -> Result<Tdd, OperationError> {
         let output = TddNodeId { vtree: self.vtree.root(), local };
-        let mut result = self.assembly.finish_changed(output, self.changed.to_close())?;
-        if !literal_tops.is_empty() {
-            crate::diagram::remap_refs_into_all(self.eng.limits(), &mut result, literal_tops, &[u32::MAX, 0, 1])?;
-        }
-        if self.prune {
-            for (leaf, _) in result.vtree.leaf_bottomup() {
-                if result.levels[leaf.idx()].is_weight_marginal() {
-                    crate::marginal::canonicalize_weighted_leaf_refs(
-                        self.eng.limits(), &[leaf.idx()], &result.vtree, &mut result.levels, result.vtree.weights())?;
-                }
-            }
-            crate::diagram::inline_small_marginal_refs(self.eng.limits(), &mut result, None)?;
-        }
-        if self.contract {
-            self.eng.reduce_plain(&mut result, crate::reduce::ReductionPlan::Full(crate::reduce::ContentTwinPolicy::Skip))?;
-        } else if self.prune || !literal_tops.is_empty() {
-            // A literal chain whose reader names one literal holds the other unread.
-            prune(self.eng, &mut result)?;
-        }
-        Ok(result)
+        self.assembly.finish_changed(output, self.changed.to_close())
     }
 }
-
-#[cfg(test)]
-#[path = "tests/placement.rs"]
-mod tests;

@@ -238,14 +238,8 @@ fn step(eng: &Engine, rng: &mut Rng, vtree: &Arc<Vtree>, pool: &[(Tdd, Table)], 
         }
         24 => {
             let keep = subset(rng, n);
-            if keep.is_empty() {
-                return None;
-            }
-            let local = |v: VarId| keep.iter().position(|&k| k == v).map(|p| VarId(p as u32 + 1));
-            let p = eng.project_to_vars(f, local, keep.len() as u32).unwrap();
-            let back = |v: VarId| keep[v.idx()];
             let gone: Vec<VarId> = (1..=n).map(VarId).filter(|v| !keep.contains(v)).collect();
-            (eng.embed(&p, vtree, back).unwrap().0, quantified(tf, n, &gone, true))
+            (f.clone().exists_vars(&gone).unwrap(), quantified(tf, n, &gone, true))
         }
         25 => {
             let mut r = f.clone();

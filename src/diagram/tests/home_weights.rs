@@ -4,7 +4,6 @@
 use std::sync::Arc;
 
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, TddBuildError, Weights};
-use crate::restructure::EmbedError;
 use crate::restructure::search::{MinimizePairs, RotationSearchConfig};
 use crate::test_helpers::{exact_weight, rat};
 use crate::vtree::{Home, VarId, Vtree};
@@ -127,9 +126,4 @@ fn a_weighted_root_computes_what_a_weighted_home_computes() {
     assert!(h.level(left).is_weight_marginal());
     assert_eq!(value_of(&h), value_of(&hh));
 
-    let into = Arc::new(Vtree::balanced(6).with_weights(table(6)).unwrap());
-    let (placed, _) = eng.embed_over(&h, &into, |v| v).unwrap();
-    assert_eq!(placed.weights(), Some(&table(6)));
-    assert_eq!(value_of(&placed), value_of(&hh));
-    assert!(matches!(eng.embed_over(&h, &Arc::new(Vtree::balanced(6)), |v| v), Err(EmbedError::SourceWeights(_))));
 }

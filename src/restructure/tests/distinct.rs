@@ -78,7 +78,7 @@ fn a_projection_onto_a_subtree_is_the_quantified_diagram() {
             let dropped: Vec<VarId> = vtree.leaf_bottomup().map(|(_, v)| v).filter(|v| !kept.contains(v)).collect();
             let g = eng.project_to_subtree(&f, key).unwrap();
             assert_canonical(&g);
-            let (back, _) = eng.embed(&g, vtree, |v| v).unwrap();
+            let (back, _) = crate::test_helpers::embedded(&g, vtree, |v| v).unwrap();
             let expected = eng.exists_vars(f.clone(), &dropped).unwrap();
             assert!(eng.equivalent(&back, &expected).unwrap(), "key {key:?}");
         }

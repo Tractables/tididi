@@ -175,21 +175,16 @@ algebra, so replacing the algebra invalidates every column.
 
 ## Placing diagrams on other vtrees
 
-`restructure::EmbeddingPlan` keeps a source vtree, a destination vtree and the
-validated correspondence between their levels, so reusing it skips validation,
-and composing plans places a diagram directly without intermediate copies.
-Embedding and grafting assemble their results through
-`restructure::placement::MovePlacement`, which owns the destination levels and
-weights, moves a source's levels or copies those of a source it borrows, keeps
-local node indices while transferring levels, and repairs the references that
-new joins introduce; each operation still checks shape and weight compatibility
-itself.
-
-`Engine::embed_over` moves weight-marginal levels with their values through
-`MovePlacement`. A free variable under such a level's image scales its values
-by that variable's weight for `true`; an internal level the destination adds
-underneath is marginal without values; and a level placed over a marginal
-child is contracted at the end, because its nodes differ only by value slot.
+`Engine::transport` moves a diagram onto the projection of a home on its
+renamed variables: level for level where the two trees have one shape up to
+mirrors, by rotations on private trees where they do not. Inside the library,
+`restructure::embed` copies or moves a diagram onto a wider projection of the
+same home: a node of the wider tree with the diagram's variables on both sides
+receives a level unchanged, one with them on one side passes that side's nodes
+through. Variable expansion joins its parts under a spine through
+`restructure::placement::MovePlacement`, which owns the destination levels,
+moves the parts' levels keeping local node indices, and repairs the references
+that new joins introduce.
 
 Composition counts how many consumers each intermediate circuit has.
 `SharedCircuit` keeps its storage until the last consumer takes it and clones
@@ -212,7 +207,7 @@ it does not substitute into the replacement functions.
 | `marginal` | Summing levels into values and restoring marginal invariants. |
 | [`maintain`] | Adding and removing one assignment at a time, in place. |
 | [`reduce`] | Reachability pruning, twin contraction, pair fusion and value-slot pruning. |
-| [`restructure`] | Vtree search, grafting, embedding, variable expansion and moves to a given vtree, with the corresponding diagram edits. |
+| [`restructure`] | Vtree search, transport, variable expansion and moves to a given vtree, with the corresponding diagram edits. |
 | [`query`] | Counting, satisfiability, evaluation and traversal of borrowed diagrams. |
 | [`cnf`] | Clauses that define a diagram's nodes, for an external SAT solver, and the probe that asks it which nodes are impossible. |
 | [`execution`] | Shared context checkouts, scratch pools and each batch's limits. |
