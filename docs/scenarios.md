@@ -201,7 +201,7 @@ witness; the reachable-set semantics are unchanged.
 
 ### Instances
 
-- [Rust walkthrough](examples/reachability.md) <!-- reviewed: b18b1ef230069729ab8ee27fd59647ae5edf7b58370c87df11ae56e989e5559f -->
+- [Rust walkthrough](examples/reachability.md) <!-- reviewed: d5ea19577da0a7f1615ee673bfe554dde1bd45b2e55ab78bec1c28bbd456d1d1 -->
 - [Rust program](../examples/reachability.rs) <!-- reviewed: 0888b766b278776e1e14f9102d2a500314d098104cffd82892530a85ce339ee3 -->
 - [Python walkthrough and program](../bindings/python/examples/03_reachability.py) <!-- reviewed: 959d0a9aea4d72b273a51ff60a2124ed1740a3ca0531376773705f423e8755ad -->
 - [Shared directed graph](reachability.svg) <!-- reviewed: b578209ba2f5bf62b32b3ba8100d7efefe03ccb8f10745da60d5af30cda85cdf -->

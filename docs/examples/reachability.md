@@ -169,12 +169,12 @@ loop {
 Output:
 
 ```text
-Iteration 1: 3 states, 35 circuit nodes, 37 pairs
-Iteration 2: 6 states, 40 circuit nodes, 45 pairs
-Iteration 3: 8 states, 41 circuit nodes, 48 pairs
-Iteration 4: 10 states, 42 circuit nodes, 51 pairs
-Iteration 5: 11 states, 42 circuit nodes, 52 pairs
-Iteration 6: 11 states, 42 circuit nodes, 52 pairs
+Iteration 1: 3 states, 41 circuit nodes, 43 pairs
+Iteration 2: 6 states, 54 circuit nodes, 59 pairs
+Iteration 3: 8 states, 62 circuit nodes, 69 pairs
+Iteration 4: 10 states, 70 circuit nodes, 79 pairs
+Iteration 5: 11 states, 74 circuit nodes, 84 pairs
+Iteration 6: 11 states, 74 circuit nodes, 84 pairs
 Fixed point reached
 ```
 
@@ -186,8 +186,8 @@ next-state indicators.
 [`pair_count`](crate::Tdd::pair_count) counts their child pairs. These describe
 the circuit representing the reachable set, rather than the graph's nodes and edges.
 
-Iterations 5 and 6 have the same reachable set and circuit size: 42 nodes and
-52 pairs. The stopping condition remains equivalence; matching sizes alone
+Iterations 5 and 6 have the same reachable set and circuit size: 74 nodes and
+84 pairs. The stopping condition remains equivalence; matching sizes alone
 would not prove stability.
 
 ## Check a safety property
