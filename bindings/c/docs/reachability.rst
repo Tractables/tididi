@@ -78,7 +78,9 @@ Reach a fixed point
 ``tididi_and_exists`` performs the AND followed by existential quantification
 from the preceding step in one call. It can avoid constructing the full
 intermediate conjunction. Union the image with the states already reached,
-minimize, and compare Boolean functions to detect convergence.
+minimize, and compare Boolean functions to detect convergence. ``tididi_or``
+does not minimize its result, and the reached set is carried into every later
+step, so the loop minimizes it after each union.
 
 .. literalinclude:: ../examples/reachability.c
    :language: c

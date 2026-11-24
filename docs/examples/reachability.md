@@ -143,13 +143,23 @@ fn image(
 
 Add each image to the states already reached. The first update gives
 `S₀(x) ∨ S₁(x) ∨ S₄(x)`, allowing any of those three states. Stop when
-[`equivalent`](crate::Tdd::equivalent) says the set has not changed:
+[`equivalent`](crate::Tdd::equivalent) says the set has not changed.
+
+The union, like `and_exists`, returns its circuit as it built it, without
+minimizing it, so the caller decides when minimization is worth its cost.
+The reached set is carried into every later image, so minimize it after each
+union: [`minimize`](crate::Tdd::minimize) removes nodes the result no longer
+reaches and merges nodes its parents use alike, leaving the smallest circuit
+for this vtree. To have every operation minimize its result instead, set
+[`with_canonical_results`](crate::limits::LimitConfig::with_canonical_results)
+on the limits the operations run under.
 
 ```rust,ignore,{class=tested-example}
 let mut iterations = 0;
 loop {
     let successors = image(reached.clone(), transition.clone(), &current_vars, &next_to_current)?;
-    let enlarged = reached.clone() | successors;
+    let mut enlarged = reached.clone() | successors;
+    enlarged.minimize()?;
     iterations += 1;
 
     let state_count = enlarged.projected_model_count(&current_vars)?;
@@ -169,12 +179,12 @@ loop {
 Output:
 
 ```text
-Iteration 1: 3 states, 41 circuit nodes, 43 pairs
-Iteration 2: 6 states, 54 circuit nodes, 59 pairs
-Iteration 3: 8 states, 62 circuit nodes, 69 pairs
-Iteration 4: 10 states, 70 circuit nodes, 79 pairs
-Iteration 5: 11 states, 74 circuit nodes, 84 pairs
-Iteration 6: 11 states, 74 circuit nodes, 84 pairs
+Iteration 1: 3 states, 35 circuit nodes, 37 pairs
+Iteration 2: 6 states, 40 circuit nodes, 45 pairs
+Iteration 3: 8 states, 41 circuit nodes, 48 pairs
+Iteration 4: 10 states, 42 circuit nodes, 51 pairs
+Iteration 5: 11 states, 42 circuit nodes, 52 pairs
+Iteration 6: 11 states, 42 circuit nodes, 52 pairs
 Fixed point reached
 ```
 
@@ -186,9 +196,10 @@ next-state indicators.
 [`pair_count`](crate::Tdd::pair_count) counts their child pairs. These describe
 the circuit representing the reachable set, rather than the graph's nodes and edges.
 
-Iterations 5 and 6 have the same reachable set and circuit size: 74 nodes and
-84 pairs. The stopping condition remains equivalence; matching sizes alone
-would not prove stability.
+Iterations 5 and 6 have the same reachable set and circuit size: 42 nodes and
+52 pairs. The stopping condition remains equivalence; matching sizes alone
+would not prove stability. `equivalent` compares functions, so its answer
+does not depend on whether its operands are minimized.
 
 ## Check a safety property
 

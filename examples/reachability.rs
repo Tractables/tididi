@@ -66,7 +66,8 @@ fn main() -> Result<(), tididi::OperationError> {
     let mut iterations = 0;
     loop {
         let successors = image(reached.clone(), transition.clone(), &current_vars, &next_to_current)?;
-        let enlarged = reached.clone() | successors;
+        let mut enlarged = reached.clone() | successors;
+        enlarged.minimize()?;
         iterations += 1;
 
         let state_count = enlarged.projected_model_count(&current_vars)?;

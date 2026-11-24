@@ -1128,11 +1128,14 @@ impl Tdd {
     /// [`rotation_search`](Self::rotation_search) searches other tree shapes.
     /// Counting, satisfiability and witness queries accept nonminimal diagrams;
     /// minimize when canonical form or removal of redundant storage is needed.
-    /// [`and`](crate::and) and [`and_clause`](Self::and_clause) leave their
-    /// result unminimized; [`or`](crate::or), [`xor`](crate::xor),
-    /// [`ite`](crate::ite), [`negate`](Self::negate), [`condition`](Self::condition),
-    /// [`exists_vars`](Self::exists_vars) and [`rename_vars`](Self::rename_vars)
-    /// return minimized results.
+    /// Operations such as [`and`](crate::and), [`or`](crate::or),
+    /// [`xor`](crate::xor), [`and_exists`](crate::and_exists),
+    /// [`condition`](Self::condition), [`exists_vars`](Self::exists_vars) and
+    /// [`rename_vars`](Self::rename_vars) leave their result unminimized unless
+    /// the engine's limits set
+    /// [`canonical_results`](crate::limits::LimitConfig::with_canonical_results);
+    /// each operation's documentation says whether it keeps the certificate of
+    /// [`is_canonical`](Self::is_canonical) operands.
     ///
     /// On a [`Home`](crate::vtree::Home) or one of its projections, with no
     /// summed-out level, a variable the minimization finds the diagram does

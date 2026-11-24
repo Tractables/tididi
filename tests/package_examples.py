@@ -94,41 +94,57 @@ def main():
             if not shipped.is_file() or shipped.read_bytes() != source.read_bytes():
                 raise RuntimeError(f"package is missing the current example: {source.name}")
 
+        failures = []
         for source in examples:
-            app = work / source.stem
-            (app / "src").mkdir(parents=True)
-            shutil.copyfile(library / "examples" / source.name, app / "src/main.rs")
-            # A program that imports more than tididi names the crates in a
-            # header comment, which is what its standalone manifest depends on.
-            extra = "".join(
-                "\n" + dependency.strip()
-                for line in source.read_text(encoding="utf-8").splitlines()
-                if line.startswith(DEPENDENCIES)
-                for dependency in line[len(DEPENDENCIES):].split(",")
-            )
-            (app / "Cargo.toml").write_text(
-                f'[package]\nname = "packaged-{source.stem}"\nversion = "0.0.0"\nedition = "2024"\n'
-                f'[workspace]\n[dependencies]\ntididi = {{ path = "../{name}" }}{extra}\n'
-            )
-            print(f"Running packaged example: {source.stem}", flush=True)
-            result = subprocess.run(
-                ["cargo", "run", "--offline", "--manifest-path", str(app / "Cargo.toml"),
-                 "--target-dir", str(work / "target")],
-                cwd=app, check=True, stdout=subprocess.PIPE, text=True,
-            )
-            print(result.stdout, end="", flush=True)
-            page = root / "docs/examples" / f"{source.stem}.md"
-            if not page.is_file():
-                raise ValueError(f"{source.name}: no walkthrough {page.name}")
-            markdown = page.read_text(encoding="utf-8")
-            if f"/examples/{source.name})" not in markdown:
-                raise ValueError(f"{page.name}: no complete-program link to {source.name}")
-            checked = check_output(markdown, result.stdout, page.name)
-            if not checked:
-                raise ValueError(f"{page.name}: no documented output checked")
-            print(f"Checked {checked} output blocks in {page.name}.", flush=True)
+            try:
+                run_example(source, library, work, name, root)
+            except ValueError as error:
+                print(f"FAILED: {error}", flush=True)
+                failures.append(str(error).partition("\n")[0])
+        if failures:
+            print(f"{len(failures)} of {len(examples)} packaged examples failed:", flush=True)
+            for failure in failures:
+                print(f"  {failure}", flush=True)
+            raise SystemExit(1)
         print(f"Passed {len(examples)} standalone packaged examples.", flush=True)
 
+
+def run_example(source, library, work, name, root):
+    """Build one shipped example as its own package and check its walkthrough."""
+    app = work / source.stem
+    (app / "src").mkdir(parents=True)
+    shutil.copyfile(library / "examples" / source.name, app / "src/main.rs")
+    # A program that imports more than tididi names the crates in a
+    # header comment, which is what its standalone manifest depends on.
+    extra = "".join(
+        "\n" + dependency.strip()
+        for line in source.read_text(encoding="utf-8").splitlines()
+        if line.startswith(DEPENDENCIES)
+        for dependency in line[len(DEPENDENCIES):].split(",")
+    )
+    (app / "Cargo.toml").write_text(
+        f'[package]\nname = "packaged-{source.stem}"\nversion = "0.0.0"\nedition = "2024"\n'
+        f'[workspace]\n[dependencies]\ntididi = {{ path = "../{name}" }}{extra}\n'
+    )
+    print(f"Running packaged example: {source.stem}", flush=True)
+    result = subprocess.run(
+        ["cargo", "run", "--offline", "--manifest-path", str(app / "Cargo.toml"),
+         "--target-dir", str(work / "target")],
+        cwd=app, stdout=subprocess.PIPE, text=True,
+    )
+    print(result.stdout, end="", flush=True)
+    if result.returncode:
+        raise ValueError(f"{source.name}: cargo run exited with status {result.returncode}")
+    page = root / "docs/examples" / f"{source.stem}.md"
+    if not page.is_file():
+        raise ValueError(f"{source.name}: no walkthrough {page.name}")
+    markdown = page.read_text(encoding="utf-8")
+    if f"/examples/{source.name})" not in markdown:
+        raise ValueError(f"{page.name}: no complete-program link to {source.name}")
+    checked = check_output(markdown, result.stdout, page.name)
+    if not checked:
+        raise ValueError(f"{page.name}: no documented output checked")
+    print(f"Checked {checked} output blocks in {page.name}.", flush=True)
 
 if __name__ == "__main__":
     main()

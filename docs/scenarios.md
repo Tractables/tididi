@@ -186,6 +186,8 @@ rename next variables back to current ones. Then introduce `and_exists` as
 conjunction and quantification combined. The first image contains nodes 1 and 4.
 
 Union reached states with their successors until semantic equivalence holds.
+Minimize each union, saying why: operations return unminimized circuits, and
+the reached set is carried into every later image.
 Projected state counts are 3, 6, 8, 10, 11, 11. Report nodes and pairs too;
 the final two iterations have equal storage sizes. Exact sizes are observed
 implementation results, not a promise about the representation.
@@ -201,12 +203,12 @@ witness; the reachable-set semantics are unchanged.
 
 ### Instances
 
-- [Rust walkthrough](examples/reachability.md) <!-- reviewed: d5ea19577da0a7f1615ee673bfe554dde1bd45b2e55ab78bec1c28bbd456d1d1 -->
-- [Rust program](../examples/reachability.rs) <!-- reviewed: 0888b766b278776e1e14f9102d2a500314d098104cffd82892530a85ce339ee3 -->
-- [Python walkthrough and program](../bindings/python/examples/03_reachability.py) <!-- reviewed: 959d0a9aea4d72b273a51ff60a2124ed1740a3ca0531376773705f423e8755ad -->
-- [Shared directed graph](reachability.svg) <!-- reviewed: b578209ba2f5bf62b32b3ba8100d7efefe03ccb8f10745da60d5af30cda85cdf -->
-- [C reachability](../bindings/c/docs/reachability.rst) <!-- reviewed: 2399b28271eb37b09b22d0955b4fefec4fdd910a5c92cc79f9e9727439ab77b4 -->
-- [C program reachability](../bindings/c/examples/reachability.c) <!-- reviewed: 8bf234fbfbed5a58bf1f034478670ddb75efea33ed66112b311ae91b851699b4 -->
+- [Rust walkthrough](examples/reachability.md) <!-- reviewed: a2fbcb68282354beba9ae510306843d9479cffb65b31eee2da22bfa6cd7ac795 -->
+- [Rust program](../examples/reachability.rs) <!-- reviewed: 907a0302cbadc794d8d9fe6743dfb4b824588552bd734da75cf39d3079f250ae -->
+- [Python walkthrough and program](../bindings/python/examples/03_reachability.py) <!-- reviewed: b2629b1916204112a4814714a701974b0969c5d75faa5a5bf9413fe9fc9daa2d -->
+- [Shared directed graph](reachability.svg) <!-- reviewed: 1ca4b73d89b0d1a06015d9bc9922b5dec95429ba70d2b3f64f246008741ac159 -->
+- [C reachability](../bindings/c/docs/reachability.rst) <!-- reviewed: 87064390b5ee82227931a0eb4a1df51d331d5ed32c011d8079f2ca8eda400775 -->
+- [C program reachability](../bindings/c/examples/reachability.c) <!-- reviewed: 6248156f2a796c38a67798097deeea99622653a1042e2fe930eb2b137746b8ed -->
 
 ## Tables
 
@@ -489,8 +491,8 @@ Do not invent a language counterpart that rebuilds the rule instead of reusing i
 
 A backup rule F=L∨R has three models. The deployment guarantees
 C=(R→L)=¬R∨L. Under this assumption the rule simplifies to L. Build F and C
-on the same two-leaf vtree, restrict a copy of F, extract the result and minimize.
-The example reduces three pairs to one. Compare G∧C with F∧C: equivalent,
+on the same two-leaf vtree and minimize F, since the union does not. Restrict a
+copy of F, extract the result and minimize. The example reduces three pairs to one. Compare G∧C with F∧C: equivalent,
 with two models (local only and both). Compare F and G without C: not equivalent.
 The remote-only assignment (L=false,R=true) satisfies F but not G.
 
@@ -503,8 +505,8 @@ care-set restriction yet.
 
 ### Instances
 
-- [Rust walkthrough](examples/care.md) <!-- reviewed: 780214d27a91687da0e76d6f0485a2eff87265a95e61189621347078d8687d61 -->
-- [Rust program](../examples/care.rs) <!-- reviewed: 5a767f47fd2cbca49113ef21e87f3aa42970510c945b1496d30e46cf3cb8e4c1 -->
+- [Rust walkthrough](examples/care.md) <!-- reviewed: cc3a993e5ec7f5c229c009c6bbe8dfdbb566dc2c7b28f9859b7399d8b108ad09 -->
+- [Rust program](../examples/care.rs) <!-- reviewed: 69180e17226ffdb71884b07735bc5aa1086cf2f3e1bcc09be6e88dedf6623449 -->
 
 ## Keeping values
 

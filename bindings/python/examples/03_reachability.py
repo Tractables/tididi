@@ -44,9 +44,11 @@ reached = at_current[0].copy()
 # %%
 # The second group describes the state after a transition. Each edge
 # contributes one conjunction to the relation; ``or_many`` combines them.
+# Boolean operations return their circuits without minimizing them; the
+# relation is used in every step, so minimize it once.
 next_vars = list(range(nodes + 1, 2 * nodes + 1))
 at_next = [state(vtree, next_vars, node) for node in range(nodes)]
-transition = or_many(at_current[a].copy() & at_next[b].copy() for a, b in edges)
+transition = or_many(at_current[a].copy() & at_next[b].copy() for a, b in edges).minimize()
 print("Transition pairs:", transition.pair_count())
 
 # %%
@@ -78,13 +80,14 @@ print("Combined operation agrees:", combined.equivalent(successors))
 # %%
 # Iterate to a fixed point
 # ----------------------------
-# Keep the states already reached and add their successors. Semantic
-# equivalence tells us when this adds no new states. We count projections
+# Keep the states already reached and add their successors, minimizing the
+# union because it is carried into the next step. Semantic equivalence tells
+# us when this adds no new states. We count projections
 # onto current-state variables, since the next-state variables are free here.
 iteration = 0
 while True:
     successors = image(reached.copy(), transition.copy())
-    enlarged = reached.copy() | successors
+    enlarged = (reached.copy() | successors).minimize()
     iteration += 1
     count = enlarged.projected_model_count(current_vars)
     print(f"Iteration {iteration}: {count} states, "

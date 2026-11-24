@@ -7,7 +7,8 @@ fn main() -> Result<(), tididi::OperationError> {
     let vtree = Arc::new(Vtree::balanced(2));
     let local = literal(&vtree, 1)?;
     let remote = literal(&vtree, 2)?;
-    let rule = local.clone() | remote.clone();
+    let mut rule = local.clone() | remote.clone();
+    rule.minimize()?;
     let care = !remote | local;
     println!("Original backup choices: {}", rule.model_count()?);
 

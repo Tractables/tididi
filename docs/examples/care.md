@@ -19,7 +19,8 @@ Run `cargo run --example care`.
 
 ## Express the rule and the assumption
 
-Build both functions on the same vtree:
+Build both functions on the same vtree. `|` does not minimize its result, so
+minimize the rule; its size is compared with the simplified rule's below:
 
 ```rust,ignore,{class=tested-example}
 use std::sync::Arc;
@@ -28,7 +29,8 @@ use tididi::{literal, Vtree};
 let vtree = Arc::new(Vtree::balanced(2));
 let local = literal(&vtree, 1)?;
 let remote = literal(&vtree, 2)?;
-let rule = local.clone() | remote.clone();
+let mut rule = local.clone() | remote.clone();
+rule.minimize()?;
 let care = !remote | local;
 println!("Original backup choices: {}", rule.model_count()?);
 ```
