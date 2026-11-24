@@ -2199,6 +2199,10 @@ pub(super) fn prune_walk(
         visits.clear();
         eng.limits().reserve_exact(marks, total.saturating_sub(marks.len()))?;
         eng.limits().reserve_exact(visits, levels)?;
+        // Its work is known before it starts: charged and tested here, a
+        // stop it would reach is taken before the walk and its compaction,
+        // which stores the implicit levels it renumbers.
+        eng.limits().poll_host_work(2 * whole_slots as u64)?;
     }
     let mut walk = mark_walk(eng.limits(), tdd, forced, start, marks, visits, bytes)?;
     match start {
@@ -2219,8 +2223,11 @@ pub(super) fn prune_walk(
     // cannot stop partway: it rewrites levels in place, so a diagram
     // abandoned mid-pass has some levels compacted and others still naming
     // their old indices. The marking tests the time between levels; the
-    // work-unit test belongs to the callers, between prunes.
-    eng.limits().charge_work(2 * walk.slots as u64);
+    // work-unit test belongs to the callers, between prunes, but for the
+    // walk from the root, charged before it starts.
+    if !matches!(start, Start::Root) {
+        eng.limits().charge_work(2 * walk.slots as u64);
+    }
     Ok(())
 }
 
