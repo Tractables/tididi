@@ -183,7 +183,7 @@ fn every_route_to_one_function() -> Vec<Tdd> {
 /// pairwise one must end on the same canonical diagram.
 #[test]
 fn listed_twin_searches_reach_the_canonical_diagram() {
-    let eng = crate::test_helpers::canonical_engine();
+    let eng = Engine::new();
     let mut rng = Lcg::new(0x5eed_1157_ed00_0001);
     let before = crate::reduce::contract::tests::listed_searches();
     for &nvars in &[6u32, 8, 10] {
@@ -201,12 +201,10 @@ fn listed_twin_searches_reach_the_canonical_diagram() {
                 .filter(|_| rng.below(3) == 0)
                 .map(VarId)
                 .collect();
-            let at_once = eng
-                .exists_vars(build_by_folding(&eng, &vtree, &clauses), &quantified)
-                .unwrap();
+            let at_once = crate::test_helpers::minimized(&eng, eng.exists_vars(build_by_folding(&eng, &vtree, &clauses), &quantified));
             let mut one_at_a_time = compile_clauses_pairwise(&vtree, &clauses);
             for &x in &quantified {
-                one_at_a_time = eng.exists_var(one_at_a_time, x).unwrap();
+                one_at_a_time = crate::test_helpers::minimized(&eng, eng.exists_var(one_at_a_time, x));
             }
             assert_canonical(&at_once);
             assert_same_shape(

@@ -5,7 +5,7 @@ use crate::test_helpers::assert_canonical;
 
 use crate::build::constant_zero;
 use crate::vtree::Vtree;
-use crate::{or, or_many, OperationError, Tdd};
+use crate::{or, or_many, Engine, OperationError, Tdd};
 
 fn vtree(n: u32) -> Arc<Vtree> {
     Arc::new(Vtree::balanced(n))
@@ -97,12 +97,12 @@ fn operands_must_share_a_vtree() {
     assert!(matches!(or_many([one, other]), Err(OperationError::VtreeMismatch)));
 }
 
-/// A false operand does not short-circuit the two-operand form either: under
-/// `canonical_results` the other operand comes back minimized whichever side
-/// it is on, and two false operands give a minimized false.
+/// A false operand does not short-circuit the two-operand form either: the
+/// other operand's function comes back whichever side it is on, and two
+/// false operands give a certified false.
 #[test]
-fn a_false_operand_leaves_the_other_minimized() {
-    let eng = &crate::test_helpers::canonical_engine();
+fn a_false_operand_gives_the_other() {
+    let eng = &Engine::new();
     let v = vtree(4);
     let zero = constant_zero(eng, &v);
     let raw = crate::apply::apply_and(
@@ -112,8 +112,6 @@ fn a_false_operand_leaves_the_other_minimized() {
     assert!(!raw.levels.is_canonical(raw.output), "the fixture still owes its reduction");
     for (f, g) in [(zero.clone(), raw.clone()), (raw.clone(), zero.clone())] {
         let result = eng.or(f, g).expect("a disjunction");
-        assert_canonical(&result);
-        assert!(result.levels.is_canonical(result.output));
         assert!(result.equivalent(&raw).expect("comparable"));
     }
     let both = eng.or(zero.clone(), zero).expect("a disjunction");

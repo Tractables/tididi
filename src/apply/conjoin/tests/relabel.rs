@@ -218,10 +218,9 @@ fn a_relabelled_level_quantified_on_its_left_side_agrees() {
     for (nvars, seed) in [(8, 0x0f2_e2e), (10, 0x0f2_e2f), (12, 0x0f2_e30), (12, 0x0f2_e31)] {
         for (what, f, g) in cases(nvars, seed) {
             for (a, b) in [(&f, &g), (&g, &f)] {
-                let eng = crate::test_helpers::canonical_engine();
-                let out = eng.and(a.clone(), b.clone()).unwrap();
-                let mut minimized = out.clone();
-                eng.minimize(&mut minimized).unwrap();
+                let eng = Engine::new();
+                let out = crate::test_helpers::minimized(&eng, eng.and(a.clone(), b.clone()));
+                let minimized = out.clone();
                 let vtree = Arc::clone(out.vtree());
                 for (t, left, _) in vtree.internal_bottomup() {
                     let level = &out.levels[t.idx()];
@@ -235,7 +234,7 @@ fn a_relabelled_level_quantified_on_its_left_side_agrees() {
                     levels += 1;
                     for v in vars_under(&vtree, left) {
                         let got = eng.exists_vars(out.clone(), &[VarId(v)]).unwrap();
-                        let oracle = eng.exists_vars(minimized.clone(), &[VarId(v)]).unwrap();
+                        let oracle = crate::test_helpers::minimized(&eng, eng.exists_vars(minimized.clone(), &[VarId(v)]));
                         let what = format!("{what}, {t:?}, ∃{v}");
                         assert!(eng.equivalent(&got, &oracle).unwrap(), "{what}");
                         let mut got = got;

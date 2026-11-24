@@ -56,8 +56,7 @@ impl Engine {
     ///
     /// The complement of a certified operand ([`Tdd::is_canonical`]) is
     /// certified. Of any other operand it is pruned but not contracted: it
-    /// may hold twins; [`minimize`](Self::minimize),
-    /// or an engine with [`canonical_results`](crate::limits::LimitConfig::with_canonical_results),
+    /// may hold twins; [`minimize`](Self::minimize)
     /// certifies it.
     ///
     /// ```
@@ -78,7 +77,7 @@ impl Engine {
     /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn negate<'f>(&self, f: impl Into<Cow<'f, Tdd>>) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        crate::apply::exit::outcome(self, negate_closed(self, f.into()))
+        negate_closed(self, f.into())
     }
 }
 

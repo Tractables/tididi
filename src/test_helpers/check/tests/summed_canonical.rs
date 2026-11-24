@@ -6,7 +6,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
-use crate::test_helpers::{assert_canonical, canonical_engine, compile_clauses_on, rand_cnf, rat, vtree_shapes, CnfShape, Lcg};
+use crate::test_helpers::{assert_canonical, compile_clauses_on, rand_cnf, rat, vtree_shapes, CnfShape, Lcg};
 use crate::vtree::{Home, VarId, Vtree, VtreeIdx};
 use crate::{Engine, Tdd};
 use super::*;
@@ -81,8 +81,11 @@ fn minimize_reaches_canonical_form_on_summed_diagrams() {
     let mut rng = Lcg::new(0x5eed_ca50);
     let (mut cases, mut summed_cases, mut regions, mut certified) = (0, 0, 0, 0);
     while cases < 1200 {
-        let eng = if rng.below(2) == 0 { Engine::new() } else { canonical_engine() };
-        let Some((r, label)) = summed(&mut rng, &eng) else { continue };
+        let (eng, minimize) = (Engine::new(), rng.below(2) != 0);
+        let Some((mut r, label)) = summed(&mut rng, &eng) else { continue };
+        if minimize {
+            eng.minimize(&mut r).unwrap();
+        }
         cases += 1;
         summed_cases += usize::from(r.has_marginal_level());
         regions += usize::from(r.vtree().bottomup().any(|t| r.vtree().node(t).is_region()));

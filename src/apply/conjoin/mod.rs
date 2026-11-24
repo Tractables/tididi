@@ -374,8 +374,7 @@ fn conjoin_recycling(
 /// copied: borrowing costs those levels and a borrowed operand's weight
 /// store, where cloning first copies every level. Owned or borrowed, the
 /// result is the same diagram for the same work. It is correct for counting
-/// but may retain unreachable nodes and twins; [`Tdd::minimize`], or an
-/// engine with [`canonical_results`](crate::limits::LimitConfig::with_canonical_results), certifies it.
+/// but may retain unreachable nodes and twins; [`Tdd::minimize`] certifies it.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -785,7 +784,7 @@ impl crate::Engine {
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn and<'f, 'g>(&self, f: impl Into<Cow<'f, Tdd>>, g: impl Into<Cow<'g, Tdd>>) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        crate::apply::exit::outcome(self, conjoin_either(self, f.into(), g.into()))
+        conjoin_either(self, f.into(), g.into())
     }
 
     /// Run [`Engine::and`], giving both operands back unchanged when it is
@@ -935,7 +934,7 @@ impl crate::Engine {
             self.marginalize_levels(&mut out, targets)?;
         }
         crate::reduce::close_constant(self, &mut out);
-        crate::apply::exit::outcome(self, Ok(out))
+        Ok(out)
     }
 
     /// Conjoin two diagrams and sum out the variables `summable` names.
@@ -982,7 +981,7 @@ impl crate::Engine {
         summable: impl Fn(VarId) -> bool,
     ) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        crate::apply::exit::outcome(self, marginalizing_where(self, f.into(), g.into(), &summable))
+        marginalizing_where(self, f.into(), g.into(), &summable)
     }
 
     /// Count the models of `f ∧ g` without keeping the conjunction.

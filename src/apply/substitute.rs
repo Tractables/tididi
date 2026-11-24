@@ -25,7 +25,7 @@ impl Engine {
         } else {
             self.substitute_with(f, replacements.iter().map(|&(var, diagram)| (var, Replacement::Diagram(diagram))))?
         };
-        super::exit::outcome(self, super::extend::trimmed(self, result))
+        super::extend::trimmed(self, result)
     }
 
     /// Run [`Tdd::rename_vars`](crate::Tdd::rename_vars) using this batch's scratch and resource limits.
@@ -36,13 +36,12 @@ impl Engine {
     /// the output-node cap return [`OperationError::Stopped`],
     /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn rename_vars(&self, f: Tdd, renames: &[(VarId, VarId)]) -> Result<Tdd, OperationError> {
-        let result = self.substitute_with(
+        self.substitute_with(
             f,
             renames
                 .iter()
                 .map(|&(source, target)| (source, Replacement::Literal(Literal::pos(target)))),
-        );
-        super::exit::outcome(self, result)
+        )
     }
 
     /// Validate replacements into one leaf-indexed table and rebuild through the Boolean kernels.

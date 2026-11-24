@@ -116,10 +116,6 @@ typedef struct TididiLimits {
    * Cooperative timeout in seconds; -1 means unlimited. Other values must be finite and nonnegative.
    */
   double timeout_seconds;
-  /**
-   * Whether the operation minimizes its result.
-   */
-  bool canonical_results;
 } TididiLimits;
 
 /**

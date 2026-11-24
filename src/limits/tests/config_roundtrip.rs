@@ -30,7 +30,6 @@ fn distinctive() -> (LimitConfig, Arc<AtomicU32>) {
         })))
         .with_memory_hooks(MemoryHooks::new(|_| {}, || 17, || Some(1 << 40), || {}))
         .with_conjunction_progress(true)
-        .with_canonical_results(true)
         .with_sparse_route(SparseRoute { sparsity: 3, min_grid: 5 });
     (config, calls)
 }
@@ -49,7 +48,6 @@ fn every_setting_survives_install_and_reads_back_through_armed() {
         stop_callback: _,
         memory_hooks: _,
         conjunction_progress: _,
-        canonical_results: _,
         sparse_route: _,
     } = &config;
 
@@ -61,7 +59,6 @@ fn every_setting_survives_install_and_reads_back_through_armed() {
     assert_eq!(back.output_node_cap(), config.output_node_cap());
     assert_eq!(back.stop_rules(), config.stop_rules());
     assert_eq!(back.conjunction_progress_enabled(), config.conjunction_progress_enabled());
-    assert_eq!(back.canonical_results(), config.canonical_results());
     assert_eq!(back.sparse_route(), config.sparse_route());
 
     // The callback and the hooks are closures, so they are compared by effect.

@@ -24,13 +24,14 @@ Breaking changes:
 - No operation minimizes its result by default. Each one ends with its own
   kernel and the close it needs (levels in closed form, a constant on the
   empty projection, the leaves it named true dropped); its documentation
-  says what it returns; `forall_vars` returns a certified canonical result,
-  because it minimizes the projection it complements.
-  `LimitConfig::with_canonical_results(true)` makes the Boolean operations
-  minimize their results, so that each is certified canonical unless it
-  holds a summed-out level; `Engine::and_restoring` of
-  structural operands, and the restructuring operations, `marginalize`,
-  `trim`, model edits, builders and readers do not read it.
+  says whether it sets, keeps or gives up the certificate
+  (`Tdd::is_canonical`); `forall_vars` returns a certified result,
+  because it minimizes the projection it complements. A caller that wants
+  a canonical result asks on the result: `Engine::minimize` (Python
+  `Circuit.minimize`, C `tididi_minimize`), or `Engine::reduce` with a
+  plan for part of the work. No setting minimizes every result, and no
+  query minimizes its intermediates. The C struct `TididiLimits` keeps its
+  0.2.0 layout.
   `Tdd::equivalent`, `Tdd::implies` and
   `Tdd::is_zero` are exact either way; `Tdd::is_one` is exact on a
   minimized diagram.

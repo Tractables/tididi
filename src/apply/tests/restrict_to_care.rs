@@ -1103,14 +1103,14 @@ fn has_implicit(t: &Tdd, p: impl Fn(&crate::diagram::TddLevel) -> bool) -> bool 
 /// marginal on each leaf, and the restriction joins a `care` level of one
 /// node as a spine.
 fn alternating_operands(k: u32) -> (Tdd, Tdd) {
-    let engine = crate::test_helpers::canonical_engine();
+    let engine = Engine::new();
     let vtree = Arc::new(Vtree::linear(2 * k));
-    let same = engine.or(engine.cube(&vtree, [3, 5]).unwrap(), engine.cube(&vtree, [-3, -5]).unwrap()).unwrap();
-    let f = engine.or(engine.cube(&vtree, [1]).unwrap(), same).unwrap();
+    let same = crate::test_helpers::minimized(&engine, engine.or(engine.cube(&vtree, [3, 5]).unwrap(), engine.cube(&vtree, [-3, -5]).unwrap()));
+    let f = crate::test_helpers::minimized(&engine, engine.or(engine.cube(&vtree, [1]).unwrap(), same));
     let evens = (1..=k).map(|i| (2 * i) as i32);
     let all = engine.cube(&vtree, evens.clone()).unwrap();
     let none = engine.cube(&vtree, evens.map(|x| -x)).unwrap();
-    (f, engine.or(all, none).unwrap())
+    (f, crate::test_helpers::minimized(&engine, engine.or(all, none)))
 }
 
 /// The spine join reads the pairs of a `care` level of one node and at most

@@ -150,9 +150,7 @@ minimizing it, so the caller decides when minimization is worth its cost.
 The reached set is carried into every later image, so minimize it after each
 union: [`minimize`](crate::Tdd::minimize) removes nodes the result no longer
 reaches and merges nodes its parents use alike, leaving the smallest circuit
-for this vtree. To have every operation minimize its result instead, set
-[`with_canonical_results`](crate::limits::LimitConfig::with_canonical_results)
-on the limits the operations run under.
+for this vtree.
 
 ```rust,ignore,{class=tested-example}
 let mut iterations = 0;

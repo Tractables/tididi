@@ -51,20 +51,19 @@ fn the_complement_of_a_minimized_operand_is_minimal_once_pruned() {
 }
 
 #[test]
-fn an_uncertified_operand_is_still_reduced_in_full() {
-    let eng = &crate::test_helpers::canonical_engine();
+fn an_uncertified_operands_complement_minimizes_to_the_certified_one() {
+    let eng = &Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let f = Tdd::clause(&vtree, [1, 2]).unwrap();
     let g = Tdd::clause(&vtree, [-2, 3]).unwrap();
     let mut conj = eng.and(f, g).unwrap();
-    // The conjunction is not minimized, so only `canonical_results` certifies its complement.
     conj.levels.forget();
-    let negated = eng.negate(conj.clone()).unwrap();
+    let negated = crate::test_helpers::minimized(eng, eng.negate(conj.clone()));
     let mut minimized = conj;
     eng.minimize(&mut minimized).unwrap();
     let expected = eng.negate(minimized).unwrap();
     assert_same_shape(&negated, &expected, "uncertified operand");
-    assert!(negated.is_canonical(), "a full plan left an uncertified operand's complement uncertified");
+    assert!(negated.is_canonical(), "minimize left an uncertified operand's complement uncertified");
     let pruned = crate::apply::with_plan::negate_with(eng, expected.clone(), ReductionPlan::Contract).unwrap();
     assert_certified_minimal(eng, &pruned, "a contraction-only plan on a certified operand");
 }

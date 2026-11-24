@@ -239,8 +239,7 @@ impl Engine {
     /// over `values` in `t`'s subtree folds each node's models, reading every
     /// model of each node at the value subtree's root (for a count, one
     /// model count of the subtree reads how many it holds). After it, a cube
-    /// is built per code. The result is not minimized; [`minimize`](Self::minimize),
-    /// or an engine with [`canonical_results`](crate::limits::LimitConfig::with_canonical_results),
+    /// is built per code. The result is not minimized; [`minimize`](Self::minimize)
     /// certifies it.
     ///
     /// ```
@@ -402,7 +401,7 @@ impl Engine {
             folds.len(),
         )?;
         drop(folds);
-        Ok(crate::apply::exit::outcome(self, fold.emit(self, &into, &mapped, &codes))?)
+        Ok(fold.emit(self, &into, &mapped, &codes)?)
     }
 }
 

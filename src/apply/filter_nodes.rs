@@ -75,8 +75,7 @@ impl Engine {
     /// not reduced: it stores the nodes its output no longer reaches, among
     /// them the orphans of the removals; [`reduce`](Self::reduce) with
     /// [`ReductionPlan::Prune`](crate::reduce::ReductionPlan::Prune) drops them, and
-    /// [`minimize`](Self::minimize), or an engine with
-    /// [`canonical_results`](crate::limits::LimitConfig::with_canonical_results),
+    /// [`minimize`](Self::minimize)
     /// certifies it.
     ///
     /// # Errors
@@ -104,7 +103,7 @@ impl Engine {
         }
         let mut tdd = assembly.finish(TddNodeId { vtree: root.vtree, local })?;
         self.close(&mut tdd, &[])?;
-        Ok(FilterOutcome::Filtered { tdd: crate::apply::exit::outcome(self, Ok(tdd))?, stats })
+        Ok(FilterOutcome::Filtered { tdd, stats })
     }
 }
 

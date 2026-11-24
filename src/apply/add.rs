@@ -69,10 +69,8 @@ use super::overlay::{ABSENT, LevelOverlay, Overlay, Pieces, Scratch, leaf_index,
 /// Both operands are consumed on success and on error. The result has the
 /// operands' summed-out levels and keeps their weights. Of two satisfiable
 /// operands without a summed-out level it is not minimized;
-/// [`Engine::minimize`], or an engine with
-/// [`canonical_results`](crate::limits::LimitConfig::with_canonical_results), certifies it. With a false
-/// operand or a summed-out level it is minimized, and certified only where
-/// no level is summed out.
+/// [`Engine::minimize`] certifies it. With a false operand or a summed-out
+/// level it is minimized, and certified only where no level is summed out.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -136,7 +134,7 @@ impl Engine {
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn add(&self, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        crate::apply::exit::outcome(self, add_on(self, f, g))
+        add_on(self, f, g)
     }
 }
 

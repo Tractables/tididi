@@ -796,7 +796,7 @@ impl Engine {
     /// 32-bit index, and the engine's refusals ([`OperationError::Stopped`],
     /// [`OperationError::OverBudget`]). A refusal consumes `f`.
     pub fn and_in_place(&self, f: Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
-        crate::apply::exit::outcome(self, and_in_place_on(self, f, g, true))
+        and_in_place_on(self, f, g, true)
     }
 
     /// [`Engine::and_in_place`] without the prune: a node of `f` the
@@ -827,7 +827,7 @@ impl Engine {
     ///
     /// Those of [`Engine::and_in_place`].
     pub fn and_in_place_loose(&self, f: Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
-        crate::apply::exit::outcome(self, and_in_place_on(self, f, g, false))
+        and_in_place_on(self, f, g, false)
     }
 
     /// `f` conjoined with a cube, the conjunction of `literals`, in `f`'s
@@ -861,7 +861,7 @@ impl Engine {
         >,
     ) -> Result<Tdd, OperationError> {
         let cube = self.cube(f.vtree(), literals)?;
-        crate::apply::exit::outcome(self, and_in_place_on(self, f, &cube, true))
+        and_in_place_on(self, f, &cube, true)
     }
 }
 

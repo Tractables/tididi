@@ -275,7 +275,7 @@ fn check<M: FoldMonoid<Value = u64>>(
     let got = eng
         .prefix_fold(&a, &b, &order, &value_vars, range, monoid, coding)
         .unwrap();
-    crate::apply::tests::exit::check_unminimized(&got, what);
+    check_unminimized(&got, what);
     let want = expected(points, values, range, monoid);
     let rank = given.into_inner();
     assert_eq!(
@@ -1118,4 +1118,20 @@ fn every_refused_reserve_of_a_fold_leaves_the_operands() {
         }
     }
     assert!(refused > 0, "no fold refused");
+}
+
+/// The invariants every stored node holds after any operation, minimized or
+/// not; trimmed on a home only.
+fn check_unminimized(f: &Tdd, label: &str) {
+    use crate::test_helpers::check::{check_implicit_levels, check_no_false_nodes, check_trimmed};
+    let on_home = f.vtree().home().is_some() || f.vtree().is_home();
+    for (checker, r) in [
+        ("trimmed", if on_home { check_trimmed(f, false) } else { Ok(()) }),
+        ("no_false_nodes", check_no_false_nodes(f)),
+        ("implicit levels", check_implicit_levels(f)),
+    ] {
+        if let Err(e) = r {
+            panic!("{label}: {checker}: {e}");
+        }
+    }
 }

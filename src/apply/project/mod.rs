@@ -91,7 +91,7 @@ impl crate::Engine {
     /// The rewrite checks allocation and cancellation while regrouping nodes. Its
     /// output cap counts emitted intermediate nodes, including the final root union.
     pub fn exists_var(&self, f: Tdd, x: VarId) -> Result<Tdd, OperationError> {
-        crate::apply::exit::outcome(self, exists_vars_on(self, f, &[x], None, true))
+        exists_vars_on(self, f, &[x], None, true)
     }
 
     /// Run [`Tdd::exists_vars`](crate::Tdd::exists_vars) using this batch's scratch and resource limits.
@@ -102,7 +102,7 @@ impl crate::Engine {
     /// the output-node cap return [`OperationError::Stopped`],
     /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn exists_vars(&self, f: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
-        crate::apply::exit::outcome(self, exists_vars_on(self, f, vars, None, true))
+        exists_vars_on(self, f, vars, None, true)
     }
 
     /// [`exists_vars`](Self::exists_vars) ending with the reduction `plan`,
@@ -117,7 +117,7 @@ impl crate::Engine {
     ///
     /// As [`exists_vars`](Self::exists_vars).
     pub fn exists_vars_with(&self, f: Tdd, vars: &[VarId], plan: ReductionPlan<'_>) -> Result<Tdd, OperationError> {
-        crate::apply::exit::outcome(self, exists_vars_on(self, f, vars, Some(plan), true))
+        exists_vars_on(self, f, vars, Some(plan), true)
     }
 
     /// Run [`Tdd::forall_vars`](crate::Tdd::forall_vars) using this batch's scratch and resource limits.
@@ -130,7 +130,7 @@ impl crate::Engine {
     pub fn forall_vars(&self, f: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
         if quantification_targets(self, f.vtree(), vars)?.is_empty() {
-            return crate::apply::exit::outcome(self, Ok(f));
+            return Ok(f);
         }
         // The complement of false is the constant, on no leaf on a home.
         if f.is_zero() {
@@ -142,6 +142,6 @@ impl crate::Engine {
         // The complement's reduction can leave a target's leaf.
         let targets = quantification_targets(self, complement.vtree(), vars)?;
         let projected = exists_targets_on(self, complement, &targets, Some(ReductionPlan::default()))?;
-        crate::apply::exit::outcome(self, negate_closed(self, std::borrow::Cow::Owned(projected)))
+        negate_closed(self, std::borrow::Cow::Owned(projected))
     }
 }

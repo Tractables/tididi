@@ -111,15 +111,6 @@ impl RestrictionOutcome {
             RestrictionOutcome::Unsatisfiable(f) => RestrictionOutcome::Unsatisfiable(trimmed(eng, f)?),
         })
     }
-
-    fn exit(self, eng: &Engine) -> Result<Self, OperationError> {
-        use crate::apply::exit::outcome;
-        Ok(match self {
-            RestrictionOutcome::Unchanged(f) => RestrictionOutcome::Unchanged(outcome(eng, Ok(f))?),
-            RestrictionOutcome::Shrunk(f) => RestrictionOutcome::Shrunk(outcome(eng, Ok(f))?),
-            RestrictionOutcome::Unsatisfiable(f) => RestrictionOutcome::Unsatisfiable(outcome(eng, Ok(f))?),
-        })
-    }
 }
 
 /// Restrict a non-false `f` to `care`.
@@ -174,13 +165,12 @@ impl crate::Engine {
     /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn restrict_to_care(&self, f: Tdd, care: &Tdd) -> Result<RestrictionOutcome, OperationError> {
         let _op = self.limits().enter()?;
-        let outcome = if crate::apply::extend::needed([&f, care]) {
-            restrict_across(self, f, care)?
+        if crate::apply::extend::needed([&f, care]) {
+            restrict_across(self, f, care)
         } else if f.is_zero() {
-            RestrictionOutcome::Unchanged(f)
+            Ok(RestrictionOutcome::Unchanged(f))
         } else {
-            restrict_prepared(self, f, care)?.trimmed(self)?
-        };
-        outcome.exit(self)
+            restrict_prepared(self, f, care)?.trimmed(self)
+        }
     }
 }

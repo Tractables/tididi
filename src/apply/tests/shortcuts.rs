@@ -111,15 +111,15 @@ fn empty_replacement_maps_still_reject_discarded_structure() {
 }
 
 #[test]
-fn composition_minimizes_nonminimal_operands_on_identity_paths() {
-    let eng = crate::test_helpers::canonical_engine();
+fn composition_of_nonminimal_operands_on_identity_paths_minimizes_to_canonical() {
+    let eng = Engine::new();
     let tree = Arc::new(Vtree::balanced(4));
     let f = with_unreachable_twin(eng.clause(&tree, [1, 3]).unwrap());
     let mut zero = f.clone();
     zero.output.local = crate::diagram::ZERO;
     for vars in [vec![], vec![VarId(1)]] {
         for input in [&f, &zero] {
-            let result = eng.and_exists(input.clone(), input.clone(), &vars).unwrap();
+            let result = crate::test_helpers::minimized(&eng, eng.and_exists(input.clone(), input.clone(), &vars));
             assert_canonical(&result);
             let expected = eng.exists_vars(input.clone(), &vars).unwrap();
             assert!(eng.equivalent(&result, &expected).unwrap());
@@ -127,7 +127,7 @@ fn composition_minimizes_nonminimal_operands_on_identity_paths() {
     }
     for condition in [eng.zero(&tree), eng.one(&tree), f.clone()] {
         for otherwise in [zero.clone(), f.clone()] {
-            let result = eng.ite(condition.clone(), f.clone(), otherwise.clone()).unwrap();
+            let result = crate::test_helpers::minimized(&eng, eng.ite(condition.clone(), f.clone(), otherwise.clone()));
             assert_canonical(&result);
             for row in 0..16 {
                 let assignment: Vec<_> = (0..4).map(|v| row & (1 << v) != 0).collect();

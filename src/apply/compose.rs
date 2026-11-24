@@ -44,8 +44,7 @@ impl SharedCircuit {
 /// Uses the shared vtree's execution context automatically.
 ///
 /// Both operands are consumed, must be structural, and must share a vtree
-/// allocation. The result is not minimized; [`Engine::minimize`], or an
-/// engine with [`canonical_results`](crate::limits::LimitConfig::with_canonical_results), certifies it. Weight
+/// allocation. The result is not minimized; [`Engine::minimize`] certifies it. Weight
 /// handling and intermediate storage follow [`ite`](crate::ite).
 ///
 /// # Errors
@@ -74,8 +73,7 @@ pub fn xor(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
 /// must be structural, on one vtree or on projections of one home, with
 /// compatible weights;
 /// an unweighted operand inherits the agreed weights. The result is not
-/// minimized; [`Engine::minimize`], or an engine with
-/// [`canonical_results`](crate::limits::LimitConfig::with_canonical_results), certifies it.
+/// minimized; [`Engine::minimize`] certifies it.
 /// Branches that hold the same levels, as a clone does, are the exception:
 /// the result is `then_branch` minimized, and no product is built.
 ///
@@ -142,8 +140,7 @@ impl Quantification {
 /// Uses the shared vtree's execution context automatically.
 ///
 /// Both operands are structural and consumed; the result keeps their shared
-/// vtree and agreed weights. It is not minimized; [`Engine::minimize`], or
-/// an engine with [`canonical_results`](crate::limits::LimitConfig::with_canonical_results), certifies it. Quantified variables remain
+/// vtree and agreed weights. It is not minimized; [`Engine::minimize`] certifies it. Quantified variables remain
 /// free in that universe, as in [`Tdd::exists_vars`]. Summing counts with
 /// [`Engine::and_marginalizing`] is a different operation.
 ///
@@ -201,12 +198,12 @@ impl Engine {
         let mut then_branch = then_branch;
         if std::sync::Arc::ptr_eq(then_branch.vtree(), else_branch.vtree()) && then_branch.same_levels(&else_branch) {
             let minimized = self.minimize(&mut then_branch).map(|()| then_branch);
-            return super::exit::outcome(self, minimized.and_then(|f| super::extend::trimmed(self, f)));
+            return minimized.and_then(|f| super::extend::trimmed(self, f));
         }
         let mut condition = SharedCircuit::new(condition, 2);
         let yes = super::conjoin::conjoin_either(self, condition.take(self)?.into(), then_branch.into())?;
         let no = overlay_reduced(self, Overlay::AndNot, else_branch, condition.take(self)?)?;
-        super::exit::outcome(self, overlay_on(self, Overlay::Or, yes, no))
+        overlay_on(self, Overlay::Or, yes, no)
     }
 
     /// Run [`xor`] using this batch's scratch and resource limits.
@@ -224,7 +221,7 @@ impl Engine {
         let mut g = SharedCircuit::new(g, 2);
         let only_f = overlay_reduced(self, Overlay::AndNot, f.take(self)?, g.take(self)?)?;
         let only_g = overlay_reduced(self, Overlay::AndNot, g.take(self)?, f.take(self)?)?;
-        super::exit::outcome(self, overlay_on(self, Overlay::Or, only_f, only_g))
+        overlay_on(self, Overlay::Or, only_f, only_g)
     }
 
     /// Run [`and_exists`] using this batch's scratch and resource limits,
@@ -267,9 +264,9 @@ impl Engine {
         // The product's close can leave a target's leaf.
         let targets = super::project::quantification_targets(self, product.vtree(), vars)?;
         if targets.is_empty() || product.is_zero() {
-            return super::exit::outcome(self, super::extend::trimmed(self, product));
+            return super::extend::trimmed(self, product);
         }
-        super::exit::outcome(self, super::extend::trimmed(self, super::project::exists_targets_on(self, product, &targets, None)?))
+        super::extend::trimmed(self, super::project::exists_targets_on(self, product, &targets, None)?)
     }
 }
 

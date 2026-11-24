@@ -148,7 +148,6 @@ pub struct LimitConfig {
     stop_callback: Option<StopCallback>,
     memory_hooks: MemoryHooks,
     conjunction_progress: bool,
-    canonical_results: bool,
     sparse_route: SparseRoute,
 }
 
@@ -287,29 +286,6 @@ impl LimitConfig {
         self
     }
 
-    /// Make the operations of [`apply`](crate::apply) minimize their results
-    /// (the Boolean combinations from `and` to `ite`, `add`, the clause and
-    /// cube conjunctions, negation, conditioning, quantification,
-    /// substitution and renaming, `restrict_to_care`, `filter_nodes`,
-    /// `prefix_fold` and `clause`), so that each is certified canonical
-    /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical)) unless it holds a
-    /// summed-out level.
-    /// [`Engine::and_restoring`](crate::Engine::and_restoring) reads it only
-    /// for an operand with a summed-out level. No operation outside that
-    /// module reads it: `marginalize`, `trim`, model edits, `transport` and
-    /// the other restructuring operations, builders and readers return what
-    /// their rustdoc says. A query built on these operations (`implies`,
-    /// `projected_model_count`, `and_model_count` of weighted operands)
-    /// minimizes its intermediate diagrams under the setting. Off by
-    /// default: an operation then returns what its rustdoc says, often
-    /// uncertified, and a caller that needs the canonical form calls
-    /// [`Engine::minimize`](crate::Engine::minimize).
-    #[must_use]
-    pub fn with_canonical_results(mut self, on: bool) -> LimitConfig {
-        self.canonical_results = on;
-        self
-    }
-
     /// Set when conjunction levels take the sparse route.
     #[must_use]
     pub fn with_sparse_route(mut self, route: SparseRoute) -> LimitConfig {
@@ -370,15 +346,6 @@ impl LimitConfig {
         self.conjunction_progress
     }
 
-    /// Whether the operations
-    /// [`with_canonical_results`](Self::with_canonical_results) names
-    /// minimize their results.
-    #[must_use]
-    #[inline]
-    pub fn canonical_results(&self) -> bool {
-        self.canonical_results
-    }
-
     /// When conjunction levels take the sparse route.
     #[must_use]
     #[inline]
@@ -413,7 +380,6 @@ pub struct Limits {
     output_node_cap: Cell<Option<u64>>,
     bounded_growth: Cell<bool>,
     conjunction_progress: Cell<bool>,
-    canonical_results: Cell<bool>,
     conjunction: Cell<Option<ConjunctionProgress>>,
     sparse_route: Cell<SparseRoute>,
     memory_hooks: RefCell<MemoryHooks>,
@@ -482,7 +448,6 @@ impl Limits {
             output_node_cap: Cell::new(None),
             bounded_growth: Cell::new(false),
             conjunction_progress: Cell::new(false),
-            canonical_results: Cell::new(false),
             conjunction: Cell::new(None),
             sparse_route: Cell::new(SparseRoute::DEFAULT),
             memory_hooks: RefCell::new(MemoryHooks::NONE),
@@ -507,13 +472,6 @@ impl Limits {
     }
 
 
-    /// Whether the `apply` operations minimize their results; read by
-    /// [`crate::apply::exit::outcome`] alone.
-    #[inline]
-    pub(crate) fn canonical_results(&self) -> bool {
-        self.canonical_results.get()
-    }
-
     /// When conjunction levels take the sparse route.
     #[inline]
     pub(crate) fn sparse_route(&self) -> SparseRoute {
@@ -530,7 +488,6 @@ impl Limits {
             stop_callback: self.stop_callback.borrow().clone(),
             memory_hooks: self.memory_hooks.borrow().clone(),
             conjunction_progress: self.conjunction_progress.get(),
-            canonical_results: self.canonical_results.get(),
             sparse_route: self.sparse_route.get(),
         }
     }
@@ -576,7 +533,6 @@ impl Limits {
         self.clock.set(poll::ClockReading::NONE);
         self.stop_callback.replace(set.stop_callback);
         self.conjunction_progress.set(set.conjunction_progress);
-        self.canonical_results.set(set.canonical_results);
         self.sparse_route.set(set.sparse_route);
         self.hooked.set(!set.memory_hooks.is_none());
         self.memory_hooks.replace(set.memory_hooks);

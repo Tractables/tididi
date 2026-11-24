@@ -1,5 +1,6 @@
 //! What a test needs from crate-private state and the library does not run:
-//! infallible fixture builders, an engine that stops at once, whole-tree
+//! infallible fixture builders, an engine that stops at once, a minimized
+//! result, whole-tree
 //! vtree rotations, re-homing a diagram at a child of its root, storage
 //! equality, and the count of the ways the care restriction's walk took.
 
@@ -63,13 +64,13 @@ pub(crate) fn stopping_engine() -> Engine {
     engine
 }
 
-/// A fresh engine whose operations certify their results
-/// (`canonical_results`), for tests that compare a result with a minimized one.
+/// An operation's result, then `minimize`: for tests that compare a result
+/// with a canonical one.
 #[must_use]
-pub(crate) fn canonical_engine() -> Engine {
-    let engine = Engine::new();
-    let _prior = engine.limits().install(LimitConfig::none().with_canonical_results(true));
-    engine
+pub(crate) fn minimized(engine: &Engine, r: Result<Tdd, crate::OperationError>) -> Tdd {
+    let mut f = r.unwrap();
+    engine.minimize(&mut f).unwrap();
+    f
 }
 
 /// Left-rotate the vtree at node `v`, promoting `v`'s right child, and repair

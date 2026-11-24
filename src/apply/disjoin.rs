@@ -122,8 +122,7 @@ fn collect_operands(operands: impl IntoIterator<Item = Tdd>) -> Result<Vec<Tdd>,
 /// Uses the shared vtree's execution context automatically.
 ///
 /// Both operands are consumed on success and on error. The result is not minimized:
-/// it may hold twins and nodes its output does not reach; [`Engine::minimize`],
-/// or an engine with [`canonical_results`](crate::limits::LimitConfig::with_canonical_results),
+/// it may hold twins and nodes its output does not reach; [`Engine::minimize`]
 /// certifies it.
 /// Weight compatibility and inheritance follow [`and`](crate::and).
 ///
@@ -165,8 +164,7 @@ pub fn or(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
 /// is complemented; intermediate sizes depend on the operands and their grouping.
 ///
 /// All operands are consumed. The result is not minimized:
-/// it may hold twins and nodes its output does not reach; [`Engine::minimize`],
-/// or an engine with [`canonical_results`](crate::limits::LimitConfig::with_canonical_results),
+/// it may hold twins and nodes its output does not reach; [`Engine::minimize`]
 /// certifies it. A false operand is
 /// dropped after checking weight compatibility; if every operand is false,
 /// so is the result. The result retains the agreed weights, as in [`or`].
@@ -205,8 +203,7 @@ pub fn or_many(operands: impl IntoIterator<Item = Tdd>) -> Result<Tdd, Operation
 /// operand and conjoins them in a balanced tree.
 ///
 /// All operands are consumed and must share a vtree. The result is not minimized:
-/// it may hold twins and nodes its output does not reach; [`Engine::minimize`],
-/// or an engine with [`canonical_results`](crate::limits::LimitConfig::with_canonical_results),
+/// it may hold twins and nodes its output does not reach; [`Engine::minimize`]
 /// certifies it.
 /// A false operand is dropped, its complement being the constant true; if
 /// every operand is false, the result is the constant true. Weight compatibility
@@ -253,11 +250,11 @@ impl crate::Engine {
         if live.is_empty() {
             // Every operand is false, so every complement is true.
             let f = a_false_one.ok_or(OperationError::EmptyOperands)?;
-            return crate::apply::exit::outcome(self, crate::apply::extend::trimmed(self, crate::build::constant_like(self, &f, true)?));
+            return crate::apply::extend::trimmed(self, crate::build::constant_like(self, &f, true)?);
         }
         if let [_] = live.as_slice() {
             let lone = live.pop().expect("one operand");
-            return crate::apply::exit::outcome(self, negate_closed(self, std::borrow::Cow::Owned(lone)));
+            return negate_closed(self, std::borrow::Cow::Owned(lone));
         }
         let complements = complements_of(self, live)?;
         let bytes = complements.charged_bytes();
@@ -271,7 +268,7 @@ impl crate::Engine {
         if result.is_zero() {
             crate::reduce::prune::clear_false(&mut result);
         }
-        crate::apply::exit::outcome(self, crate::apply::extend::trimmed(self, result))
+        crate::apply::extend::trimmed(self, result)
     }
 
     /// Run [`or`] using this batch's scratch and resource limits.
@@ -282,7 +279,7 @@ impl crate::Engine {
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn or(&self, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        crate::apply::exit::outcome(self, overlay_on(self, Overlay::Or, f, g))
+        overlay_on(self, Overlay::Or, f, g)
     }
 
     /// Run [`or_many`] using this batch's scratch and resource limits.
@@ -297,7 +294,7 @@ impl crate::Engine {
         for f in &operands { f.require_structure()?; }
         let operands = crate::apply::extend::on_one(self, operands.into_iter().map(Cow::Owned).collect::<Vec<_>>())?;
         let operands = operands.into_iter().map(Cow::into_owned).collect();
-        crate::apply::exit::outcome(self, crate::apply::extend::trimmed(self, disjoin_many_on(self, operands)?))
+        crate::apply::extend::trimmed(self, disjoin_many_on(self, operands)?)
     }
 }
 
