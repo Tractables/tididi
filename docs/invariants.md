@@ -45,9 +45,9 @@ operation.
 
 | # | Statement | Kept by | Decided by |
 |---|---|---|---|
-| 13 | Storage agrees with the vtree: one level per vtree node, at the node's index; a leaf level stores no node; every pair side names a slot of the child level (a label at a leaf, a node below the level's slot count, a value at a summed-out child); the output is a node of the root level or the false sentinel, and on the vtree with no node the false or the true sentinel. | every producer; [`TddBuilder::finish`] and the readers in [`io`] check it in every build profile | `test_helpers::check::validate_vtree_structure` (the output, empty leaf levels, pair sides in range); the level count only by the storage check of [`TddBuilder::finish`] |
-| 1 | Determinism: distinct nodes of a structural level denote disjoint sets of assignments. So a pair of child nodes belongs to at most one node of its level and occurs once in it, and a node's count is the sum over its pairs of the product of the two child counts. | apply's emit; projection's owner-set regroup. [`TddBuilder::finish`] and the readers refuse a diagram that breaks it at a level with no summed-out level under it (see below), and leave the levels above one to the author | `test_helpers::check::check_determinism` on small diagrams; the repeated-pair check of [`TddBuilder::finish`] (see below) |
-| 14 | Leaf form: a structural level names a leaf child that is not summed out in one form, as `One` in every stored pair or as a literal in every stored pair. It is the leaf case of item 1: `One` overlaps both literals. | the three writers of `One` (leaf twin contraction, conditioning, quantification) rewrite a whole side of a level or none of it | [`TddBuilder::finish`]; `test_helpers::check::assert_no_mixed_leaf_side`; `check_determinism` |
+| 13 | Storage agrees with the vtree: one level per vtree node, at the node's index; a leaf level stores no node; every pair side names a slot of the child level (a label at a leaf, a node below the level's slot count, a value at a summed-out child); the output is a node of the root level or the false sentinel, and on the vtree with no node the false or the true sentinel. | every producer; [`TddBuilder::finish`] and the readers in [`io`] check it in every build profile | `test_helpers::check::validate_vtree_structure` (the output, empty leaf levels, pair sides in range); `diagram::check_stored`, the storage check of [`TddBuilder::finish`] on any diagram, the level count included |
+| 1 | Determinism: distinct nodes of a structural level denote disjoint sets of assignments. So a pair of child nodes belongs to at most one node of its level and occurs once in it, and a node's count is the sum over its pairs of the product of the two child counts. | apply's emit; projection's owner-set regroup. [`TddBuilder::finish`] and the readers refuse a diagram that breaks it at a level with no summed-out level under it (see below), and leave the levels above one to the author | `test_helpers::check::check_determinism` on small diagrams; the repeated-pair check of [`TddBuilder::finish`] (see below), which `diagram::check_stored` runs on any diagram |
+| 14 | Leaf form: a structural level names a leaf child that is not summed out in one form, as `One` in every stored pair or as a literal in every stored pair. It is the leaf case of item 1: `One` overlaps both literals. | the three writers of `One` (leaf twin contraction, conditioning, quantification) rewrite a whole side of a level or none of it | [`TddBuilder::finish`] and `diagram::check_stored`; `test_helpers::check::assert_no_mixed_leaf_side`; `check_determinism` |
 | 2 | No false node: every stored node of a structural level holds a pair, and no pair names the false sentinel, so every stored node is satisfiable. False is the output sentinel only, and a false diagram stores no node. | checked builder; apply's emit; conditioning's falsity sweep. Broken by conditioning's leaf rewrite, within one call | `test_helpers::check::check_no_false_nodes` |
 | 3 | Distinct functions, with no summed-out level: no two stored nodes of a level denote the same function, so no two have equal pair sets. It follows from items 1 and 2: equal and disjoint, the function would be false. | items 1 and 2 | `test_helpers::check::check_distinct_functions` (random signatures) |
 | 15 | Projection form, on a home: no stored pair names a variable leaf `One`, and the output of a one-leaf diagram is a literal; a constant is on the home's projection with no node ([`Vtree::empty_projection`]), and only a constant is. So every leaf of the vtree is named by a literal in every pair of its parent level, and the vtree is the home's projection on those variables. | the close that ends every operation drops the leaves a pass named `One` (`reduce::settle`); [`TddBuilder::finish`] and the readers trim ([`Tdd::trim`]), a diagram with a summed-out level included. `finish` returns a diagram as built when the trim would have to rebuild a summed-out variable leaf, and this item can then fail | `test_helpers::check::check_trimmed` |
@@ -76,12 +76,17 @@ level under it. It decides determinism of the stored circuit, not that the
 circuit is the function its author meant.
 
 **What item 15 excludes.** On a plain root a level can pass a child through:
-every pair names true on one side, which is `One` at a leaf and a node whose
-pairs name `One` on both sides above the leaves. On a home no pair names
-`One`, so no such level or node is stored. A node can still denote every
-assignment of its variables through literals, as `{(Pos, Pos), (Pos, Neg),
-(Neg, Pos), (Neg, Neg)}` does, until a reduction contracts its leaf twins;
-only a certified diagram is free of them (item 21).
+every pair names true on one side, which is `One` at a leaf and, above the
+leaves, a node whose pairs reach the leaves only through `One`. On a home no
+pair names `One`, so item 15 excludes every pass-through spelled with `One`.
+It does not exclude a node that denotes every assignment of its variables
+through literals, as `{(Pos, Pos), (Pos, Neg), (Neg, Pos), (Neg, Neg)}` does,
+nor a leaf read alike through both literals. Such a node is the only node of
+its level (item 1), so its parent level passes only its other child through.
+Item 15 together with "no node denotes every assignment of its variables"
+(item 21) excludes every pass-through, internal sides included; only a
+certified diagram is bound by item 21, and an uncertified result can hold
+such a node until a reduction contracts its leaf twins.
 
 ## A certified diagram
 
@@ -93,8 +98,8 @@ diagrams with no summed-out level.
 |---|---|---|---|
 | 4 | Reachability: the output reaches every stored node. The root level holds the output alone. | the prune | `test_helpers::check::check_canonicity` (rule 1); `check_certified` |
 | 19 | No twins: no two nodes of a structural level are named at the same set of places. | twin contraction, which replaces twins by their union | `check_canonicity` (rule 2) |
-| 20 | No contractible leaf side: no level names a variable leaf by literals with every node holding `(Pos, b)` exactly when it holds `(Neg, b)`. Such a leaf is one the function does not read. | leaf twin contraction, which on a plain root rewrites the side to `One` and on a home drops the leaf | `check_canonicity` (rule 3); `check_certified`; on a home `check_trimmed` |
-| 21 | Support, on a home: the variables at the leaves are the [support](crate::Tdd::support) of the function. So the vtree is the home's projection on the support, and its internal nodes are exactly the home's nodes with a support variable under each child: the function depends on both sides of every vtree node that has a level, and of no other home node. No node denotes every assignment of its variables. | items 15 and 20 (proof below) | `check_trimmed` with `minimized` |
+| 20 | No contractible leaf side: no level names a variable leaf by literals with every node holding `(Pos, b)` exactly when it holds `(Neg, b)`. Such a leaf is one the function does not read. | leaf twin contraction, which on a plain root rewrites the side to `One` and on a home drops the leaf | `check_canonicity` (rule 3); `check_certified`; on a home `check_trimmed`; on a plain root, at the leaves, `test_helpers::check::check_padded_support` (a leaf is named `One` exactly when its variable is outside the support) |
+| 21 | Support, on a home: the variables at the leaves are the [support](crate::Tdd::support) of the function. So the vtree is the home's projection on the support, and its internal nodes are exactly the home's nodes with a support variable under each child: the function depends on both sides of every vtree node that has a level, and of no other home node. No node denotes every assignment of its variables. | items 15 and 20 (proof below) | `check_trimmed` with `minimized` (the leaves); `test_helpers::check::check_no_true_node` (no node denotes every assignment) |
 
 **Uniqueness.** Two certified diagrams on one plain root, or on projections
 of one home, denote the same function over the root's or the home's
@@ -143,8 +148,9 @@ of `⟦b⟧ × C(n)` over the places `(n, b)` of `m`. Going down from the root:
 **Who sets the certificate.** [`Tdd::minimize`], and [`Tdd::reduce`] with a
 full [`ReductionPlan`], certify a diagram with no summed-out level. Constants
 and literals are built certified. Every other operation states in its
-documentation whether it keeps the certificate of certified operands or
-gives it up; a result without it may be canonical, unknown to the library. A
+documentation whether it sets the certificate, keeps that of certified
+operands or gives it up; a result without it may be canonical, unknown to the
+library. A
 write to any level forgets the certificate. `minimize` returns at once on a
 certified diagram whose worklists are empty.
 
@@ -178,7 +184,7 @@ What changes:
 
 | # | Statement | Kept by | Decided by |
 |---|---|---|---|
-| 5 | Marginality is permanent and downward-closed: a summed-out level never becomes structural, and the levels below it are summed out or leaves whose contribution is absorbed. | [`Tdd::marginalize_levels`] | [`reduce`]'s demarginalization guard |
+| 5 | Marginality is permanent and downward-closed: a summed-out level never becomes structural, and the levels below it are summed out or leaves whose contribution is absorbed. | [`Tdd::marginalize_levels`] | `diagram::check_stored` (downward closure); [`reduce`]'s demarginalization guard |
 | 22 | Regions, on a home: a summed-out level stands only at a region or a variable leaf, and every region holds one. | [`Tdd::marginalize`]; [`Tdd::trim`]; [`TddBuilder::finish`], which makes a region of each internal summed-out level that is not under another (with the exception of item 15) | `check_trimmed` |
 | 23 | Extents, on a home: the extents of the regions are pairwise disjoint and hold no variable that is at a leaf. | [`Tdd::marginalize`]; the conjunction refuses an operand with a variable leaf inside the other operand's extent | `check_trimmed` |
 | 6 | Every reference into a summed-out child decodes through [`ChildDecoder`]; no site outside `diagram/` reads the raw bits. | the marginal-reference encoding | review |
@@ -202,27 +208,27 @@ the pass that establishes them, and together at the end of a full reduction:
 | Entry | Checks | Run by |
 |---|---|---|
 | `test_helpers::assert_canonical` | `check_all_fast` and `check_certified`; item 11 on a diagram with a summed-out level | every test and documentation example that produces a diagram |
-| `check::check_all_fast` | items 13, 2 and 16; on a home 15, 17, 22, 23, and 21 when certified; when certified 4, 19, 20; with no summed-out level 3 | `assert_canonical`; the operation tests, after each operation |
+| `check::check_all_fast` | items 13, 14, 5's downward closure and 1 at every level with no summed-out level under it (`diagram::check_stored`); 2 and 16; on a home 15, 17, 22, 23, and when certified 21 (`check_trimmed`, `check_no_true_node`); on a plain root, when certified, 20 at the leaves (`check_padded_support`); when certified 4, 19, 20; with no summed-out level 3 | `assert_canonical`; the operation tests, after each operation |
+| `diagram::check_stored` | the checks of [`TddBuilder::finish`] with the repeated-pair check and the diagram's weights: items 13, 14, 5's downward closure, and 1 as no repeated pair | `check_all_fast` |
 | `check::check_certified` | on a certified diagram items 4, 19, 20, and that a copy with every level put back on the worklists minimizes to as many nodes and pairs (item 18) | `assert_canonical` |
 | `check::check_canonicity` | items 4, 19, 20, then 3, or 7 to 10, 24 and 12 on a diagram with a summed-out level | `check_all_fast` on a certified diagram; `test_helpers::assert_marginal_canonical` after `minimize` |
 | `check::check_determinism` | items 1 and 14 by pairwise conjunction; diagrams of a few variables with no summed-out level | the operation tests on small inputs; the randomized differential suite |
 | `check::check_trimmed` | item 15; on a home 22 and 23; 17; on a certified diagram 4 and 20; with its `minimized` argument and no summed-out level 21 | `check_all_fast` on a home; the tests of the trim, the close, the moves and the readers |
+| `check::check_no_true_node` | the last sentence of item 21: no node of an internal level over at most 126 variables denotes every assignment of them; no summed-out level | `check_all_fast` on a certified diagram on a home; the producer audit after `minimize` |
+| `check::check_padded_support` | on a plain root with no summed-out level, a leaf is named `One` exactly when its variable is outside the support: item 20 at the leaves, and step 4 of the proof | `check_all_fast` on a certified diagram on a plain root; the C and Python producer tests after `minimize` |
 | `check::check_loose_levels` | item 17 | `check_trimmed`; the conjunction tests |
 | `check::marginal` | items 7 to 12 and 24, one function each; `check_marginal_canonical_form` runs 7 to 10 and 24 | the tests of marginalization and of each reduction pass |
 | the tests `reduce::tests::canonicity` and `test_helpers::check::tests::same_function_same_diagram` | uniqueness: one function reached by several routes minimizes to one diagram; `reduce::tests::close` compares a minimized result on a home with a rebuild on the support | the test suite |
+| the producer audit, `diagram::tdd::tests::audit_i1` | `check_all_fast` on the result of every public producer on projections of a home, then item 21 (`check_trimmed` with `minimized`, `check_no_true_node`) after `minimize` | the test suite |
 | debug assertions | item 16 at every close; item 4, and on a home item 20, where a certificate is set; item 8 after each fusion sweep; item 11 in the slot prune | every debug build |
 
 What the checkers leave open:
 
-- Item 1 is decided in full only on diagrams of a few variables
-  (`check_determinism`). On a larger result the tests see a violation only
-  where it also breaks item 3 or changes an answer; the linear check of
-  "Determinism in linear time" runs where a diagram is built or read, not on
-  operation results.
-- Item 14 is checked on operation results only by the tests that call
-  `assert_no_mixed_leaf_side` or `check_determinism`.
-- The level count of item 13 and item 5 are checked only where a diagram is
-  built or read.
+- Items 1 and 14 are decided on an operation result only where a test runs
+  `check_all_fast` (the linear check of "Determinism in linear time") or
+  `check_determinism` on it.
+- That a summed-out level stays summed out (item 5) is checked only by
+  [`reduce`]'s demarginalization guard.
 - Item 6 is kept by review.
 - Item 18 is decided only through a certified diagram: an uncertified result
   whose worklists omit a level shows only when a later `minimize` stops

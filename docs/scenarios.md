@@ -203,7 +203,7 @@ witness; the reachable-set semantics are unchanged.
 
 ### Instances
 
-- [Rust walkthrough](examples/reachability.md) <!-- reviewed: a2fbcb68282354beba9ae510306843d9479cffb65b31eee2da22bfa6cd7ac795 -->
+- [Rust walkthrough](examples/reachability.md) <!-- reviewed: 35aace0f59ccc0f2c7de356f8fc98162097a4585abecc83e7bd6c5406c70cda7 -->
 - [Rust program](../examples/reachability.rs) <!-- reviewed: 907a0302cbadc794d8d9fe6743dfb4b824588552bd734da75cf39d3079f250ae -->
 - [Python walkthrough and program](../bindings/python/examples/03_reachability.py) <!-- reviewed: b2629b1916204112a4814714a701974b0969c5d75faa5a5bf9413fe9fc9daa2d -->
 - [Shared directed graph](reachability.svg) <!-- reviewed: 1ca4b73d89b0d1a06015d9bc9922b5dec95429ba70d2b3f64f246008741ac159 -->
@@ -394,7 +394,7 @@ owns the circuit until finish; unlike Python, freeing the handle ends all checks
 
 ### Instances
 
-- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: 936f1b54fdcb13c3fe7af3b71d61583fe14b31a60d60585c32a8cbd73b7646f7 -->
+- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: ae107973f00cdb171d2fe26331acd692f6ba217230f5a8220714e0832d89eee1 -->
 - [Python ownership guide](../bindings/python/docs/ownership.rst) <!-- reviewed: 685e0b6279a4115660efab3cb519c70bfca9eac7320a8c905dd5f720637b2723 -->
 - [C ownership](../bindings/c/docs/ownership.rst) <!-- reviewed: 39ab8a8f865680890f676f3022da9389bf6a3c18cdac1c388f3333b4df0757b9 -->
 
@@ -462,7 +462,7 @@ there is no separate Python implementation to describe.
 
 ### Instances
 
-- [Rust architecture reference](architecture.md) <!-- reviewed: 4110d28d739006a2eceb1e8b3b4088edf856c994276e1fe5de291a225b54d704 -->
+- [Rust architecture reference](architecture.md) <!-- reviewed: f659b70d86ef52a74c8235b7322821a39f1b7af25784a3315c43dc9b9ae25f42 -->
 
 ## Invariants
 
@@ -479,7 +479,7 @@ is no separate Python implementation to describe.
 
 ### Instances
 
-- [Rust invariants reference](invariants.md) <!-- reviewed: e8a071f557919edc4239e6b3cad1912e1ee6a97bbc84b313deae05caa8e1dff9 -->
+- [Rust invariants reference](invariants.md) <!-- reviewed: fe0483acdeee084e0cc7d4730bd2513d5ddd8161a5c2fb7bd7bd786ab7da660a -->
 
 ## Reusable components
 

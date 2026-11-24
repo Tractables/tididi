@@ -53,7 +53,8 @@ fn require(label: &str, checker: &str, r: Result<(), String>) {
 /// Run the fast checks of what holds after any operation, minimized or not:
 /// vtree structure; the storage checks of
 /// [`TddBuilder::finish`](crate::diagram::TddBuilder::finish) (determinism as
-/// no repeated pair below every summed-out level, and the leaf form); no
+/// no repeated pair at every level with no summed-out level under it, and the
+/// leaf form); no
 /// false nodes; on a home the trimmed form ([`check_trimmed`]: no stored pair
 /// names a variable leaf `One`, and a certified diagram with no summed-out
 /// level has the support as its leaves and no node that denotes every
