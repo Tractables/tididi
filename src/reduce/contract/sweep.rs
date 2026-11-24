@@ -357,6 +357,7 @@ fn restore_pending_dirty(tdd: &mut Tdd, pending: &mut Pending, current: Option<u
 /// running and the reduce poll is armed. Either way the diagram is well-formed and
 /// the unprocessed parents are back on the `Pass::Contract` worklist, so a
 /// later minimize resumes them.
+#[cfg(any(test, debug_assertions, feature = "testing"))]
 pub(crate) fn contract_all_twins(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
     sweep_twins(eng, tdd, true, None)
 }
