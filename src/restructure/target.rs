@@ -67,6 +67,9 @@ impl Tdd {
     /// Diagrams with summed-out levels move as long as no rotation turns a
     /// summed-out level. Weighted diagrams are refused.
     ///
+    /// A diagram without a summed-out level that moves is minimized first, and
+    /// the result is certified ([`is_canonical`](Self::is_canonical)).
+    ///
     /// # Errors
     ///
     /// [`RestructureError::Variables`] when the two vtrees do not have the
@@ -221,6 +224,13 @@ impl Engine {
             mover.arrange(a, b, &mut work)?;
         }
         let Mover { mut stats, .. } = mover;
+        if structural {
+            // A rotation of a minimized diagram leaves it minimized (rotation
+            // locality, `relevel`), so the outer levels the rotations queued
+            // for contraction owe nothing and no level is loose.
+            tdd.dirty = crate::diagram::Dirty::default();
+            tdd.dirty.set_loose(Some(Vec::new()));
+        }
         stats.mirrors += reseat(self, tdd, target, structural)?;
         self.limits().check_stop()?;
         Ok(stats)

@@ -87,6 +87,9 @@ impl Tdd {
     /// numbering lets it be one. Renumbering the result again changes
     /// nothing.
     ///
+    /// The result is certified when this diagram is
+    /// ([`is_canonical`](Self::is_canonical)).
+    ///
     /// # Errors
     ///
     /// [`OperationError::OverBudget`] if an allocation is refused. Runs on
@@ -239,8 +242,10 @@ fn copy(eng: &Engine, f: &Tdd, numbering: &Numbering) -> Result<Tdd, OperationEr
         None => None,
     };
     // The levels are the operand's up to numbering, so its outstanding
-    // reduction work carries over as it is, and its canonical form holds.
+    // reduction work, its loose levels with their counts and its canonical
+    // form carry over as they are.
     let mut tdd = out.finish_with(output, f.dirty.clone(), &[], None)?;
+    tdd.dirty.restore_loose(f.dirty.loose().map(|loose| Box::new(loose.clone())));
     if f.levels.is_canonical(f.output) {
         tdd.levels.certify(output);
     }

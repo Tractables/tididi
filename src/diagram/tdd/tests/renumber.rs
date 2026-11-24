@@ -36,6 +36,8 @@ fn assert_renumbering_of(g: &Tdd, f: &Tdd) {
     }
     assert!(g.equivalent(f).unwrap());
     assert_eq!(g.output().vtree, f.output().vtree);
+    assert_eq!(g.is_canonical(), f.is_canonical(), "the certificate");
+    assert_eq!(format!("{:?}", g.dirty.loose()), format!("{:?}", f.dirty.loose()), "the loose levels");
     for t in 0..f.levels.len() {
         let t = VtreeIdx(t as u32);
         assert_eq!(g.level(t).slot_count(), f.level(t).slot_count(), "level {t:?}");

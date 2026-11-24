@@ -28,6 +28,7 @@ fn check_move(clauses: &[Vec<i32>], source: &Arc<Vtree>, target: &Arc<Vtree>) {
     let direct = compile_clauses(target, clauses);
     let stats = moved.restructure_to(target, usize::MAX).expect("an unbounded move completes");
     assert!(Arc::ptr_eq(moved.vtree(), target));
+    assert!(moved.is_canonical(), "the certificate after {} rotations", stats.rotations);
     assert_canonical(&moved);
     assert!(moved.equivalent(&direct).unwrap(), "{} -> {}", source.to_text(), target.to_text());
     assert_eq!(moved.model_count().unwrap(), direct.model_count().unwrap());
