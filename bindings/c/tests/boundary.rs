@@ -28,24 +28,36 @@ fn ffi_transformation_results_satisfy_diagram_invariants() {
     unsafe {
         let mut vtree = std::ptr::null_mut();
         assert!(tididi_vtree_balanced(4, &mut vtree).is_null());
-        let mut a = std::ptr::null_mut();
-        let mut b = std::ptr::null_mut();
-        let mut result = std::ptr::null_mut();
-        assert!(tididi_literal(vtree, 1, &mut a, std::ptr::null()).is_null());
-        assert!(tididi_literal(vtree, 3, &mut b, std::ptr::null()).is_null());
-        tididi::test_helpers::assert_canonical(&borrow(a).unwrap());
-        tididi::test_helpers::assert_canonical(&borrow(b).unwrap());
-        assert!(tididi_xor(a, b, &mut result, std::ptr::null()).is_null());
-        tididi::test_helpers::assert_canonical(&borrow(result).unwrap());
-        let mut projected = std::ptr::null_mut();
-        assert!(tididi_exists(result, [1].as_ptr(), 1, &mut projected, std::ptr::null()).is_null());
-        tididi::test_helpers::assert_canonical(&borrow(projected).unwrap());
-        for handle in [a, b, result, projected] { assert!(tididi_circuit_free(handle).is_null()); }
+        let canonical = TididiLimits { canonical: true, ..tididi_limits_default() };
+        for options in [std::ptr::null(), std::ptr::from_ref(&canonical)] {
+            let check = |c: *mut TididiCircuit, what: &str| {
+                let f = borrow(c).unwrap();
+                if options.is_null() {
+                    tididi::test_helpers::check::check_all_fast(&f, what);
+                } else {
+                    tididi::test_helpers::assert_canonical(&f);
+                }
+            };
+            let mut a = std::ptr::null_mut();
+            let mut b = std::ptr::null_mut();
+            let mut result = std::ptr::null_mut();
+            assert!(tididi_literal(vtree, 1, &mut a, std::ptr::null()).is_null());
+            assert!(tididi_literal(vtree, 3, &mut b, std::ptr::null()).is_null());
+            tididi::test_helpers::assert_canonical(&borrow(a).unwrap());
+            tididi::test_helpers::assert_canonical(&borrow(b).unwrap());
+            assert!(tididi_xor(a, b, &mut result, options).is_null());
+            check(result, "xor");
+            let mut projected = std::ptr::null_mut();
+            assert!(tididi_exists(result, [1].as_ptr(), 1, &mut projected, options).is_null());
+            check(projected, "exists");
+            for handle in [a, b, result, projected] { assert!(tididi_circuit_free(handle).is_null()); }
+        }
         tididi_vtree_free(vtree);
     }
 }
 
-/// Every circuit a C entry returns holds every diagram invariant. A C vtree
+/// Every circuit a C entry returns holds every diagram invariant, and is
+/// certified when `TididiLimits.canonical` asks for it. A C vtree
 /// is a plain root, so a circuit stores a level for each of its variables;
 /// after `minimize` the leaves it names `One` are exactly the variables
 /// outside its support. The formulas are random clause sets over a few
@@ -84,9 +96,15 @@ fn every_c_producer_stores_only_used_levels() {
         unsafe { ok(tididi_copy(c, &mut out)) };
         out
     }
-    unsafe fn check(c: *mut TididiCircuit, what: &str) {
+    unsafe fn check(c: *mut TididiCircuit, what: &str, certified: bool) {
         let Ok(f) = (unsafe { borrow(c) }) else { panic!("{what}: no circuit") };
-        let checked = std::panic::catch_unwind(AssertUnwindSafe(|| tididi::test_helpers::assert_canonical(&f)));
+        let checked = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            if certified {
+                tididi::test_helpers::assert_canonical(&f);
+            } else {
+                tididi::test_helpers::check::check_all_fast(&f, what);
+            }
+        }));
         assert!(checked.is_ok(), "{what}: the result breaks an invariant");
         let mut minimized = f.clone();
         minimized.minimize().unwrap();
@@ -97,6 +115,7 @@ fn every_c_producer_stores_only_used_levels() {
         assert!(unsafe { tididi_circuit_free(c) }.is_null());
     }
     let none = std::ptr::null();
+    let canonical = TididiLimits { canonical: true, ..tididi_limits_default() };
     let mut rng = Rng(1124);
     for case in 0..60 {
         let n = 4 + rng.below(13) as u32;
@@ -127,51 +146,58 @@ fn every_c_producer_stores_only_used_levels() {
         let (f, g, h) = (formula(&mut rng), formula(&mut rng), formula(&mut rng));
         let (x, y) = (used[0], used[1]);
         let some = &used[..1 + rng.below(used.len())];
-        let what = |name: &str| format!("case {case} on {n} variables, formulas over {used:?}: {name}");
-        let mut out = std::ptr::null_mut();
+        // `f`, `g` and `h` are built without `canonical`, so what returns
+        // them as they are (copy, the readers, finish) is not certified.
+        for opts in [none, std::ptr::from_ref(&canonical)] {
+            let asked = !opts.is_null();
+            let what = |name: &str| format!("case {case} on {n} variables, formulas over {used:?}, canonical {asked}: {name}");
+            let mut out = std::ptr::null_mut();
+            unsafe {
+                let produce = |name: &str, certified: bool, error: *mut TididiError, out: &mut *mut TididiCircuit| {
+                    ok(error);
+                    check(*out, &what(name), certified);
+                    *out = std::ptr::null_mut();
+                };
+                let (xi, yi) = (i64::from(x), i64::from(y));
+                produce("copy", false, tididi_copy(f, &mut out), &mut out);
+                produce("literal", asked, tididi_literal(vtree, -xi, &mut out, opts), &mut out);
+                produce("cube", asked, tididi_cube(vtree, [xi, -yi].as_ptr(), 2, &mut out, opts), &mut out);
+                produce("clause", asked, tididi_clause(vtree, [-xi, yi].as_ptr(), 2, &mut out, opts), &mut out);
+                produce("one", true, tididi_one(vtree, &mut out), &mut out);
+                produce("zero", true, tididi_zero(vtree, &mut out), &mut out);
+                produce("from_models", asked, tididi_from_models(vtree, [x, y].as_ptr(), 2, [1u8, 0, 0, 1].as_ptr(), 2, &mut out, opts), &mut out);
+                produce("and", asked, tididi_and(copy(f), copy(g), &mut out, opts), &mut out);
+                produce("or", asked, tididi_or(copy(f), copy(g), &mut out, opts), &mut out);
+                produce("xor", asked, tididi_xor(copy(f), copy(g), &mut out, opts), &mut out);
+                produce("negate", asked, tididi_negate(copy(f), &mut out, opts), &mut out);
+                produce("minimize", true, tididi_minimize(copy(f), &mut out, opts), &mut out);
+                produce("condition", asked, tididi_condition(copy(f), [xi, -yi].as_ptr(), 2, &mut out, opts), &mut out);
+                produce("exists", asked, tididi_exists(copy(f), some.as_ptr(), some.len(), &mut out, opts), &mut out);
+                produce("forall", asked, tididi_forall(copy(f), some.as_ptr(), some.len(), &mut out, opts), &mut out);
+                produce("and_exists", asked, tididi_and_exists(copy(f), copy(g), some.as_ptr(), some.len(), &mut out, opts), &mut out);
+                produce("rename", asked, tididi_rename(copy(f), [x, y].as_ptr(), [y, x].as_ptr(), 2, &mut out, opts), &mut out);
+                produce("or_many", asked, tididi_or_many([copy(f), copy(g), copy(h)].as_ptr(), 3, &mut out, opts), &mut out);
+                produce("ite", asked, tididi_ite(copy(f), copy(g), copy(h), &mut out, opts), &mut out);
+                let (insert, remove) = ([xi, yi], [-xi, -yi]);
+                let cube = |c: &[i64; 2]| TididiCube { literals: c.as_ptr(), len: 2 };
+                produce("update", asked, tididi_update(copy(f), &cube(&insert), 1, &cube(&remove), 1, &mut out, opts), &mut out);
+                let mut bytes = std::ptr::null_mut();
+                ok(tididi_to_bytes(f, &mut bytes));
+                produce("from_bytes", false, tididi_from_bytes(vtree, tididi_bytes_data(bytes), tididi_bytes_len(bytes), &mut out), &mut out);
+                tididi_bytes_free(bytes);
+                let mut counter = std::ptr::null_mut();
+                ok(tididi_counter(copy(f), &mut counter));
+                produce("counter_finish", false, tididi_counter_finish(counter, &mut out), &mut out);
+                assert!(tididi_counter_free(counter).is_null());
+                let mut evaluator = std::ptr::null_mut();
+                let (half, one) = (c"1/2", c"1");
+                let weights: Vec<TididiWeight> = order.iter().map(|&variable| TididiWeight { variable, negative: half.as_ptr(), positive: one.as_ptr() }).collect();
+                ok(tididi_evaluator(copy(f), weights.as_ptr(), weights.len(), &mut evaluator));
+                produce("evaluator_finish", false, tididi_evaluator_finish(evaluator, &mut out), &mut out);
+                assert!(tididi_evaluator_free(evaluator).is_null());
+            }
+        }
         unsafe {
-            let produce = |name: &str, error: *mut TididiError, out: &mut *mut TididiCircuit| {
-                ok(error);
-                check(*out, &what(name));
-                *out = std::ptr::null_mut();
-            };
-            let (xi, yi) = (i64::from(x), i64::from(y));
-            produce("copy", tididi_copy(f, &mut out), &mut out);
-            produce("literal", tididi_literal(vtree, -xi, &mut out, none), &mut out);
-            produce("cube", tididi_cube(vtree, [xi, -yi].as_ptr(), 2, &mut out, none), &mut out);
-            produce("clause", tididi_clause(vtree, [-xi, yi].as_ptr(), 2, &mut out, none), &mut out);
-            produce("one", tididi_one(vtree, &mut out), &mut out);
-            produce("zero", tididi_zero(vtree, &mut out), &mut out);
-            produce("from_models", tididi_from_models(vtree, [x, y].as_ptr(), 2, [1u8, 0, 0, 1].as_ptr(), 2, &mut out, none), &mut out);
-            produce("and", tididi_and(copy(f), copy(g), &mut out, none), &mut out);
-            produce("or", tididi_or(copy(f), copy(g), &mut out, none), &mut out);
-            produce("xor", tididi_xor(copy(f), copy(g), &mut out, none), &mut out);
-            produce("negate", tididi_negate(copy(f), &mut out, none), &mut out);
-            produce("minimize", tididi_minimize(copy(f), &mut out, none), &mut out);
-            produce("condition", tididi_condition(copy(f), [xi, -yi].as_ptr(), 2, &mut out, none), &mut out);
-            produce("exists", tididi_exists(copy(f), some.as_ptr(), some.len(), &mut out, none), &mut out);
-            produce("forall", tididi_forall(copy(f), some.as_ptr(), some.len(), &mut out, none), &mut out);
-            produce("and_exists", tididi_and_exists(copy(f), copy(g), some.as_ptr(), some.len(), &mut out, none), &mut out);
-            produce("rename", tididi_rename(copy(f), [x, y].as_ptr(), [y, x].as_ptr(), 2, &mut out, none), &mut out);
-            produce("or_many", tididi_or_many([copy(f), copy(g), copy(h)].as_ptr(), 3, &mut out, none), &mut out);
-            produce("ite", tididi_ite(copy(f), copy(g), copy(h), &mut out, none), &mut out);
-            let (insert, remove) = ([xi, yi], [-xi, -yi]);
-            let cube = |c: &[i64; 2]| TididiCube { literals: c.as_ptr(), len: 2 };
-            produce("update", tididi_update(copy(f), &cube(&insert), 1, &cube(&remove), 1, &mut out, none), &mut out);
-            let mut bytes = std::ptr::null_mut();
-            ok(tididi_to_bytes(f, &mut bytes));
-            produce("from_bytes", tididi_from_bytes(vtree, tididi_bytes_data(bytes), tididi_bytes_len(bytes), &mut out), &mut out);
-            tididi_bytes_free(bytes);
-            let mut counter = std::ptr::null_mut();
-            ok(tididi_counter(copy(f), &mut counter));
-            produce("counter_finish", tididi_counter_finish(counter, &mut out), &mut out);
-            assert!(tididi_counter_free(counter).is_null());
-            let mut evaluator = std::ptr::null_mut();
-            let (half, one) = (c"1/2", c"1");
-            let weights: Vec<TididiWeight> = order.iter().map(|&variable| TididiWeight { variable, negative: half.as_ptr(), positive: one.as_ptr() }).collect();
-            ok(tididi_evaluator(copy(f), weights.as_ptr(), weights.len(), &mut evaluator));
-            produce("evaluator_finish", tididi_evaluator_finish(evaluator, &mut out), &mut out);
-            assert!(tididi_evaluator_free(evaluator).is_null());
             for c in [f, g, h] {
                 assert!(tididi_circuit_free(c).is_null());
             }
