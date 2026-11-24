@@ -61,7 +61,9 @@ uses them identically. For example, leaf twins `x` and `¬x` merge into `true`.
 
 The resulting structural TDD is minimal and canonical for the fixed vtree,
 up to node numbering and pair order. This is the minimization result of
-[the TDD paper, Section 5]. Changing the vtree can give a different size;
+[the TDD paper, Section 5]; the [invariants] reference states the form
+exactly, with what holds before minimization. Changing the vtree can give a
+different size;
 [`Tdd::rotation_search`] searches such changes, while
 [`Tdd::equivalent`] compares functions without relying on node identifiers.
 
@@ -101,3 +103,4 @@ must also establish the determinism contract documented on that type.
 [`diagram`]: crate::diagram
 [`Vtree::bottomup`]: crate::Vtree::bottomup
 [`TddBuilder`]: crate::diagram::TddBuilder
+[invariants]: crate::guide::invariants

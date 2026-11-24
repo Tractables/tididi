@@ -9,34 +9,22 @@ use super::signature::{eval_all_signatures, random_var_assignments};
 
 /// Check that `tdd` is canonical: `Ok` exactly when
 /// [`minimize`](crate::Tdd::minimize), with every level owed to its passes,
-/// would change nothing, up to node order within a level.
+/// would change nothing, up to node order within a level. The invariants are
+/// stated in `docs/invariants.md`; the rules, in the order they are checked:
 ///
-/// The rules, in the order they are checked:
+/// 1. Invariant 4, at the structural levels.
+/// 2. Invariant 19, at the structural levels.
+/// 3. Invariant 20. A level where one node does not pair up, or that names
+///    the leaf `One`, passes.
+/// 4. On a diagram with a summed-out level, invariants 7 to 10 and 24
+///    (`marginal::check_marginal_canonical_form`) and 12
+///    (`marginal::check_no_orphan_slots`), which stand in for rules 1 and 2
+///    at the summed levels.
+/// 5. On a diagram with no summed-out level, invariant 3
+///    ([`check_distinct_functions`] over `rounds` rounds), which also fails
+///    some diagrams whose levels are not deterministic.
 ///
-/// 1. Reachability: the output reaches every stored node of a structural
-///    level (the prune).
-/// 2. No twins: no two nodes of a structural level are named by their parent
-///    level in the same set of places, the same parent node with the same
-///    partner on the other side (twin contraction, which replaces them by
-///    their union).
-/// 3. No contractible leaf side: no level names a variable leaf that is not
-///    summed out through literals with every node pairing each `(Pos, s)`
-///    with a `(Neg, s)` and holding no `One` there (leaf twin contraction,
-///    which rewrites both to `(One, s)`). A level where one node does not
-///    pair up keeps its literals.
-/// 4. On a diagram with a summed-out level, the marginal canonical form
-///    (`marginal::check_marginal_canonical_form`, invariants 7 to 10) and
-///    slot reachability (`marginal::check_no_orphan_slots`, invariant 12),
-///    which stand in for rules 1 and 2 at the summed levels.
-/// 5. On a diagram with no summed-out level, distinct functions,
-///    [`check_distinct_functions`] over `rounds` rounds.
-///
-/// Rules 1 to 4 decide the fixpoint; rule 5 also fails a diagram whose
-/// levels are not deterministic. It does not hold at the fixpoint of a
-/// summed diagram: `(a, 1) + (b, 1)` and `(a ∨ b, 1)` over a summed child
-/// compute one function, and no pass merges them. An unminimized result of
-/// an operation may fail any rule and still be well formed. Cost:
-/// O(pairs × log pairs + diagram size × rounds).
+/// Cost: O(pairs × log pairs + diagram size × rounds).
 pub fn check_canonicity(tdd: &Tdd, rounds: u32) -> Result<(), String> {
     check_reachable(tdd)?;
     check_no_twins(tdd)?;
@@ -126,20 +114,14 @@ fn check_no_leaf_twins(tdd: &Tdd) -> Result<(), String> {
     Ok(())
 }
 
-/// Check by random-assignment signatures that no two nodes of a level compute
-/// the same function: a node's signature is its value in the (Z_p, +, ×)
-/// semiring with random variable values, p = 2^61 − 1, and a collision of
-/// two distinct functions has probability at most `n/p` per round and pair.
-///
-/// On a diagram with no summed-out level this holds after any operation,
-/// minimized or not: distinct satisfiable nodes of a deterministic level are
-/// disjoint, so they differ. It does not decide canonical form, which
+/// Check invariant 3 by random-assignment signatures: a node's signature is
+/// its value in the (Z_p, +, ×) semiring with random variable values,
+/// p = 2^61 − 1, and a collision of two distinct functions has probability at
+/// most `n/p` per round and pair. It does not decide canonical form, which
 /// [`check_canonicity`] does. Cost: O(diagram size × rounds).
 ///
 /// A diagram with a summed-out level is outside its domain, and it says so
-/// with `Err`: a sum-out makes distinct children equal, so the property fails
-/// after an operation, and the fixpoint of `minimize` keeps nodes of one
-/// function as well (see [`check_canonicity`]).
+/// with `Err`.
 pub fn check_distinct_functions(tdd: &Tdd, rounds: u32) -> Result<(), String> {
     if tdd.has_marginal_level() {
         return Err("distinct functions is not decided on a diagram with a summed-out level".into());

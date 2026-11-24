@@ -91,8 +91,8 @@ refused.
 Twin contraction differs from removing duplicate nodes. Twins are nodes that
 their parents use in the same way, though their own functions may differ; the
 diagram can replace them by their union. Duplicates have identical pair lists.
-A minimized structural diagram has neither, and is then canonical for its
-vtree.
+A minimized structural diagram has neither; the [invariants] reference states
+its canonical form.
 
 `LevelStorage` remembers the output for which a completed structural
 minimization established canonical form. Taking mutable access to a level or
@@ -149,7 +149,7 @@ consistent with the slot metadata without changing the compact level layout.
 Marginal diagrams have extra reduction passes. *Pair fusion* merges a node's
 pairs that share the same structural child into one pair carrying the summed
 value; twin contraction and slot pruning then restore uniqueness. The
-invariants table below lists what each pass establishes.
+[invariants] reference lists what each pass establishes (items 5 to 12).
 
 ## Queries and counting
 
@@ -222,61 +222,20 @@ the diagrams they borrow unchanged.
 
 ## Invariants
 
-Each row states a property the code relies on, the pass that makes it true,
-the passes during which it may briefly be false, and the checker that tests
-it. The numbers are referred to from source comments. These properties assume
-a valid TDD: the builder and the reader validate storage, but they do not
-prove that an arbitrary circuit's nodes are disjoint (row 1).
-
-| # | Statement | Established by | Transiently broken by | Decided by |
-|---|---|---|---|---|
-| 1 | Structural determinism: distinct nodes at one level compute disjoint functions; each child pair belongs to at most one node. | apply's emit; projection's owner-set regroup | — | `test_helpers::check::check_determinism` |
-| 2 | Every stored node in a structural diagram is satisfiable, whether or not the output reaches it; ⊥ is the output sentinel only. | checked builder; apply's emit; conditioning's falsity sweep | conditioning's leaf rewrite, within one call | `test_helpers::check::check_no_false_nodes` |
-| 3 | Content uniqueness, structural diagrams: no two stored nodes at one level have equal pair multisets. It follows from rows 1 and 2: two such nodes compute one function, and disjoint, that function is false. | rows 1 and 2 | conditioning's leaf rewrite, within one call (row 2) | `test_helpers::check::check_distinct_functions` |
-| 4 | Reachability: a certified diagram (`is_canonical`) reaches every stored node. An uncertified one may hold nodes its output does not reach; when it knows its loose levels (`Dirty::loose`), they list every level below the root with a node no pair of its parent level names. A reader that needs reachability requires the certificate, prunes, or numbers the reachable nodes. | [`reduce::minimize`]; the prune | any operation, before it returns | `test_helpers::check::check_trimmed`; `test_helpers::check::check_canonicity` |
-| 5 | Marginality is permanent and downward-closed: a marginal level never becomes structural, and its descendants are marginal or leaves whose contribution is absorbed. | [`marginal::marginalize_levels`] | — | [`reduce`]'s demarginalization guard |
-| 6 | Every reference into a marginal child decodes through [`ChildDecoder`]; no site outside `diagram/` reads the raw bits. | the marginal-reference encoding | — | review |
-| 7 | Inline discipline: no value slot referenced from a structural parent holds an inline-eligible value. | the reference tagger, then the slot prune | apply's emit, before tagging | `test_helpers::check::marginal::check_inline_discipline` |
-| 8 | Pair-fusion saturation: no eligible same-structural-child group remains (exact arithmetic; at a weighted leaf or region the sum must already be in the column, where fusion mints no value). | [`marginalize_levels`]'s fusion sweep | a later twin merge | `test_helpers::check::marginal::check_marginal_canonical_form` |
-| 9 | Twin canonicality, marginal diagrams: no two nodes at one level have equal pair multisets. | the content-twin merge | pair fusion; the slot prune's value merge | `test_helpers::check::marginal::check_marginal_canonical_form` |
-| 10 | Value-slot uniqueness: at a marginal level all stored values are pairwise distinct. | mint-time dedup, then the slot prune | apply's emit | `test_helpers::check::marginal::check_slot_count_uniqueness` |
-| 11 | Weighted leaf column pin: a weight-marginal leaf's three slots are an immutable, label-ordered cache of `Weights::leaf_val`. No pass compacts, erases, reorders or appends to the column, and every reader re-derives it through `diagram::leaf_column_vals`. | `marginal::marginalize_leaf_weighted` | — | `test_helpers::check::marginal::check_leaf_columns_pinned` |
-| 12 | Slot reachability: at a boundary marginal level other than the output's, every value slot is referenced from the structural parent. | [`reduce`]'s slot prune | pair fusion and twin contraction, until the prune runs | `test_helpers::check::marginal::check_no_orphan_slots` |
-
-Rows 1 and 2 hold over every stored node, dead ones included: `trim` reads a level's first node and `or_cube` reads every node, reached or not. Rows 8, 9, 10 and 12 hold after a pass rather than throughout. Canonical
-structural form also requires that no twins remain, which no row above
-covers: rows 3 and 9 forbid duplicate pair lists, while twins are nodes their
-parents use identically. `test_helpers::check::check_canonicity` decides
-canonical form: rows 3 and 4, no twins, and no leaf child read alike through
-both literals at every node; on a diagram with a summed-out level, rows 7 to
-10 and 12 in place of row 3, which does not hold there (two pairs over
-disjoint children and one summed value compute what one pair over their
-disjunction computes, and no pass merges the two).
-
-A diagram an operation returns without a full reduction may hold unreachable
-nodes, duplicates and twins, but row 1 holds over every stored node, reachable
-or not, and every operation assumes no more of its input. Readers that take a
-whole level, such as negation's fill, the graft of an expansion and the
-maintenance index, rely on that. At the root, which has no parent, the nodes
-other than the output are unreachable and disjoint from it; an operation that
-grows the output in place or builds its complement beside it drops them first.
-
-A diagram an operation returns without a full reduction may hold unreachable
-nodes, duplicates and twins, but row 1 holds over every stored node, reachable
-or not, and every operation assumes no more of its input. Readers that take a
-whole level, such as negation's fill, the graft of an expansion and the
-maintenance index, rely on that. At the root, which has no parent, the nodes
-other than the output are unreachable and disjoint from it; an operation that
-grows the output in place or builds its complement beside it drops them first.
+The properties the code relies on are stated once, in the [invariants]
+reference: what holds of every diagram, of a certified one and of one with a
+summed-out level, each with the pass that keeps it, the passes during which it
+may briefly be false, and the checker that decides it. Source comments refer
+to its items by number. The builder and the readers validate storage and
+refuse a repeated pair, which decides that a circuit's nodes are disjoint
+(item 1) only where no summed-out level is under them.
 
 ## Testing
 
 | Oracle | Path | When |
 |---|---|---|
-| Fast invariants | `test_helpers::check::check_all_fast` | After any operation, on any size. |
-| Canonical form | `test_helpers::check::check_canonicity` | After `minimize`. |
+| Invariants | `test_helpers::assert_canonical` and the checkers the [invariants] reference names | After any operation, on any size. |
 | Minimize round-trip | `test_helpers::check_minimize_soundness` | On small structural diagrams; it minimizes. |
-| Marginal invariants | `test_helpers::check::marginal` | After marginalization or a reduction pass. |
 | Brute-force count | `test_helpers::brute_force_count` | Small formulas, to confirm a count. |
 | Round trip | [`io`] | To confirm a diagram survives text. |
 | Differential fold | [`query`] | Fast and exact counts must agree. |
@@ -366,3 +325,4 @@ release build, as described under [Testing](#testing).
 
 [API overview]: crate::guide::api
 [data model]: crate::guide::model
+[invariants]: crate::guide::invariants

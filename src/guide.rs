@@ -2,8 +2,9 @@
 
 //! The [API overview](api) groups circuit operations and links to their specifications.
 //! The [worked examples](examples) combine these operations in applications.
-//! Read the [data model](model) for the representation or the
-//! [architecture reference](architecture) for the implementation.
+//! Read the [data model](model) for the representation, the
+//! [invariants] for what holds of every diagram and of a canonical
+//! one, or the [architecture reference](architecture) for the implementation.
 
 // Keep the index, sidebar and module declarations in one reading order.
 macro_rules! walkthroughs {
@@ -56,6 +57,9 @@ pub mod api {}
 
 #[doc = include_str!("../docs/tdd.md")]
 pub mod model {}
+
+#[doc = include_str!("../docs/invariants.md")]
+pub mod invariants {}
 
 #[doc = include_str!("../docs/architecture.md")]
 pub mod architecture {}

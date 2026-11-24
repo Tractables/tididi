@@ -84,7 +84,9 @@ use super::primitives::{LEAF_WIDTH, ONE_LEAF_IDX, TddNodeId, TRUE, ZERO};
 /// explains traversal and child references.
 ///
 /// [`minimize`](Self::minimize) makes a structural diagram canonical for its
-/// vtree, up to node numbering and pair order. Compare functions with
+/// vtree, up to node numbering and pair order; the
+/// [invariants](crate::guide::invariants) reference states that form and what
+/// holds of a diagram before it is minimized. Compare functions with
 /// [`equivalent`](Self::equivalent), rather than comparing output identifiers.
 /// Diagrams assembled with [`TddBuilder`](crate::diagram::TddBuilder) need an
 /// explicit minimization step to become canonical.
@@ -398,13 +400,14 @@ impl Tdd {
     }
 
     /// Whether the diagram is certified canonical: its output reaches every
-    /// node it stores and no two nodes of a level denote the same function,
-    /// so [`Engine::minimize`](crate::Engine::minimize) would leave it as it
-    /// is. A diagram on a vtree with no node is certified. An operation's
-    /// documentation says whether its result keeps the certificate of its
-    /// operands; a result without it may still be canonical, unknown to the
-    /// library. The certificate does not say that no pair names a leaf as
-    /// true: a diagram an embedding padded keeps its padding.
+    /// node it stores, no two nodes of a level are twins and no leaf is read
+    /// alike through both literals, so
+    /// [`Engine::minimize`](crate::Engine::minimize) would leave it as it is
+    /// ([invariants](crate::guide::invariants), "A certified diagram", which
+    /// also gives the uniqueness this means). A diagram on a vtree with no
+    /// node is certified. An operation's documentation says whether its
+    /// result keeps the certificate of its operands; a result without it may
+    /// still be canonical, unknown to the library.
     ///
     /// ```
     /// use std::sync::Arc;

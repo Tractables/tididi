@@ -2,10 +2,11 @@
 //! canonicalization, orphan, twin and fusion-redex detection, pair-fusion
 //! saturation, and model-count preservation.
 //!
-//! The invariants are numbered in `docs/architecture.md` and stated there once.
-//! This module decides six of them: 7 (inline discipline), 8 (pair-fusion
+//! The invariants are numbered in `docs/invariants.md` and stated there once.
+//! This module decides seven of them: 7 (inline discipline), 8 (pair-fusion
 //! saturation), 9 (twin canonicality), 10 (value-slot uniqueness), 11 (the
-//! weighted leaf column pin) and 12 (slot reachability).
+//! weighted leaf column pin), 12 (slot reachability) and 24 (subsumed
+//! stores).
 //!
 //! Invariants 8, 9 and 10 hold at the fixpoint of twin contraction,
 //! canonicalization by value, and pair fusion, at every boundary-marginal level
@@ -336,7 +337,7 @@ pub fn check_store_counts(counts: &[u128], big: Option<&CountOverflow>) -> Resul
     Ok(())
 }
 
-/// A marginal level whose parent is marginal holds no value store. The parent's
+/// Invariant 24: a marginal level whose parent is marginal holds no value store. The parent's
 /// aggregate is all a reader above can reach, so the marginalization pass and the
 /// marginalizing conjunction free each child's store as the parent becomes
 /// marginal (`marginal::transition::free_subsumed_marginal_children`) and no later pass
@@ -354,8 +355,7 @@ pub fn check_subsumed_stores_empty(tdd: &Tdd) -> Result<(), String> {
     ))
 }
 
-/// Full canonical form: invariants 7, 8, 9 and 10 together, and no value
-/// store under a marginal parent.
+/// Full canonical form: invariants 7, 8, 9, 10 and 24 together.
 ///
 /// Valid at the fixpoint of twin contraction, canonicalization and pair
 /// fusion, followed by the slot prune — in practice on a freshly minimized

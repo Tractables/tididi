@@ -47,14 +47,11 @@ pub fn reachable_true_labels(tdd: &Tdd) -> Result<Option<String>, String> {
     Ok(first)
 }
 
-/// No pair of `tdd` names a variable leaf as `One`, nor does the output,
-/// dead nodes included; a constant has no leaf; on a home, summed-out levels
-/// and regions as `regions` checks; the loose levels, when known, are
-/// complete ([`check_loose_levels`](super::check_loose_levels)); a certified
-/// `tdd` reaches every node it stores and, with no summed-out level, reads no
-/// leaf child through twin literals in every node. An uncertified `tdd` may
-/// hold nodes its output does not reach. With `minimized` and no summed-out
-/// level, also that the leaves are the
+/// The projection form of `docs/invariants.md`: invariant 15 over every
+/// stored pair; on a home 22 and 23 (`regions`); 17
+/// ([`check_loose_levels`](super::check_loose_levels)); on a certified `tdd`
+/// 4 and, with no summed-out level, 20 over the reachable nodes; with
+/// `minimized` and no summed-out level 21, the leaves read against
 /// [`support`](Tdd::support).
 ///
 /// Cost: O(diagram size).
@@ -137,12 +134,11 @@ fn regions(tdd: &Tdd) -> Result<(), String> {
     }
 }
 
-/// A certified `tdd` holds to its certificate: its output reaches every node
-/// it stores, no level reads a leaf child the same through both literals in
-/// every node, no two nodes of a structural level denote the same function
+/// A certified `tdd` holds to its certificate: invariants 4, 19, 20 and 3
 /// ([`check_canonicity`](super::check_canonicity)), and a copy with the
 /// certificate dropped and every level owing the contraction passes
-/// minimizes to as many nodes and pairs. An uncertified `tdd` passes.
+/// minimizes to as many nodes and pairs (18). An uncertified `tdd` passes;
+/// on one with a summed-out level only 4 is checked.
 ///
 /// Cost: O(diagram size), and a minimization of a copy.
 pub fn check_certified(tdd: &Tdd) -> Result<(), String> {

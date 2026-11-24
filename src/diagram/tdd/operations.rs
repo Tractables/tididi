@@ -1128,7 +1128,8 @@ impl Tdd {
     /// Minimize this diagram under its current vtree, preserving its function and count.
     ///
     /// For a structural diagram, the result is canonical and minimal up to node
-    /// numbering and pair order. Removes unreachable nodes and contracts nodes
+    /// numbering and pair order ([invariants](crate::guide::invariants), "A
+    /// certified diagram"). Removes unreachable nodes and contracts nodes
     /// with identical parent contexts. Marginal levels stay marginal, with their
     /// applicable value and pair cleanup passes applied. The result is
     /// certified ([`is_canonical`](Self::is_canonical)) unless it holds a
@@ -1354,7 +1355,8 @@ impl Tdd {
     /// a variable leaf true.
     ///
     /// A diagram with a region is canonical for nothing: two of them for the
-    /// same summed function may differ. Its variable leaves and Boolean
+    /// same summed function may differ ([invariants](crate::guide::invariants),
+    /// "A diagram with a summed-out level"). Its variable leaves and Boolean
     /// classes are those of the function before the sum-out as the
     /// reduction passes left them, not those of the summed function, and
     /// [`equivalent`](Self::equivalent) refuses it. A region whose counts

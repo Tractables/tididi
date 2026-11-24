@@ -8,10 +8,11 @@
 //! does not carry them. A test suite built on the crate reaches them through
 //! `test_helpers`.
 //!
-//! Every checker returns `Ok(())` or `Err(String)` naming the violation. The
-//! invariant table in `docs/architecture.md` names the checker that decides
-//! each invariant; the marginal-form checks are reached through the
-//! `marginal` submodule.
+//! Every checker returns `Ok(())` or `Err(String)` naming the violation.
+//! `docs/invariants.md` (the `guide::invariants` page) states each invariant
+//! once, with its number, the checker that decides it and where the checkers
+//! run; the comments here say how a check works. The marginal-form checks are
+//! reached through the `marginal` submodule.
 
 mod canonicity;
 mod implicit;

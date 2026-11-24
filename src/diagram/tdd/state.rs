@@ -6,7 +6,7 @@
 //! level whose references changed is a candidate for all three.
 //!
 //! A level absent from a pass's worklist is asserted to be at that pass's
-//! fixpoint. Everything that changes a diagram therefore has to say so through
+//! fixpoint (invariant 18, `docs/invariants.md`). Everything that changes a diagram therefore has to say so through
 //! [`Tdd::invalidate`], and a pass that is cut short has to hand back what it
 //! did not reach.
 
@@ -542,7 +542,7 @@ pub(crate) struct Dirty {
     lists: [Vec<u32>; 3],
     /// The levels that may hold a node no node of their parent level names,
     /// reachable or not; every other level's nodes are each named by some
-    /// node of its parent level. `None` when that is not known, which is
+    /// node of its parent level (invariant 17). `None` when that is not known, which is
     /// what every diagram starts as and what any edit makes it, unless the
     /// edit hands the levels back ([`take_loose`](Self::take_loose)). A
     /// prune leaves none, and it walks only as much as these levels need.

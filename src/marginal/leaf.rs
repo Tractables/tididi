@@ -145,7 +145,7 @@ fn canonicalize_leaf_refs_at_parent(
 ///
 /// # Soundness
 ///
-/// The column installed here is pinned (architecture invariant 11): readers
+/// The column installed here is pinned (invariant 11): readers
 /// decode a leaf-side reference as a label, so compacting, reordering or
 /// appending to it would desynchronise the column from the references.
 /// [`check_leaf_columns_pinned`](crate::test_helpers::check::marginal::check_leaf_columns_pinned)

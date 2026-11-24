@@ -5,7 +5,8 @@ use crate::diagram::{Tdd, ZERO};
 
 // ── Public checker functions ─────────────────────────────────────────────────
 
-/// Validate that every diagram node matches its vtree position.
+/// Validate that every diagram node matches its vtree position (invariant
+/// 13).
 ///
 /// Checks:
 /// - Leaf vtree levels have no stored nodes (implicit representation)
@@ -82,12 +83,8 @@ pub fn validate_vtree_structure(tdd: &Tdd) -> Result<(), String> {
     Ok(())
 }
 
-/// Check that no node in any level computes the constant-false function.
-///
-/// This invariant holds for every public diagram (even before minimize):
-/// - A leaf level stores no nodes, so the constant-false atom never appears
-/// - No internal nodes with empty pairs exist in any level
-/// - If UNSAT (after minimize), all internal levels are empty
+/// Check invariant 2: no stored node holds no pair, and a false diagram
+/// stores no node at all.
 ///
 /// Cost: O(total nodes).
 pub fn check_no_false_nodes(tdd: &Tdd) -> Result<(), String> {
@@ -136,7 +133,7 @@ pub fn check_no_false_nodes_in_levels(tdd: &Tdd) -> Result<(), String> {
     Ok(())
 }
 
-/// Check the loose levels a diagram knows: each structural
+/// Check the loose levels a diagram knows (invariant 17): each structural
 /// internal level below the root that they leave out has every node named
 /// by a pair of its parent level. A diagram that does not know them passes.
 ///

@@ -48,7 +48,7 @@ and freeing without changing their ownership rules.
 ### Instances
 
 - [Rust README](../README.md) <!-- reviewed: 5036c4ed6313b69e64ef44f22ab946744f3651c601952c2af08a26e3e437aebd -->
-- [Rust crate introduction](../src/lib.rs) <!-- reviewed: 402ca1ce163ee32e662e7563baa60ee8260bd101ecade73eb0cccd1dc2013a2e -->
+- [Rust crate introduction](../src/lib.rs) <!-- reviewed: 9416cc0a2fb54414faa57205db1c7f16e2a210a770b46567322e4b9028c2d625 -->
 - [Python README](../bindings/python/README.rst) <!-- reviewed: 3ea8cce1c65aac9e011830f0a1e51a780009f26d04c563b9ae32c4d4300a68e9 -->
 - [Python getting started](../bindings/python/docs/getting_started.rst) <!-- reviewed: ddd5e7b2357bf35a2ede868b429fd409ef8541bc9da20883e14ab8b3f99e11a7 -->
 - [C getting started](../bindings/c/docs/getting_started.rst) <!-- reviewed: bb58b033976cfacb2ff6a6eb7b0d6c036b10eccd99b02ba5a7dc5f54bb40b4c9 -->
@@ -75,7 +75,7 @@ resource limits; the application chapters retain the same order.
 
 ### Instances
 
-- [Rust guide and example navigation](../src/guide.rs) <!-- reviewed: a659b4c3434b3dd1f96b690f00f9da9bd078896c1c58fc88e795b1287bcfaab9 -->
+- [Rust guide and example navigation](../src/guide.rs) <!-- reviewed: 81bb969ea443fc2223c0fde83f03264df21cb91b5d9f3103c9afdfde31c41989 -->
 - [Python guide index](../bindings/python/docs/index.rst) <!-- reviewed: f9cb128a9cbd5b76db5695320ace78dd852ce38a7cdbc4ca2a453cdfbef4bce6 -->
 - [Python gallery introduction](../bindings/python/examples/GALLERY_HEADER.rst) <!-- reviewed: 836d9d8f1ff4c5feb0b5f766281cc25372579e2d299f6a993cd825dfa81a7850 -->
 - [C index](../bindings/c/docs/index.rst) <!-- reviewed: 0e6c564d98419e17db63d947b0488f27c319d95fdd65f20f4e3ee1677a8326fa -->
@@ -394,7 +394,7 @@ owns the circuit until finish; unlike Python, freeing the handle ends all checks
 
 ### Instances
 
-- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: 6b590a76334073214b17a10cac566669cd7f3c637cece505875726b0a731fe89 -->
+- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: 936f1b54fdcb13c3fe7af3b71d61583fe14b31a60d60585c32a8cbd73b7646f7 -->
 - [Python ownership guide](../bindings/python/docs/ownership.rst) <!-- reviewed: 685e0b6279a4115660efab3cb519c70bfca9eac7320a8c905dd5f720637b2723 -->
 - [C ownership](../bindings/c/docs/ownership.rst) <!-- reviewed: 39ab8a8f865680890f676f3022da9389bf6a3c18cdac1c388f3333b4df0757b9 -->
 
@@ -434,7 +434,7 @@ invariants and marginal levels; Python concentrates on using shared vtrees.
 
 ### Instances
 
-- [Rust data model](tdd.md) <!-- reviewed: 675c01a269101a83d8c644db15c673201dfd0a47d3e3db1c76f84a08b38ed5a7 -->
+- [Rust data model](tdd.md) <!-- reviewed: 7ff553c55c52ff3a7a3be1a092ed3f3bc7b8a29784bf487b655e67759b336be7 -->
 - [Python data model](../bindings/python/docs/representation.rst) <!-- reviewed: ed52b71f88c82caf64b54c6227acbe5de4215ce34886e327f1b102cdd338b20c -->
 - [Shared decomposition figure](tdd-basics.svg) <!-- reviewed: 5f2ab1677522a6a53385289841534c2a0096087bc65c8ce7f6c51d3be0e83c12 -->
 
@@ -455,14 +455,31 @@ reusable relation layouts, reduction scheduling, checked
 vtree construction and traversal
 validation, and the boundary that coordinates level edits with references
 and worklists. Define terms
-once, map modules to responsibilities, and identify which operations establish
-or temporarily break each invariant. Distinguish validation of stored data
-from proving structural determinism. This is a Rust implementation reference;
+once, map modules to responsibilities, and link the invariants reference for
+what holds and which operations establish or temporarily break it. Distinguish
+validation of stored data from proving structural determinism. This is a Rust implementation reference;
 there is no separate Python implementation to describe.
 
 ### Instances
 
-- [Rust architecture reference](architecture.md) <!-- reviewed: 586120db376146e7d7f9cc858f613dbb65f1d20658d83f5e02597695d15797d5 -->
+- [Rust architecture reference](architecture.md) <!-- reviewed: 4110d28d739006a2eceb1e8b3b4088edf856c994276e1fe5de291a225b54d704 -->
+
+## Invariants
+
+State once what holds of a diagram, as numbered items in three groups: every
+diagram an operation returns, a diagram that carries the canonical
+certificate, and a diagram with a summed-out level. Define the terms the items
+use first, and say which items depend on the layout (a plain root or a home).
+Give each item the code that keeps it and the checker that decides it, then
+the uniqueness of the canonical form with its proof, and one table of where
+the checkers run. The numbers are cited from source comments and checker
+messages, so an item keeps its number. Other pages and doc comments link here
+instead of restating an item. This is a Rust implementation reference; there
+is no separate Python implementation to describe.
+
+### Instances
+
+- [Rust invariants reference](invariants.md) <!-- reviewed: e8a071f557919edc4239e6b3cad1912e1ee6a97bbc84b313deae05caa8e1dff9 -->
 
 ## Reusable components
 

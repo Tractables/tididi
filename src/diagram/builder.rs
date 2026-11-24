@@ -126,9 +126,12 @@ impl<'a> LevelView<'a> {
 /// [`finish`](Self::finish) checks references, storage, marginal columns, and
 /// that a level names each leaf child in one form (as `One`, or as `Pos` and
 /// `Neg`), and that no pair occurs twice in a level with no marginal level
-/// under it. It does not prove determinism: the caller must ensure that nodes
-/// at a structural level represent disjoint functions. Counting relies on this;
-/// minimization cannot turn an arbitrary overlapping circuit into a TDD.
+/// under it. With no marginal level these checks decide determinism (item 1
+/// of the [invariants](crate::guide::invariants)), so a circuit whose nodes
+/// overlap is refused. Above a marginal level they do not: the caller must
+/// ensure that nodes at a structural level represent disjoint functions.
+/// Counting relies on this; minimization cannot turn an overlapping circuit
+/// into a TDD.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -390,16 +393,19 @@ impl TddBuilder {
     /// unreachable nodes and uncontracted twins.
     /// [`minimize`](crate::Tdd::minimize) makes a valid TDD canonical.
     ///
-    /// Storage validity is checked in every build profile, and so is the one
+    /// Storage validity is checked in every build profile, and so is the
     /// part of determinism a level shows by itself: no pair occurs twice in a
-    /// level with no marginal level under it. The rest of semantic determinism
-    /// remains the caller's responsibility, as described on [`TddBuilder`].
+    /// level with no marginal level under it. With no marginal level that is
+    /// all of determinism; above a marginal level it remains the caller's
+    /// responsibility, as described on [`TddBuilder`].
     ///
-    /// On a vtree on a home (its root or a projection), a diagram with no
-    /// marginal level is then [trimmed](crate::Tdd::trim): it is returned on
-    /// the projection of the home on the leaves its pairs do not name `One`,
-    /// and false is the constant on the empty projection. A diagram with a
-    /// marginal level is returned on the builder's vtree.
+    /// On a vtree on a home (its root or a projection), the diagram is then
+    /// [trimmed](crate::Tdd::trim): it is returned on the projection of the
+    /// home on the leaves its pairs do not name `One`, and false is the
+    /// constant on the empty projection. An internal marginal level that is
+    /// not under another becomes a region. A diagram whose trim would have
+    /// to rebuild a marginal variable leaf is returned on the builder's
+    /// vtree.
     ///
     /// The diagram is not certified
     /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical));
@@ -633,7 +639,8 @@ fn debug_assert_pairs(vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx, pairs: &[
     }
 }
 
-/// Check the invariants the [module docs](super) list: one level per vtree
+/// Check the storage invariants (`docs/invariants.md`, items 13, 14, 2 and
+/// 5, and the stores of a summed-out level): one level per vtree
 /// node, empty leaf levels, no empty node, every pair
 /// side naming a live slot in its child level (decoded through `ChildDecoder::child`
 /// when the child is marginal, and never with bit 31 set), every overflowed

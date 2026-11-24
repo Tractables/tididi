@@ -68,7 +68,8 @@
 //!
 //! The [API overview](guide::api) finds the operation for a task, and each
 //! item below gives its contract. The [data model](guide::model) explains the
-//! representation; contributors can start with the
+//! representation, and the [invariants](guide::invariants) state what holds of
+//! every diagram and of a canonical one; contributors can start with the
 //! [architecture reference](guide::architecture).
 
 // Guards the public-release doc surface: an undocumented public item warns.

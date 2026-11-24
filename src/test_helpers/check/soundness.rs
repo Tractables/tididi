@@ -8,8 +8,8 @@ use crate::apply::apply_and;
 use crate::diagram::{LEAF_WIDTH, LeafLabel, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, Tdd, ZERO};
 use super::signature::tdd_with_output;
 
-/// Check the determinism property: at each vtree level, all *live* nodes
-/// compute mutually exclusive Boolean functions.
+/// Check determinism (invariants 1 and 14): at each vtree level, all stored
+/// nodes compute mutually exclusive Boolean functions.
 ///
 /// **Internal levels** — for each pair of distinct nodes (i, j) at the same
 /// internal vtree level, conjoins them via `apply_and` and verifies
@@ -25,10 +25,6 @@ use super::signature::tdd_with_output;
 /// (unconstrained mode), never spanning both. This is exactly the
 /// per-pair-mutex condition extended to the leaf "node" that lives only
 /// implicitly in the labels its parents pick.
-///
-/// Mode is a global property of the function on the vtree (determined by
-/// whether the leaf's two bit-values induce the same external-completion
-/// set), so a canonical diagram picks one mode per leaf at construction.
 ///
 /// Only feasible for small diagrams (≤5 variables): O(width² × apply) per
 /// internal level plus O(size) for the leaf-label scan.

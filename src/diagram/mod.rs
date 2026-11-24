@@ -38,25 +38,14 @@
 //!   side; decode it with the child's [`TddLevel::child_decoder`], which yields
 //!   either the count itself or an index into the child's values.
 //!
-//! Invariants a reader may rely on:
-//!
-//! - every child index is in range for the child level's `reference_slot_count`
-//!   (after [`ChildDecoder::child`] on a marginal side, a slot index is in range
-//!   for the child's values);
-//! - [`ZERO`] never appears in a pair — every live node in a structural diagram is satisfiable;
-//! - marginality is downward-closed: every level below a marginal level is
-//!   marginal or a leaf;
-//! - a structural level names each structural leaf child in one form: as
-//!   [`ONE_LEAF_IDX`] in every pair, or as [`POS_LEAF_IDX`] and
-//!   [`NEG_LEAF_IDX`] in every pair;
-//! - in a diagram an operation produced, distinct nodes at a level denote
-//!   pairwise disjoint functions, so a node's pairs denote disjoint products
-//!   and its count is the sum over its pairs; a diagram built level by level
-//!   ([`TddBuilder`]) has that property only if its author kept it;
-//! - after [`minimize`](crate::Tdd::minimize), distinct nodes at a
-//!   structural level have no remaining context twins and every live node is
-//!   reachable from `output`; minimization does not repair a violation of the
-//!   builder's determinism precondition.
+//! What a reader may rely on is stated in the
+//! [invariants](crate::guide::invariants) reference: for every diagram, child
+//! references in range (item 13), disjoint nodes at a level (1), one form per
+//! leaf child (14), no false node (2) and downward-closed marginality (5);
+//! after [`minimize`](crate::Tdd::minimize), every node reachable and no
+//! twins (4, 19, 20). A diagram built level by level ([`TddBuilder`]) with a
+//! marginal level is deterministic only if its author kept it so, and
+//! minimization does not repair a violation.
 //!
 //! # Inspect structural pairs
 //!

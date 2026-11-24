@@ -13,7 +13,7 @@ use crate::limits::{Limits, OperationError};
 /// node left in the diagram computes ⊥.
 ///
 /// A node whose every pair was dropped computes ⊥, which invariant 2
-/// (`docs/architecture.md`) forbids, and every reduction rule that follows
+/// (`docs/invariants.md`) forbids, and every reduction rule that follows
 /// assumes such a node is already gone. One bottom-up pass drops every pair
 /// whose structural child is empty, which empties further nodes above and
 /// cascades. What is left unreferenced is removed by `prune_unreachable` in

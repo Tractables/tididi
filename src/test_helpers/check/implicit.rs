@@ -3,7 +3,7 @@
 use crate::diagram::LevelState;
 use crate::diagram::{floor, stored_levels_forced, ImplicitLevel, Tdd};
 
-/// Every implicit level is in the canonical form of [`ImplicitLevel`]: a
+/// Invariant 16: every implicit level is in the canonical form of [`ImplicitLevel`]: a
 /// structural level whose nodes hold the same pairs each, [`FLOOR`](crate::diagram::FLOOR) or
 /// more in all, described in normal form, by the digits a fit reads off its
 /// pairs. No stored structural level can be implicit: none of [`FLOOR`](crate::diagram::FLOOR) or
