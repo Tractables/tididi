@@ -12,7 +12,7 @@ use std::sync::Arc;
 use smallvec::SmallVec;
 
 use crate::Engine;
-use crate::diagram::{Dirty, Tdd, TddLevel, TddNodeId};
+use crate::diagram::{Dirty, Pass, Tdd, TddLevel, TddNodeId};
 use crate::limits::{Limits, OperationError, Transient};
 use crate::restructure::relevel::{RotationStep, rebuild_levels};
 use crate::restructure::scratch::RestructureScratch;
@@ -173,8 +173,9 @@ impl Tdd {
     /// The diagram must be canonical, which is what makes a rebuilt level
     /// interchangeable with the one it replaced.
     ///
-    /// A kept sequence gives up the certificate
-    /// ([`is_canonical`](Self::is_canonical)).
+    /// A kept sequence keeps the certificate
+    /// ([`is_canonical`](Self::is_canonical)) of a diagram without a
+    /// summed-out level.
     ///
     /// # Errors
     ///
@@ -334,6 +335,30 @@ impl DiagramHeader {
         }
     }
 
+    /// Keep the rotations that rebuilt `changed` in `tdd`: close those levels
+    /// and put the pending obligations back under what the rotations
+    /// recorded.
+    fn keep(self, tdd: &mut Tdd, changed: &[VtreeIdx]) {
+        // The rebuilt levels are built stored; the kept rotations are the
+        // operation's end, which closes them.
+        tdd.close_changed_levels(changed);
+        let certified = self.canonical && !tdd.has_marginal_level();
+        if certified {
+            // Rotation locality (`relevel`): a rotation of a canonical
+            // diagram without a summed-out level leaves it canonical, every
+            // node reached, so the outer levels the rotations queued owe
+            // nothing.
+            for pass in [Pass::Contract, Pass::LeafContract, Pass::ContentTwin] {
+                tdd.dirty.clear(pass);
+            }
+            tdd.dirty.set_loose(Some(Vec::new()));
+        }
+        tdd.dirty.merge_under_kept(self.dirty, changed);
+        if certified {
+            tdd.levels.certify(tdd.output);
+        }
+    }
+
     /// Put the header back on `tdd`.
     fn restore(self, tdd: &mut Tdd) {
         tdd.output = self.output;
@@ -405,10 +430,7 @@ impl<'a> Preimages<'a> {
     ) -> Transient<'a, Vec<Preimage<'a>>> {
         let Preimages { mut headers, levels, .. } = self;
         for (i, header) in headers.drain(..) {
-            // The rebuilt levels are built stored; the kept rotations are the
-            // operation's end, which closes them.
-            diagrams[i].close_changed_levels(changed);
-            diagrams[i].dirty.merge_under_kept(header.dirty, changed);
+            header.keep(diagrams[i], changed);
         }
         levels
     }
@@ -419,9 +441,7 @@ impl<'a> Preimages<'a> {
         let Preimages { mut headers, levels, .. } = self;
         debug_assert_eq!(levels.len(), 2 * headers.len());
         for ((i, header), pair) in headers.drain(..).zip(levels.chunks_exact(2)) {
-            let changed = [pair[0].node, pair[1].node];
-            diagrams[i].close_changed_levels(&changed);
-            diagrams[i].dirty.merge_under_kept(header.dirty, &changed);
+            header.keep(diagrams[i], &[pair[0].node, pair[1].node]);
         }
         levels
     }

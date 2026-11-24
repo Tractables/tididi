@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use crate::Engine;
-use crate::diagram::{Pass, Tdd};
-use crate::restructure::search::RotationMove;
+use crate::diagram::{Dirty, Pass, Tdd};
+use crate::restructure::search::{MinimizePairs, MultistartConfig, PoolMove, RotationMove, RotationSearchConfig};
 use crate::restructure::search::probe::rotate_if_on;
 use crate::test_helpers::check::marginal::check_pair_fusion_saturation;
 use crate::test_helpers::{assert_canonical, assert_same_shape, compile_clauses_on, rand_cnf, vtree_shapes, CnfShape};
@@ -108,4 +108,122 @@ fn an_accepted_rotation_keeps_the_fusion_records_it_left_alone() {
         }
     }
     assert!(kept_records > 0, "no rotation kept a record");
+}
+
+#[test]
+fn a_kept_rotation_of_an_uncertified_diagram_owes_its_outer_level_every_pass() {
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(4));
+    let mut f = Tdd::clause(&vtree, [1, 2]).unwrap() & Tdd::clause(&vtree, [3, 4]).unwrap();
+    eng.minimize(&mut f).unwrap();
+    assert!(f.dirty.is_empty());
+    f.levels.forget();
+    let turn = RotationMove { pivot: vtree.root(), kind: RotationKind::Left };
+    assert_eq!(rotate_if_on(&eng, &mut f, &[turn], usize::MAX, |_| true), Ok(true));
+    // What a release build leaves: the test build's locality check must not
+    // drain the lists it checks.
+    assert_eq!(owed(&f), [vec![vtree.root().0], vec![vtree.root().0], vec![vtree.root().0]]);
+}
+
+/// Whether a minimize of `f` that owed every level and forgot the
+/// certificate would drop a node or a pair.
+fn minimize_changes(eng: &Engine, f: &Tdd) -> bool {
+    let mut g = f.clone();
+    g.levels.forget();
+    let internal = g.vtree.internal_bottomup_slice().to_vec();
+    g.dirty = Dirty::default().seeded(&g.vtree, internal.into_iter(), None).unwrap();
+    eng.minimize(&mut g).unwrap();
+    let slots = |t: &Tdd| t.levels.iter().map(|l| l.slot_count()).collect::<Vec<_>>();
+    g.pair_count() != f.pair_count() || slots(&g) != slots(f)
+}
+
+/// What the results of one operation showed.
+#[derive(Default, Debug)]
+struct Tally {
+    results: usize,
+    certified: usize,
+    /// Canonical, yet uncertified: the next minimize runs passes that find
+    /// nothing.
+    spurious: usize,
+    /// Results a minimize runs its passes on.
+    passes: usize,
+}
+
+impl Tally {
+    fn record(&mut self, eng: &Engine, f: &Tdd, label: &str) {
+        let changes = minimize_changes(eng, f);
+        self.results += 1;
+        self.certified += usize::from(f.is_canonical());
+        self.spurious += usize::from(!f.is_canonical() && !changes);
+        self.passes += usize::from(!(f.is_canonical() && f.dirty.is_empty()));
+        assert!(!(f.is_canonical() && changes), "{label}: certified, and a minimize changes it");
+        assert_canonical(f);
+    }
+}
+
+/// Random formulas on every vtree shape, minimized, through each rotation
+/// operation: a result is certified exactly when a minimize would change
+/// nothing.
+#[test]
+fn a_rotation_of_a_canonical_diagram_keeps_the_certificate() {
+    let mut rng = Lcg::new(7);
+    let mut tallies: [Tally; 4] = Default::default();
+    for num_vars in 4..10u32 {
+        for ((shape, vtree), round) in vtree_shapes(num_vars).into_iter().flat_map(|s| [(s.clone(), 0), (s.clone(), 1), (s, 2)]) {
+            let eng = Engine::new();
+            let cnf = |rng: &mut Lcg| rand_cnf(rng, num_vars, CnfShape { clauses: 2 * num_vars as usize, width: 3 });
+            let mut f = compile_clauses_on(&eng, &vtree, &cnf(&mut rng));
+            let mut g = compile_clauses_on(&eng, &vtree, &cnf(&mut rng));
+            eng.minimize(&mut f).unwrap();
+            eng.minimize(&mut g).unwrap();
+            if f.is_zero() || f.is_one() {
+                continue;
+            }
+            let label = format!("{shape} over {num_vars} variables, round {round}");
+            let pivots: Vec<VtreeIdx> = vtree.internal_bottomup_slice().to_vec();
+            let kind = |rng: &mut Lcg| if rng.below(2) == 0 { RotationKind::Left } else { RotationKind::Right };
+
+            for _ in 0..6 {
+                let mut r = f.clone();
+                let moves: Vec<RotationMove> = (0..1 + rng.below(2))
+                    .map(|_| RotationMove { pivot: pivots[rng.below(pivots.len() as u64) as usize], kind: kind(&mut rng) })
+                    .collect();
+                if rotate_if_on(&eng, &mut r, &moves, usize::MAX, |_| true) == Ok(true) {
+                    tallies[0].record(&eng, &r, &format!("rotate_if, {label}"));
+                }
+            }
+
+            let mut r = f.clone();
+            eng.rotation_search(&mut r, &mut MinimizePairs, &RotationSearchConfig::default()).unwrap();
+            tallies[1].record(&eng, &r, &format!("rotation_search, {label}"));
+
+            let mut r = f.clone();
+            let mut config = MultistartConfig { restarts: 2, kick: 3, seed: rng.below(1000), ..MultistartConfig::default() };
+            config.search.max_inner_pairs = 1 << 20;
+            eng.rotation_multistart(&mut r, &mut MinimizePairs, &config).unwrap();
+            tallies[2].record(&eng, &r, &format!("rotation_multistart, {label}"));
+
+            if Arc::ptr_eq(f.vtree(), g.vtree()) {
+                for _ in 0..4 {
+                    let mut pool = [f.clone(), g.clone()];
+                    let rotation = RotationMove { pivot: pivots[rng.below(pivots.len() as u64) as usize], kind: kind(&mut rng) };
+                    let mv = PoolMove { rotation, crossed: rng.below(2) == 0 };
+                    let [a, b] = &mut pool;
+                    if eng.rotate_pool_if(&mut [a, b], mv, usize::MAX, |_| true) == Ok(true) {
+                        for m in &pool {
+                            tallies[3].record(&eng, m, &format!("rotate_pool_if {mv:?}, {label}"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let names = ["rotate_if", "rotation_search", "rotation_multistart", "rotate_pool_if"];
+    for (name, tally) in names.iter().zip(&tallies) {
+        eprintln!("{name}: {tally:?}");
+    }
+    for (name, tally) in names.iter().zip(&tallies) {
+        assert!(tally.results > 0, "{name}: no result");
+        assert_eq!(tally.spurious, 0, "{name}: canonical results left uncertified");
+    }
 }

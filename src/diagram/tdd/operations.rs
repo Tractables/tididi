@@ -1404,8 +1404,9 @@ impl Tdd {
     /// arrive canonical; trials touching marginal levels are skipped. Accepted
     /// rotations preserve canonical form and counts, including marginal values.
     ///
-    /// The diagram stays canonical, but a kept rotation gives up its
-    /// certificate ([`is_canonical`](Self::is_canonical)).
+    /// A diagram without a summed-out level ends certified
+    /// ([`is_canonical`](Self::is_canonical)) once the opening minimization
+    /// succeeds.
     ///
     /// # Errors
     ///

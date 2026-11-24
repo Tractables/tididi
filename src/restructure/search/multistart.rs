@@ -75,8 +75,9 @@ impl crate::Engine {
     /// this is exactly one `rotation_search`, and the objective decides
     /// whether that shrinks the diagram.
     ///
-    /// The diagram stays canonical, but a kept rotation gives up its
-    /// certificate ([`Tdd::is_canonical`](crate::Tdd::is_canonical)).
+    /// A diagram without a summed-out level ends certified
+    /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical)) once its first
+    /// search's opening minimization succeeds.
     ///
     /// # Errors
     ///

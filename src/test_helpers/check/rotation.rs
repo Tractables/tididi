@@ -22,12 +22,13 @@ use crate::vtree::VtreeIdx;
 /// assume untouched. Release builds rely on the preserved multiset, so the
 /// check mirrors them and does nothing.
 ///
-/// Drains the contract worklist as the contraction does; the caller clears
-/// the worklists afterwards either way.
-pub fn assert_rotation_locality(eng: &Engine, tdd: &mut Tdd, w_idx: VtreeIdx) {
+/// The contractions run on a copy, so a test build leaves the diagram, its
+/// worklists included, as a release build does.
+pub fn assert_rotation_locality(eng: &Engine, tdd: &Tdd, w_idx: VtreeIdx) {
     if tdd.has_marginal_level() {
         return;
     }
+    let tdd = &mut tdd.clone();
     let widths: Vec<usize> = tdd.levels.iter().map(|l| l.slot_count()).collect();
     contract_all_twins(eng, tdd).expect("rotation-locality check: an allocation was refused");
     for (i, level) in tdd.levels.iter().enumerate() {

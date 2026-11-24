@@ -997,7 +997,7 @@ fn a_replayed_refusal_decides_and_charges_as_probing_again() {
 #[test]
 fn a_pool_search_makes_the_moves_and_charges_it_made_before() {
     use crate::test_helpers::{compile_clauses_on, vtree_shapes, CnfShape, Lcg};
-    const PINNED: u64 = 0x99a1_5f54_1dcc_59de;
+    const PINNED: u64 = 0x1196_f88f_128b_4d92;
     let eng = crate::Engine::new();
     let mut rng = Lcg::new(0x9001);
     let mut hash = 0xcbf2_9ce4_8422_2325u64;

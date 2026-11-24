@@ -322,10 +322,10 @@ impl Engine {
     /// rebuild.
     ///
     /// The members should be canonical: a rebuilt level is then
-    /// interchangeable with the one it replaced. A kept move can leave twins
-    /// in a rebuilt level, which a later minimize contracts.
+    /// interchangeable with the one it replaced, and a kept move leaves the
+    /// members canonical.
     ///
-    /// A kept move gives up each member's certificate
+    /// A kept move keeps each member's certificate
     /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical)).
     ///
     /// # Errors
