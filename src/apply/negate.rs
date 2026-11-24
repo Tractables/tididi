@@ -1072,8 +1072,8 @@ impl<'a> Cover<'a> {
         common: &mut Vec<u32>,
     ) -> Result<bool, OperationError> {
         let (rows, cols) = (self.lefts.len(), self.rights.len());
-        let mut lines = cells.chunk_by(|a, b| a.left == b.left);
-        if internal[0] && cells.len() >= 2 * cols && lines.clone().filter(|row| row.len() == cols).nth(1).is_some() {
+        let same_row = |a: &ChildPair, b: &ChildPair| a.left == b.left;
+        if internal[0] && cells.len() >= 2 * cols && cells.chunk_by(same_row).filter(|row| row.len() == cols).nth(1).is_some() {
             return Ok(true);
         }
         if !internal[1] || cells.len() < 2 * rows {
@@ -1081,6 +1081,7 @@ impl<'a> Cover<'a> {
         }
         // A whole column has a cell in every row: the columns of the first
         // row that each later row holds too.
+        let mut lines = cells.chunk_by(same_row);
         let Some(first) = lines.next() else { return Ok(false) };
         common.clear();
         lim.reserve_exact(common, first.len())?;
