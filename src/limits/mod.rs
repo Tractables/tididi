@@ -293,11 +293,10 @@ impl LimitConfig {
     /// substitution and renaming, `restrict_to_care`, `filter_nodes`,
     /// `prefix_fold` and `clause`), so that each is certified canonical
     /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical)) unless it holds a
-    /// summed-out level. [`Engine::and_onto`](crate::Engine::and_onto) does
-    /// not read the setting, and
+    /// summed-out level.
     /// [`Engine::and_restoring`](crate::Engine::and_restoring) reads it only
     /// for an operand with a summed-out level. No operation outside that
-    /// module reads it: `marginalize`, `trim`, model edits, embeddings and
+    /// module reads it: `marginalize`, `trim`, model edits, `transport` and
     /// the other restructuring operations, builders and readers return what
     /// their rustdoc says. A query built on these operations (`implies`,
     /// `projected_model_count`, `and_model_count` of weighted operands)

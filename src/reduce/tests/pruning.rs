@@ -264,7 +264,7 @@ fn placed(eng: &crate::Engine, rng: &mut crate::test_helpers::Lcg, wide: &Arc<Vt
     let k = vars.len() as u32;
     let mut f = compile_clauses_on(eng, &small, &rand_cnf(rng, k, CnfShape { clauses: k as usize, width: 4 }));
     eng.minimize(&mut f).unwrap();
-    crate::test_helpers::moved(&eng, f, wide, |v| VarId(vars[v.idx()])).unwrap().0
+    crate::test_helpers::moved(eng, f, wide, |v| VarId(vars[v.idx()])).unwrap().0
 }
 
 /// An embedding lists every level of its result that holds a node no pair
@@ -294,7 +294,7 @@ fn an_embedding_lists_the_levels_holding_an_unnamed_node() {
             let what = format!("{name}, case {case}");
             let unnamed_source = unnamed_levels(&source);
             let count = source.model_count().unwrap();
-            let (moved, _) = crate::test_helpers::moved(&eng, source, &wide, |v| VarId(vars[v.idx()])).unwrap();
+            let (moved, _) = crate::test_helpers::moved(eng, source, &wide, |v| VarId(vars[v.idx()])).unwrap();
             let listed = moved.dirty.loose().expect("the source's loose levels are known");
             for t in unnamed_levels(&moved) {
                 assert!(listed.contains(t), "{what}: level {t} holds an unnamed node and is not listed");

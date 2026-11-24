@@ -561,10 +561,6 @@ pub(crate) enum Free {
 /// empty. A
 /// false diagram is the false diagram on `into`, every level empty, whatever
 /// `free` says.
-#[expect(
-    clippy::result_large_err,
-    reason = "the refusal hands back what it was given"
-)]
 pub(crate) fn place_moving(
     eng: &Engine,
     tdd: Tdd,

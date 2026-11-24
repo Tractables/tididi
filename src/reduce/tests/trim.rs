@@ -55,7 +55,7 @@ fn same_queries(f: &Tdd, g: &Tdd, n: u32, rng: &mut Lcg, label: &str) {
     let algebra = ws.algebra().clone();
     assert_eq!(f.evaluate(&algebra).unwrap(), g.evaluate(&algebra).unwrap(), "{label}: evaluation");
     let weighted = Arc::new(Vtree::clone(f.vtree()).with_weights(ws).unwrap());
-    let (fw, gw) = (crate::test_helpers::embedded(&f, &weighted, |v| v).unwrap().0, crate::test_helpers::embedded(&g, &weighted, |v| v).unwrap().0);
+    let (fw, gw) = (crate::test_helpers::embedded(f, &weighted, |v| v).unwrap().0, crate::test_helpers::embedded(g, &weighted, |v| v).unwrap().0);
     let value = |t: &Tdd| exact_weight(&t.weighted_value().unwrap().unwrap());
     assert_eq!(value(&fw), value(&gw), "{label}: weighted value");
 }
@@ -345,7 +345,7 @@ fn in_place_against_rebuild(seed: u64, seen: &mut [usize; 6]) {
     assert_eq!(g.is_zero(), h.is_zero(), "{label}: false");
     assert_eq!(g.is_one(), h.is_one(), "{label}: true");
     if g.vtree().num_nodes() > 0 {
-        let back = |t: &Tdd| crate::test_helpers::embedded(&t, &home, |v| v).unwrap().0;
+        let back = |t: &Tdd| crate::test_helpers::embedded(t, &home, |v| v).unwrap().0;
         assert!(equiv(&back(&g), &back(&h)), "{label}: another function than the rebuild's");
         assert!(equiv(&back(&g), &f), "{label}: another function");
     }

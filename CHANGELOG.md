@@ -28,7 +28,7 @@ Breaking changes:
   because it minimizes the projection it complements.
   `LimitConfig::with_canonical_results(true)` makes the Boolean operations
   minimize their results, so that each is certified canonical unless it
-  holds a summed-out level; `Engine::and_onto`, `Engine::and_restoring` of
+  holds a summed-out level; `Engine::and_restoring` of
   structural operands, and the restructuring operations, `marginalize`,
   `trim`, model edits, builders and readers do not read it.
   `Tdd::equivalent`, `Tdd::implies` and

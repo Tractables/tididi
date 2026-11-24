@@ -247,7 +247,7 @@ fn on_home(g: &Tdd, home: &Arc<Vtree>) -> Tdd {
     if Arc::ptr_eq(g.vtree(), home) {
         return g.clone();
     }
-    crate::test_helpers::embedded(&g, home, |v| v).unwrap().0
+    crate::test_helpers::embedded(g, home, |v| v).unwrap().0
 }
 
 /// `g` on `home` when it is on a projection of it or on it.
