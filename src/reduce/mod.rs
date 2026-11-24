@@ -108,7 +108,8 @@ pub enum ContentTwinPolicy<'a> {
 /// Pass the same schedule to [`ContentTwinPolicy::Adaptive`] when repeatedly
 /// reducing a growing diagram. Eligible small and weighted diagrams are scanned on
 /// every call. For larger unweighted diagrams, a scan schedules the next one
-/// at four times its input size; falling below the size threshold resets it.
+/// at 1.5 to 4 times its input size, sooner the larger the share of nodes
+/// it removed; falling below the size threshold resets it.
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct ContentTwinSchedule {

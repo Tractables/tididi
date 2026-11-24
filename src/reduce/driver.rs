@@ -11,6 +11,14 @@ use super::contract::pair_fusion::fuse_pairs_at_parents;
 use super::slot_prune::prune_value_slots;
 
 const CONTENT_SCAN_MAX_NODES: u64 = 131_072;
+/// A scan that removed a share `y` of the nodes sets the next one at
+/// `1 + SCAN_GROWTH_PER_YIELD / y` times its input size, clamped to
+/// `SCAN_GROWTH_MIN..=SCAN_GROWTH_MAX`. Fitted on model-counting runs:
+/// a later scan that saves less than it costs followed a first scan with
+/// a 19% yield, a paying one a 22% yield.
+const SCAN_GROWTH_PER_YIELD: f64 = 0.27;
+const SCAN_GROWTH_MIN: f64 = 1.5;
+const SCAN_GROWTH_MAX: f64 = 4.0;
 
 /// The driver consumes rewrite reports; kernels own their scratch and local
 /// worklists. A content merge needs pruning and contraction, a leaf rewrite
@@ -287,8 +295,9 @@ impl<'a> Reduction<'a> {
     }
 
     /// Always scan small or weighted marginal diagrams. Large unweighted
-    /// diagrams use the schedule's fourfold growth threshold. Returns whether
-    /// a scan, stopped after its sample or not, ran.
+    /// diagrams use the schedule's growth threshold, which each scan sets
+    /// from its yield. Returns whether a scan, stopped after its sample or
+    /// not, ran.
     fn scan_if_due(&mut self, schedule: &mut ContentTwinSchedule, sample: Option<(f64, usize)>) -> Result<bool, OperationError> {
         schedule.last_sample_yield = None;
         if !self.marginal() { return Ok(false); }
@@ -296,7 +305,11 @@ impl<'a> Reduction<'a> {
         if self.tdd.weight_table().is_some() || before <= CONTENT_SCAN_MAX_NODES || before >= schedule.next_scan_at_nodes {
             schedule.last_sample_yield = self.content_twins(sample)?;
             let after: u64 = self.tdd.levels.iter().map(|l| l.nodes().len() as u64).sum();
-            schedule.next_scan_at_nodes = if after > CONTENT_SCAN_MAX_NODES { before.saturating_mul(4) } else { 0 };
+            schedule.next_scan_at_nodes = if after > CONTENT_SCAN_MAX_NODES {
+                let removed = before.saturating_sub(after).max(1) as f64;
+                let growth = (1.0 + SCAN_GROWTH_PER_YIELD * before as f64 / removed).clamp(SCAN_GROWTH_MIN, SCAN_GROWTH_MAX);
+                (before as f64 * growth) as u64
+            } else { 0 };
             return Ok(true);
         }
         Ok(false)
