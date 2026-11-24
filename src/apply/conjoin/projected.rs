@@ -66,7 +66,7 @@ pub(super) fn conjoin_projections<'a>(eng: &Engine, mut f: Cow<'a, Tdd>, mut g: 
             into
         }
     };
-    let mut out = conjoin_onto(eng, f, |v| v, g, |v| v, &into).map_err(|refused| extend::operation_error(refused.error))?;
+    let mut out = conjoin_onto(eng, f, g, &into, true).map_err(|refused| refused.error)?;
     crate::reduce::close_constant(eng, &mut out);
     Ok(out)
 }
@@ -140,8 +140,7 @@ pub(super) fn conjoin_projections_kept<'a>(eng: &Engine, f: Cow<'a, Tdd>, g: Cow
         };
         let mut out = match into {
             None => conjoin_kept(eng, f, g, Operands::default(), Operands::default(), Operands::default(), Operands::default())?,
-            Some(into) => conjoin_onto(eng, f, |v| v, g, |v| v, &into)
-                .map_err(|r| AndRefused { error: extend::operation_error(r.error), f: r.f, g: r.g })?,
+            Some(into) => conjoin_onto(eng, f, g, &into, true)?,
         };
         crate::reduce::close_constant(eng, &mut out);
         return Ok(out);
@@ -160,26 +159,14 @@ fn conjoin_borrowing<'a>(eng: &Engine, f: Cow<'a, Tdd>, g: Cow<'a, Tdd>) -> Resu
 /// leaf for; [`Vtree::leaf_sets`] refuses one inside the other's extent.
 #[cold]
 pub(super) fn check_summed_leaves(f: &Tdd, g: &Tdd) -> Result<(), OperationError> {
-    check_summed_leaves_mapped(f, &|v| v, g, &|v| v)
-}
-
-/// [`check_summed_leaves`] with the variables of `f` and `g` renamed by
-/// `f_map` and `g_map`.
-#[cold]
-pub(super) fn check_summed_leaves_mapped(
-    f: &Tdd,
-    f_map: &dyn Fn(VarId) -> VarId,
-    g: &Tdd,
-    g_map: &dyn Fn(VarId) -> VarId,
-) -> Result<(), OperationError> {
-    for ((a, a_map), (b, b_map)) in [((f, f_map), (g, g_map)), ((g, g_map), (f, f_map))] {
+    for (a, b) in [(f, g), (g, f)] {
         if !a.has_marginal_level() {
             continue;
         }
-        let mut vars: Vec<VarId> = b.vtree().leaf_bottomup().map(|(_, var)| b_map(var)).collect();
+        let mut vars: Vec<VarId> = b.vtree().leaf_bottomup().map(|(_, var)| var).collect();
         vars.sort_unstable();
         for (leaf, var) in a.vtree().leaf_bottomup() {
-            if a.level(leaf).is_marginal() && vars.binary_search(&a_map(var)).is_ok() {
+            if a.level(leaf).is_marginal() && vars.binary_search(&var).is_ok() {
                 return Err(OperationError::MarginalLevel(leaf));
             }
         }

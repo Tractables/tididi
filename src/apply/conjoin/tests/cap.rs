@@ -145,7 +145,7 @@ fn a_cap_refuses_no_level_the_build_would_finish_otherwise() {
     }
 }
 
-/// [`Engine::and_onto`] counts the nodes of the levels a placement leaves
+/// [`conjoin_onto`] counts the nodes of the levels a placement leaves
 /// free under a refused level: `f` over the odd variables of its own
 /// balanced vtree, placed on the left half of a wider one, against `g`
 /// over the even variables of the wider vtree.
@@ -165,10 +165,7 @@ fn a_placement_counts_its_free_levels_under_a_refused_level() {
                 let eng = Engine::new();
                 let _scope = eng.limits().scope(LimitConfig::none().with_output_node_cap(cap).with_stop_rules(rules));
                 let out = with_dense_poll_stride(STRIDE, || {
-                    eng.and_onto(f.clone(), |v| v, g.clone(), |v| v, &wide).map(drop).map_err(|r| match r.error {
-                        crate::restructure::EmbedError::Operation(e) => e,
-                        other => panic!("placed {i}: {other:?}"),
-                    })
+                    super::and_on(&eng, f.clone(), g.clone(), &wide).map(drop).map_err(|r| r.error)
                 });
                 (out, eng.limits().work_units())
             },

@@ -55,9 +55,9 @@
 //! - [`level_counts_match_enumeration`] — counts kept with a diagram answer
 //!   its count and its conjunction's, after the binary format carried them
 //!   too, and a resealed corruption of them never panics.
-//! - [`mirrored_placements_match_enumeration`] — a diagram copied or moved
-//!   onto its vtree with children swapped at random nodes, and two diagrams
-//!   conjoined onto it, answer the truth table they had.
+//! - [`mirrored_placements_match_enumeration`] — a diagram moved onto its
+//!   vtree with children swapped at random nodes, and two diagrams moved and
+//!   conjoined there, answer the truth table they had.
 //! - [`renumbering_keeps_the_diagram`] — numbering each level's nodes in the
 //!   order a walk down from the output reaches them keeps the function, the
 //!   nodes and the pairs of a canonical diagram and of an unreduced
@@ -90,7 +90,7 @@ use tididi::test_helpers::{
     compile_clauses_pairwise, eval, rand_cnf, truth_table, weighted_sum, CnfShape, Lcg,
 };
 use tididi::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
-use tididi::{Engine, OperationError, Tdd};
+use tididi::{and, Engine, OperationError, Tdd};
 
 // ── The case ────────────────────────────────────────────────────────────────
 
@@ -1221,39 +1221,29 @@ fn mirrored(vtree: &Vtree, t: VtreeIdx, rng: &mut Lcg) -> Vtree {
     }
 }
 
-/// The compiled diagram copied and moved onto a mirror of its vtree, and the
-/// halves conjoined onto it, each against the truth table.
+/// The compiled diagram moved onto a mirror of its vtree, and the halves
+/// moved there and conjoined, each against the truth table.
 fn mirrored_placements_match_enumeration(case: &Case) {
     let n = case.num_vars;
-    let eng = Engine::new();
     let mut rng = Lcg::new(case.seed ^ 0x3177_0e5d);
     let mirror = Arc::new(mirrored(&case.vtree, case.vtree.root(), &mut rng));
-    let f = compile(case);
-    let tf = diagram_truth(&f, n);
-
-    step("a copy onto a mirror");
-    let (copied, _) = eng.embed(&f, &mirror, |v| v).unwrap();
-    assert_canonical_after_minimize(&copied);
-    assert_truth(&diagram_truth(&copied, n), &tf, n, "a copy onto a mirror");
+    let mut moved = compile(case);
+    let tf = diagram_truth(&moved, n);
 
     step("a move onto a mirror");
-    let (mut moved, _) = eng.embed_moving(f, &mirror, |v| v).map_err(|r| r.error).unwrap();
+    moved.restructure_to(&mirror, usize::MAX).unwrap();
     assert_truth(&diagram_truth(&moved, n), &tf, n, "a move onto a mirror");
     moved.minimize().unwrap();
     assert_canonical(&moved);
-    let mut copied = copied;
-    copied.minimize().unwrap();
-    assert_same_shape(&moved, &copied, "a move against a copy onto a mirror");
 
-    step("a conjunction onto a mirror");
+    step("a conjunction on a mirror");
     let split = case.clauses.len().div_ceil(2);
-    let (head, tail) = compile_split(case, split);
-    let both = eng
-        .and_onto(head, |v| v, tail, |v| v, &mirror)
-        .map_err(|r| r.error)
-        .unwrap();
+    let (mut head, mut tail) = compile_split(case, split);
+    head.restructure_to(&mirror, usize::MAX).unwrap();
+    tail.restructure_to(&mirror, usize::MAX).unwrap();
+    let both = and(head, tail).unwrap();
     assert_canonical_after_minimize(&both);
-    assert_truth(&diagram_truth(&both, n), &tf, n, "a conjunction onto a mirror");
+    assert_truth(&diagram_truth(&both, n), &tf, n, "a conjunction on a mirror");
 }
 
 // ── Regression cases ────────────────────────────────────────────────────────

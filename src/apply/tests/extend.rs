@@ -532,7 +532,7 @@ fn check_union(eng: &Engine, hm: &Home, f: &Tdd, g: &Tdd, trimmed: bool, what: &
     merged.dedup();
     let union = Vtree::projection(hm, merged.iter().copied()).unwrap();
     let expected = eng.and(on_home(eng, f, home), on_home(eng, g, home)).unwrap();
-    let mut placed = crate::apply::conjoin::conjoin_onto_as(eng, (f.into(), |v| v), (g.into(), |v| v), &union, false)
+    let mut placed = crate::apply::conjoin::conjoin_onto(eng, f.into(), g.into(), &union, false)
         .map_err(|r| r.error)
         .unwrap();
     crate::reduce::close_constant(eng, &mut placed);

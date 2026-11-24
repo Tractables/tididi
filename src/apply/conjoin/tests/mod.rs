@@ -35,6 +35,32 @@ mod target_completion;
 mod width_cap;
 mod workspace;
 
+/// `f ∧ g` on `into`, a vtree holding both operands' leaves, by
+/// [`conjoin_onto`] through views, closed as [`and`] closes it.
+#[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
+fn and_on<'a>(eng: &Engine, f: impl Into<Cow<'a, Tdd>>, g: impl Into<Cow<'a, Tdd>>, into: &Arc<Vtree>) -> Result<Tdd, AndRefused<'a>> {
+    conjoin_onto(eng, f.into(), g.into(), into, true).map(|mut out| {
+        crate::reduce::close_constant(eng, &mut out);
+        out
+    })
+}
+
+/// `t` placed on `u`, a vtree holding its leaves, free levels built: an
+/// operand [`conjoin_onto`] placed and then refused.
+fn placed_on(eng: &Engine, t: &Tdd, u: &Arc<Vtree>) -> Tdd {
+    if Arc::ptr_eq(t.vtree(), u) {
+        return t.clone();
+    }
+    let plan = Plan::build(eng, t.vtree(), u, |v| v, false, Free::Leave).unwrap();
+    place_by(eng, Cow::Borrowed(t), u, &plan, Free::Build).map_err(|e| e.0).unwrap()
+}
+
+/// `cnf` over variables `1..=k` renamed to `vars[0..k]`.
+fn renamed_cnf(cnf: Vec<Vec<i32>>, vars: &[u32]) -> Vec<Vec<i32>> {
+    let image = |l: i32| l.signum() * vars[l.unsigned_abs() as usize - 1] as i32;
+    cnf.into_iter().map(|c| c.into_iter().map(image).collect()).collect()
+}
+
 thread_local! {
     /// Whether a level whose nodes pass the output-node cap is built on this
     /// thread rather than refused before it is built ([`builds_past_cap`]).

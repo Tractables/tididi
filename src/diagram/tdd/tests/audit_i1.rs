@@ -25,7 +25,6 @@ use super::*;
 /// The producers whose results name a leaf `One` today, with the reason. A
 /// line marked `unpredicted` was found by this test, not by an audit.
 const EXPECTED_OPEN: &[(&str, &str)] = &[
-    ("and_onto a wider vtree [fixed]", "a target wider than the union"),
     ("embed onto the home", "a variable of the home the operand does not use"),
     ("embed_moving onto the home", "a variable of the home the operand does not use"),
     ("embed_over the home", "a variable of the home the operand does not use"),
@@ -467,7 +466,6 @@ fn fixed_cases(a: &mut Audit, eng: &Engine) {
     a.run("cube [fixed]", || eng.cube(&xyz, [1, -2]));
     a.run("clause [fixed]", || eng.clause(&xyz, [1, -2]));
     a.run("from_models [fixed]", || Tdd::from_models(&xyz, &[VarId(1)], &[1]));
-    a.run("and_onto a wider vtree [fixed]", || eng.and_onto(&x, |v| v, &x, |v| v, &xyz).map_err(|e| format!("{e:?}")));
 
     a.case = "tag_level of ((x y) z) = (x and y and z) or (not (x and y) and not z) at (x y), both nodes tagged 0".into();
     a.run("tag_level [fixed]", || {

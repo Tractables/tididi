@@ -148,7 +148,6 @@ For more specialized control:
 | Place a diagram with summed-out levels | [`Engine::embed_over`](crate::Engine::embed_over) |
 | Drop the variables a diagram has summed out from its vtree | [`Engine::project_over`](crate::Engine::project_over) |
 | Conjoin or place by moving levels, getting the operands back on refusal | [`Engine::and_restoring`](crate::Engine::and_restoring), [`Engine::embed_moving`](crate::Engine::embed_moving) |
-| Conjoin two diagrams placed on a larger vtree | [`Engine::and_onto`](crate::Engine::and_onto) |
 | Conjoin a small constraint into a large diagram's own levels | [`Engine::and_in_place`](crate::Engine::and_in_place), [`Engine::and_in_place_loose`](crate::Engine::and_in_place_loose), [`Engine::and_cube`](crate::Engine::and_cube) |
 | Conjoin with, or sum against, a large diagram through an index of its pairs | [`PairIndex`](crate::diagram::PairIndex), [`Engine::and_indexed`](crate::Engine::and_indexed), [`Engine::sum_indexed`](crate::Engine::sum_indexed) |
 | Pair each node of a level with a code | [`Engine::tag_level`](crate::Engine::tag_level) |

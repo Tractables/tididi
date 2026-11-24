@@ -157,8 +157,8 @@ impl Case {
             Ok(result) if clash => return assert!(result.is_zero() && smooth.is_zero(), "{what}: a conflict was not refused"),
             Ok(result) => result,
         };
-        // `and_onto` keeps a false result on its target.
-        if !(result.is_zero() && what.contains("and_onto")) {
+        // `conjoin_onto` keeps a false result on its target.
+        if !(result.is_zero() && what.contains("conjoin_onto")) {
             check_form(&result, what);
         }
         let vars = summed(&result);
@@ -205,11 +205,8 @@ fn and_on_projections_with_regions_matches_the_smooth_form() {
         case.check(&what("and mixed"), &ops, eng.and(&a.f, b.f.clone()), &smooth, false);
         case.check(&what("and_restoring"), &ops, eng.and_restoring(&a.f, &b.f).map_err(|r| r.error), &smooth, false);
         if let Some(into) = union(&a.f, &b.f) {
-            let onto = eng.and_onto(&a.f, |v| v, &b.f, |v| v, &into).map_err(|r| match r.error {
-                crate::restructure::EmbedError::Operation(e) => e,
-                e => panic!("{}: {e:?}", what("and_onto")),
-            });
-            case.check(&what("and_onto"), &ops, onto, &smooth, false);
+            let onto = super::and_on(&eng, &a.f, &b.f, &into).map_err(|r| r.error);
+            case.check(&what("conjoin_onto"), &ops, onto, &smooth, false);
         }
         let hs = targets(home.vtree(), &[], &mut rng);
         case.check(&what("and_marginalizing_where"), &ops, eng.and_marginalizing_where(&a.f, &b.f, under(&home, &hs)), &smooth, true);
@@ -608,9 +605,9 @@ fn same_value(f: &Tdd, g: &Tdd, arithmetic: Arithmetic, what: &str) {
 }
 
 /// One random computation on a home that holds the weights gives the
-/// weighted values of the same functions on a root of the same shape given
-/// the weights by [`Vtree::with_weights`], where nothing is summed out, and
-/// refuses exactly what the same computation on an unweighted home refuses.
+/// weighted values of the same functions with nothing summed out, placed on
+/// the home's own vtree, and refuses exactly what the same computation on an
+/// unweighted home refuses.
 #[test]
 fn a_weighted_home_computes_what_a_weighted_root_computes() {
     let eng = Engine::new();
@@ -622,12 +619,11 @@ fn a_weighted_home_computes_what_a_weighted_root_computes() {
         let arithmetic = [Arithmetic::ExactRational, Arithmetic::ScaledFloat][index as usize % 2];
         let held = Home::weighted(Vtree::random(n, index), Weights::new(w.clone(), arithmetic)).unwrap();
         let plain = Home::new(Vtree::random(n, index));
-        let root = Arc::new(Vtree::random(n, index).with_weights(Weights::new(w.clone(), arithmetic)).unwrap());
         let seed = rng.below(u64::MAX);
         let (mut on_held, mut on_plain) = (Lcg::new(seed), Lcg::new(seed));
         let [a, b] = [(); 2].map(|()| make(&eng, &held, &mut on_held));
         let [pa, pb] = [(); 2].map(|()| make(&eng, &plain, &mut on_plain).f);
-        let [ra, rb] = [&a, &b].map(|op| eng.embed(&op.smooth, &root, |v| v).unwrap().0);
+        let [ra, rb] = [&a, &b].map(|op| crate::apply::extend::onto(&eng, &op.smooth, held.vtree()).unwrap().into_owned());
         let (a, b) = (a.f, b.f);
         let product = eng.and(&ra, &rb).unwrap();
         let what = |entry: &str| format!("case {index} {entry} {arithmetic:?}");
@@ -656,17 +652,9 @@ fn a_weighted_home_computes_what_a_weighted_root_computes() {
             &product,
         );
         if let (Some(into), Some(plain_into)) = (union(&a, &b), union(&pa, &pb)) {
-            let onto = |f: &Tdd, g: &Tdd, into: &Arc<Vtree>| eng.and_onto(f, |v| v, g, |v| v, into).map_err(|r| format!("{:?}", r.error));
-            check("and_onto", onto(&a, &b, &into), Some(onto(&pa, &pb, &plain_into)), &product);
-            let place = |f: &Tdd, into: &Arc<Vtree>| eng.embed_over(f, into, |v| v).map(|(f, _)| f).map_err(|e| format!("{e:?}"));
+            let onto = |f: &Tdd, g: &Tdd, into: &Arc<Vtree>| super::and_on(&eng, f, g, into).map_err(|r| format!("{:?}", r.error));
             placed += 1;
-            // `embed_over` refuses integer counts, so an unweighted diagram
-            // with a summed level is no reference for the placement.
-            let unweighted = match place(&pa, &plain_into) {
-                Err(e) if pa.has_marginal_level() && e.contains("MarginalLevel") => None,
-                other => Some(other),
-            };
-            check("placement", place(&a, &into), unweighted, &ra);
+            check("conjoin_onto", onto(&a, &b, &into), Some(onto(&pa, &pb, &plain_into)), &product);
         }
         let trim = |f: &Tdd, home: &Home| {
             let mut f = f.clone();

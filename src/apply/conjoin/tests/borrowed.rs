@@ -14,7 +14,7 @@ use crate::Engine;
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
 use crate::limits::{LimitConfig, SparseRoute, StopAt, StopRules};
 use crate::test_helpers::{compile_clauses_on, rand_cnf, rat, same_storage, vtree_shapes, CnfShape, Lcg};
-use crate::vtree::{VarId, Vtree};
+use crate::vtree::{Home, VarId, Vtree};
 
 /// Every level the sparse route can take, takes it.
 const SPARSE: SparseRoute = SparseRoute { sparsity: 1, min_grid: 0 };
@@ -244,8 +244,8 @@ fn a_refused_conjunction_hands_back_what_it_was_given() {
     assert!(refusals > 100, "only {refusals} refusals");
 }
 
-/// [`Engine::and_onto`] with each operand borrowed in turn and both, one on
-/// the destination and one placed there, against the same call with both
+/// [`conjoin_onto`] with each operand borrowed in turn and both, one on
+/// the destination and one, on a projection of its home, placed there, against the same call with both
 /// owned; refused at each unit of work, it is refused where the owned one
 /// is, and refused there or at any reserve, it hands back what it was
 /// given: a borrowed operand as the borrow, an owned one as it was or
@@ -253,34 +253,29 @@ fn a_refused_conjunction_hands_back_what_it_was_given() {
 #[test]
 fn a_borrowed_operand_conjoins_onto_as_an_owned_one() {
     let eng = Engine::new();
-    let small = Arc::new(Vtree::balanced(4));
-    let into = Arc::new(Vtree::balanced(8));
+    let home = Home::new(Vtree::balanced(8));
+    let into = Arc::clone(home.vtree());
     let mut rng = Lcg::new(0x0170);
     let mut checked = 0;
     for case in 0..8u32 {
-        let on_small = compile_clauses_on(&eng, &small, &rand_cnf(&mut rng, 4, CnfShape { clauses: 6, width: 3 }));
-        let on_into = compile_clauses_on(&eng, &into, &rand_cnf(&mut rng, 8, CnfShape { clauses: 12, width: 3 }));
         let offset = 4 * (case % 2);
-        let map = |t: &Tdd| {
-            let there = Arc::ptr_eq(t.vtree(), &into);
-            move |v: VarId| if there { v } else { VarId(v.0 + offset) }
-        };
-        let placed = |t: &Tdd| match Arc::ptr_eq(t.vtree(), &into) {
-            true => t.clone(),
-            false => eng.embed_moving(t.clone(), &into, map(t)).map_err(|r| r.error).unwrap().0,
-        };
+        let vars: Vec<u32> = (1 + offset..=4 + offset).collect();
+        let small = Vtree::projection(&home, vars.iter().map(|&v| VarId(v))).unwrap();
+        let on_small = compile_clauses_on(&eng, &small, &super::renamed_cnf(rand_cnf(&mut rng, 4, CnfShape { clauses: 6, width: 3 }), &vars));
+        let on_into = compile_clauses_on(&eng, &into, &rand_cnf(&mut rng, 8, CnfShape { clauses: 12, width: 3 }));
+        let placed = |t: &Tdd| super::placed_on(&eng, t, &into);
         for (a, b, what) in [(&on_small, &on_into, "placed and on into"), (&on_into, &on_small, "on into and placed")] {
-            let (owned, owned_work) = on_fresh(false, |eng| eng.and_onto(given(a, false), map(a), given(b, false), map(b), &into).map_err(|r| r.error).unwrap());
+            let (owned, owned_work) = on_fresh(false, |eng| super::and_on(eng, given(a, false), given(b, false), &into).map_err(|r| r.error).unwrap());
             for (borrow_a, borrow_b) in BORROWS {
                 let at = format!("case {case}, {what}, borrowing ({borrow_a}, {borrow_b})");
-                let (out, work) = on_fresh(false, |eng| eng.and_onto(given(a, borrow_a), map(a), given(b, borrow_b), map(b), &into).map_err(|r| r.error).unwrap());
+                let (out, work) = on_fresh(false, |eng| super::and_on(eng, given(a, borrow_a), given(b, borrow_b), &into).map_err(|r| r.error).unwrap());
                 assert_borrowed_matches_owned(&out, work, &owned, owned_work, &at);
                 for n in 0..=owned_work {
                     let refused_at = |borrow: (bool, bool)| {
                         let eng = Engine::new();
                         let stop = StopRules { unconditional: Some(StopAt::WorkUnits(eng.limits().work_units() + n)), after_pairs: None };
                         let _scope = eng.limits().scope(LimitConfig::none().with_stop_rules(stop));
-                        let refused = eng.and_onto(given(a, borrow.0), map(a), given(b, borrow.1), map(b), &into).err();
+                        let refused = super::and_on(&eng, given(a, borrow.0), given(b, borrow.1), &into).err();
                         if let Some(r) = &refused {
                             for (back, t, borrowed) in [(&r.f, a, borrow.0), (&r.g, b, borrow.1)] {
                                 let as_placed = !borrowed && matches!(back, Cow::Owned(back) if same_storage(back, &placed(t)));
@@ -296,7 +291,7 @@ fn a_borrowed_operand_conjoins_onto_as_an_owned_one() {
                     let eng = Engine::new();
                     let _scope = eng.limits().scope(LimitConfig::none());
                     eng.refuse_nth_reserve(n);
-                    let Err(r) = eng.and_onto(given(a, borrow_a), map(a), given(b, borrow_b), map(b), &into) else {
+                    let Err(r) = super::and_on(&eng, given(a, borrow_a), given(b, borrow_b), &into) else {
                         if eng.limits().refusal_pending() {
                             break;
                         }

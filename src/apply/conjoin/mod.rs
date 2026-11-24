@@ -3,8 +3,8 @@
 //! Entry points validate the operands, align weight tables, and check the
 //! constant and self-conjunction (`f ∧ f = f`) shortcuts before entering the
 //! level sweep ([`drive`]). Operands may be owned or borrowed (`Cow<Tdd>`),
-//! placed onto a wider destination with free levels left unbuilt
-//! ([`Engine::and_onto`]), or restored intact on refusal
+//! placed onto a wider projection with free levels left unbuilt
+//! ([`conjoin_onto`]), or restored intact on refusal
 //! ([`Engine::and_restoring`]).
 //!
 //! Within the active [`setup::Cone`], leaf levels are seeded from the constant
@@ -30,7 +30,6 @@ use std::borrow::{Borrow, Cow};
 use std::sync::Arc;
 
 use crate::vtree::{VarId, Vtree, VtreeIdx};
-use crate::restructure::EmbedError;
 use crate::restructure::embed::{place, place_by, Free, Plan};
 use crate::restructure::placement::push_free_level;
 use super::CONJOIN_GRID;
@@ -366,7 +365,7 @@ fn conjoin_recycling(
 /// operands on two projections lives on the larger operand's vtree when its
 /// leaves hold the other's, and on the projection of both leaf sets
 /// otherwise; an operand with a summed-out level is refused there
-/// ([`OperationError::MarginalLevel`]), as [`Engine::and_onto`] refuses it.
+/// ([`OperationError::MarginalLevel`]).
 ///
 /// Each operand is a [`Tdd`], consumed on success and on error, or a
 /// `&Tdd`, read in place and left as it is. Where the result takes a level
@@ -433,20 +432,6 @@ pub struct AndRefused<'a> {
     /// The first operand, unchanged.
     pub f: Cow<'a, Tdd>,
     /// The second operand, unchanged.
-    pub g: Cow<'a, Tdd>,
-}
-
-/// A conjunction [`Engine::and_onto`](crate::Engine::and_onto) refused, with
-/// each owned operand on the destination where it was placed there before
-/// the refusal and as it was given otherwise, and each borrowed one as the
-/// borrow.
-#[derive(Debug)]
-pub struct AndOntoRefused<'a> {
-    /// Why the placement or the conjunction was refused.
-    pub error: EmbedError,
-    /// The first operand.
-    pub f: Cow<'a, Tdd>,
-    /// The second operand.
     pub g: Cow<'a, Tdd>,
 }
 
@@ -602,11 +587,11 @@ fn reinstate_known(tdd: &mut Cow<'_, Tdd>, known: Option<diagram::Known>) {
 /// An operand [`place_onto`] placed, or to be viewed, with the plan it was
 /// placed or is to be viewed by, or why it was refused, with the operand as
 /// it was given.
-type Placed<'a> = Result<(Cow<'a, Tdd>, Option<Plan>, bool), (EmbedError, Cow<'a, Tdd>)>;
+type Placed<'a> = Result<(Cow<'a, Tdd>, Option<Plan>, bool), (OperationError, Cow<'a, Tdd>)>;
 
-/// Make `tdd` an operand on `into` for
-/// [`Engine::and_onto`](crate::Engine::and_onto), with the plan that embeds
-/// it: as it is, with no plan, when it is on `into` already; with
+/// Make `tdd`, on a projection of `into`'s home holding none of `into`'s
+/// leaves it lacks, an operand on `into` for [`conjoin_onto`], with the plan
+/// that embeds it: as it is, with no plan, when it is on `into` already; with
 /// `viewing`, left as it is for a [`View`] where it is structural,
 /// unweighted, not false, its plan mirrors no image and, owned, it is
 /// cheaper to view than to place ([`views_cheaper`]), which the flag says;
@@ -618,7 +603,6 @@ fn place_onto<'a>(
     eng: &Engine,
     tdd: Cow<'a, Tdd>,
     into: &Arc<Vtree>,
-    map: impl Fn(VarId) -> VarId,
     begun: &mut bool,
     viewing: bool,
 ) -> Placed<'a> {
@@ -626,19 +610,19 @@ fn place_onto<'a>(
         return Ok((tdd, None, false));
     }
     if let Err(error) = begin_phase(eng, *begun) {
-        return Err((error.into(), tdd));
+        return Err((error, tdd));
     }
     *begun = true;
     if tdd.vtree().num_nodes() == 0 {
         return match crate::build::constant_padded_on(eng, into, tdd.is_one()) {
             Ok(constant) => Ok((Cow::Owned(constant), None, false)),
-            Err(error) => Err((error.into(), tdd)),
+            Err(error) => Err((error, tdd)),
         };
     }
     if viewing && !tdd.is_zero() && tdd.require_structure().is_ok() {
-        let plan = match Plan::build(eng, tdd.vtree(), into, map, true, Free::Leave) {
+        let plan = match Plan::build(eng, tdd.vtree(), into, |v| v, true, Free::Leave) {
             Ok(plan) => plan,
-            Err(error) => return Err((error, tdd)),
+            Err(error) => return Err((extend::operation_error(error), tdd)),
         };
         let viewed = match tdd {
             Cow::Borrowed(_) => true,
@@ -647,9 +631,13 @@ fn place_onto<'a>(
         if viewed && plan.mirrored_images().next().is_none() {
             return Ok((tdd, Some(plan), true));
         }
-        return place_by(eng, tdd, into, &plan, Free::Leave).map(|tdd| (Cow::Owned(tdd), Some(plan), false));
+        return place_by(eng, tdd, into, &plan, Free::Leave)
+            .map(|tdd| (Cow::Owned(tdd), Some(plan), false))
+            .map_err(|(error, tdd)| (extend::operation_error(error), tdd));
     }
-    place(eng, tdd, into, map, Free::Leave).map(|(tdd, plan)| (Cow::Owned(tdd), Some(plan), false))
+    place(eng, tdd, into, |v| v, Free::Leave)
+        .map(|(tdd, plan)| (Cow::Owned(tdd), Some(plan), false))
+        .map_err(|(error, tdd)| (extend::operation_error(error), tdd))
 }
 
 /// Whether an owned operand embedded by `plan` into `into` costs less read
@@ -673,32 +661,20 @@ fn view_of(eng: &Engine, tdd: &Tdd, into: &Arc<Vtree>, plan: Option<&Plan>, view
     }
 }
 
-/// [`Engine::and_onto`](crate::Engine::and_onto).
+/// `f ∧ g` on `into`, a projection of their home holding both leaf sets,
+/// before the close: each operand not on `into` read through a view where
+/// `viewing` and it is cheaper, placed otherwise.
 #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
-fn conjoin_onto<'a>(
+pub(crate) fn conjoin_onto<'a>(
     eng: &Engine,
     f: Cow<'a, Tdd>,
-    f_map: impl Fn(VarId) -> VarId,
     g: Cow<'a, Tdd>,
-    g_map: impl Fn(VarId) -> VarId,
-    into: &Arc<Vtree>,
-) -> Result<Tdd, AndOntoRefused<'a>> {
-    conjoin_onto_as(eng, (f, f_map), (g, g_map), into, true)
-}
-
-/// [`conjoin_onto`], reading its plain operands through views where
-/// `viewing` and placing every operand not on `into` otherwise.
-#[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
-pub(crate) fn conjoin_onto_as<'a>(
-    eng: &Engine,
-    (f, f_map): (Cow<'a, Tdd>, impl Fn(VarId) -> VarId),
-    (g, g_map): (Cow<'a, Tdd>, impl Fn(VarId) -> VarId),
     into: &Arc<Vtree>,
     viewing: bool,
-) -> Result<Tdd, AndOntoRefused<'a>> {
+) -> Result<Tdd, AndRefused<'a>> {
     let _op = match eng.limits().enter() {
         Ok(op) => op,
-        Err(error) => return Err(AndOntoRefused { error: error.into(), f, g }),
+        Err(error) => return Err(AndRefused { error, f, g }),
     };
     // A borrowed operand comes back as the borrow, whatever its placed
     // copy went through.
@@ -712,33 +688,33 @@ pub(crate) fn conjoin_onto_as<'a>(
     // `into` already, where the conjunction leaves this check to the caller.
     if (f.vtree().on_home() || g.vtree().on_home())
         && !Arc::ptr_eq(f.vtree(), g.vtree())
-        && let Err(error) = projected::check_summed_leaves_mapped(&f, &f_map, &g, &g_map)
+        && let Err(error) = projected::check_summed_leaves(&f, &g)
     {
-        return Err(AndOntoRefused { error: error.into(), f, g });
+        return Err(AndRefused { error, f, g });
     }
     let mut begun = false;
-    let (f, f_plan, f_viewed) = match place_onto(eng, f, into, f_map, &mut begun, viewing) {
+    let (f, f_plan, f_viewed) = match place_onto(eng, f, into, &mut begun, viewing) {
         Ok(placed) => placed,
-        Err((error, f)) => return Err(AndOntoRefused { error, f, g }),
+        Err((error, f)) => return Err(AndRefused { error, f, g }),
     };
     let free_f = free_levels(&f, f_plan.as_ref());
     // The free levels a placement left empty, which a refusal builds.
     let placed_f = if f_viewed { VtreeMask::default() } else { free_f };
-    let refuse_f = |error: EmbedError, f: Cow<'a, Tdd>, g| {
+    let refuse_f = |error: OperationError, f: Cow<'a, Tdd>, g| {
         let mut f = f;
         fill_free_cow(&mut f, placed_f);
-        Err(AndOntoRefused { error, f: back(f, f_given), g })
+        Err(AndRefused { error, f: back(f, f_given), g })
     };
-    let (g, g_plan, g_viewed) = match place_onto(eng, g, into, g_map, &mut begun, viewing) {
+    let (g, g_plan, g_viewed) = match place_onto(eng, g, into, &mut begun, viewing) {
         Ok(placed) => placed,
         Err((error, g)) => return refuse_f(error, f, g),
     };
     let free = Operands { f: free_f, g: free_levels(&g, g_plan.as_ref()) };
     let placed_g = if g_viewed { VtreeMask::default() } else { free.g };
-    let refuse = |error: EmbedError, mut f: Cow<'a, Tdd>, mut g: Cow<'a, Tdd>| {
+    let refuse = |error: OperationError, mut f: Cow<'a, Tdd>, mut g: Cow<'a, Tdd>| {
         fill_free_cow(&mut f, placed_f);
         fill_free_cow(&mut g, placed_g);
-        Err(AndOntoRefused { error, f: back(f, f_given), g: back(g, g_given) })
+        Err(AndRefused { error, f: back(f, f_given), g: back(g, g_given) })
     };
     // f ∧ f = f, placed as a conjunction of placed operands returns it.
     if let (Some(fp), Some(gp)) = (&f_plan, &g_plan)
@@ -748,24 +724,24 @@ pub(crate) fn conjoin_onto_as<'a>(
         && same_levels(&f, &g, Operands::default())
     {
         if let Err(error) = eng.limits().gate().poll_each(gp.pass_throughs as u64) {
-            return refuse(error.into(), f, g);
+            return refuse(error, f, g);
         }
         let placed = place_by(eng, f, into, fp, Free::Leave).map(|mut out| {
             fill_free(&mut out, VtreeMask::free_of(fp));
             out
         });
-        return placed.map_err(|(error, f)| AndOntoRefused { error, f: back(f, f_given), g });
+        return placed.map_err(|(error, f)| AndRefused { error: extend::operation_error(error), f: back(f, f_given), g });
     }
     let mut f_view = match view_of(eng, &f, into, f_plan.as_ref(), f_viewed) {
         Ok(view) => view,
-        Err(error) => return refuse(error.into(), f, g),
+        Err(error) => return refuse(error, f, g),
     };
     let mut g_view = match view_of(eng, &g, into, g_plan.as_ref(), g_viewed) {
         Ok(view) => view,
-        Err(error) => return refuse(error.into(), f, g),
+        Err(error) => return refuse(error, f, g),
     };
     match begin_phase(eng, begun) {
-        Err(error) => refuse(error.into(), f, g),
+        Err(error) => refuse(error, f, g),
         Ok(()) => conjoin_kept(
             eng,
             f,
@@ -775,11 +751,11 @@ pub(crate) fn conjoin_onto_as<'a>(
             Operands { f: f_plan.as_ref(), g: g_plan.as_ref() },
             Operands::default(),
         )
-            .map_err(|r| AndOntoRefused { error: r.error.into(), f: back(r.f, f_given), g: back(r.g, g_given) }),
+            .map_err(|r| AndRefused { error: r.error, f: back(r.f, f_given), g: back(r.g, g_given) }),
     }
 }
 
-/// Begin a phase of [`Engine::and_onto`](crate::Engine::and_onto) as the
+/// Begin a phase of [`conjoin_onto`], a placement or the conjunction, as the
 /// operation it stands for begins, after the first: the meters start from
 /// zero and the stop is tested. The first is the operation's own entry.
 fn begin_phase(eng: &Engine, begun: bool) -> Result<(), OperationError> {
@@ -863,68 +839,6 @@ impl crate::Engine {
             return projected::conjoin_projections_kept(self, f, g);
         }
         conjoin_kept(self, f, g, Operands::default(), Operands::default(), Operands::default(), Operands::default()).map(|mut out| {
-            crate::reduce::close_constant(self, &mut out);
-            out
-        })
-    }
-
-    /// [`Engine::and_restoring`] of `f` and `g` placed on `into` as
-    /// [`Engine::embed_moving`] places them, each renamed by its own map,
-    /// without building the levels a placement adds where none of its
-    /// variables is under them.
-    ///
-    /// Such a level is the constant true level, one node true on both sides,
-    /// so the conjunction takes the other operand's level there; it builds
-    /// one only where the other operand is the constant true level too. The
-    /// result is the diagram `and_restoring` returns on the two embeddings,
-    /// node for node. An operand already on `into` is taken as it is, and
-    /// its map is not read. Each operand is owned or borrowed, at the costs
-    /// [`and`] states; a borrowed operand on `into` is read in place. One
-    /// that is not is read where it is when it is structural, unweighted
-    /// and its embedding swaps no node's children, a level of it copied only
-    /// where the result takes it, unless it is owned and a quarter or more
-    /// of `into`'s nodes would be pass-through levels of it; otherwise it
-    /// is placed, a borrowed one copied whole first.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    /// use tididi::vtree::VarId;
-    ///
-    /// let engine = Engine::new();
-    /// let pair = Arc::new(Vtree::balanced(2));
-    /// let wide = Arc::new(Vtree::balanced(4));
-    /// let low = engine.clause(&pair, [1, 2])?;
-    /// let high = engine.clause(&pair, [-1, -2])?;
-    /// let both = engine
-    ///     .and_onto(low, |v| v, high, |v| VarId(v.0 + 2), &wide)
-    ///     .map_err(|r| r.error)?;
-    /// assert_eq!(engine.model_count(&both)?, 9u32.into());
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Those of [`Engine::embed_moving`] and [`Engine::and_restoring`]. Each
-    /// owned operand comes back on `into` when it was placed there before
-    /// the refusal and as it was given otherwise; its [`Tdd::vtree`] tells
-    /// which. A borrowed operand comes back as the borrow.
-    /// The placements and the conjunction are metered as the operations they
-    /// stand for are, each from zero, with the stop tested as each begins.
-    /// The work clock is charged as for the two embeddings and the
-    /// conjunction, less one unit for each level a placement leaves free:
-    /// the conjunction builds such a level only where it carries it as an
-    /// identity level, which it charges nothing.
-    #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
-    pub fn and_onto<'a>(
-        &self,
-        f: impl Into<Cow<'a, Tdd>>,
-        f_map: impl Fn(VarId) -> VarId,
-        g: impl Into<Cow<'a, Tdd>>,
-        g_map: impl Fn(VarId) -> VarId,
-        into: &Arc<Vtree>,
-    ) -> Result<Tdd, AndOntoRefused<'a>> {
-        conjoin_onto(self, f.into(), f_map, g.into(), g_map, into).map(|mut out| {
             crate::reduce::close_constant(self, &mut out);
             out
         })

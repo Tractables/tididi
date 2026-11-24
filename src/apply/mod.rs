@@ -44,7 +44,7 @@ mod runs;
 
 pub use add::add;
 pub(crate) use conjoin::apply_and;
-pub use conjoin::{and, AndOntoRefused, AndRefused};
+pub use conjoin::{and, AndRefused};
 pub(crate) use disjoin::apply_or;
 pub use disjoin::{nor_many, or, or_many};
 pub use overlay::and_not;
