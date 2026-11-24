@@ -384,13 +384,22 @@ fn beside(eng: &Engine, home: &Home, g: &Tdd, n: u32, rng: &mut Lcg) -> Option<T
 #[allow(clippy::too_many_lines)]
 fn binary_audit_case(a: &mut Audit, eng: &Engine, f: &Tdd, g: &Tdd, b: &Tdd) {
     let bf = crate::test_helpers::embedded(b, f.vtree(), |v| v).unwrap().0;
-    // A placed operand passes the checks its operand passed.
-    let fast = |t: &Tdd| catch_unwind(AssertUnwindSafe(|| crate::test_helpers::check::check_all_fast(t, "operand"))).is_ok();
+    // A placed operand passes the checks its operand passed, but for the
+    // trimmed form: placement names `One` beside the other operand's region.
+    let placed_checks = |t: &Tdd, name: &str| {
+        use crate::test_helpers::check::{check_implicit_levels, check_no_false_nodes, validate_vtree_structure};
+        for (checker, r) in [("vtree structure", validate_vtree_structure(t)), ("no false nodes", check_no_false_nodes(t)), ("implicit levels", check_implicit_levels(t))] {
+            if let Err(e) = r {
+                panic!("{name}: {checker}: {e}");
+            }
+        }
+    };
+    let fast = |t: &Tdd| catch_unwind(AssertUnwindSafe(|| placed_checks(t, "operand"))).is_ok();
     if let Ok([pg, pb]) = crate::apply::extend::on_one(eng, [std::borrow::Cow::Borrowed(g), std::borrow::Cow::Borrowed(b)]) {
         for (name, operand, placed) in [("placed summed", g, pg), ("placed beside", b, pb)] {
             if b.vtree().num_nodes() != 0 && fast(operand) {
                 a.runs(name, || {
-                    crate::test_helpers::check::check_all_fast(&placed, name);
+                    placed_checks(&placed, name);
                     Ok::<_, ()>(())
                 });
             }

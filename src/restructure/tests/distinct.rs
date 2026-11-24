@@ -128,6 +128,8 @@ fn every_refused_reserve_of_a_distinct_count_leaves_the_operand() {
                     None => eng.project_to_subtree(&f, key),
                 };
                 let want = run(&Engine::new()).unwrap();
+                // The checks fill the levels' kept pair counts, which the comparison reads.
+                assert_canonical(&want);
                 let eng = Engine::new();
                 refused += eng
                     .sweep_reserves(

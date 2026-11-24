@@ -303,6 +303,8 @@ fn every_refused_reserve_of_a_tagging_leaves_the_operand() {
             let tags = cycling(&f, at);
             let tag = |eng: &Engine| eng.tag_level(&f, at, &into, |v| local[v.idx()].unwrap(), &tags, &code_vars, &CODES);
             let want = tag(&Engine::new()).unwrap();
+            // The checks fill the levels' kept pair counts, which the comparison reads.
+            assert_canonical(&want);
             let eng = Engine::new();
             refused += eng
                 .sweep_reserves(

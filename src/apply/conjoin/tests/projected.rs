@@ -46,7 +46,7 @@ fn clause(vars: &[VarId], rng: &mut Lcg) -> Vec<i32> {
 /// A random CNF over the projection of `home` on `vars`, built on it.
 fn cnf_on(eng: &Engine, home: &Home, vars: &[VarId], rng: &mut Lcg) -> Tdd {
     let vtree = Vtree::projection(home, vars.iter().copied()).unwrap();
-    let mut f = crate::test_helpers::padded(Tdd::one(&vtree), &vtree);
+    let mut f = Tdd::one(&vtree);
     for _ in 0..1 + rng.below(4) {
         f = eng.and_clause(f, &clause(vars, rng)).unwrap();
     }

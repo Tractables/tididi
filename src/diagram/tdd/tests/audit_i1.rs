@@ -2,7 +2,9 @@
 //! names a leaf child `One` in all its reachable pairs or in none, for every
 //! public producer on operands that satisfy both, on projections of one home.
 //! [`EXPECTED_OPEN`] lists the producers known to name a leaf `One` today:
-//! each must do so at least once, every other producer never.
+//! each must do so at least once, every other producer never. Every other
+//! result on a home also passes `check_all_fast`, I1 over dead nodes
+//! included, and minimizes to a diagram whose leaves are its support.
 
 use std::collections::BTreeMap;
 use std::fmt::Debug;
@@ -14,8 +16,8 @@ use crate::apply::{FilterOutcome, FoldCodes, FoldMonoid, FoldRange};
 use crate::diagram::{Arithmetic, ChildPair, LeafLabel, LiteralWeights, NodeIdx, PairIndex, RationalWeights, TddNodeId, Weights};
 use crate::reduce::{ContentTwinPolicy, ReductionPlan};
 use crate::restructure::search::{MinimizePairs, MultistartConfig, PoolSearchConfig, RotationMove, RotationSearchConfig};
-use crate::test_helpers::check::{check_trimmed, reachable_true_labels};
-use crate::test_helpers::rand_conj;
+use crate::test_helpers::check::{check_all_fast, check_no_true_node, check_trimmed, reachable_true_labels};
+use crate::test_helpers::rand_conj_over;
 use crate::vtree::rng::Lcg;
 use crate::vtree::{Home, RotationKind, VarId, VtreeIdx};
 use crate::{Engine, Literal, OperationError};
@@ -25,19 +27,7 @@ use super::*;
 /// The producers whose results name a leaf `One` today, with the reason. A
 /// line marked `unpredicted` was found by this test, not by an audit.
 const EXPECTED_OPEN: &[(&str, &str)] = &[
-];
-
-/// Producers whose results on a home are also held to [`check_trimmed`]:
-/// on the projection of no leaf they do not read, besides naming none true.
-const HELD_TRIMMED: &[&str] = &[
-    "and_in_place_loose",
-    "and_cube",
-    "rotation_multistart",
-    "rotate_if",
-    "renumber_top_down",
-    "Maintenance::insert_model",
-    "Maintenance::remove_model",
-    "Tdd::insert_model",
+    ("expand_variables", "a plain root, on which a class of one literal the operand does not read is a leaf named One"),
 ];
 
 // Predicted open, but no result named One on these inputs, so the audit
@@ -54,6 +44,10 @@ struct Seen {
     panics: Vec<String>,
     false_with_nodes: usize,
     untrimmed: Vec<String>,
+    off_support: Vec<String>,
+    /// Unminimized results holding a node that denotes every assignment of
+    /// its variables: contraction debt, which `minimize` must clear.
+    true_node: usize,
 }
 
 #[derive(Default)]
@@ -70,8 +64,7 @@ impl Audit {
         let seen = self.seen.entry(name).or_default();
         match catch_unwind(AssertUnwindSafe(call)) {
             Err(e) => {
-                let text = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| (*s).to_string()));
-                seen.panics.push(format!("{case}: {}", text.unwrap_or_default()));
+                seen.panics.push(format!("{case}: {}", panic_text(&*e)));
             }
             Ok(Err(_)) => seen.refused += 1,
             Ok(Ok(t)) => {
@@ -80,11 +73,19 @@ impl Audit {
                 // The smooth form `marginalize_levels` leaves on a home's
                 // root keeps its internal summed levels.
                 let smooth = t.vtree().bottomup().any(|u| !t.vtree().node(u).is_leaf() && t.level(u).is_marginal());
-                if t.vtree().on_home()
-                    && !smooth
-                    && let Err(e) = check_trimmed(&t, false)
-                {
-                    seen.untrimmed.push(format!("{case}: {e}"));
+                if t.vtree().on_home() && !smooth {
+                    let fast = catch_unwind(AssertUnwindSafe(|| check_all_fast(&t, "result")));
+                    if let Err(e) = check_trimmed(&t, t.is_canonical()).and(fast.map_err(|e| panic_text(&*e))) {
+                        seen.untrimmed.push(format!("{case}: {e}"));
+                    }
+                    if !t.has_marginal_level() {
+                        seen.true_node += usize::from(check_no_true_node(&t).is_err());
+                        let mut m = t.clone();
+                        let minimized = m.minimize().map_err(|e| e.to_string()).and_then(|()| check_trimmed(&m, true)).and_then(|()| check_no_true_node(&m));
+                        if let Err(e) = minimized {
+                            seen.off_support.push(format!("{case}: {e}; {}", self.inputs));
+                        }
+                    }
                 }
                 match catch_unwind(AssertUnwindSafe(|| reachable_true_labels(&t))) {
                     Err(_) => seen.panics.push(format!("{case}: the scan")),
@@ -108,19 +109,25 @@ impl Audit {
         for (&name, s) in &self.seen {
             let open = EXPECTED_OPEN.iter().any(|&(n, _)| n == name);
             report += &format!(
-                "{name}: {} results, {} named One, {} refused, {} false on a vtree with nodes, {} not trimmed{}\n",
+                "{name}: {} results, {} named One, {} refused, {} false on a vtree with nodes, {} not trimmed, {} off the support once minimized, {} with a true node{}\n",
                 s.runs,
                 s.named_one,
                 s.refused,
                 s.false_with_nodes,
                 s.untrimmed.len(),
+                s.off_support.len(),
+                s.true_node,
                 s.first_one.as_ref().map(|w| format!(" (first {w})")).unwrap_or_default()
             );
             if let Some(e) = s.leaf_form.first() {
                 findings.push(format!("{name}: leaf form fails {} times, first {e}", s.leaf_form.len()));
             }
-            if let (true, Some(e)) = (HELD_TRIMMED.contains(&name), s.untrimmed.first()) {
+            let held = !open;
+            if let (true, Some(e)) = (held, s.untrimmed.first()) {
                 findings.push(format!("{name}: not trimmed {} times, first {e}", s.untrimmed.len()));
+            }
+            if let (true, Some(e)) = (held, s.off_support.first()) {
+                findings.push(format!("{name}: off the support once minimized {} times, first {e}", s.off_support.len()));
             }
             if let Some(p) = s.panics.first() {
                 findings.push(format!("{name}: {} panics, first {p}", s.panics.len()));
@@ -140,6 +147,10 @@ impl Audit {
     }
 }
 
+fn panic_text(e: &(dyn std::any::Any + Send)) -> String {
+    e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| (*s).to_string())).unwrap_or_default()
+}
+
 fn weights(n: u32, rng: &mut Lcg) -> Weights {
     let mut w = || BigRational::new((1 + rng.below(5) as i64).into(), (1 + rng.below(4) as i64).into());
     let literals: Vec<_> = (0..=n).map(|_| LiteralWeights { negative: w(), positive: w() }).collect();
@@ -157,16 +168,16 @@ fn reseated(t: &Tdd, onto: &Home) -> Tdd {
     t
 }
 
-/// A random function of the home's variables, minimized and trimmed: it names
-/// no leaf `One` and sits on the projection of the home on its support.
-fn operand(home: &Arc<Vtree>, n: u32, rng: &mut Lcg) -> Tdd {
-    let mut f = rand_conj(home, n, 4, 3, false, rng);
+/// A random function of `vars`, minimized and trimmed: it names no leaf
+/// `One` and sits on the projection of the home on its support.
+fn operand(home: &Arc<Vtree>, vars: &[u32], rng: &mut Lcg) -> Tdd {
+    let mut f = rand_conj_over(home, vars, 4, 3, false, rng);
     for _ in 0..rng.below(3) {
-        let var = VarId(1 + rng.below(u64::from(n)) as u32);
+        let var = VarId(vars[rng.below(vars.len() as u64) as usize]);
         f = match rng.below(3) {
             0 => f.condition_var(var, rng.coin()).unwrap(),
             1 => f.exists_vars(&[var]).unwrap(),
-            _ => crate::test_helpers::and2(&f, &rand_conj(home, n, 2, 3, false, rng)),
+            _ => crate::test_helpers::and2(&f, &rand_conj_over(home, vars, 2, 3, false, rng)),
         };
     }
     f.minimize().unwrap();
@@ -206,18 +217,18 @@ fn pick<T: Copy>(v: &[T], rng: &mut Lcg) -> Option<T> {
 }
 
 #[allow(clippy::too_many_lines)]
-fn random_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, n: u32, rng: &mut Lcg) {
+fn random_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, used: &[u32], rng: &mut Lcg) {
     let hm = Home::new(Arc::clone(home));
-    let (f, g, h) = (operand(home, n, rng), operand(home, n, rng), operand(home, n, rng));
+    let n = home.num_vars();
+    let (f, g, h) = (operand(home, used, rng), operand(home, used, rng), operand(home, used, rng));
     a.inputs = format!("f {}, g {}, h {}", models(&f), models(&g), models(&h));
     for t in [&f, &g, &h] {
         a.run("operand", || Ok::<_, ()>(t.clone()));
     }
-    let var = |rng: &mut Lcg| VarId(1 + rng.below(u64::from(n)) as u32);
-    let some = |rng: &mut Lcg| -> Vec<VarId> { (1..=n).filter(|_| rng.coin()).map(VarId).collect() };
+    let some = |rng: &mut Lcg| -> Vec<VarId> { used.iter().copied().filter(|_| rng.coin()).map(VarId).collect() };
     let lit = |v: VarId, sign: bool| Literal { var: v, sign };
-    let x = var(rng);
-    let y = VarId(1 + (x.0 % n));
+    let i = rng.below(used.len() as u64) as usize;
+    let (x, y) = (VarId(used[i]), VarId(used[(i + 1) % used.len()]));
     let (b1, b2) = (rng.coin(), rng.coin());
     let pair = [lit(x, b1), lit(y, b2)];
     let mutate = |t: &Tdd, op: &dyn Fn(&mut Tdd) -> Result<(), OperationError>| {
@@ -299,6 +310,58 @@ fn random_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, n: u32, rng: &mut
         FilterOutcome::Unchanged => Ok(f.clone()),
         FilterOutcome::Filtered { tdd, .. } | FilterOutcome::Unsatisfiable { tdd, .. } => Ok::<_, OperationError>(tdd),
     });
+    a.run("or_many", || eng.or_many(vec![f.clone(), g.clone(), h.clone()]));
+    a.run("nor_many", || eng.nor_many(vec![f.clone(), g.clone(), h.clone()]));
+    a.run("operator &", || Ok::<_, ()>(f.clone() & g.clone()));
+    a.run("operator |", || Ok::<_, ()>(f.clone() | g.clone()));
+    a.run("operator !", || Ok::<_, ()>(!f.clone()));
+    a.run("and_restoring", || eng.and_restoring(&f, &g).map_err(|r| r.error));
+    a.run("try_clone", || eng.try_clone(&f));
+    a.run("clone", || Ok::<_, ()>(f.clone()));
+    a.run("trim", || mutate(&f, &|t| eng.trim(t, &hm).map(drop)));
+    a.run("reduce(Prune)", || mutate(&f, &|t| t.reduce(ReductionPlan::Prune)));
+    a.run("reduce(Contract)", || mutate(&f, &|t| t.reduce(ReductionPlan::Contract)));
+    a.run("attach_level_counts", || mutate(&f, &|t| t.attach_level_counts()));
+    a.run("unnamed_nodes", || mutate(&f, &|t| eng.unnamed_nodes(t).map(drop)));
+    a.run("literal", || eng.literal(home, lit(x, b1)));
+    a.run("one", || Ok::<_, ()>(eng.one(home)));
+    a.run("zero", || Ok::<_, ()>(eng.zero(home)));
+    a.run("cube", || eng.cube(home, pair));
+    a.run("clause", || eng.clause(home, pair));
+    a.run("from_models", || Tdd::from_models(home, &[x, y], &[0b01, 0b10]));
+    a.run("from_columns", || eng.from_columns(home, &[&[x, y][..]], &[&[1u32, 2][..]], crate::diagram::RowSelection::All));
+    // Cube x = 1, y free: value bits, then fixed bits.
+    a.run("from_cubes", || eng.from_cubes(home, &[x, y], &[0b01, 0b01]));
+    a.run("expand_variables", || {
+        let classes = (1..=n).map(|v| vec![lit(VarId(v), true)]).collect();
+        let expansion = crate::restructure::VariableExpansion { classes, constants: Vec::new(), free: Vec::new(), num_vars: n };
+        eng.expand_variables(&f, &expansion).map_err(|e| format!("{e:?}"))
+    });
+    a.run("rotation_search_with", || {
+        let mut config = RotationSearchConfig::default();
+        config.max_inner_pairs = 64;
+        mutate(&f, &|t| eng.rotation_search_with(t, &mut MinimizePairs, &mut crate::restructure::search::Greedy, &config).map(drop))
+    });
+    let home_internal: Vec<VtreeIdx> = home.bottomup().filter(|&i| !home.node(i).is_leaf()).collect();
+    if let Some(pivot) = pick(&home_internal, rng) {
+        let rotation = RotationMove { pivot, kind: if rng.coin() { RotationKind::Left } else { RotationKind::Right } };
+        let crossed = rng.coin();
+        a.run("rotate_pool_if", || {
+            let (mut p, mut q) = (f.clone(), g.clone());
+            eng.rotate_pool_if(&mut [&mut p, &mut q], crate::restructure::search::PoolMove { rotation, crossed }, usize::MAX, |_| true).map(|_| p)
+        });
+    }
+    a.run("write_tdd, read_tdd", || {
+        let mut bytes = Vec::new();
+        crate::io::write_tdd(&mut bytes, &f).map_err(|e| e.to_string())?;
+        crate::io::read_tdd(&mut bytes.as_slice(), home).map_err(|e| e.to_string())
+    });
+    a.run("write_tdd_binary, read_tdd_binary", || {
+        let mut bytes = Vec::new();
+        crate::io::write_tdd_binary(&mut bytes, &f).map_err(|e| e.to_string())?;
+        crate::io::read_tdd_binary(&mut bytes.as_slice(), home).map_err(|e| e.to_string())
+    });
+    a.run("TddBuilder::finish", || rebuilt(eng, &f));
 
     // Predicted to name One on some inputs.
     let b = rng.coin();
@@ -310,6 +373,8 @@ fn random_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, n: u32, rng: &mut
     a.run("exists_vars", || f.clone().exists_vars(&vs));
     a.run("forall_vars", || f.clone().forall_vars(&vs));
     a.run("and_exists", || eng.and_exists(f.clone(), g.clone(), &vs));
+    a.run("and_exists_with(Product)", || eng.and_exists_with(f.clone(), g.clone(), &vs, crate::Quantification::Product));
+    a.run("exists_vars_with(Prune)", || eng.exists_vars_with(f.clone(), &vs, ReductionPlan::Prune));
     if let Some(at) = pick(&internal_nodes(&f), rng) {
         a.run("at_least_distinct", || eng.at_least_distinct(&f, at, 2));
         a.run("project_to_subtree", || eng.project_to_subtree(&f, at));
@@ -356,6 +421,28 @@ fn rng_keep() -> bool {
         k.set(k.get().wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1));
         keep
     })
+}
+
+/// `f` built again pair by pair through the public builder.
+fn rebuilt(eng: &Engine, f: &Tdd) -> Result<Tdd, String> {
+    let v = f.vtree();
+    if v.num_nodes() == 0 || v.node(v.root()).is_leaf() {
+        return Ok(f.clone());
+    }
+    let mut b = Tdd::builder(eng, v).map_err(|e| format!("{e:?}"))?;
+    let mut ids: Vec<Vec<NodeIdx>> = vec![Vec::new(); v.num_nodes()];
+    let map = |ids: &[Vec<NodeIdx>], child: VtreeIdx, raw: u32| if v.node(child).is_leaf() { NodeIdx(raw) } else { ids[child.idx()][raw as usize] };
+    for t in v.bottomup().filter(|&t| !v.node(t).is_leaf()) {
+        let (l, r) = v.children(t);
+        let level = f.level(t);
+        for j in 0..level.slot_count() {
+            let pairs: Vec<ChildPair> = level.pairs_iter_of_idx(j).map(|p| ChildPair::new(map(&ids, l, p.left.raw()), map(&ids, r, p.right.raw()))).collect();
+            let id = b.push(eng, t, &pairs).map_err(|e| format!("{e:?}"))?;
+            ids[t.idx()].push(id);
+        }
+    }
+    let out = f.output();
+    b.finish(TddNodeId { vtree: out.vtree, local: ids[out.vtree.idx()][out.local.0 as usize] }).map_err(|e| format!("{e:?}"))
 }
 
 /// A diagram built pair by pair on `vtree`, its output the last node pushed
@@ -524,16 +611,26 @@ fn audit_i1_constant_operands_do_not_panic() {
     }
 }
 
+/// Half the cases use every variable of a small home, half two to five
+/// variables scattered over a home of up to 24.
 #[test]
 fn audit_i1_every_producer() {
     let eng = Engine::new();
     let mut audit = Audit::default();
     for seed in 0..160u64 {
         let mut rng = Lcg::new(seed ^ 0x11a7);
-        let n = 3 + rng.below(6) as u32;
+        let scattered = seed % 2 == 1;
+        let n = if scattered { 8 + rng.below(17) as u32 } else { 3 + rng.below(6) as u32 };
         let home = Arc::clone(Home::new(Vtree::random(n, seed)).vtree());
-        audit.case = format!("seed {seed}, {n} variables");
-        random_case(&mut audit, &eng, &home, n, &mut rng);
+        let mut used: Vec<u32> = (1..=n).collect();
+        if scattered {
+            for i in (1..used.len()).rev() {
+                used.swap(i, rng.below(i as u64 + 1) as usize);
+            }
+            used.truncate(2 + rng.below(4) as usize);
+        }
+        audit.case = format!("seed {seed}, {n} variables, operands over {used:?}");
+        random_case(&mut audit, &eng, &home, &used, &mut rng);
     }
     fixed_cases(&mut audit, &eng);
     let (findings, report) = audit.verdict();

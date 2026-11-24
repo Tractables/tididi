@@ -20,27 +20,36 @@ fn subset(n: u32, rng: &mut Lcg) -> Vec<VarId> {
     if keep.is_empty() { vec![VarId(1 + rng.below(n as u64) as u32)] } else { keep }
 }
 
-/// One to six clauses of one to three literals over `vars`.
+/// One to six clauses of one to three literals over `vars`, then one clause
+/// of every variable none of them names.
 fn clauses(vars: &[VarId], rng: &mut Lcg) -> Vec<Vec<i32>> {
-    (0..1 + rng.below(6))
-        .map(|_| {
-            (0..1 + rng.below(3))
-                .map(|_| {
-                    let var = vars[rng.below(vars.len() as u64) as usize].0 as i32;
-                    if rng.coin() { var } else { -var }
-                })
-                .collect()
-        })
-        .collect()
+    let literal = |var: VarId, rng: &mut Lcg| if rng.coin() { var.0 as i32 } else { -(var.0 as i32) };
+    let mut clauses: Vec<Vec<i32>> = (0..1 + rng.below(6))
+        .map(|_| (0..1 + rng.below(3)).map(|_| literal(vars[rng.below(vars.len() as u64) as usize], rng)).collect())
+        .collect();
+    let rest: Vec<i32> = vars
+        .iter()
+        .filter(|var| !clauses.iter().flatten().any(|&l| l.unsigned_abs() == var.0))
+        .map(|&var| literal(var, rng))
+        .collect();
+    if !rest.is_empty() {
+        clauses.push(rest);
+    }
+    clauses
 }
 
+/// The minimized CNF, on `vtree` itself when it depends on every leaf of
+/// `vtree`, else on the projection of its support.
 fn compile(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
-    let mut f = crate::test_helpers::padded(Tdd::one(vtree), vtree);
+    let mut f = Tdd::one(vtree);
     for clause in clauses {
         f = eng.and_clause(f, clause).unwrap();
     }
     eng.minimize(&mut f).unwrap();
-    f
+    match f.vtree().num_leaves() == vtree.num_leaves() {
+        true => crate::test_helpers::padded(f, vtree),
+        false => f,
+    }
 }
 
 fn store(n: u32, rng: &mut Lcg) -> Weights {
@@ -195,7 +204,7 @@ fn a_pool_on_projections_searches_as_on_the_root() {
 fn members_with_every_leaf_make_the_moves_of_the_search_on_the_root() {
     let eng = Engine::new();
     let mut moves = 0;
-    for seed in 0..40u64 {
+    for seed in 0..80u64 {
         let mut rng = Lcg::new(seed ^ 0x0dd_ba11);
         let n = 2 + rng.below(40) as u32;
         let home = random_home(n, seed, &mut rng);
@@ -266,7 +275,7 @@ fn a_pool_move_on_projections_ends_on_one_home() {
                 })
             })
             .unwrap();
-            if full {
+            if full && own.iter().all(|f| f.vtree().num_leaves() == n) {
                 assert_eq!((kept, delta), (root_kept, root_delta), "seed {seed} {mv:?}");
             }
             kept_moves += usize::from(kept);

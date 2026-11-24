@@ -19,18 +19,26 @@ fn subset(n: u32, rng: &mut Lcg) -> Vec<VarId> {
     if keep.is_empty() { vec![VarId(1 + rng.below(n as u64) as u32)] } else { keep }
 }
 
-/// A random CNF of one to six clauses over `vtree`'s leaves, minimized.
+/// A random CNF over `vtree`'s leaves, minimized: one to six clauses, then
+/// one clause of every leaf none of them names, so that the diagram is on
+/// `vtree` but for the leaves the clauses make irrelevant.
 fn diagram(eng: &Engine, vtree: &Arc<Vtree>, rng: &mut Lcg) -> Tdd {
     let vars: Vec<VarId> = vtree.leaf_bottomup().map(|(_, var)| var).collect();
-    let mut f = crate::test_helpers::padded(Tdd::one(vtree), vtree);
-    for _ in 0..1 + rng.below(6) {
-        let clause: Vec<i32> = (0..1 + rng.below(3))
-            .map(|_| {
-                let var = vars[rng.below(vars.len() as u64) as usize].0 as i32;
-                if rng.coin() { var } else { -var }
-            })
-            .collect();
-        f = eng.and_clause(f, &clause).unwrap();
+    let literal = |var: VarId, rng: &mut Lcg| if rng.coin() { var.0 as i32 } else { -(var.0 as i32) };
+    let mut clauses: Vec<Vec<i32>> = (0..1 + rng.below(6))
+        .map(|_| (0..1 + rng.below(3)).map(|_| literal(vars[rng.below(vars.len() as u64) as usize], rng)).collect())
+        .collect();
+    let rest: Vec<i32> = vars
+        .iter()
+        .filter(|var| !clauses.iter().flatten().any(|&l| l.unsigned_abs() == var.0))
+        .map(|&var| literal(var, rng))
+        .collect();
+    if !rest.is_empty() {
+        clauses.push(rest);
+    }
+    let mut f = Tdd::one(vtree);
+    for c in &clauses {
+        f = eng.and_clause(f, c).unwrap();
     }
     eng.minimize(&mut f).unwrap();
     f
@@ -146,7 +154,7 @@ fn leaves_under(v: &Vtree, t: VtreeIdx) -> Vec<VarId> {
 fn a_diagram_in_two_parts_transports_without_rotating() {
     let eng = Engine::new();
     let mut cases = [0usize; 2];
-    for seed in 0..80u64 {
+    for seed in 0..120u64 {
         let mut rng = Lcg::new(seed ^ 0x9e37_79b9);
         let n = 4 + rng.below(61) as u32;
         let home = Home::new(Vtree::random(n, seed));
@@ -166,8 +174,9 @@ fn a_diagram_in_two_parts_transports_without_rotating() {
 
         let f = diagram(&eng, &own, &mut rng);
         // The parts are read on `own`: a diagram that does not depend on
-        // every leaf of it is on a narrower projection.
-        if !Arc::ptr_eq(f.vtree(), &own) {
+        // every leaf of it is on a narrower projection. One on the same
+        // leaves has the same node indices.
+        if f.vtree().num_leaves() != own.num_leaves() {
             continue;
         }
         let mut moved = f.clone();
@@ -198,7 +207,7 @@ fn a_diagram_in_two_parts_transports_without_rotating() {
         }
         let g_own = Vtree::projection(&home, vars).unwrap();
         let g = diagram(&eng, &g_own, &mut rng);
-        if !Arc::ptr_eq(g.vtree(), &g_own) {
+        if g.vtree().num_leaves() != g_own.num_leaves() {
             continue;
         }
         cases[usize::from(three)] += 1;
@@ -231,11 +240,11 @@ fn a_declined_search_keeps_the_vtree() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(16));
     let own = Vtree::projection(&home, [1, 2, 5, 6, 9, 13, 14].map(VarId)).unwrap();
-    let f = crate::test_helpers::padded(eng.clause(&own, [1, -5, 9]).unwrap(), &own);
+    let f = eng.clause(&own, [1, -2, -5, 6, 9, -13, 14]).unwrap();
     let mut g = f.clone();
     let turn = RotationMove { pivot: own.root(), kind: RotationKind::Right };
     assert!(!g.rotate_if(&[turn], usize::MAX, |_| false).unwrap());
-    assert!(Arc::ptr_eq(g.vtree(), &own));
+    assert!(Arc::ptr_eq(g.vtree(), f.vtree()));
     assert!(Arc::ptr_eq(g.home().unwrap().vtree(), home.vtree()));
 }
 
@@ -247,7 +256,7 @@ fn a_home_root_held_alone_is_no_home_while_it_moves() {
     for accept in [false, true] {
         let mut f = {
             let root = Arc::clone(Home::new(Vtree::balanced(8)).vtree());
-            crate::test_helpers::padded(Tdd::clause(&root, [1, -4, 6]).unwrap(), &root)
+            Tdd::clause(&root, [1, 2, -3, -4, 5, 6, -7, 8]).unwrap()
         };
         let before = Arc::as_ptr(f.vtree());
         let pivot = f.vtree().root();

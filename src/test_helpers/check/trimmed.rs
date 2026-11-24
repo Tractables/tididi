@@ -171,6 +171,73 @@ pub fn check_certified(tdd: &Tdd) -> Result<(), String> {
     Ok(())
 }
 
+/// No stored node of an internal level denotes every assignment of the
+/// variables under its vtree node, on a diagram with no summed-out level.
+/// Such a node is the only node of its level (item 1), so every parent pair
+/// names it and the parent level only passes its other child through. Item
+/// 15 excludes the form that names `One`; this one is built from literals,
+/// as `{(Pos, Pos), (Pos, Neg), (Neg, Pos), (Neg, Neg)}` is, and item 21
+/// excludes it from a certified diagram. Levels over more than 126 variables
+/// are skipped.
+///
+/// Cost: O(diagram size) `u128` operations.
+pub fn check_no_true_node(tdd: &Tdd) -> Result<(), String> {
+    let vtree = tdd.vtree();
+    if vtree.num_nodes() == 0 || tdd.has_marginal_level() || tdd.is_zero() {
+        return Ok(());
+    }
+    let counts = tdd.node_counts_u128().map_err(|e| e.to_string())?;
+    let mut width = vec![0u32; vtree.num_nodes()];
+    for t in vtree.bottomup() {
+        width[t.idx()] = match *vtree.node(t) {
+            VtreeNode::Internal { left, right, .. } => width[left.idx()] + width[right.idx()],
+            _ => 1,
+        };
+        if vtree.node(t).is_leaf() || width[t.idx()] > 126 {
+            continue;
+        }
+        if let Some(j) = counts[t.idx()].iter().position(|&c| c == 1u128 << width[t.idx()]) {
+            return Err(format!("node {j} of level {} denotes every assignment of its {} variables", t.0, width[t.idx()]));
+        }
+    }
+    Ok(())
+}
+
+/// On a plain root, with no summed-out level: a leaf is named `One` (by its
+/// parent level, or as the output of a one-leaf diagram) exactly when its
+/// variable is outside the [`support`](Tdd::support), so the only levels that
+/// pass a child through are those of variables the function ignores. Holds of
+/// a certified diagram (Corollary A1 of the projection form); an
+/// unminimized one may read a variable it ignores through literals.
+///
+/// Cost: O(diagram size).
+pub fn check_padded_support(tdd: &Tdd) -> Result<(), String> {
+    let vtree = tdd.vtree();
+    if vtree.num_nodes() == 0 || tdd.has_marginal_level() || tdd.is_zero() || tdd.is_one() {
+        return Ok(());
+    }
+    let support = tdd.support().map_err(|e| e.to_string())?;
+    for t in vtree.bottomup() {
+        if !vtree.node(t).is_var_leaf() {
+            continue;
+        }
+        let var = vtree.leaf_var(t);
+        let named_one = match vtree.node(t).parent() {
+            None => tdd.output().local == ONE_LEAF_IDX,
+            Some(p) => {
+                let VtreeNode::Internal { left, .. } = *vtree.node(p) else { unreachable!("a parent is internal") };
+                let level = tdd.level(p);
+                let mut sides = (0..level.slot_count()).flat_map(|j| level.pairs_iter_of_idx(j)).map(|pair| if t == left { pair.left } else { pair.right });
+                sides.next().is_some_and(|side| side.raw() == ONE_LEAF_IDX.0)
+            }
+        };
+        if named_one == support.contains(&var) {
+            return Err(format!("leaf {} of variable {} is named One {named_one}, in the support {}", t.0, var.0, !named_one));
+        }
+    }
+    Ok(())
+}
+
 /// The output of a certified `tdd` reaches every node of its structural
 /// internal levels.
 fn every_node_reached(tdd: &Tdd) -> Result<(), String> {

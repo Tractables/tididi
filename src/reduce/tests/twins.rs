@@ -125,8 +125,8 @@ fn test_minimize_contracts_marginal_twins() {
     //
     // v_left:  A=(Pos, One)  represents "x0=1, x1 free"
     //          B=(Neg, One)  represents "x0=0, x1 free"
-    // v_right: r0=(Pos, One) represents "x2=1, x3 free"
-    //          r1=(One, Pos) represents "x2 free, x3=1"
+    // v_right: r0=(Pos, Pos) represents "x2=1, x3=1"
+    //          r1=(Neg, Pos) represents "x2=0, x3=1"
     // root:    one node with pairs [(A, r0), (B, r1)]
     //
     // A and B have *different* siblings at root → not twins.
@@ -135,8 +135,8 @@ fn test_minimize_contracts_marginal_twins() {
     let mut levels = take_levels(&eng, vtree.num_nodes());
     let a = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
     let b = levels[v_left.idx()].push_internal_node(&[ChildPair::new(neg, one)]);
-    let r0 = levels[v_right.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
-    let r1 = levels[v_right.idx()].push_internal_node(&[ChildPair::new(one, pos)]);
+    let r0 = levels[v_right.idx()].push_internal_node(&[ChildPair::new(pos, pos)]);
+    let r1 = levels[v_right.idx()].push_internal_node(&[ChildPair::new(neg, pos)]);
     let root_node = levels[root.idx()].push_internal_node(&[
         ChildPair::new(a, r0),
         ChildPair::new(b, r1),
@@ -259,15 +259,14 @@ fn test_contract_detects_twins_with_scrambled_signature_order_width3() {
 
     let pos = NodeIdx(LeafLabel::Pos as u32);
     let neg = NodeIdx(LeafLabel::Neg as u32);
-    let one = NodeIdx(LeafLabel::One as u32);
 
     let mut levels = take_levels(&eng, vtree.num_nodes());
-    // v_left: A,B are twins; C = (One,Pos) [x1=1] is a distinct non-twin.
-    let a = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
-    let b = levels[v_left.idx()].push_internal_node(&[ChildPair::new(neg, one)]);
-    let c = levels[v_left.idx()].push_internal_node(&[ChildPair::new(one, pos)]);
-    let r0 = levels[v_right.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
-    let r1 = levels[v_right.idx()].push_internal_node(&[ChildPair::new(one, pos)]);
+    // v_left: A,B are twins; C = (Neg,Pos) is a distinct non-twin.
+    let a = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, pos)]);
+    let b = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, neg)]);
+    let c = levels[v_left.idx()].push_internal_node(&[ChildPair::new(neg, pos)]);
+    let r0 = levels[v_right.idx()].push_internal_node(&[ChildPair::new(pos, pos)]);
+    let r1 = levels[v_right.idx()].push_internal_node(&[ChildPair::new(neg, neg)]);
 
     // A: (r0, r1); B: (r1, r0) [scrambled twins]; C: only r0 [distinct sig,
     // breaks r0/r1 symmetry so neither sibling collapses].
@@ -301,18 +300,17 @@ fn test_contract_detects_twins_with_reversed_multi_sibling_signature() {
 
     let pos = NodeIdx(LeafLabel::Pos as u32);
     let neg = NodeIdx(LeafLabel::Neg as u32);
-    let one = NodeIdx(LeafLabel::One as u32);
 
     let mut levels = take_levels(&eng, vtree.num_nodes());
     // v_left twins A,B over {x0,x1}; C,D distinct symmetry-breakers.
-    let a = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
-    let b = levels[v_left.idx()].push_internal_node(&[ChildPair::new(neg, one)]);
-    let c = levels[v_left.idx()].push_internal_node(&[ChildPair::new(one, pos)]);
-    let d = levels[v_left.idx()].push_internal_node(&[ChildPair::new(one, neg)]);
+    let a = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, pos)]);
+    let b = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, neg)]);
+    let c = levels[v_left.idx()].push_internal_node(&[ChildPair::new(neg, pos)]);
+    let d = levels[v_left.idx()].push_internal_node(&[ChildPair::new(neg, neg)]);
     // Three distinct siblings over {x2,x3}.
-    let s0 = levels[v_right.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
-    let s1 = levels[v_right.idx()].push_internal_node(&[ChildPair::new(neg, one)]);
-    let s2 = levels[v_right.idx()].push_internal_node(&[ChildPair::new(one, pos)]);
+    let s0 = levels[v_right.idx()].push_internal_node(&[ChildPair::new(pos, pos)]);
+    let s1 = levels[v_right.idx()].push_internal_node(&[ChildPair::new(pos, neg)]);
+    let s2 = levels[v_right.idx()].push_internal_node(&[ChildPair::new(neg, pos)]);
 
     // A: (s0,s1,s2);  B: (s2,s1,s0) reversed — same SET, reversed sequence.
     // C pins s0, D pins s1 → sibling signatures s0=[A,B,C], s1=[A,B,D],

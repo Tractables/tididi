@@ -131,11 +131,14 @@ fn a_move_past_its_bound_keeps_the_function() {
 #[test]
 fn a_refused_restructure_of_a_projection_leaves_it_as_it_was() {
     use crate::vtree::Home;
-    let mut rng = Lcg::new(11);
     let home = Home::new(Vtree::linear(10));
     let kept = [1u32, 2, 3, 5, 6, 8, 9];
     let own = Vtree::projection(&home, kept.map(VarId)).unwrap();
-    let f = crate::test_helpers::padded(crate::test_helpers::rand_conj_over(&own, &kept, 8, 3, false, &mut rng), &own);
+    // Parity reads every variable, so the diagram is on `own`. Minimized,
+    // because the restructure reduces its operand before it can be refused.
+    let eng = crate::Engine::new();
+    let mut f = kept.iter().map(|&v| eng.literal(&own, v as i32).unwrap()).reduce(|a, b| eng.xor(a, b).unwrap()).unwrap();
+    f.minimize().unwrap();
     let count = f.model_count().unwrap();
     let order = [1, 10, 2, 9, 3, 8, 4, 7, 5, 6].map(VarId);
     let other = Home::new(Vtree::balanced_over(&order).unwrap());

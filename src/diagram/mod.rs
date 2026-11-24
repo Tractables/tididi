@@ -223,6 +223,8 @@ pub(crate) use pool::LevelPool;
 pub use build_error::TddBuildError;
 pub use builder::{LevelView, TddBuilder};
 pub(crate) use builder::{check_seated_pairs, trim_on_home};
+#[cfg(any(test, debug_assertions, feature = "testing"))]
+pub(crate) use builder::check_stored;
 pub use pair_index::PairIndex;
 pub use tdd::Tdd;
 pub use crate::build::models::RowSelection;

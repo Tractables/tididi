@@ -7,7 +7,7 @@ use rustc_hash::{FxHashMap, FxHasher};
 
 use crate::Engine;
 use crate::limits::{Limits, OperationError};
-use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
+use crate::vtree::{Vtree, VtreeIdx, VtreeNode, REGION_VAR};
 
 use super::build_error::TddBuildError;
 use super::level::{StoredPairs, TddLevel};
@@ -555,6 +555,13 @@ pub(crate) fn check_seated_pairs(tdd: &Tdd) -> Result<(), TddBuildError> {
     check_storage::<true>(&tdd.vtree, &tdd.levels, tdd.output, None)
 }
 
+/// The checks of [`TddBuilder::finish`], the repeated-pair check and the
+/// diagram's weights included, on any diagram.
+#[cfg(any(test, debug_assertions, feature = "testing"))]
+pub(crate) fn check_stored(tdd: &Tdd) -> Result<(), TddBuildError> {
+    check_storage::<true>(&tdd.vtree, &tdd.levels, tdd.output, tdd.weights())
+}
+
 /// [`Tdd::trim`] of a diagram just seated on a home; an internal summed-out
 /// level not under another becomes a region. A drop that would rebuild a
 /// summed variable leaf leaves the diagram as it was seated.
@@ -579,10 +586,11 @@ pub(crate) fn trim_on_home(tdd: &mut Tdd) -> Result<(), TddBuildError> {
 
 /// The index bound a pair side pointing at level `t` is checked against: the
 /// implicit leaf nodes, the value slots of a marginal level, or the nodes
-/// stored so far.
+/// stored so far. A summed leaf with no column still has its labels: its
+/// parents hold their counts inline, and at the root the output is a label.
 fn bound(vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx) -> usize {
     let lvl = &levels[t.idx()];
-    if lvl.is_marginal() {
+    if lvl.is_marginal() && !(vtree.node(t).is_leaf() && lvl.slot_count() == 0) {
         lvl.slot_count()
     } else if vtree.node(t).is_leaf() {
         LEAF_WIDTH
@@ -676,6 +684,8 @@ fn check_storage<const PAIRS: bool>(
             return Err(TddBuildError::WeightedLevelWithoutStore { level: t });
         }
         match *vtree.node(t) {
+            // `check_region_levels` reads a region's level.
+            VtreeNode::Leaf { var: REGION_VAR, .. } => {}
             VtreeNode::Leaf { .. } => check_leaf_level(lvl, t)?,
             VtreeNode::Internal { .. } if lvl.is_marginal() => check_marginal_level(vtree, levels, t)?,
             VtreeNode::Internal { left, right, .. } => {

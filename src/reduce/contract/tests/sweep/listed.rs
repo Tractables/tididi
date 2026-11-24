@@ -11,7 +11,6 @@ use crate::diagram::{ChildPair, LeafLabel, NodeIdx, TddLevel, TddNodeId};
 use crate::reduce::contract::tests::listed_searches;
 
 use crate::Engine;
-use crate::test_helpers::assert_canonical;
 use crate::vtree::Vtree;
 use std::sync::Arc;
 
@@ -80,6 +79,9 @@ fn a_contraction_below_the_worklist_is_found_by_listing() {
     assert!(listed >= 1, "the left level's left child is searched by list: {listed}");
     assert_eq!(tdd.model_count().unwrap(), count, "contraction keeps the function");
     tdd.minimize().unwrap();
-    assert_canonical(&tdd);
+    // `a5` overlaps `a1` and `a3` and names its right leaf `One`, so the
+    // left level's left child keeps neither determinism nor the leaf form,
+    // and only the rules of canonical form are checked.
+    crate::test_helpers::check::check_canonicity(&tdd, 3).unwrap();
     assert_eq!(tdd.model_count().unwrap(), count);
 }
