@@ -133,6 +133,10 @@ pub fn write_tdd_binary<W: Write>(w: &mut W, tdd: &Tdd) -> Result<(), IoError> {
 /// The vtree of the result, and what is checked, are as [`read_tdd_binary`]
 /// states. A file holds one diagram: bytes after its checksum are refused.
 ///
+/// The diagram read is not certified
+/// ([`Tdd::is_canonical`](crate::Tdd::is_canonical));
+/// [`Tdd::minimize`](crate::Tdd::minimize) certifies it.
+///
 /// # Errors
 ///
 /// Returns [`IoError::Io`] if the file cannot be read, or the format errors
@@ -175,6 +179,10 @@ pub fn load_tdd_binary(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd
 /// a level, as the text reader does, and moves the result by the trim of
 /// [`TddBuilder::finish`](crate::diagram::TddBuilder::finish) to the
 /// projection on the leaves its pairs use, the counts with it.
+///
+/// The diagram read is not certified
+/// ([`Tdd::is_canonical`](crate::Tdd::is_canonical));
+/// [`Tdd::minimize`](crate::Tdd::minimize) certifies it.
 ///
 /// # Errors
 ///

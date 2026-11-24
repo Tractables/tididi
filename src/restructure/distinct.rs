@@ -66,6 +66,9 @@ impl Engine {
     /// under `key` ([`Vtree::sub_projection`]): a constant when it has none
     /// there. On a root vtree, `key` is a node of that vtree.
     ///
+    /// The result is certified
+    /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical)).
+    ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Engine, Vtree};
@@ -147,6 +150,9 @@ impl Engine {
     /// it: on a diagram with a [home](Vtree::home), an index is a home node
     /// and an own index is read as one without an error; the result is on
     /// the projection of the home on the diagram's leaves under `key`.
+    ///
+    /// The result is certified
+    /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical)).
     ///
     /// ```
     /// use std::sync::Arc;

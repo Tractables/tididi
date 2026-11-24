@@ -51,6 +51,8 @@ impl Tdd {
     /// vtree, the columns in order, and the rows sorted on the columns) are
     /// only checked, as `from_models` checks rows already in order.
     ///
+    /// The result is certified ([`is_canonical`](Self::is_canonical)).
+    ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};

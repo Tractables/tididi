@@ -66,6 +66,9 @@ impl Tdd {
     /// outside those paths pass through. The result counts correctly but may need
     /// [`minimize`](Self::minimize) to establish canonical form.
     ///
+    /// The result is not certified ([`is_canonical`](Self::is_canonical));
+    /// [`minimize`](Self::minimize) certifies it.
+    ///
     /// # Errors
     ///
     /// Returns [`OperationError::InvalidLiteral`] for integer zero,
@@ -105,6 +108,9 @@ impl Tdd {
     ///
     /// Over a subtree the cube leaves free it is true, and the result holds
     /// the part of that subtree's assignments no node of the operand covers.
+    ///
+    /// The result is not certified ([`is_canonical`](Self::is_canonical));
+    /// [`minimize`](Self::minimize) certifies it.
     ///
     /// # Errors
     ///
@@ -180,6 +186,9 @@ impl Tdd {
     /// [`condition`](Self::condition) accepts mixed assignments and explains
     /// cofactor counts versus evidence counts.
     ///
+    /// The result is not certified ([`is_canonical`](Self::is_canonical));
+    /// [`minimize`](Self::minimize) certifies it.
+    ///
     /// # Errors
     ///
     /// Returns [`OperationError::VariableNotInVtree`] for an absent variable,
@@ -208,6 +217,9 @@ impl Tdd {
     /// target becomes free in model counts. For a nonfalse input, each target leaf
     /// and its parent must be structural; other levels may be marginal.
     /// Use [`condition`](Self::condition) for mixed polarities.
+    ///
+    /// The result is not certified ([`is_canonical`](Self::is_canonical));
+    /// [`minimize`](Self::minimize) certifies it.
     ///
     /// # Errors
     ///
@@ -238,6 +250,9 @@ impl Tdd {
     /// as [`exists_vars`](Self::exists_vars) says. A false operand remains false. The quantified variable
     /// becomes free, so divide the full-vtree model count by two to count assignments
     /// to the remaining variables. [`exists_vars`](Self::exists_vars) accepts a batch.
+    ///
+    /// The result is not certified ([`is_canonical`](Self::is_canonical));
+    /// [`minimize`](Self::minimize) certifies it.
     ///
     /// # Errors
     ///
@@ -423,8 +438,9 @@ impl Tdd {
     ///
     /// [`RestrictionOutcome`] distinguishes an unchanged operand, a shrunk diagram,
     /// and a false result; [`RestrictionOutcome::into_tdd`] extracts the diagram.
-    /// A shrunk result is not minimized: [`minimize`](Self::minimize)
-    /// certifies it. A false operand is returned unchanged;
+    /// A shrunk result is not certified ([`is_canonical`](Self::is_canonical)):
+    /// [`minimize`](Self::minimize) certifies it. An unchanged one keeps its
+    /// certificate. A false operand is returned unchanged;
     /// otherwise false `care` produces an unsatisfiable outcome.
     ///
     /// Marginal levels in this function are retained; marginal levels in `care`
@@ -1114,23 +1130,26 @@ impl Tdd {
     /// For a structural diagram, the result is canonical and minimal up to node
     /// numbering and pair order. Removes unreachable nodes and contracts nodes
     /// with identical parent contexts. Marginal levels stay marginal, with their
-    /// applicable value and pair cleanup passes applied.
+    /// applicable value and pair cleanup passes applied. The result is
+    /// certified ([`is_canonical`](Self::is_canonical)) unless it holds a
+    /// summed-out level.
     ///
     /// This is fixed-vtree minimization as described in
     /// [Section 5 of the TDD paper](https://arxiv.org/html/2604.05537v1#S5).
     /// [`rotation_search`](Self::rotation_search) searches other tree shapes.
     /// Counting, satisfiability and witness queries accept nonminimal diagrams;
     /// minimize when canonical form or removal of redundant storage is needed.
-    /// Unless the engine's limits set
-    /// [`canonical_results`](crate::limits::LimitConfig::with_canonical_results),
-    /// an operation minimizes its result only where its documentation says
+    /// An operation minimizes its result only where its documentation says
     /// so: [`and`](crate::and), [`and_clause`](Self::and_clause),
     /// [`or`](crate::or), [`xor`](crate::xor), [`ite`](crate::ite),
     /// [`and_exists`](crate::and_exists), [`condition`](Self::condition),
     /// [`exists_vars`](Self::exists_vars) and
     /// [`rename_vars`](Self::rename_vars) do not, [`negate`](Self::negate)
     /// keeps the certificate of a certified operand, and
-    /// [`forall_vars`](Self::forall_vars) returns a certified result.
+    /// [`forall_vars`](Self::forall_vars) returns a certified result. Each
+    /// operation's documentation says whether it sets, keeps or gives up the
+    /// certificate of [`is_canonical`](Self::is_canonical); a caller that
+    /// wants a canonical result calls this method on it.
     ///
     /// On a [`Home`](crate::vtree::Home) or one of its projections, with no
     /// summed-out level, a variable the minimization finds the diagram does
@@ -1234,6 +1253,10 @@ impl Tdd {
     /// On a home, the variables contraction finds the diagram does not depend
     /// on leave its vtree, as in [`minimize`](Self::minimize).
     ///
+    /// A full plan certifies a diagram without a summed-out level
+    /// ([`is_canonical`](Self::is_canonical)); a partial plan keeps the
+    /// certificate and sets none.
+    ///
     /// # Errors
     ///
     /// Returns [`OperationError::OverBudget`] if an allocation is refused. Each pass
@@ -1275,6 +1298,9 @@ impl Tdd {
     /// Completed levels retain their values and valid parent references. The pass
     /// also fuses eligible marginal pairs and removes unused or duplicate value
     /// slots.
+    ///
+    /// The result is not certified ([`is_canonical`](Self::is_canonical)), and
+    /// while it holds a summed-out level no reduction certifies it.
     ///
     /// # Errors
     ///
@@ -1336,6 +1362,9 @@ impl Tdd {
     /// weighted values, floating-point ones included, are not tested for
     /// the value that leaves their extent free, so such a region stays.
     ///
+    /// The result is not certified ([`is_canonical`](Self::is_canonical)), and
+    /// while it holds a summed-out level no reduction certifies it.
+    ///
     /// # Errors
     ///
     /// [`OperationError::MarginalLevel`] for an internal summed-out level on
@@ -1374,6 +1403,9 @@ impl Tdd {
     /// Structural diagrams are minimized first. A diagram with marginal levels must
     /// arrive canonical; trials touching marginal levels are skipped. Accepted
     /// rotations preserve canonical form and counts, including marginal values.
+    ///
+    /// The diagram stays canonical, but a kept rotation gives up its
+    /// certificate ([`is_canonical`](Self::is_canonical)).
     ///
     /// # Errors
     ///

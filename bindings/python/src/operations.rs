@@ -48,6 +48,7 @@ pub fn binary(py: Python<'_>, left: Py<PyCircuit>, right: Py<PyCircuit>, limits:
 }
 
 /// Construct a literal circuit from a signed integer or an immutable Literal value.
+/// The result is minimized.
 #[pyfunction]
 #[pyo3(signature = (vtree, value, *, limits=None))]
 pub fn literal(py: Python<'_>, vtree: &PyVtree, value: &Bound<'_, PyAny>, limits: Option<&PyLimits>) -> PyResult<PyCircuit> {
@@ -57,6 +58,7 @@ pub fn literal(py: Python<'_>, vtree: &PyVtree, value: &Bound<'_, PyAny>, limits
 
 /// Construct a conjunction of signed integers or Literal values. Omitted variables are free.
 /// Each variable may occur once; an empty iterable constructs true.
+/// The result is minimized.
 #[pyfunction]
 #[pyo3(signature = (vtree, literals, *, limits=None))]
 pub fn cube(py: Python<'_>, vtree: &PyVtree, literals: &Bound<'_, PyAny>, limits: Option<&PyLimits>) -> PyResult<PyCircuit> {
@@ -65,6 +67,7 @@ pub fn cube(py: Python<'_>, vtree: &PyVtree, literals: &Bound<'_, PyAny>, limits
 }
 
 /// Construct a disjunction of literals. An empty iterable constructs false.
+/// The result is not minimized; minimize() makes it canonical.
 #[pyfunction]
 #[pyo3(signature = (vtree, literals, *, limits=None))]
 pub fn clause(py: Python<'_>, vtree: &PyVtree, literals: &Bound<'_, PyAny>, limits: Option<&PyLimits>) -> PyResult<PyCircuit> {
@@ -73,16 +76,19 @@ pub fn clause(py: Python<'_>, vtree: &PyVtree, literals: &Bound<'_, PyAny>, limi
 }
 
 /// Construct true over every variable of vtree.
+/// The result is minimized.
 #[pyfunction]
 pub fn one(vtree: &PyVtree) -> PyCircuit { PyCircuit::new(Tdd::one(&vtree.0)) }
 
 /// Construct false over every variable of vtree.
+/// The result is minimized.
 #[pyfunction]
 pub fn zero(vtree: &PyVtree) -> PyCircuit { PyCircuit::new(Tdd::zero(&vtree.0)) }
 
 /// Construct the set of Boolean rows over variables, leaving other variables free.
 /// Every row must contain one bool per variable. Repeated rows count once.
 /// Empty rows denote false; one empty row over no variables denotes true.
+/// The result is minimized.
 #[pyfunction]
 #[pyo3(signature = (vtree, variables, rows, *, limits=None))]
 pub fn from_models(py: Python<'_>, vtree: &PyVtree, variables: Vec<u32>, rows: &Bound<'_, PyAny>, limits: Option<&PyLimits>) -> PyResult<PyCircuit> {
@@ -103,6 +109,7 @@ pub fn from_models(py: Python<'_>, vtree: &PyVtree, variables: Vec<u32>, rows: &
 
 /// Conjoin two circuits, consuming both. Equivalent to left & right, with optional limits.
 /// Copy operands first if they must remain usable, including for retry after a resource error.
+/// The result is not minimized; minimize() makes it canonical.
 #[pyfunction]
 #[pyo3(signature = (left, right, *, limits=None))]
 pub fn and_(py: Python<'_>, left: Py<PyCircuit>, right: Py<PyCircuit>, limits: Option<&PyLimits>) -> PyResult<PyCircuit> {
@@ -110,6 +117,7 @@ pub fn and_(py: Python<'_>, left: Py<PyCircuit>, right: Py<PyCircuit>, limits: O
 }
 
 /// Disjoin two circuits, consuming both. Equivalent to left | right, with optional limits.
+/// The result is not minimized; minimize() makes it canonical.
 #[pyfunction]
 #[pyo3(signature = (left, right, *, limits=None))]
 pub fn or_(py: Python<'_>, left: Py<PyCircuit>, right: Py<PyCircuit>, limits: Option<&PyLimits>) -> PyResult<PyCircuit> {
@@ -117,6 +125,7 @@ pub fn or_(py: Python<'_>, left: Py<PyCircuit>, right: Py<PyCircuit>, limits: Op
 }
 
 /// Exclusive-or two circuits, consuming both. Also available as left ^ right.
+/// The result is not minimized; minimize() makes it canonical.
 #[pyfunction]
 #[pyo3(signature = (left, right, *, limits=None))]
 pub fn xor(py: Python<'_>, left: Py<PyCircuit>, right: Py<PyCircuit>, limits: Option<&PyLimits>) -> PyResult<PyCircuit> {
@@ -124,6 +133,8 @@ pub fn xor(py: Python<'_>, left: Py<PyCircuit>, right: Py<PyCircuit>, limits: Op
 }
 
 /// Build (condition & then_branch) | (~condition & else_branch), consuming all three inputs.
+/// The result is not minimized unless both branches hold the same levels, as copies do; minimize()
+/// makes it canonical.
 #[pyfunction]
 #[pyo3(signature = (condition, then_branch, else_branch, *, limits=None))]
 pub fn ite(py: Python<'_>, condition: Py<PyCircuit>, then_branch: Py<PyCircuit>, else_branch: Py<PyCircuit>, limits: Option<&PyLimits>) -> PyResult<PyCircuit> {
@@ -137,6 +148,7 @@ pub fn ite(py: Python<'_>, condition: Py<PyCircuit>, then_branch: Py<PyCircuit>,
 
 /// Union a nonempty iterable of circuits, consuming every element.
 /// Duplicate handles are rejected; pass explicit copies when reusing a circuit.
+/// The result is not minimized; minimize() makes it canonical.
 #[pyfunction]
 #[pyo3(signature = (circuits, *, limits=None))]
 pub fn or_many(py: Python<'_>, circuits: &Bound<'_, PyAny>, limits: Option<&PyLimits>) -> PyResult<PyCircuit> {
@@ -148,6 +160,7 @@ pub fn or_many(py: Python<'_>, circuits: &Bound<'_, PyAny>, limits: Option<&PyLi
 
 /// Conjoin, then existentially quantify variables in one call, consuming both circuits.
 /// This computes the same function as (left & right).exists(variables).
+/// The result is not minimized; minimize() makes it canonical.
 #[pyfunction]
 #[pyo3(signature = (left, right, variables, *, limits=None))]
 pub fn and_exists(py: Python<'_>, left: Py<PyCircuit>, right: Py<PyCircuit>, variables: Vec<u32>, limits: Option<&PyLimits>) -> PyResult<PyCircuit> {

@@ -144,6 +144,7 @@ fn a_seed_variable_the_diagram_lacks_is_skipped() {
     assert!(eng.equivalent(&conditioned, &eng.literal(home.vtree(), -3).unwrap()).unwrap());
     let forall = eng.forall_vars(f, &[VarId(2), VarId(1)]).unwrap();
     assert_eq!(leaf_vars(&forall), [VarId(3)]);
+    assert!(forall.is_canonical());
 }
 
 /// ((x y) z), ¬x ∧ ¬y ∧ ¬z: under `Contract` the root level holds the parts
@@ -167,7 +168,7 @@ fn forall_of_an_embedded_false_is_false() {
     let zero = crate::test_helpers::padded(Tdd::zero(home.vtree()), home.vtree());
     assert!(zero.vtree().num_nodes() > 0);
     let g = eng.forall_vars(zero, &[VarId(1)]).unwrap();
-    assert!(g.is_zero() && g.vtree().num_nodes() == 0);
+    assert!(g.is_zero() && g.vtree().num_nodes() == 0 && g.is_canonical());
 }
 
 /// (x ∨ y) ∧ (¬x ∨ y) is y: the product's reduction leaves x before the

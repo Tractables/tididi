@@ -74,6 +74,8 @@ impl Tdd {
     /// to the assignments they cover. Cubes whose free variables cross each
     /// other arbitrarily can cut into many more pieces.
     ///
+    /// The result is certified ([`is_canonical`](Self::is_canonical)).
+    ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};

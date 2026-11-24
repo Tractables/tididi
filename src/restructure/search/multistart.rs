@@ -75,6 +75,9 @@ impl crate::Engine {
     /// this is exactly one `rotation_search`, and the objective decides
     /// whether that shrinks the diagram.
     ///
+    /// The diagram stays canonical, but a kept rotation gives up its
+    /// certificate ([`Tdd::is_canonical`](crate::Tdd::is_canonical)).
+    ///
     /// # Errors
     ///
     /// [`OperationError::UnboundedSearch`] when `config.restarts` and

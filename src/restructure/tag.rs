@@ -53,6 +53,9 @@ impl Engine {
     /// place of `into`'s, with the code subtree on either side, and the
     /// other side must have `at`'s subtree's shape, children in order.
     ///
+    /// The result is certified
+    /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical)).
+    ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Engine, Tdd, Vtree};

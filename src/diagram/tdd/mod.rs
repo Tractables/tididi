@@ -252,6 +252,9 @@ impl crate::Engine {
     /// takes the copies here where memory may run short. A copy is not
     /// tested against the stop rules and charges no work.
     ///
+    /// The copy is certified when `f` is
+    /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical)).
+    ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Engine, OperationError, Vtree};

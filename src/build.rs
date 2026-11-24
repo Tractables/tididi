@@ -147,6 +147,8 @@ pub(crate) fn seat_canonical(eng: &Engine, vtree: &Arc<Vtree>, levels: Vec<TddLe
 /// Uses the execution context attached to the vtree.
 /// Use [`Engine::literal`] inside a batch with resource limits.
 ///
+/// The result is certified ([`Tdd::is_canonical`](crate::Tdd::is_canonical)).
+///
 /// # Errors
 ///
 /// Returns [`OperationError::InvalidLiteral`] for integer zero,
@@ -174,6 +176,8 @@ impl Tdd {
     /// An empty cube is true. On a home or a projection of one, the result is
     /// on the projection of the cube's variables, each of which need only be
     /// in the home. Uses the execution context attached to the vtree.
+    ///
+    /// The result is certified ([`is_canonical`](Self::is_canonical)).
     ///
     /// # Errors
     ///
@@ -203,6 +207,8 @@ impl Tdd {
     /// Either is canonical. [`Engine::one`] is the same diagram built in a
     /// caller's engine.
     ///
+    /// The result is certified ([`is_canonical`](Self::is_canonical)).
+    ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
@@ -226,6 +232,8 @@ impl Tdd {
     /// [`Tdd::is_zero`] is true. On a home or a projection of one, the result
     /// is on the home's empty projection. [`Engine::zero`] is the same diagram
     /// built in a caller's engine.
+    ///
+    /// The result is certified ([`is_canonical`](Self::is_canonical)).
     pub fn zero(vtree: &Arc<Vtree>) -> Tdd {
         vtree.context().run(|eng| eng.zero(vtree))
     }
@@ -248,6 +256,9 @@ impl crate::Engine {
     /// The constant-true function over `vtree`, built in this engine's pools.
     ///
     /// Does not check resource limits; use an empty [`Engine::cube`] for checked construction.
+    ///
+    /// The result is certified
+    /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical)).
     #[must_use]
     pub fn one(&self, vtree: &Arc<Vtree>) -> Tdd {
         crate::build::constant_one(self, vtree)
@@ -256,6 +267,9 @@ impl crate::Engine {
     /// The constant-false function over `vtree`, built in this engine's pools.
     ///
     /// Does not check resource limits; use an empty [`Engine::clause`] for checked construction.
+    ///
+    /// The result is certified
+    /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical)).
     #[must_use]
     pub fn zero(&self, vtree: &Arc<Vtree>) -> Tdd {
         crate::build::constant_zero(self, vtree)

@@ -793,6 +793,10 @@ impl Engine {
     /// deterministic and not minimized ([`Engine::minimize`] makes it
     /// canonical).
     ///
+    /// The result is not certified
+    /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical));
+    /// [`Engine::minimize`](crate::Engine::minimize) certifies it.
+    ///
     /// # Work
     ///
     /// Always: `f`'s pairs are read once, and each live product costs at

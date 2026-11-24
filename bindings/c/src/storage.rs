@@ -36,6 +36,8 @@ pub unsafe extern "C" fn tididi_to_bytes(value: *const TididiCircuit, out: *mut 
 }
 
 /// Load circuit bytes onto an existing vtree. Use one shared vtree for related circuits.
+/// The circuit is read as not minimized, even if it was saved minimized; tididi_minimize makes it
+/// canonical.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_from_bytes(tree: *const TididiVtree, data: *const u8, len: usize,
     out: *mut *mut TididiCircuit) -> *mut TididiError {

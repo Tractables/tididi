@@ -113,6 +113,10 @@ impl crate::Engine {
     /// Every plan returns the same function, and the default plan minimizes
     /// it; with nothing to quantify, `plan` reduces `f` alone.
     ///
+    /// A full plan certifies a result without a summed-out level
+    /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical)), as
+    /// [`minimize`](Self::minimize) does; a partial plan certifies none.
+    ///
     /// # Errors
     ///
     /// As [`exists_vars`](Self::exists_vars).

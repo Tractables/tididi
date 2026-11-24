@@ -173,6 +173,9 @@ impl Tdd {
     /// The diagram must be canonical, which is what makes a rebuilt level
     /// interchangeable with the one it replaced.
     ///
+    /// A kept sequence gives up the certificate
+    /// ([`is_canonical`](Self::is_canonical)).
+    ///
     /// # Errors
     ///
     /// [`OperationError::OverBudget`] from a rebuild that does not fit the

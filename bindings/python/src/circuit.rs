@@ -60,6 +60,7 @@ impl PyCircuit {
     fn vtree(&self) -> PyResult<PyVtree> { Ok(PyVtree(Arc::clone(self.get()?.vtree()))) }
 
     /// Duplicate diagram storage, leaving the original usable. The vtree is shared.
+    /// The copy is minimized when this circuit is.
     fn copy(&self, py: Python<'_>) -> PyResult<Self> {
         let f = self.get()?;
         Ok(Self::new(py.detach(|| f.clone())))
@@ -88,6 +89,7 @@ impl PyCircuit {
     fn __invert__(&mut self, py: Python<'_>) -> PyResult<Self> { self.negate(py, None) }
 
     /// Complement this circuit, consuming it. Equivalent to ~circuit, with optional limits.
+    /// The complement of a minimized circuit is minimized; of any other it is not.
     #[pyo3(signature = (*, limits=None))]
     fn negate(&mut self, py: Python<'_>, limits: Option<&PyLimits>) -> PyResult<Self> {
         self.transform(py, limits, Engine::negate)
@@ -97,6 +99,7 @@ impl PyCircuit {
     /// Repeated literals are ignored; opposite signs for one variable produce false.
     /// Assigned variables become free in the resulting function's counting universe.
     /// To count assignments consistent with evidence, use counter() instead.
+    /// The result is not minimized; minimize() makes it canonical.
     #[pyo3(signature = (literals, *, limits=None))]
     fn condition(&mut self, py: Python<'_>, literals: &Bound<'_, PyAny>, limits: Option<&PyLimits>) -> PyResult<Self> {
         let literals = domain::read_literals(literals)?;
@@ -106,6 +109,7 @@ impl PyCircuit {
 
     /// Existentially quantify variables, consuming this circuit.
     /// Quantified variables remain free in the vtree; use projected_model_count to count distinct projections.
+    /// The result is not minimized; minimize() makes it canonical.
     #[pyo3(signature = (variables, *, limits=None))]
     fn exists(&mut self, py: Python<'_>, variables: Vec<u32>, limits: Option<&PyLimits>) -> PyResult<Self> {
         self.quantify(py, variables, limits, Engine::exists_vars)
@@ -113,6 +117,7 @@ impl PyCircuit {
 
     /// Universally quantify variables, consuming this circuit: the result holds where every value of them satisfies it.
     /// Quantified variables remain free in the vtree.
+    /// The result is minimized unless no variable is given.
     #[pyo3(signature = (variables, *, limits=None))]
     fn forall(&mut self, py: Python<'_>, variables: Vec<u32>, limits: Option<&PyLimits>) -> PyResult<Self> {
         self.quantify(py, variables, limits, Engine::forall_vars)
@@ -121,6 +126,7 @@ impl PyCircuit {
     /// Simultaneously rename variables using a dict {source: target}, consuming this circuit.
     /// Swaps and cycles are simultaneous; several sources may map to the same target.
     /// The vtree and its counting universe stay unchanged.
+    /// The result is not minimized; minimize() makes it canonical.
     #[pyo3(signature = (mapping, *, limits=None))]
     fn rename(&mut self, py: Python<'_>, mapping: &Bound<'_, PyDict>, limits: Option<&PyLimits>) -> PyResult<Self> {
         let pairs = mapping.iter().map(|(a, b)| Ok((domain::variable_id(a.extract()?)?, domain::variable_id(b.extract()?)?)))
@@ -266,6 +272,8 @@ impl PyCircuit {
         Ok(PyBytes::new(py, &bytes))
     }
     /// Load serialized circuit bytes onto an existing vtree.
+    /// The circuit is read as not minimized, even if it was saved minimized; minimize() makes it
+    /// canonical.
     #[staticmethod]
     fn from_bytes(vtree: &PyVtree, mut data: &[u8]) -> PyResult<Self> {
         tididi::io::read_tdd(&mut data, &vtree.0).map(Self::new).map_err(domain::value_error)
@@ -275,6 +283,8 @@ impl PyCircuit {
         tididi::io::save_tdd(self.get()?, path).map_err(io_error)
     }
     /// Read a circuit file onto an existing vtree.
+    /// The circuit is read as not minimized, even if it was saved minimized; minimize() makes it
+    /// canonical.
     #[staticmethod]
     fn load(vtree: &PyVtree, path: PathBuf) -> PyResult<Self> {
         tididi::io::load_tdd(path, &vtree.0).map(Self::new).map_err(io_error)

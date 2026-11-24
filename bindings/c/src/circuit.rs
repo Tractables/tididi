@@ -83,6 +83,7 @@ unsafe fn quantify(
 }
 
 /// Copy diagram storage while sharing the vtree. The input remains usable.
+/// The copy is minimized when the input is.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_copy(value: *const TididiCircuit, out: *mut *mut TididiCircuit) -> *mut TididiError {
     boundary(|| { let out = unsafe { vacant(out)? }; *out = circuit(unsafe { borrow(value)? }.clone()); Ok(()) })
@@ -99,47 +100,56 @@ pub unsafe extern "C" fn tididi_circuit_free(value: *mut TididiCircuit) -> *mut 
     unsafe { free_handle(value, |h| &h.0) }
 }
 /// Construct a signed, one-based literal; zero is invalid. out must point to NULL.
+/// The result is minimized.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_literal(tree: *const TididiVtree, value: i64, out: *mut *mut TididiCircuit, config: *const TididiLimits) -> *mut TididiError {
     boundary(|| { let out = unsafe { vacant(out)? }; let vtree = unsafe { vtree(tree)? }; let value = literal_value(value)?;
         *out = circuit(run(vtree, unsafe { limits(config)? }, |e| e.literal(vtree, value))?); Ok(()) })
 }
 /// Construct the constant true function over all vtree variables.
+/// The result is minimized.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_one(tree: *const TididiVtree, out: *mut *mut TididiCircuit) -> *mut TididiError {
     boundary(|| { let out = unsafe { vacant(out)? }; *out = circuit(Tdd::one(unsafe { vtree(tree)? })); Ok(()) })
 }
 /// Construct the constant false function over all vtree variables.
+/// The result is minimized.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_zero(tree: *const TididiVtree, out: *mut *mut TididiCircuit) -> *mut TididiError {
     boundary(|| { let out = unsafe { vacant(out)? }; *out = circuit(Tdd::zero(unsafe { vtree(tree)? })); Ok(()) })
 }
 /// Conjoin signed literals, each variable occurring once. An empty cube is true; omitted variables are free.
+/// The result is minimized.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_cube(tree: *const TididiVtree, values: *const i64, len: usize, out: *mut *mut TididiCircuit, config: *const TididiLimits) -> *mut TididiError {
     boundary(|| unsafe { literal_set(tree, values, len, out, config, |e, vtree, lits| e.cube(vtree, lits)) })
 }
 /// Disjoin signed literals. An empty clause is false.
+/// The result is not minimized; tididi_minimize makes it canonical.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_clause(tree: *const TididiVtree, values: *const i64, len: usize, out: *mut *mut TididiCircuit, config: *const TididiLimits) -> *mut TididiError {
     boundary(|| unsafe { literal_set(tree, values, len, out, config, |e, vtree, lits| e.clause(vtree, lits)) })
 }
 /// Conjoin two circuits, consuming both. Preflight errors preserve inputs; execution failures consume them.
+/// The result is not minimized; tididi_minimize makes it canonical.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_and(left: *mut TididiCircuit, right: *mut TididiCircuit, out: *mut *mut TididiCircuit, config: *const TididiLimits) -> *mut TididiError {
     boundary(|| unsafe { binary(left, right, out, config, Engine::and) })
 }
 /// Disjoin two circuits, consuming both. Operands must be distinct handles sharing one vtree.
+/// The result is not minimized; tididi_minimize makes it canonical.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_or(left: *mut TididiCircuit, right: *mut TididiCircuit, out: *mut *mut TididiCircuit, config: *const TididiLimits) -> *mut TididiError {
     boundary(|| unsafe { binary(left, right, out, config, Engine::or) })
 }
 /// Exclusive-or two circuits, consuming both.
+/// The result is not minimized; tididi_minimize makes it canonical.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_xor(left: *mut TididiCircuit, right: *mut TididiCircuit, out: *mut *mut TididiCircuit, config: *const TididiLimits) -> *mut TididiError {
     boundary(|| unsafe { binary(left, right, out, config, Engine::xor) })
 }
 /// Complement a circuit, consuming it.
+/// The complement of a minimized circuit is minimized; of any other it is not.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_negate(value: *mut TididiCircuit, out: *mut *mut TididiCircuit, config: *const TididiLimits) -> *mut TididiError {
     boundary(|| { let out = unsafe { vacant(out)? }; *out = circuit(unsafe { unary(value, limits(config)?, |_| Ok(()), Engine::negate)? }); Ok(()) })
@@ -151,6 +161,7 @@ pub unsafe extern "C" fn tididi_minimize(value: *mut TididiCircuit, out: *mut *m
 }
 /// Substitute literal values, consuming the circuit. Repeats are ignored; opposite signs produce false.
 /// Substituted variables remain free in the counting universe; use a counter to count under observations.
+/// The result is not minimized; tididi_minimize makes it canonical.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_condition(value: *mut TididiCircuit, assignments: *const i64, len: usize,
     out: *mut *mut TididiCircuit, config: *const TididiLimits) -> *mut TididiError {
@@ -166,16 +177,19 @@ pub unsafe extern "C" fn tididi_condition(value: *mut TididiCircuit, assignments
     })
 }
 /// Existentially quantify variables, consuming the circuit. They remain free in the vtree's counting universe.
+/// The result is not minimized; tididi_minimize makes it canonical.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_exists(value: *mut TididiCircuit, vars: *const u32, len: usize, out: *mut *mut TididiCircuit, config: *const TididiLimits) -> *mut TididiError {
     boundary(|| unsafe { quantify(value, vars, len, out, config, Engine::exists_vars) })
 }
 /// Universally quantify variables, consuming the circuit: the result holds where every value of them satisfies it. They remain free in the vtree's counting universe.
+/// The result is minimized unless no variable is given.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_forall(value: *mut TididiCircuit, vars: *const u32, len: usize, out: *mut *mut TididiCircuit, config: *const TididiLimits) -> *mut TididiError {
     boundary(|| unsafe { quantify(value, vars, len, out, config, Engine::forall_vars) })
 }
 /// Conjoin then quantify in one call, consuming both inputs. Equivalent to and followed by exists.
+/// The result is not minimized; tididi_minimize makes it canonical.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_and_exists(left: *mut TididiCircuit, right: *mut TididiCircuit, vars: *const u32, len: usize, out: *mut *mut TididiCircuit, config: *const TididiLimits) -> *mut TididiError {
     boundary(|| { let out = unsafe { vacant(out)? }; let vars = variables(unsafe { array(vars, len)? })?; let config = unsafe { limits(config)? };
@@ -185,6 +199,7 @@ pub unsafe extern "C" fn tididi_and_exists(left: *mut TididiCircuit, right: *mut
 }
 /// Rename from[i] to to[i] simultaneously, consuming the circuit. Swaps and cycles are simultaneous.
 /// Each source occurs once; several sources may share a target. The vtree stays unchanged.
+/// The result is not minimized; tididi_minimize makes it canonical.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_rename(value: *mut TididiCircuit, from: *const u32, to: *const u32, len: usize, out: *mut *mut TididiCircuit, config: *const TididiLimits) -> *mut TididiError {
     boundary(|| { let out = unsafe { vacant(out)? };
@@ -194,6 +209,7 @@ pub unsafe extern "C" fn tididi_rename(value: *mut TididiCircuit, from: *const u
         *out = circuit(unsafe { unary(value, limits(config)?, |v| check_variables(v, pairs.iter().flat_map(|&(a,b)| [a,b])), |e,f| e.rename_vars(f, &pairs))? }); Ok(()) })
 }
 /// Union a nonempty array of distinct circuit handles, consuming every payload.
+/// The result is not minimized; tididi_minimize makes it canonical.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_or_many(values: *const *mut TididiCircuit, len: usize, out: *mut *mut TididiCircuit, config: *const TididiLimits) -> *mut TididiError {
     boundary(|| { let out = unsafe { vacant(out)? }; let config = unsafe { limits(config)? };
@@ -201,6 +217,8 @@ pub unsafe extern "C" fn tididi_or_many(values: *const *mut TididiCircuit, len: 
         *out = circuit(run(&vtree, config, |e| e.or_many(values))?); Ok(()) })
 }
 /// Build if-then-else, consuming three distinct circuit handles sharing one vtree.
+/// The result is not minimized unless both branches hold the same levels, as copies do;
+/// tididi_minimize makes it canonical.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_ite(condition: *mut TididiCircuit, yes: *mut TididiCircuit, no: *mut TididiCircuit, out: *mut *mut TididiCircuit, config: *const TididiLimits) -> *mut TididiError {
     boundary(|| { let out = unsafe { vacant(out)? }; let config = unsafe { limits(config)? };
@@ -210,6 +228,7 @@ pub unsafe extern "C" fn tididi_ite(condition: *mut TididiCircuit, yes: *mut Tid
 }
 /// Build a set of row-major Boolean rows. Every cell is 0 or 1; duplicates count once.
 /// rows contains nrows*nvars bytes. Other vtree variables are free.
+/// The result is minimized.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_from_models(tree: *const TididiVtree, vars: *const u32, nvars: usize, rows: *const u8, nrows: usize, out: *mut *mut TididiCircuit, config: *const TididiLimits) -> *mut TididiError {
     boundary(|| { let out = unsafe { vacant(out)? }; let vtree = unsafe { vtree(tree)? };

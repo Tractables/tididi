@@ -877,6 +877,10 @@ impl crate::Engine {
     /// level of a weighted sum as a target keeps the levels below the
     /// topmost out of the store.
     ///
+    /// The result is not certified
+    /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical)), and while it holds a
+    /// summed-out level no reduction certifies it.
+    ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Engine, Vtree};
@@ -955,6 +959,10 @@ impl crate::Engine {
     /// with a leaf in a region is refused [`OperationError::MarginalLevel`].
     /// Home variables neither operand uses stay free, also under a summed
     /// node, and [`Engine::evaluate`] applies its algebra to them.
+    ///
+    /// The result is not certified
+    /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical)), and while it holds a
+    /// summed-out level no reduction certifies it.
     ///
     /// ```
     /// use tididi::{Engine, Tdd};

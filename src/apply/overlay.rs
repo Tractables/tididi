@@ -893,6 +893,10 @@ fn across(eng: &Engine, op: Overlay, f: Tdd, g: Tdd) -> Result<Tdd, OperationErr
 /// minimized: it may hold twins and nodes its output does not reach.
 /// Weight compatibility and inheritance follow [`and`](crate::and).
 ///
+/// The result is not certified
+/// ([`Tdd::is_canonical`](crate::Tdd::is_canonical));
+/// [`Engine::minimize`](crate::Engine::minimize) certifies it.
+///
 /// ```
 /// use std::sync::Arc;
 /// use tididi::{and_not, literal, Tdd, Vtree};

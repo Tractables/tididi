@@ -13,6 +13,10 @@ use super::{IoError, TDD_FORMAT_VERSION};
 ///
 /// The vtree of the result is as [`read_tdd`] states, with its format requirements.
 ///
+/// The diagram read is not certified
+/// ([`Tdd::is_canonical`](crate::Tdd::is_canonical));
+/// [`Tdd::minimize`](crate::Tdd::minimize) certifies it.
+///
 /// ```
 /// use std::sync::Arc;
 /// use tididi::{Tdd, Vtree};
@@ -63,6 +67,10 @@ pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoErr
 /// describe TDDs satisfying the [data-model rules](crate::guide::model), as the
 /// library's writer produces; arbitrary overlapping pair lists are not valid
 /// inputs for model counting.
+///
+/// The diagram read is not certified
+/// ([`Tdd::is_canonical`](crate::Tdd::is_canonical));
+/// [`Tdd::minimize`](crate::Tdd::minimize) certifies it.
 ///
 /// # Errors
 ///

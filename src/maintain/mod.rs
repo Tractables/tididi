@@ -123,6 +123,10 @@ impl Tdd {
     /// it once. The diagram is left sound but not canonical; minimize it when
     /// the batch is over. See the [module documentation](crate::maintain).
     ///
+    /// The diagram loses its certificate
+    /// ([`is_canonical`](Self::is_canonical)); [`minimize`](Self::minimize)
+    /// certifies it again.
+    ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
@@ -156,6 +160,10 @@ impl Tdd {
     /// [`Maintenance`] batch instead of building an index for each call.
     /// An error preserves the previous function; the diagram remains usable.
     ///
+    /// The diagram loses its certificate
+    /// ([`is_canonical`](Self::is_canonical)); [`minimize`](Self::minimize)
+    /// certifies it again.
+    ///
     /// # Errors
     ///
     /// Returns [`OperationError::InvalidLiteral`] for integer zero,
@@ -175,6 +183,10 @@ impl Tdd {
     /// [`and_clause`](Self::and_clause) with the input's literals negated.
     /// For several updates, reuse a [`Maintenance`] batch.
     /// An error preserves the previous function; the diagram remains usable.
+    ///
+    /// The diagram loses its certificate
+    /// ([`is_canonical`](Self::is_canonical)); [`minimize`](Self::minimize)
+    /// certifies it again.
     ///
     /// # Errors
     ///

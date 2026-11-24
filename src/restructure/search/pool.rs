@@ -325,6 +325,9 @@ impl Engine {
     /// interchangeable with the one it replaced. A kept move can leave twins
     /// in a rebuilt level, which a later minimize contracts.
     ///
+    /// A kept move gives up each member's certificate
+    /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical)).
+    ///
     /// # Errors
     ///
     /// [`OperationError::VtreeMismatch`] when the members neither share one
@@ -405,6 +408,10 @@ impl Engine {
     /// scores keep then charges what [`rotate_pool_if`](Self::rotate_pool_if)
     /// does, less the copy of the tree, and the nodes whose place in the
     /// bottom-up order it changes: the descent moves one copy in place.
+    ///
+    /// Each member without a summed-out level ends certified
+    /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical)) unless an error skips
+    /// the closing reduction.
     ///
     /// # Errors
     ///

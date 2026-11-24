@@ -774,6 +774,10 @@ impl Engine {
     /// [`Engine::minimize`] makes it canonical. Both operands must be
     /// structural and unweighted, and share their vtree.
     ///
+    /// The result is not certified
+    /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical));
+    /// [`Engine::minimize`](crate::Engine::minimize) certifies it.
+    ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Engine, Vtree};
@@ -809,6 +813,10 @@ impl Engine {
     /// sizes ([`Tdd::pair_count`], [`Tdd::node_count`]) count what the
     /// prune would remove.
     ///
+    /// The result is not certified
+    /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical));
+    /// [`Engine::minimize`](crate::Engine::minimize) certifies it.
+    ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Engine, Vtree};
@@ -837,6 +845,10 @@ impl Engine {
     /// other polarity dropped and those true over the leaf set to the
     /// literal; the rest of the work is the falsity that leaves and the
     /// prune.
+    ///
+    /// The result is not certified
+    /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical));
+    /// [`Engine::minimize`](crate::Engine::minimize) certifies it.
     ///
     /// ```
     /// use std::sync::Arc;

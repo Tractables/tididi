@@ -51,6 +51,9 @@ impl Engine {
     /// on no leaf, false, and true named `One` at a one-leaf root become that
     /// constant on [`Vtree::empty_projection`] of `home`.
     ///
+    /// The result is certified when `f` is
+    /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical)).
+    ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Engine, Vtree};

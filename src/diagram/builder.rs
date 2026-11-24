@@ -401,6 +401,10 @@ impl TddBuilder {
     /// and false is the constant on the empty projection. A diagram with a
     /// marginal level is returned on the builder's vtree.
     ///
+    /// The diagram is not certified
+    /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical));
+    /// [`Tdd::minimize`](crate::Tdd::minimize) certifies it.
+    ///
     /// # Errors
     ///
     /// The first invariant violated — [`TddBuildError::BadOutput`] when

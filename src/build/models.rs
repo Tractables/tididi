@@ -58,6 +58,8 @@ impl Tdd {
     /// storage includes the packed rows, the distinct values of the nodes
     /// still to be split, sorting scratch and every level's pairs.
     ///
+    /// The result is certified ([`is_canonical`](Self::is_canonical)).
+    ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};

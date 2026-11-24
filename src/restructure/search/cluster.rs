@@ -186,6 +186,9 @@ impl Engine {
     /// use [`Tdd::vtree`]. A diagram over the old allocation is not transformed
     /// by this call. With no candidate, the original allocation is retained.
     ///
+    /// The diagram has a summed-out level, so it is not certified
+    /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical)) before or after.
+    ///
     /// # Errors
     ///
     /// An invalid `root` returns [`OperationError::LevelNotInVtree`] before
