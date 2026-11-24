@@ -104,7 +104,7 @@ It omits the witness, replacement observation and minimization demonstrations.
 
 ### Instances
 
-- [Rust walkthrough](examples/configurations.md) <!-- reviewed: 6dd56145de35b5f50e65ec71d571cec7772523e286c9c0c22e56a325666e5f8b -->
+- [Rust walkthrough](examples/configurations.md) <!-- reviewed: 94e453000d7f09f72939054dd10f7dfebb738ae280e645219d2b5ed28b022fbc -->
 - [Rust program](../examples/configurations.rs) <!-- reviewed: 79ec2d3fa05da95e1360b51129c1de3d8090c146a1a6aead105ef16c08c11dd4 -->
 - [Python walkthrough and program](../bindings/python/examples/01_configurations.py) <!-- reviewed: 6a369c0d5f4dd63db5fe776ae2f5699ac0d370d32925b2a9bc6a9e9c6ae67006 -->
 - [C configurations](../bindings/c/docs/configurations.rst) <!-- reviewed: ac03abce92815601a4e6410435e1724f471e5ffcd9be87a436fae77a9fd2e392 -->
@@ -364,7 +364,7 @@ omits the literal comparison and represents an empty maximum by zero pairs.
 
 ### Instances
 
-- [Rust walkthrough](examples/statistics.md) <!-- reviewed: 5ea48e9c1549098c4c28f4b90d72d0191bba099b1cd5694f73044b3f1bc73f62 -->
+- [Rust walkthrough](examples/statistics.md) <!-- reviewed: c307927ba504f6c7f3329377ef5e4af5e9b8b27885994abf1387a35623e5cd3d -->
 - [Rust program](../examples/statistics.rs) <!-- reviewed: af452250f58ee6f6a2ddacdeb1380ba0efc6405a902214ab6df305d3973ea70a -->
 - [Python walkthrough and program](../bindings/python/examples/09_statistics.py) <!-- reviewed: d405decff7aa771faa37c7c8694e017388052b40060de82be72e3180fee835e3 -->
 - [C statistics](../bindings/c/docs/statistics.rst) <!-- reviewed: 9445ca2077f5955c6a34013c4abec4f0132b827e6c32738aa84bfb7cee1d367c -->

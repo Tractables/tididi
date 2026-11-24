@@ -30,4 +30,4 @@ def verify(outputs):
     assert iterations[-1][2:4] == iterations[-2][2:4], "fixed-point storage should stabilize"
     assert iterations[-1][4] == " (fixed point)"
     assert outputs["reachability"].count("Unreachable:") == 5
-    assert re.search(r"Models: 8; stored nodes: \d+; pairs: 4", outputs["statistics"])
+    assert re.search(r"Models: 8; stored nodes: \d+; pairs: 5", outputs["statistics"])

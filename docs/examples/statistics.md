@@ -12,9 +12,12 @@ if the distinction between a vtree level, a TDD node, and a child pair is new.
 ## Inspect an exclusive disjunction
 
 Use a balanced vtree over four variables. The exclusive OR of its first two
-variables is **(x1 ∧ ¬x2) ∨ (¬x1 ∧ x2)**. Each alternative is one child pair
-at the level containing those variables. Build it with [`xor`](crate::xor),
-copying `x1` so we can inspect the literal separately:
+variables is **(x1 ∧ ¬x2) ∨ (¬x1 ∧ x2)**. Build it with [`xor`](crate::xor),
+copying `x1` so we can inspect the literal separately. `xor` does not minimize
+its result: each alternative is one child pair of the root, whose left child
+is a node holding that alternative at the level containing x1 and x2.
+[`minimize`](crate::Tdd::minimize) would merge those two nodes into one with
+two pairs.
 
 ```rust,ignore,{class=tested-example}
 use std::sync::Arc;
@@ -59,7 +62,7 @@ println!("Widest XOR node: {pairs} pairs at vtree node {}", level.idx());
 Output:
 
 ```text
-Widest XOR node: 2 pairs at vtree node 4
+Widest XOR node: 2 pairs at vtree node 6
 ```
 
 The other two variables are free. For comparison, a single positive literal
@@ -88,12 +91,12 @@ println!("Satisfying assignments: {}", exclusive.model_count()?);
 Output:
 
 ```text
-Total XOR pairs: 4
+Total XOR pairs: 5
 Satisfying assignments: 8
 ```
 
 Exactly one of `x1` and `x2` is true, giving two choices. Each of the other
-two variables is free, so the model count is 2 × 2 × 2 = 8. The four stored
+two variables is free, so the model count is 2 × 2 × 2 = 8. The five stored
 pairs describe those eight assignments.
 
 Adapt the same traversal for a histogram of node sizes or a per-level report.
