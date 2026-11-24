@@ -358,6 +358,8 @@ fn refusals_in_a_multistart_keep_the_function() {
         let outcome = eng.rotation_multistart(&mut tdd, &mut MinimizePairs, &config(restarts));
         let pending = eng.limits().refusal_pending();
         eng.limits().grant_every_reserve();
+        // Shown before the checks, which read the pair counts a level keeps.
+        let shown = format!("{tdd:?}");
         assert_canonical(&tdd);
         assert_eq!(tdd.model_count().unwrap(), count, "reservation {nth}");
         match outcome {
@@ -367,7 +369,7 @@ fn refusals_in_a_multistart_keep_the_function() {
                 assert!(stats.rounds <= restarts, "reservation {nth}: {stats:?}");
                 let (diagram, best_round) = &unrefused[stats.rounds - 1];
                 assert_eq!(stats.best_round, *best_round, "reservation {nth}");
-                assert_eq!(&format!("{tdd:?}"), diagram, "reservation {nth}");
+                assert_eq!(&shown, diagram, "reservation {nth}");
                 refused_at[stats.rounds] += 1;
             }
             Err(e) => {
