@@ -22,8 +22,7 @@ impl Tdd {
     /// level at every node of the home's tree, which [`Engine::pool_search`](crate::Engine::pool_search)
     /// minimizes over a pool on projections.
     ///
-    /// Not cached: it reads the pairs of every level with a leaf child and
-    /// walks the home's nodes between own nodes.
+    /// Not cached: it reads the pairs of every level with a leaf child.
     ///
     /// ```
     /// use tididi::Tdd;
@@ -54,12 +53,10 @@ impl Tdd {
             }
             let top = self.vtree.home_node(VtreeIdx(t as u32));
             for c in [l, r] {
-                let extra = widths[c.idx()] as usize - 1;
-                if extra == 0 {
-                    continue;
-                }
-                let between = chain(hv, self.vtree.home_node(c), top).count().saturating_sub(1);
-                carried += between * extra;
+                let below = self.vtree.home_node(c);
+                debug_assert_eq!(home.depth(below) - home.depth(top), chain(hv, below, top).count() as u32);
+                let between = (home.depth(below) - home.depth(top) - 1) as usize;
+                carried += between * (widths[c.idx()] as usize - 1);
             }
         }
         pairs + carried
