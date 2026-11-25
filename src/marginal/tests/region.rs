@@ -12,6 +12,7 @@ use crate::vtree::rng::Lcg;
 use crate::vtree::{Home, VarId, Vtree, VtreeIdx};
 use crate::{Engine, OperationError, Tdd};
 
+// Padded form: the padded sum-out.
 /// A random trimmed diagram on the projection of `home` on `vars`: a CNF of
 /// one to five clauses, a constant on the empty projection when `vars` is
 /// empty.
@@ -271,6 +272,7 @@ fn count_regions(f: &Tdd) -> usize {
     f.vtree().bottomup().filter(|&t| f.vtree().node(t).is_region()).count()
 }
 
+// Padded form: the padded sum-out.
 #[test]
 fn marginalize_refuses_a_summed_out_internal_level_that_is_not_a_region() {
     let eng = Engine::new();
@@ -282,6 +284,7 @@ fn marginalize_refuses_a_summed_out_internal_level_that_is_not_a_region() {
     assert_eq!(f.marginalize(|_| true), Err(OperationError::MarginalLevel(left)));
 }
 
+// Padded form: the padded sum-out.
 /// A summable leaf whose parent has a variable that is not summable becomes
 /// a region of its one variable.
 #[test]
@@ -312,6 +315,7 @@ fn a_node_under_a_summed_node_leaves_no_internal_summed_level() {
     assert_eq!(f.model_count().unwrap(), before);
 }
 
+// Padded form: the padded sum-out.
 /// Home `(m, (((x, u), z), y))` and `f = (m ∨ x) ∧ (x ∨ z) ∧ y` on the
 /// projection without `u`, `m` summed in place and `y` conditioned: a
 /// sum-out over `x` and `z` that is refused leaves the count as it was.
@@ -335,6 +339,7 @@ fn a_refused_marginalize_leaves_the_count_as_it_was() {
     assert_eq!(f.model_count().unwrap(), before);
 }
 
+// Padded form: the padded sum-out.
 /// A refusal at any reserve of a sum-out that builds a region leaves the
 /// count as it was.
 #[test]
@@ -368,7 +373,7 @@ fn summing_out_a_root_of_several_nodes_follows_the_output() {
     use crate::diagram::{ChildPair, TddNodeId, NEG_LEAF_IDX, POS_LEAF_IDX};
     // Three root nodes with 1, 1 and 2 models; the output is the second.
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::balanced(2)));
     let root = vtree.root();
     let mut b = Tdd::builder(&eng, &vtree).unwrap();
     b.push(&eng, root, &[ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX)]).unwrap();
@@ -446,6 +451,7 @@ fn conjoined_value(eng: &Engine, f: &Tdd, g: &Tdd) -> String {
     values[0].clone()
 }
 
+// Padded form: the padded sum-out.
 /// Home `((x1, x2), (x3, x4))`, `f = x1 ∧ (x3 ∨ x4)` summed over `(x3, x4)`:
 /// beside `x2`, the reader of `x1` names it as a literal through a
 /// pass-through, with the region in `f`'s leaf pass list.

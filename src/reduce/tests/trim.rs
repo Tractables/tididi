@@ -96,12 +96,12 @@ fn trimmed_copies_answer_as_the_original() {
 fn constants_have_no_leaf() {
     let hm = Home::new(Vtree::balanced(5));
     let home = Arc::clone(&hm);
-    let mut zero = crate::test_helpers::padded(Tdd::zero(&crate::vtree::Home::unchecked(&home)), &home);
+    let mut zero = crate::test_helpers::padded(Tdd::zero(&crate::vtree::Home::new(std::sync::Arc::clone(&home))), &home);
     assert!(zero.trim(&hm).unwrap());
     assert!(zero.is_zero() && zero.vtree().num_nodes() == 0);
     assert_eq!(zero.model_count().unwrap(), 0u32.into());
 
-    let mut one = crate::test_helpers::padded(Tdd::one(&crate::vtree::Home::unchecked(&home)), &home);
+    let mut one = crate::test_helpers::padded(Tdd::one(&crate::vtree::Home::new(std::sync::Arc::clone(&home))), &home);
     assert!(one.trim(&hm).unwrap());
     assert!(one.is_one() && !one.is_zero());
     assert_eq!(one.vtree().num_nodes(), 0);
@@ -112,7 +112,7 @@ fn constants_have_no_leaf() {
     assert!(!one.trim(&hm).unwrap());
     check_trimmed(&one, true).unwrap();
 
-    let mut x = crate::test_helpers::padded(literal(&crate::vtree::Home::unchecked(&home), 3).unwrap(), &home);
+    let mut x = crate::test_helpers::padded(literal(&crate::vtree::Home::new(std::sync::Arc::clone(&home)), 3).unwrap(), &home);
     assert!(x.trim(&hm).unwrap());
     assert_eq!(x.vtree().num_nodes(), 1);
     assert_eq!(x.model_count().unwrap(), 16u32.into());
@@ -162,14 +162,14 @@ fn counts_on_a_projection_are_over_the_home() {
     let hm = Home::new(Vtree::balanced(6));
     let home = Arc::clone(&hm);
     let own = Vtree::projection(&hm, [VarId(2), VarId(5)]).unwrap();
-    let f = Tdd::clause(&crate::vtree::Home::unchecked(&own), [2, 5]).unwrap();
+    let f = Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&own)), [2, 5]).unwrap();
     assert_eq!(f.model_count().unwrap(), (3u32 << 4).into());
     assert_eq!(f.projected_model_count(&[VarId(2), VarId(1)]).unwrap(), 4u32.into());
     assert_eq!(f.projected_model_count(&[VarId(5)]).unwrap(), 2u32.into());
     let all: Vec<VarId> = (1..=6).map(VarId).collect();
     assert_eq!(f.projected_model_count(&all).unwrap(), f.model_count().unwrap());
     assert!(matches!(f.projected_model_count(&[VarId(7)]), Err(crate::OperationError::VariableNotInVtree(_))));
-    let mut on_home = Tdd::clause(&crate::vtree::Home::unchecked(&home), [2, 5]).unwrap();
+    let mut on_home = Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&home)), [2, 5]).unwrap();
     on_home.minimize().unwrap();
     assert_eq!(on_home.model_count().unwrap(), f.model_count().unwrap());
 }
@@ -431,7 +431,7 @@ fn summed_leaf_under_a_dropped_level(clause: &[i32], vars: &[u32], arithmetic: O
         None => Home::new(Vtree::balanced(4)),
     };
     let own = Vtree::projection(&home, vars.iter().map(|&v| crate::vtree::VarId(v))).unwrap();
-    let mut f = crate::test_helpers::padded(Tdd::clause(&crate::vtree::Home::unchecked(&own), clause.iter().copied()).unwrap(), &own);
+    let mut f = crate::test_helpers::padded(Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&own)), clause.iter().copied()).unwrap(), &own);
     let leaf = own.leaf_of(crate::vtree::VarId(2)).unwrap();
     crate::marginal::tests::marginalize_levels(&Engine::new(), &mut f, &[leaf]).unwrap();
     (f.clone(), f, home)

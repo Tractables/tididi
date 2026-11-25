@@ -33,7 +33,7 @@ fn destination(f: &Tdd, at: VtreeIdx) -> (Arc<Vtree>, Vec<Option<VarId>>, [VarId
     let (sub, local, m) = subtree_projection(f.vtree(), at);
     let code = [VarId(m + 1), VarId(m + 2)];
     let into = Vtree::join(&sub, &Vtree::balanced_over(&code).unwrap()).unwrap();
-    (Arc::new(into), local, code)
+    (Arc::clone(&crate::vtree::Home::new(into)), local, code)
 }
 
 /// Every assignment to `g`'s variables against the tags read node by node.
@@ -65,6 +65,17 @@ fn check(f: &Tdd, at: VtreeIdx, tags: &[Option<u32>]) {
 fn cycling(f: &Tdd, at: VtreeIdx) -> Vec<Option<u32>> {
     let width = if f.vtree().node(at).is_leaf() { LEAF_WIDTH } else { f.level(at).nodes().len() };
     (0..width).map(|i| (i != 1).then_some(i as u32 % CODES.len() as u32)).collect()
+}
+
+#[test]
+fn an_into_off_every_home_is_refused_by_name() {
+    let vtree = Home::new(Vtree::balanced(4));
+    let f = compile_clauses(&vtree, &[vec![1, 2], vec![3, 4]]);
+    let (left, _) = vtree.children(vtree.root());
+    let (into, local, code) = destination(&f, left);
+    let plain = Arc::new(Vtree::clone(&into));
+    let r = Engine::new().tag_level(&f, left, &plain, |v| local[v.idx()].unwrap(), &cycling(&f, left), &code, &CODES);
+    assert!(matches!(r, Err(TagError::Operation(OperationError::NotOnHome))), "{r:?}");
 }
 
 #[test]
@@ -161,8 +172,8 @@ fn shapes_codes_and_tags_are_checked() {
         eng.tag_level(&f, left, &into, |v| VarId(3 - map(v).0), &tags, &code, &CODES),
         Err(TagError::Placement(EmbedError::NotIsomorphic { .. })),
     ));
-    // A code variable left out, and one that is no leaf of the code subtree.
-    assert!(matches!(eng.tag_level(&f, left, &into, map, &tags, &code[..1], &CODES), Err(TagError::CodeVariables(_))));
+    // A code variable that is no leaf of the code subtree. One left out is
+    // not refused on a home: the code variables choose the projection.
     assert!(matches!(eng.tag_level(&f, left, &into, map, &tags, &[code[0], VarId(1)], &CODES), Err(TagError::CodeVariables(_))));
     // Too few tags, a tag past the codes, and a ragged code list.
     assert!(matches!(eng.tag_level(&f, left, &into, map, &tags[1..], &code, &CODES), Err(TagError::Tags(_))));
@@ -279,7 +290,7 @@ fn wide_codes_share_the_cube_nodes_they_agree_on() {
                 _ => Some((i * 7 % (slots + 1)) as u32),
             }).collect();
             for code_tree in code_subtrees(m, width, &mut rng) {
-                let into = Arc::new(Vtree::join(&sub, &code_tree).unwrap());
+                let into = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::join(&sub, &code_tree).unwrap()));
                 check_codes(&f, at, &into, &local, &tags, &code_vars, &codes);
             }
         }

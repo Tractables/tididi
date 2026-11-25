@@ -54,6 +54,7 @@ fn clone_guarded_copies_big_overflow_exactly() {
     }
 }
 
+// Padded form: the padded sum-out.
 /// Refuse every reservation in turn, then resume using the same engine and diagram.
 fn marginal_refusals(weighted: bool, overflow: bool) {
     use std::sync::Arc;

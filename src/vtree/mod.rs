@@ -130,3 +130,15 @@ impl std::error::Error for VtreeError {}
 
 #[cfg(test)]
 mod tests;
+
+/// Whether `vtree`, a plain root, was admitted by the test door
+/// `Home::unchecked`; always false outside test builds.
+#[inline(always)]
+pub(crate) fn admitted_by_test(vtree: &Vtree) -> bool {
+    #[cfg(test)]
+    if tests::admitted(vtree) {
+        return true;
+    }
+    let _ = vtree;
+    false
+}

@@ -44,6 +44,7 @@ fn assert_same_nodes(a: &Tdd, b: &Tdd, what: &str) {
 /// x1 ∧ x3 over ((x1 x2) (x3 x4)), x2 and x4 named `One`: on `vtree` as
 /// `finish` seats it.
 fn x1_x3_padded(eng: &Engine, vtree: &Arc<Vtree>) -> Result<Tdd, crate::diagram::TddBuildError> {
+    crate::vtree::Home::unchecked(vtree);
     let (l, r) = vtree.children(vtree.root());
     let mut b = Tdd::builder(eng, vtree).unwrap();
     let left = b.push(eng, l, &[ChildPair::new(POS_LEAF_IDX, ONE_LEAF_IDX)]).unwrap();

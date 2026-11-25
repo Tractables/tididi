@@ -96,6 +96,7 @@ impl ClauseSink for Untouched {
     fn poll(&mut self, _: EncodePoint) -> ControlFlow<()> { panic!("a refused encoding polled") }
 }
 
+// Padded form: the padded sum-out.
 #[test]
 fn a_weight_marginal_level_is_refused_before_the_sink_is_called() {
     use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};

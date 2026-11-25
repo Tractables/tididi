@@ -15,6 +15,7 @@ fn left_linear_home() -> Home {
     Home::new(Vtree::from_text("vtree 7\nL 0 1\nL 1 2\nI 2 0 1\nL 3 3\nI 4 2 3\nL 5 4\nI 6 4 5\n").unwrap())
 }
 
+// Padded form: the padded sum-out.
 /// The disjunction of `cubes` on `vtree`, trimmed to `home`.
 fn from_cubes(eng: &Engine, home: &Home, vtree: &Arc<Vtree>, cubes: &[&[i32]]) -> Tdd {
     let on = Home::unchecked(vtree);

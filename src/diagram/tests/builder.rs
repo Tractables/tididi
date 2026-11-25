@@ -5,9 +5,12 @@ use crate::test_helpers::assert_canonical;
 use crate::vtree::Vtree;
 use std::sync::Arc;
 
+// Padded form: the true-label form the conjunction detects.
 #[test]
 fn interning_indexes_prior_pushes_and_copy_replaces_the_entire_level() {
+    // The clause's level names x2 `One`.
     let tree = Arc::new(Vtree::balanced(2));
+    let home = crate::vtree::Home::unchecked(&tree);
     let eng = Engine::new();
     let root = tree.root();
     let pair = [ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX)];
@@ -19,7 +22,7 @@ fn interning_indexes_prior_pushes_and_copy_replaces_the_entire_level() {
     assert_eq!(builder.intern(&eng, root, &other).unwrap(), second);
     assert_ne!(builder.push(&eng, root, &pair).unwrap(), first);
     assert_eq!(builder.intern(&eng, root, &pair).unwrap(), first);
-    let source = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1]).unwrap();
+    let source = Tdd::clause(&home, [1]).unwrap();
     assert_canonical(&source);
     builder.replace_level(&eng, root, source.level_view(root)).unwrap();
     builder.replace_level(&eng, root, source.level_view(root)).unwrap();
@@ -315,6 +318,7 @@ fn push_every_pair_below_root(eng: &Engine, tree: &Vtree, b: &mut crate::diagram
 /// one node `root`; every pair on the right of the root names x3.
 fn assemble(eng: &Engine, inner: &[&[ChildPair]], root: &[u32]) -> (Arc<Vtree>, crate::diagram::TddBuilder, TddNodeId) {
     let tree = Arc::new(Vtree::from_text("vtree 5\nL 0 1\nL 1 2\nI 2 0 1\nL 3 3\nI 4 2 3\n").unwrap());
+    crate::vtree::Home::unchecked(&tree);
     let (left, _) = tree.children(tree.root());
     let mut b = Tdd::builder(eng, &tree).unwrap();
     for pairs in inner {
@@ -375,4 +379,16 @@ fn a_pair_repeated_in_a_level_is_refused() {
         r => wrong.push(format!("first case by hand: text reader {:?}", r.map(|g| g.model_count().unwrap()))),
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// A plain root, neither a home's root nor a projection of one, is refused
+/// by name where a public entry takes a vtree.
+#[test]
+fn a_vtree_off_every_home_is_refused_by_name() {
+    use crate::restructure::RestructureError;
+    let eng = Engine::new();
+    let plain = Arc::new(Vtree::balanced(2));
+    assert!(matches!(Tdd::builder(&eng, &plain), Err(crate::OperationError::NotOnHome)));
+    let mut f = Tdd::clause(&Home::new(Vtree::linear(2)), [1, 2]).unwrap();
+    assert_eq!(f.restructure_to(&plain, usize::MAX), Err(RestructureError::Operation(crate::OperationError::NotOnHome)));
 }

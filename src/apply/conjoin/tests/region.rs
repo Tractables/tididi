@@ -523,6 +523,7 @@ fn e9c_summing_before_and_after_a_conjunction_with_a_literal() {
     println!("E9c pairs: sum then conjoin {}, conjoin then sum {}, summing conjunction {}", before.pair_count(), after.pair_count(), fused.pair_count());
 }
 
+// Padded form: the true-label form the conjunction detects.
 /// `((1, 2), (3, 4))` on a root vtree, `g = (1 ∨ 2) ∧ (3 ∨ 4)`.
 fn t1_operands(weighted: bool) -> (Arc<Vtree>, Tdd, [Tdd; 2]) {
     let mut vtree = Vtree::balanced(4);

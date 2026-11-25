@@ -10,6 +10,7 @@ use crate::test_helpers::assert_same_shape;
 use crate::vtree::{VarId, Vtree};
 use crate::{Engine, Tdd};
 
+// Padded form: the padded sum-out.
 #[test]
 fn a_leaf_target_is_summed_out_after_the_product() {
     let vtree = Arc::new(Vtree::balanced(4));

@@ -678,6 +678,7 @@ fn audit_i1_minimize_stopped_after_a_contraction() {
     assert_eq!(done.vtree().num_leaves(), 2, "x and z");
 }
 
+// Padded form: the true-label form the conjunction detects.
 /// ((a b) c) with a, b, c = 1, 2, 3; `f` is c, its level (a b) one node
 /// naming both leaves `One`.
 fn c_over_true(eng: &Engine) -> (Arc<Vtree>, Tdd) {
@@ -688,6 +689,7 @@ fn c_over_true(eng: &Engine) -> (Arc<Vtree>, Tdd) {
     (abc, f)
 }
 
+// Padded form: the true-label form the conjunction detects.
 /// T1a: `g` = (a or b) and c summed over the subtree (a b), `f` naming a and
 /// b `One` in every pair. Not refused: `f`'s identity at (a b) admits the
 /// summed level, and the count is the unsummed conjunction's.
@@ -702,6 +704,7 @@ fn audit_i1_and_of_a_summed_subtree_beside_true_leaves() {
     assert_eq!(got, Ok(Ok(3u32.into())));
 }
 
+// Padded form: the true-label form the conjunction detects.
 /// T1c: T1a through `and_marginalizing` with the root, the summed subtree's
 /// parent, as the target: the same count.
 #[test]
@@ -773,6 +776,7 @@ fn true_leaves(t: &Tdd) -> Result<Vec<VarId>, String> {
     Ok(named)
 }
 
+// Padded form: the true-label form the conjunction detects.
 /// S1 to S4: `exists` through the structural entry with a pruning
 /// reduction names each target leaf `One` in every pair that reaches it, and
 /// no other leaf.

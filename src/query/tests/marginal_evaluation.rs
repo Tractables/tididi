@@ -199,6 +199,7 @@ fn assert_eval_matches(eng: &Engine, m: &Tdd, w: &Weighted, expected: u64, conte
     check_levels(eng, m, w, context);
 }
 
+// Padded form: the padded sum-out.
 #[test]
 fn a_marginal_diagram_evaluates_as_its_summed_structure_does() {
     let eng = Engine::new();
@@ -243,6 +244,7 @@ fn a_marginal_diagram_evaluates_as_its_summed_structure_does() {
     assert!(cases > 0 && inline > 0, "inline {inline} and slot {slots} references were read");
 }
 
+// Padded form: the padded sum-out.
 #[test]
 fn a_marginalizing_conjunction_evaluates_as_the_plain_one() {
     let eng = Engine::new();
@@ -274,6 +276,7 @@ fn a_marginalizing_conjunction_evaluates_as_the_plain_one() {
     assert!(marginal > 0, "some conjunction kept a marginal level");
 }
 
+// Padded form: the padded sum-out.
 #[test]
 fn a_count_past_u128_is_valued_exactly() {
     // On the right-linear vtree the root's right child spans x2..x140, which

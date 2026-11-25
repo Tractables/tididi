@@ -167,6 +167,7 @@ fn test_apply_and_stick_vtree_conjunction() {
     assert_eq!(result.model_count().unwrap(), BigUint::from(expected as u64));
 }
 
+// Padded form: the padded sum-out.
 /// A canonical marginal operand cannot meet another that still constrains its discarded structure.
 #[test]
 fn conjunction_rejects_a_constrained_marginal_level() {

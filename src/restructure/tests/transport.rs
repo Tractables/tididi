@@ -124,7 +124,7 @@ fn case(eng: &Engine, seed: u64, rng: &mut Lcg) -> Case {
         }
         _ => Vtree::projection(&source_home, vars).unwrap(),
     };
-    let f = diagram(eng, &crate::vtree::Home::unchecked(&vtree), rng.below(4) != 0, rng);
+    let f = diagram(eng, &crate::vtree::Home::new(std::sync::Arc::clone(&vtree)), rng.below(4) != 0, rng);
     Case { dest, f, back }
 }
 
@@ -233,7 +233,14 @@ fn a_map_that_breaks_the_shape_rotates_as_restructure_to_then_renames() {
                 assert!(stats.rotations > 0 || f.is_zero(), "{stats:?}");
                 assert_canonical(&got);
                 let into = Vtree::projection(&dest, f.vtree().leaf_bottomup().map(|(_, v)| map(v))).unwrap();
-                let shape = Arc::new(renamed_mirrored(&into, &inverse(&perm), n, &mut rng));
+                let mirrored = renamed_mirrored(&into, &inverse(&perm), n, &mut rng);
+                let used: Vec<VarId> = f.vtree().leaf_bottomup().map(|(_, v)| v).collect();
+                let rest: Vec<VarId> = source.leaf_bottomup().map(|(_, v)| v).filter(|v| !used.contains(v)).collect();
+                let shape_home = match rest.is_empty() {
+                    true => Home::new(mirrored),
+                    false => Home::new(Vtree::join(&mirrored, &Vtree::balanced_over(&rest).unwrap()).unwrap()),
+                };
+                let shape = Vtree::projection(&shape_home, used).unwrap();
                 let mut expected = f.clone();
                 expected.restructure_to(&shape, usize::MAX).unwrap();
                 let (mut expected, _) = eng.transport(expected, &dest, map, 0).map_err(|r| r.error).unwrap();

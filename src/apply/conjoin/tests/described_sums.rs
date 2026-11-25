@@ -159,6 +159,7 @@ fn same_both_ways(parts: &[Tdd], targets: &[VtreeIdx]) {
     }
 }
 
+// Padded form: the padded sum-out.
 /// The affine functions of `m` classes on a balanced vtree of `n`
 /// variables, weighted, each conditioned on the variables `given` names.
 fn parts(
@@ -170,6 +171,7 @@ fn parts(
 ) -> (Arc<Vtree>, Vec<Tdd>) {
     let weights = Weights::new(weights(rng, n, wide), Arithmetic::ScaledFloat);
     let vtree = Arc::new(Vtree::balanced(n).with_weights(weights).unwrap());
+    crate::vtree::Home::unchecked(&vtree);
     let eng = Engine::new();
     let parts = (0..m)
         .map(|j| {
@@ -248,6 +250,7 @@ fn conditioned_and_empty_products_match_the_cells() {
     }
 }
 
+// Padded form: the padded sum-out.
 /// The two operands of [`carried_marginal_children_match_the_cells`] on a
 /// balanced vtree of `n` variables, under uniform weights, whose summed
 /// values repeat: the product of three affine functions with the subtrees
@@ -264,6 +267,7 @@ fn carried_operands(n: u32, seed: u64) -> (Arc<Vtree>, Tdd, Tdd, Vec<VtreeIdx>) 
     let uniform = RationalWeights::from_literals(&vec![half; n as usize]);
     let weights = Weights::new(uniform, Arithmetic::ScaledFloat);
     let vtree = Arc::new(Vtree::balanced(n).with_weights(weights).unwrap());
+    crate::vtree::Home::unchecked(&vtree);
     let eng = Engine::new();
     let factors: Vec<Tdd> = (0..4)
         .map(|j| affine_function(&eng, &vtree, 4, j, &mut rng))

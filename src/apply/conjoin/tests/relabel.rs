@@ -297,6 +297,7 @@ fn a_refused_conjunction_gives_moved_levels_back() {
     assert!(relabel_census()[0] > before[0], "no level was moved whole");
 }
 
+// Padded form: the padded sum-out.
 /// A child of the root that an earlier sum left marginal with one value,
 /// a count too large to sit inline and so in a slot of its own, under a root
 /// of one node in both operands: the count that holds root children back

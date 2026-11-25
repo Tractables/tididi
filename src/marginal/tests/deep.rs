@@ -35,6 +35,7 @@ fn pow2(k: u32) -> BigUint {
     BigUint::from(1u32) << k
 }
 
+// Padded form: the padded sum-out.
 /// A pass whose one target is the root of a right-linear vtree marginalizes
 /// every level of the spine under it.
 #[test]
@@ -49,6 +50,7 @@ fn marginalize_root_of_deep_spine() {
     });
 }
 
+// Padded form: the padded sum-out.
 /// A conjunction with an operand that is true below its second level carries
 /// the other operand's spine there unbuilt, and summing every level out
 /// marginalizes that spine from the lowest level the conjunction builds.

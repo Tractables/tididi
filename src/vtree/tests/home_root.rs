@@ -18,6 +18,7 @@ fn x_and_y() -> (Home, Tdd) {
     (home, f)
 }
 
+// Padded form: a bare root, placed by tree matching.
 /// Random clauses over `vars`, two or three literals each, and their
 /// conjunction on `vtree`.
 fn cnf(rng: &mut Lcg, vtree: &Arc<Vtree>, vars: &[u32], clauses: usize) -> (Vec<Vec<i32>>, Tdd) {

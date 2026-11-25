@@ -51,6 +51,7 @@ fn weighted_vtree() -> Arc<Vtree> {
     )
 }
 
+// Padded form: the padded sum-out.
 /// A weighted diagram, with the level under the root's left child summed out.
 fn weighted_with_a_marginal_level(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
     let (left, _) = vtree.children(vtree.root());

@@ -214,7 +214,7 @@ fn expand_classes(eng: &Engine, tdd: &Tdd, class_vtree: &Arc<Vtree>, classes: &[
     let lim = eng.limits();
     let reduced = tdd.vtree();
     let idx_map = lockstep_map(reduced, class_vtree);
-    let mut out = Tdd::builder(eng, class_vtree)?;
+    let mut out = crate::diagram::TddBuilder::empty(eng, class_vtree)?;
 
     // Which of a class leaf's three nodes the levels above reference. Only
     // those are built, which keeps the result free of unreachable nodes, and

@@ -13,6 +13,7 @@ fn check(f: &Tdd) {
     }
 }
 
+// Padded form: the padded sum-out.
 #[test]
 fn summaries_follow_consuming_edits_clones_and_marginalization() {
     let tree = Arc::new(Vtree::balanced(8));

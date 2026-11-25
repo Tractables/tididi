@@ -94,6 +94,7 @@ fn a_rotation_search_keeps_the_weights_of_the_home() {
     assert_eq!(value_of(&f), before);
 }
 
+// Padded form: a bare root, placed by tree matching.
 /// A root that is not a home, with weights: the level sum-outs and placement
 /// compute what a weighted home computes.
 #[test]

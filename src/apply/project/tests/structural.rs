@@ -963,7 +963,7 @@ fn exists_above_a_summed_out_level_is_refused() {
     ];
     let mut wrong = Vec::new();
     for (text, clauses) in homes {
-        let tree = Arc::new(Vtree::from_text(text).unwrap());
+        let tree = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::from_text(text).unwrap()));
         let mut f = compile_clauses(&tree, &clauses);
         f.marginalize(crate::test_helpers::summing(f.vtree(), &[tree.leaf_of(VarId(1)).unwrap()])).unwrap();
         assert_eq!(f.model_count().unwrap(), 3u32.into());

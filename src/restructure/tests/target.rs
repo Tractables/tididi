@@ -18,7 +18,7 @@ fn random_tree(vars: &[VarId], rng: &mut Lcg) -> Arc<Vtree> {
         let b = parts.swap_remove(j);
         parts.push(Vtree::join(&a, &b).expect("disjoint variables"));
     }
-    Arc::new(parts.pop().expect("at least one variable"))
+    Arc::clone(&Home::new(parts.pop().expect("at least one variable")))
 }
 
 /// `f` moved to `target` must be the diagram compiled there directly: the
@@ -28,7 +28,7 @@ fn check_move(clauses: &[Vec<i32>], source: &Arc<Vtree>, target: &Arc<Vtree>) {
     let mut moved = compile_clauses(source, clauses);
     let direct = compile_clauses(target, clauses);
     let stats = moved.restructure_to(target, usize::MAX).expect("an unbounded move completes");
-    assert!(Arc::ptr_eq(moved.vtree(), target));
+    assert!(Arc::ptr_eq(&moved.home(), target));
     assert!(moved.is_canonical(), "the certificate after {} rotations", stats.rotations);
     assert_canonical(&moved);
     assert!(moved.equivalent(&direct).unwrap(), "{} -> {}", source.to_text(), target.to_text());
@@ -58,7 +58,7 @@ fn a_comb_turns_in_n_minus_two_rotations() {
         let leaves: Vec<Vtree> = (1..=n).map(|v| Vtree::leaf(VarId(v))).collect();
         let right = leaves.iter().rev().cloned().reduce(|t, l| Vtree::join(&l, &t).unwrap()).unwrap();
         let left = leaves.iter().cloned().reduce(|t, l| Vtree::join(&t, &l).unwrap()).unwrap();
-        let (source, target) = (Arc::new(right), Arc::new(left));
+        let (source, target) = (Arc::clone(&Home::new(right)), Arc::clone(&Home::new(left)));
         let clauses: Vec<Vec<i32>> = (1..n as i32).map(|i| vec![i, -(i + 1)]).collect();
         let mut moved = compile_clauses(&source, &clauses);
         let stats = moved.restructure_to(&target, usize::MAX).unwrap();
@@ -115,8 +115,8 @@ fn a_move_past_its_bound_keeps_the_function() {
     let vars: Vec<VarId> = (1..=8).map(VarId).collect();
     let mut rng = Lcg::new(3);
     let clauses = rand_cnf(&mut rng, 8, CnfShape { clauses: 10, width: 3 });
-    let source = Arc::new(Vtree::linear_from_order(&vars).unwrap());
-    let target = Arc::new(Vtree::balanced_over(&[VarId(1), VarId(8), VarId(2), VarId(7), VarId(3), VarId(6), VarId(4), VarId(5)]).unwrap());
+    let source = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::linear_from_order(&vars).unwrap()));
+    let target = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::balanced_over(&[VarId(1), VarId(8), VarId(2), VarId(7), VarId(3), VarId(6), VarId(4), VarId(5)]).unwrap()));
     let mut f = compile_clauses(&source, &clauses);
     let count = f.model_count().unwrap();
     match f.restructure_to(&target, 1) {
@@ -175,35 +175,37 @@ fn a_refused_restructure_of_a_projection_leaves_it_as_it_was() {
 
 #[test]
 fn other_variables_are_refused() {
-    let f = Tdd::clause(&crate::vtree::Home::unchecked(&Arc::new(Vtree::balanced(3))), [1, 2]).unwrap();
-    let wider = Arc::new(Vtree::balanced(4));
+    let f = Tdd::clause(&Home::new(Vtree::balanced(3)), [1, 2]).unwrap();
+    let wider = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::balanced(4)));
     let mut g = f.clone();
     assert_eq!(g.restructure_to(&wider, usize::MAX), Err(RestructureError::Variables { variable: VarId(4) }));
 }
 
 #[test]
 fn the_empty_function_moves() {
-    let source = Arc::new(Vtree::linear(4));
-    let target = Arc::new(Vtree::balanced(4));
+    let source = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::linear(4)));
+    let target = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::balanced(4)));
     let mut f = compile_clauses(&source, &[vec![1], vec![-1]]);
     f.restructure_to(&target, usize::MAX).unwrap();
     assert!(f.is_zero());
-    assert!(Arc::ptr_eq(f.vtree(), &target));
+    assert!(Arc::ptr_eq(&f.home(), &target));
 }
 
+// Padded form: the padded sum-out.
 /// A summed-out block moves with its parent as long as no rotation turns a
-/// summed-out level.
+/// summed-out level. On a home a region is refused.
 #[test]
 fn summed_out_blocks_move_as_units() {
     let block = |k: u32| Vtree::linear_from_order(&[VarId(2 * k + 1), VarId(2 * k + 2)]).unwrap();
     let (a, b, c) = (block(0), block(1), block(2));
     let ab_c = Arc::new(Vtree::join(&Vtree::join(&a, &b).unwrap(), &c).unwrap());
     let ac_b = Arc::new(Vtree::join(&Vtree::join(&a, &c).unwrap(), &b).unwrap());
+    let _ = (Home::unchecked(&ab_c), Home::unchecked(&ac_b));
     let clauses = vec![vec![1, 3], vec![-2, 5], vec![4, -6], vec![1, -5]];
     let f = compile_clauses(&ab_c, &clauses);
     let summed = f.vtree().leaf_of(VarId(3)).and_then(|leaf| f.vtree().node(leaf).parent()).unwrap();
     let eng = crate::Engine::new();
-    let g = crate::test_helpers::and_marginalizing_under(&eng, f.clone(), crate::Tdd::one(&crate::vtree::Home::unchecked(&ab_c)), &[summed]).unwrap();
+    let g = crate::test_helpers::and_marginalizing_under(&eng, f.clone(), crate::Tdd::one(&Home::unchecked(&ab_c)), &[summed]).unwrap();
     let count = g.model_count().unwrap();
     let mut moved = g.clone();
     moved.restructure_to(&ac_b, usize::MAX).unwrap();
@@ -214,12 +216,12 @@ fn summed_out_blocks_move_as_units() {
 #[test]
 fn a_rotation_at_a_summed_out_level_is_refused() {
     let vars: Vec<VarId> = (1..=4).map(VarId).collect();
-    let source = Arc::new(Vtree::linear_from_order(&vars).unwrap());
+    let source = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::linear_from_order(&vars).unwrap()));
     let f = compile_clauses(&source, &[vec![1, 2], vec![-3, 4]]);
     let eng = crate::Engine::new();
-    let g = crate::test_helpers::and_marginalizing_under(&eng, f, crate::Tdd::one(&crate::vtree::Home::unchecked(&source)), &[source.root()]).unwrap();
+    let g = crate::test_helpers::and_marginalizing_under(&eng, f, crate::Tdd::one(&crate::vtree::Home::new(std::sync::Arc::clone(&source))), &[source.root()]).unwrap();
     let mut moved = g;
-    let target = Arc::new(Vtree::balanced(4));
+    let target = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::balanced(4)));
     match moved.restructure_to(&target, usize::MAX) {
         Err(RestructureError::Operation(OperationError::MarginalLevel(_))) => {}
         other => panic!("{other:?}"),
@@ -248,29 +250,29 @@ fn moves_more_than_thirty_two_independent_units() {
     for n in [33, 40, 65] {
         let order: Vec<_> = (1..=n).map(VarId).collect();
         let reversed: Vec<_> = order.iter().rev().copied().collect();
-        let source = Arc::new(Vtree::linear_from_order(&order).unwrap());
-        let target = Arc::new(Vtree::linear_from_order(&reversed).unwrap());
+        let source = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::linear_from_order(&order).unwrap()));
+        let target = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::linear_from_order(&reversed).unwrap()));
         check_move(&[vec![1, 2], vec![-2, n as i32]], &source, &target);
     }
 }
 
 #[test]
 fn reseating_counts_its_mirrors() {
-    let source = Arc::new(Vtree::join(&Vtree::leaf(VarId(1)), &Vtree::leaf(VarId(2))).unwrap());
-    let target = Arc::new(Vtree::join(&Vtree::leaf(VarId(2)), &Vtree::leaf(VarId(1))).unwrap());
-    let mut f = compile_clauses(&source, &[vec![1]]);
+    let source = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::join(&Vtree::leaf(VarId(1)), &Vtree::leaf(VarId(2))).unwrap()));
+    let target = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::join(&Vtree::leaf(VarId(2)), &Vtree::leaf(VarId(1))).unwrap()));
+    let mut f = compile_clauses(&source, &[vec![1, -2]]);
     let stats = f.restructure_to(&target, usize::MAX).unwrap();
     assert_canonical(&f);
     assert_eq!((stats.rotations, stats.mirrors), (0, 1));
-    assert_eq!(f.model_count().unwrap(), 2u32.into());
+    assert_eq!(f.model_count().unwrap(), 3u32.into());
 }
 
 #[test]
 fn every_refusal_or_stop_keeps_a_move_retryable() {
     use crate::limits::{LimitConfig, StopAt, StopRules};
     for n in [5, 9] {
-        let source = Arc::new(Vtree::linear(n));
-        let target = Arc::new(Vtree::random(n, 17));
+        let source = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::linear(n)));
+        let target = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::random(n, 17)));
         let clauses = vec![vec![1, -3], vec![2, n as i32]];
         let original = compile_clauses(&source, &clauses);
         for stopping in [false, true] {

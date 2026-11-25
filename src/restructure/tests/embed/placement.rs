@@ -33,6 +33,7 @@ pub(super) fn renamed_shape(
         .expect("a renamed copy of a tree is a tree")
 }
 
+// Padded form: a bare root, placed by tree matching.
 /// `(x1 ∨ x2) ∧ (¬x3 ∨ x4)` renamed through `names`, on `vtree`.
 fn fixture(vtree: &Arc<Vtree>, names: [i32; 4]) -> Tdd {
     let mut f = and(
@@ -119,6 +120,7 @@ fn leaves_spread_along_a_spine_match_a_direct_build() {
     }
 }
 
+// Padded form: a bare root, placed by tree matching.
 #[test]
 fn two_placements_of_one_relation_conjoin() {
     let pair = Arc::new(Vtree::linear(2));
@@ -139,6 +141,7 @@ fn two_placements_of_one_relation_conjoin() {
     );
 }
 
+// Padded form: a bare root, placed by tree matching.
 #[test]
 fn a_false_diagram_embeds_to_false() {
     let small = Arc::new(Vtree::balanced(2));
@@ -152,6 +155,7 @@ fn a_false_diagram_embeds_to_false() {
     assert_eq!(levels.as_slice().len(), small.num_nodes());
 }
 
+// Padded form: a bare root, placed by tree matching.
 #[test]
 fn a_one_variable_diagram_embeds() {
     let small = Arc::new(Vtree::leaf(VarId(1)));

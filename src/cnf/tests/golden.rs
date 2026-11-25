@@ -7,7 +7,6 @@
 //! before any pair's, the single-pair rule on the stored pair count, and the
 //! polls.
 
-use std::sync::Arc;
 use super::*;
 use crate::diagram::{ChildPair, LeafLabel, NEG_LEAF_IDX, POS_LEAF_IDX};
 
@@ -90,7 +89,7 @@ fn the_single_pair_rule_counts_stored_pairs() {
     // the first pair can be true, but the node stores two, so the pair gets
     // a variable of its own.
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::balanced(2)));
     let root = vtree.root();
     let mut builder = Tdd::builder(&eng, &vtree).unwrap();
     sum_out_leaf(&eng, &vtree, &mut builder, vtree.children(root).1);

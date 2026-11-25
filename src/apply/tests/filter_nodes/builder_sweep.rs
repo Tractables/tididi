@@ -18,7 +18,7 @@ pub(super) fn replica(eng: &Engine, f: &Tdd, keep: impl Fn(TddNodeId) -> bool) -
     let mut remap: Vec<Vec<u32>> = (0..vtree.num_nodes())
         .map(|i| (0..f.reference_slot_count(VtreeIdx(i as u32)) as u32).collect())
         .collect();
-    let mut out = Tdd::builder(eng, vtree).unwrap();
+    let mut out = crate::diagram::TddBuilder::empty(eng, vtree).unwrap();
     for i in 0..vtree.num_nodes() {
         let t = VtreeIdx(i as u32);
         if f.levels()[i].is_marginal() { out.replace_level(eng, t, f.level_view(t)).unwrap(); }

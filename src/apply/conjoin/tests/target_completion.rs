@@ -71,6 +71,7 @@ fn target_completion_preserves_false_and_empty_requests() {
     assert_canonical(&result);
 }
 
+// Padded form: the padded sum-out.
 /// Two conjunctions over eight variables, `f` with the level `ll` already
 /// summed out, and the internal levels of the balanced vtree.
 fn collapse_operands(eng: &Engine) -> (Tdd, Tdd, Arc<Vtree>) {

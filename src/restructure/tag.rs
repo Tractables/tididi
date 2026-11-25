@@ -76,6 +76,8 @@ impl Engine {
     ///
     /// # Errors
     ///
+    /// [`TagError::Operation`] with [`OperationError::NotOnHome`] when
+    /// `into` is neither a home's root nor a projection of one;
     /// [`TagError::Placement`] when `into`'s left subtree is not `at`'s
     /// subtree under `map`, on a home also when the projection's tagged side is a mirror
     /// of it, or `into`'s root is a leaf; [`TagError::CodeVariables`] when
@@ -110,14 +112,11 @@ impl Engine {
         for s in source.bottomup().filter(|&s| source.in_subtree(s, at)) {
             tdd.require_structure_at(s)?;
         }
-        let projected;
-        let into = match into.home() {
-            Some(home) => {
-                projected = tagged_projection(source, at, &home, &map, code_vars).unwrap_or_else(|| Arc::clone(into));
-                &projected
-            }
-            None => into,
+        let Some(home) = into.home() else {
+            return Err(OperationError::NotOnHome.into());
         };
+        let projected = tagged_projection(source, at, &home, &map, code_vars).unwrap_or_else(|| Arc::clone(into));
+        let into = &projected;
         if into.node(into.root()).is_leaf() {
             return Err(TagError::Placement(EmbedError::NotIsomorphic {
                 source: at,
@@ -215,6 +214,7 @@ impl Engine {
             vtree: into.root(),
             local: root,
         })?;
+        self.trim(&mut result, &home)?;
         self.minimize(&mut result)?;
         Ok(result)
     }

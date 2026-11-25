@@ -172,6 +172,7 @@ fn allocation_refusals_preserve_pins_and_retry_on_the_same_engine() {
     }
 }
 
+// Padded form: the padded sum-out.
 #[test]
 fn constants_marginals_and_batch_limits() {
     use crate::limits::LimitConfig;

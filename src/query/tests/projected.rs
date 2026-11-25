@@ -56,6 +56,7 @@ fn projected_counts_cover_leaf_outputs_and_large_free_domains() {
     assert_eq!(f.projected_model_count(&selected).unwrap(), BigUint::from(1u32) << 130usize);
 }
 
+// Padded form: the padded sum-out.
 #[test]
 fn projected_counts_ignore_weights_and_reject_marginal_structure() {
     use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};

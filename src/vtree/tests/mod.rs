@@ -8,11 +8,29 @@ mod structure;
 mod text;
 
 impl crate::vtree::Home {
-    /// `vtree` as a `Home` whatever it is, so a test still on a plain root
-    /// reaches the constructors.
+    /// `vtree` as a `Home` whatever it is, and on a plain root admitted by
+    /// [`Tdd::builder`](crate::Tdd::builder) on this thread: the door for
+    /// tests of the padded form, each tagged with the change that deletes
+    /// the form and the test.
     pub(crate) fn unchecked(vtree: &std::sync::Arc<crate::vtree::Vtree>) -> crate::vtree::Home {
+        if !vtree.on_home() {
+            ADMITTED.with(|admitted| admitted.borrow_mut().push(std::sync::Arc::as_ptr(vtree)));
+        }
         crate::vtree::Home(std::sync::Arc::clone(vtree))
     }
+}
+
+std::thread_local! {
+    // Addresses, not `Weak`s: a weak count makes `Arc::get_mut` fail on the
+    // root. A root dropped and another allocated at its address on the same
+    // thread is admitted too, so a test of the refusal admits nothing.
+    static ADMITTED: std::cell::RefCell<Vec<*const crate::vtree::Vtree>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Whether [`Home::unchecked`](crate::vtree::Home::unchecked) admitted
+/// `vtree` on this thread.
+pub(crate) fn admitted(vtree: &crate::vtree::Vtree) -> bool {
+    ADMITTED.with(|admitted| admitted.borrow().contains(&std::ptr::from_ref(vtree)))
 }
 
 impl crate::vtree::Vtree {

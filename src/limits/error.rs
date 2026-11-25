@@ -151,6 +151,9 @@ pub enum OperationError {
         /// The variables listed.
         vars: usize,
     },
+    /// The vtree is neither a home's root nor a projection of one
+    /// ([`Home`](crate::vtree::Home)).
+    NotOnHome,
 }
 
 impl std::fmt::Display for OperationError {
@@ -195,6 +198,7 @@ impl std::fmt::Display for OperationError {
             OperationError::TableTooWide { vars } => {
                 write!(f, "a count table over {vars} variables is past the {} it may list", crate::query::MAX_COUNT_TABLE_VARS)
             }
+            OperationError::NotOnHome => f.write_str("the vtree is neither a home's root nor a projection of one"),
         }
     }
 }

@@ -106,6 +106,7 @@ fn empty_clause_gives_a_canonical_false() {
     assert_canonical(&out);
 }
 
+// Padded form: a bare root, placed by tree matching.
 /// The walk reads the output's `cd_map` block, which it plans only on the
 /// clause's spine, and the root is on every spine. Every diagram the public
 /// API builds has its output at the root (`TddBuilder::finish` refuses

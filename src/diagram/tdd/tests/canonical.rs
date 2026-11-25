@@ -25,6 +25,7 @@ fn canonical_guarantee_follows_storage_and_output() {
     crate::test_helpers::assert_canonical(&f);
 }
 
+// Padded form: the padded sum-out.
 #[test]
 fn builder_and_marginal_storage_are_not_certified() {
     let vtree = Arc::new(Vtree::balanced(3));

@@ -209,6 +209,7 @@ fn renaming_builds_on_the_variables_used() {
     assert!(eng.equivalent(&y, &eng.literal(&home, 2).unwrap()).unwrap());
 }
 
+// Padded form: a bare root, placed by tree matching.
 #[test]
 fn a_constructor_given_the_root_or_a_projection_returns_the_same_vtree() {
     let eng = Engine::new();
@@ -238,6 +239,7 @@ fn a_constructor_given_the_root_or_a_projection_returns_the_same_vtree() {
     }
 }
 
+// Padded form: a bare root, placed by tree matching.
 /// On a home of four variables, a rename onto variables of the home answers
 /// as on a bare root of the same shape, on the projection of the variables
 /// the result uses: onto a variable `f` has no leaf for, a swap with one,

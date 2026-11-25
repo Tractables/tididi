@@ -125,6 +125,7 @@ fn leaf_outputs_have_only_their_forced_literal() {
     }
 }
 
+// Padded form: the padded sum-out.
 #[test]
 fn leaf_scan_omits_marginal_leaves_and_public_query_rejects_them() {
     let eng = Engine::new();

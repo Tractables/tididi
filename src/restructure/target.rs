@@ -77,6 +77,8 @@ impl Tdd {
     ///
     /// # Errors
     ///
+    /// [`RestructureError::Operation`] with [`OperationError::NotOnHome`]
+    /// when `target` is neither a home's root nor a projection of one;
     /// [`RestructureError::Variables`] when the two vtrees (the two homes,
     /// as above) do not have the same variables, or `target`, on a home,
     /// lacks a variable the diagram depends on; [`RestructureError::Weighted`] for a diagram with a
@@ -133,7 +135,8 @@ impl Engine {
                 let source = tdd.vtree().home();
                 same_variables(source.as_ref().map_or(tdd.vtree(), |h| &**h), &home)?;
             }
-            None => same_variables(tdd.vtree(), target)?,
+            None if crate::vtree::admitted_by_test(target) => same_variables(tdd.vtree(), target)?,
+            None => return Err(OperationError::NotOnHome.into()),
         }
         if let Some(region) = tdd.vtree().regions().chain(target.regions()).next() {
             return Err(OperationError::MarginalLevel(region).into());

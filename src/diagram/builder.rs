@@ -175,19 +175,31 @@ impl Tdd {
         LevelView { level: self.level(t), weights: self.weights() }
     }
 
-    /// Start a diagram over `vtree`, with one empty level per vtree node.
+    /// Start a diagram over `vtree`, a home's root or a projection of one,
+    /// with one empty level per vtree node.
     ///
     /// See [`TddBuilder`].
     ///
     /// # Errors
     ///
+    /// [`OperationError::NotOnHome`] for any other vtree;
     /// [`OperationError::OverBudget`] if the level buffers are refused.
     pub fn builder(eng: &Engine, vtree: &Arc<Vtree>) -> Result<TddBuilder, OperationError> {
-        Ok(TddBuilder::from_levels(Arc::clone(vtree), try_take_levels(eng, vtree.num_nodes())?))
+        if !vtree.on_home() && !crate::vtree::admitted_by_test(vtree) {
+            return Err(OperationError::NotOnHome);
+        }
+        TddBuilder::empty(eng, vtree)
     }
 }
 
 impl TddBuilder {
+    /// [`Tdd::builder`] without the home check, for an operation's output:
+    /// its vtree comes from the operands', except `expand_variables`' class
+    /// vtree, still a plain root.
+    pub(crate) fn empty(eng: &Engine, vtree: &Arc<Vtree>) -> Result<Self, OperationError> {
+        Ok(Self::from_levels(Arc::clone(vtree), try_take_levels(eng, vtree.num_nodes())?))
+    }
+
     /// Shared storage initialization for public and operation-local construction.
     pub(crate) fn from_levels(vtree: Arc<Vtree>, levels: Vec<TddLevel>) -> Self {
         Self { vtree, levels, interned: Vec::new() }

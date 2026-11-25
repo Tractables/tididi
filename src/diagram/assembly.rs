@@ -20,7 +20,7 @@ impl<'a> Assembly<'a> {
     /// Allocate empty output levels through the caller's limits.
     #[inline]
     pub(crate) fn new(engine: &'a Engine, vtree: &Arc<Vtree>) -> Result<Self, OperationError> {
-        Ok(Self { engine, builder: Some(Tdd::builder(engine, vtree)?) })
+        Ok(Self { engine, builder: Some(TddBuilder::empty(engine, vtree)?) })
     }
 
     /// Take ownership of arenas already allocated or moved from an operand.

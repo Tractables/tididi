@@ -33,7 +33,7 @@ fn draw_vars(rng: &mut Lcg, vars: &Range<u32>) -> u32 {
 /// second.
 pub fn chain() -> (Tdd, [VtreeIdx; 3]) {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::linear(4));
+    let vtree = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::linear(4)));
     let root = vtree.root();
     let a = vtree.children(root).1;
     let b = vtree.children(a).1;
@@ -47,13 +47,16 @@ pub fn chain() -> (Tdd, [VtreeIdx; 3]) {
     (builder.finish(TddNodeId { vtree: root, local: out }).unwrap(), [b, a, root])
 }
 
+// Padded form: the true-label form the conjunction detects.
 /// Bonsai's inline marginal fixture on the balanced vtree over four
 /// variables. Level `v4 = (x1, x2)` with x2 summed out holds `x1 · 5` and
 /// `¬x1 · 0`, which is dead; level `v5 = (x3, x4)` holds `x3` and `¬x3`;
 /// the output joins the first of each and the second of each.
 pub fn inline_marginal() -> (Tdd, [VtreeIdx; 3]) {
     let eng = Engine::new();
+    // v5 names x4 `One`.
     let vtree = Arc::new(Vtree::balanced(4));
+    crate::vtree::Home::unchecked(&vtree);
     let root = vtree.root();
     let (v4, v5) = vtree.children(root);
     let mut builder = Tdd::builder(&eng, &vtree).unwrap();
@@ -66,11 +69,14 @@ pub fn inline_marginal() -> (Tdd, [VtreeIdx; 3]) {
     (builder.finish(TddNodeId { vtree: root, local: out }).unwrap(), [v4, v5, root])
 }
 
+// Padded form: the padded sum-out.
 /// Bonsai's donor of a level with two count slots, 2^31 and 2^32, too large
 /// to sit inline: the right child of the balanced vtree over 64 variables,
 /// summed out under an output that reads it through its first two nodes.
 fn marginal_slot_donor(eng: &Engine) -> (Tdd, VtreeIdx) {
+    // A summed internal level under the output.
     let vtree = Arc::new(Vtree::balanced(64));
+    crate::vtree::Home::unchecked(&vtree);
     let mut builder = Tdd::builder(eng, &vtree).unwrap();
     let root = vtree.root();
     let mut labels = vec![[ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX]; vtree.num_nodes()];
@@ -103,6 +109,7 @@ fn marginal_slot_donor(eng: &Engine) -> (Tdd, VtreeIdx) {
     (donor, source)
 }
 
+// Padded form: the padded sum-out.
 /// Bonsai's marginal boundary fixture. On the vtree
 /// `((x1, (x2, x5)), (x3, x4))` the level `m = (x2, x5)` is summed out with
 /// two count slots. Level `v4 = (x1, m)` holds `x1 · slot 0` and
@@ -110,10 +117,12 @@ fn marginal_slot_donor(eng: &Engine) -> (Tdd, VtreeIdx) {
 /// each node of `v4` with it.
 pub fn marginal_boundary(second: LeafLabel) -> (Tdd, [VtreeIdx; 4]) {
     let leaf = |v: u32| Vtree::leaf(VarId(v));
+    // The summed internal level `m`.
     let vtree = Arc::new(Vtree::join(
         &Vtree::join(&leaf(1), &Vtree::join(&leaf(2), &leaf(5)).unwrap()).unwrap(),
         &Vtree::join(&leaf(3), &leaf(4)).unwrap(),
     ).unwrap());
+    crate::vtree::Home::unchecked(&vtree);
     let root = vtree.root();
     let (v4, v5) = vtree.children(root);
     let m = vtree.children(v4).1;
@@ -138,9 +147,11 @@ pub fn slot_side(slot: u32) -> EncodedChildRef {
     ValueRef::Slot(slot).side().expect("the fixture's slots fit")
 }
 
+// Padded form: the padded sum-out.
 /// Give `builder` a summed-out leaf at `leaf`, whose sides are all inline.
+/// The donor is summed padded on a plain copy of `vtree`.
 pub fn sum_out_leaf(eng: &Engine, vtree: &Arc<Vtree>, builder: &mut TddBuilder, leaf: VtreeIdx) {
-    let mut donor = eng.cube(&crate::vtree::Home::unchecked(vtree), std::iter::empty::<i32>()).unwrap();
+    let mut donor = eng.cube(&crate::vtree::Home::unchecked(&Arc::new(Vtree::clone(vtree))), std::iter::empty::<i32>()).unwrap();
     crate::test_helpers::marginalize_under(eng, &mut donor, &[leaf]).unwrap();
     assert_eq!(donor.level(leaf).marginal_counts(), Some([].as_slice()));
     builder.replace_level(eng, leaf, donor.level_view(leaf)).unwrap();

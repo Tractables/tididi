@@ -407,6 +407,7 @@ fn column_evaluation_agrees_with_evaluate_and_folds_every_node() {
     }
 }
 
+// Padded form: the padded sum-out.
 #[test]
 fn column_evaluation_stops_refuses_and_rejects_marginal_levels() {
     let eng = Engine::new();
@@ -508,6 +509,7 @@ fn evaluating_at_a_level_values_each_node_over_its_subtree() {
     }
 }
 
+// Padded form: the padded sum-out.
 #[test]
 fn evaluating_at_a_level_refuses_a_foreign_level_and_marginal_structure() {
     let eng = Engine::new();

@@ -124,6 +124,7 @@ fn cached_and_constant_counts_observe_stops_without_losing_pins() {
     }
 }
 
+// Padded form: the padded sum-out.
 #[test]
 fn checked_queries_refuse_incompatible_marginal_values() {
     use crate::diagram::{Arithmetic, RationalWeights, Weights};

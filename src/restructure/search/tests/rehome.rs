@@ -36,7 +36,7 @@ fn diagram(eng: &Engine, vtree: &Arc<Vtree>, rng: &mut Lcg) -> Tdd {
     if !rest.is_empty() {
         clauses.push(rest);
     }
-    let mut f = Tdd::one(&crate::vtree::Home::unchecked(vtree));
+    let mut f = Tdd::one(&crate::vtree::Home::new(std::sync::Arc::clone(vtree)));
     for c in &clauses {
         f = eng.and_clause(f, c).unwrap();
     }
@@ -240,7 +240,7 @@ fn a_declined_search_keeps_the_vtree() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(16));
     let own = Vtree::projection(&home, [1, 2, 5, 6, 9, 13, 14].map(VarId)).unwrap();
-    let f = eng.clause(&crate::vtree::Home::unchecked(&own), [1, -2, -5, 6, 9, -13, 14]).unwrap();
+    let f = eng.clause(&crate::vtree::Home::new(std::sync::Arc::clone(&own)), [1, -2, -5, 6, 9, -13, 14]).unwrap();
     let mut g = f.clone();
     let turn = RotationMove { pivot: own.root(), kind: RotationKind::Right };
     assert!(!g.rotate_if(&[turn], usize::MAX, |_| false).unwrap());
@@ -256,7 +256,7 @@ fn a_home_root_held_alone_is_no_home_while_it_moves() {
     for accept in [false, true] {
         let mut f = {
             let root = Arc::clone(&Home::new(Vtree::balanced(8)));
-            Tdd::clause(&crate::vtree::Home::unchecked(&root), [1, 2, -3, -4, 5, 6, -7, 8]).unwrap()
+            Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&root)), [1, 2, -3, -4, 5, 6, -7, 8]).unwrap()
         };
         let before = Arc::as_ptr(f.vtree());
         let pivot = f.vtree().root();

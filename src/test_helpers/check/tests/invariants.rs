@@ -378,7 +378,7 @@ fn canonicity_rejects_a_duplicated_node() {
     use crate::diagram::ChildPair;
 
     let eng = &crate::Engine::new();
-    let vtree = Arc::new(Vtree::random(4, 42));
+    let vtree = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::random(4, 42)));
     let tdd = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3], vec![-3, 4]]);
 
     let target = vtree

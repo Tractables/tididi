@@ -111,6 +111,7 @@ fn absent_pin_variables_leave_cached_and_pending_counts_unchanged() {
     for_both_retentions(invalid_pins);
 }
 
+// Padded form: the padded sum-out.
 /// Refuse summed-out variables while continuing to count pins on structural leaves.
 fn marginal_pins(retention: Retention) {
     let eng = Engine::new();

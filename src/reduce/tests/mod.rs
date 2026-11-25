@@ -20,6 +20,7 @@ use crate::diagram::Literal;
 use crate::vtree::{VarId, Vtree, VtreeIdx};
 use std::sync::Arc;
 
+// Padded form: the padded sum-out.
 /// A count-marginal diagram straight out of a conjunction, still owing every
 /// pass.
 fn edited_marginal_diagram(eng: &Engine) -> crate::Tdd {

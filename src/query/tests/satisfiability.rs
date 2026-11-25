@@ -32,6 +32,7 @@ fn checked_satisfiability_agrees_with_every_three_variable_truth_table() {
     }
 }
 
+// Padded form: the padded sum-out.
 #[test]
 fn checked_satisfiability_ignores_weights_and_reads_marginal_counts() {
     let engine = Engine::new();
@@ -78,6 +79,7 @@ fn checked_satisfiability_returns_refusals_without_changing_the_input() {
     assert_canonical(&f);
 }
 
+// Padded form: the padded sum-out.
 /// A count-marginal diagram with its reduction still pending.
 fn edited_marginal_fixture(engine: &Engine) -> Tdd {
     let tree = Arc::new(Vtree::balanced(8));
@@ -135,7 +137,7 @@ fn checked_satisfiability_does_not_read_counts() {
     use crate::diagram::{ChildPair, TddNodeId, POS_LEAF_IDX};
     use crate::test_helpers::{inline_side, sum_out_leaf};
     let engine = Engine::new();
-    let tree = Arc::new(Vtree::balanced(2));
+    let tree = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::balanced(2)));
     let root = tree.root();
     let mut builder = Tdd::builder(&engine, &tree).unwrap();
     sum_out_leaf(&engine, &tree, &mut builder, tree.children(root).1);

@@ -344,6 +344,7 @@ fn finished(tree: &Vtree, acc: &Tdd, rest: &[Vec<i32>]) -> Vec<VtreeIdx> {
         .collect()
 }
 
+// Padded form: the padded sum-out.
 /// [`Engine::and_marginalizing`] with each operand borrowed in turn and
 /// both, against the same call with both owned, along walks that sum out
 /// each finished subtree, so that the operands are weighted and carry

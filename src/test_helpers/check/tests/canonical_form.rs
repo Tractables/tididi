@@ -1,7 +1,6 @@
 //! `check_canonicity` accepts a structural diagram exactly when `minimize`
 //! leaves it unchanged.
 
-use std::sync::Arc;
 
 use crate::reduce::ReductionPlan;
 use crate::diagram::{ChildPair, Dirty, Tdd, TddNodeId, NEG_LEAF_IDX, POS_LEAF_IDX};
@@ -15,7 +14,7 @@ use super::*;
 /// each chain, and the root names both tops with `x1`.
 fn two_chains() -> Tdd {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::linear(5));
+    let vtree = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::linear(5)));
     let root = vtree.root();
     let a = vtree.children(root).1;
     let b = vtree.children(a).1;
@@ -67,7 +66,7 @@ fn an_unreachable_node_is_not_canonical() {
 #[test]
 fn a_leaf_read_alike_through_both_literals_is_not_canonical() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::linear(3));
+    let vtree = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::linear(3)));
     let root = vtree.root();
     let a = vtree.children(root).1;
     let mut builder = Tdd::builder(&eng, &vtree).unwrap();

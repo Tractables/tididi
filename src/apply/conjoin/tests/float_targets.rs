@@ -43,6 +43,7 @@ fn weighted(tree: &Vtree, store: &Weights) -> Arc<Vtree> {
     Arc::new(tree.clone().with_weights(store.clone()).unwrap())
 }
 
+// Padded form: the padded sum-out.
 /// The weighted value of `clauses` over `tree` weighted by `store`:
 /// conjoined one clause at a time, each conjunction summing out every
 /// subtree the clauses after it do not touch, nested targets included.
@@ -75,6 +76,7 @@ fn value(eng: &Engine, d: &Tdd) -> crate::diagram::WeightValue {
     eng.weighted_value(d).unwrap().expect("a weighted diagram has a value")
 }
 
+// Padded form: the padded sum-out.
 fn build_clauses(eng: &Engine, tree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
     let mut d = eng.one(&crate::vtree::Home::unchecked(tree));
     for clause in clauses {
