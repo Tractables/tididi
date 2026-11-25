@@ -84,7 +84,6 @@ fn chain(tree: &Vtree, u: VtreeIdx, top: VtreeIdx) -> impl Iterator<Item = Vtree
 /// of a tree of one leaf is left as it is. Returns the nodes and pairs read.
 pub(super) fn own_widths(m: &Tdd, kids: &[(VtreeIdx, VtreeIdx)], widths: &mut [u32]) -> u64 {
     let mut read = 0u64;
-    let mut labels = [Vec::new(), Vec::new()];
     for (t, &(l, r)) in kids.iter().enumerate() {
         if l.idx() == t {
             continue;
@@ -96,10 +95,11 @@ pub(super) fn own_widths(m: &Tdd, kids: &[(VtreeIdx, VtreeIdx)], widths: &mut [u
         if leaves == [false, false] {
             continue;
         }
-        read += leaf_labels(level, leaves, &mut labels);
+        let (labels, pairs) = leaf_labels(&m.levels, t, [l, r], leaves);
+        read += pairs;
         for (side, c) in [l, r].into_iter().enumerate() {
             if leaves[side] {
-                widths[c.idx()] = labels[side].len().max(1) as u32;
+                widths[c.idx()] = labels[side].max(1);
             }
         }
     }
@@ -113,23 +113,30 @@ fn level_width(level: &TddLevel) -> u32 {
     }
 }
 
-/// The distinct children `level`'s pairs name on each side marked in
-/// `sides`, in `labels`; the pairs read.
-fn leaf_labels(level: &TddLevel, sides: [bool; 2], labels: &mut [Vec<u32>; 2]) -> u64 {
-    labels.iter_mut().for_each(Vec::clear);
+/// The distinct children the pairs of the level at `t` name on each side
+/// marked in `leaves`, whose children `kids` are leaves, and the pairs read.
+/// A leaf summed out is named by counts or values rather than labels, so a
+/// level over one is read pair by pair rather than as bits
+/// ([`TddLevel::leaf_label_bits`]).
+fn leaf_labels(levels: &[TddLevel], t: usize, kids: [VtreeIdx; 2], leaves: [bool; 2]) -> ([u32; 2], u64) {
+    let level = &levels[t];
     if level.is_marginal() {
-        return 0;
+        return ([0; 2], 0);
     }
-    let mut read = 0u64;
+    if !(0..2).any(|s| leaves[s] && levels[kids[s].idx()].is_marginal()) {
+        let (bits, read) = level.leaf_label_bits();
+        return (bits.map(u8::count_ones), read);
+    }
+    let (mut labels, mut read) = ([Vec::new(), Vec::new()], 0u64);
     level.for_each_node_pair(|_, pair| {
         read += 1;
         for (side, child) in [pair.left.0, pair.right.0].into_iter().enumerate() {
-            if sides[side] && !labels[side].contains(&child) {
+            if leaves[side] && !labels[side].contains(&child) {
                 labels[side].push(child);
             }
         }
     });
-    read
+    (labels.map(|l| l.len() as u32), read)
 }
 
 /// The O, M and L parts of a move made as `info`: the pivot's child that
@@ -346,7 +353,6 @@ impl Carried {
     ) -> u64 {
         self.total = self.total.checked_add_signed(change.by[0]).expect("carried pairs stay positive");
         let mut read = 0u64;
-        let mut labels = [Vec::new(), Vec::new()];
         for &(i, moved) in touched {
             let group = &groups.groups[groups.of[i]];
             let kids = group.kids.as_ref().expect("a listed group");
@@ -354,7 +360,8 @@ impl Carried {
                 let level = &members[i].levels[t.idx()];
                 let (l, r) = kids[t.idx()];
                 let leaves = [kids[l.idx()].0 == l, kids[r.idx()].0 == r];
-                read += leaf_labels(level, leaves, &mut labels) + level.node_count() as u64;
+                let (labels, pairs) = leaf_labels(&members[i].levels, t.idx(), [l, r], leaves);
+                read += pairs + level.node_count() as u64;
                 let mut set = |c: VtreeIdx, width: u32| {
                     let entry = &mut self.widths[self.at[i] + c.idx()];
                     let delta = i64::from(width) - i64::from(*entry);
@@ -375,7 +382,7 @@ impl Carried {
                 set(t, level_width(level));
                 for (side, c) in [l, r].into_iter().enumerate() {
                     if leaves[side] {
-                        set(c, labels[side].len().max(1) as u32);
+                        set(c, labels[side].max(1));
                     }
                 }
             }

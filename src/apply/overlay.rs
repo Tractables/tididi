@@ -805,9 +805,7 @@ fn nested_readings(lim: &Limits, into: &Vtree, inner: &Vtree, leaves: &[(VtreeId
 /// The labels by which `level` names its leaf child on `left` (else right),
 /// as bits.
 fn leaf_labels(level: &TddLevel, left: bool) -> u8 {
-    let mut labels = 0u8;
-    level.for_each_node_pair(|_, p| labels |= 1 << if left { p.left.0 } else { p.right.0 }.min(7));
-    labels
+    level.leaf_label_bits().0[usize::from(!left)]
 }
 
 /// How the overlay reads `f` at each internal node of `into` from its
