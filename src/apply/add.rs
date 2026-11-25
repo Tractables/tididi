@@ -67,11 +67,15 @@ use super::overlay::{ABSENT, LevelOverlay, Overlay, Pieces, Scratch, leaf_index,
 /// On projections of one home ([`Vtree::home`](crate::Vtree::home)) an
 /// operand records only the variables [`Tdd::marginalize`] summed out on its
 /// own projection, as regions; a summed-out variable its projection lacks
-/// stays free. Operands with a region are added only on one vtree: on two
-/// projections a region is refused, even where both operands summed out the
-/// same variables, and operands of which neither records a summed-out
-/// variable are added as a disjunction. Operands with no common model can
-/// be added before the sum-out, and the sum summed out.
+/// stays free, and a region whose count is `2^k` everywhere for its `k`
+/// variables is dropped, its variables free. Operands on two projections
+/// must record the same regions, each over the same variables in both:
+/// they are added on the projection on both leaf sets, which holds each
+/// region once. Operands that record different regions are refused, even
+/// where one recorded none because its region was dropped; operands of
+/// which neither records a summed-out variable are added as a disjunction.
+/// Operands with no common model can be added before the sum-out, and the
+/// sum summed out.
 ///
 /// Uses the shared vtree's execution context automatically.
 ///
@@ -83,6 +87,7 @@ use super::overlay::{ABSENT, LevelOverlay, Overlay, Pieces, Scratch, leaf_index,
 ///
 /// ```
 /// use std::sync::Arc;
+/// use tididi::vtree::{Home, VarId};
 /// use tididi::{add, or, Tdd, Vtree};
 ///
 /// // ((x1 x2) (x3 x4)): sum out x1 and x2, keeping x3 and x4.
@@ -106,7 +111,21 @@ use super::overlay::{ABSENT, LevelOverlay, Overlay, Pieces, Scratch, leaf_index,
 /// let a = Tdd::cube(&vtree, [1, 2])?;
 /// let b = Tdd::cube(&vtree, [-1, 3])?;
 /// assert!(add(a.clone(), b.clone())?.equivalent(&or(a, b)?)?);
-/// # Ok::<(), tididi::OperationError>(())
+///
+/// // On projections of a home, x1 summed out of x1 ∨ x3 and of x1 ∧ x4:
+/// // the sum is on the projection on x1's region, x3 and x4.
+/// let home = Home::new(Vtree::balanced(4));
+/// let mut f = Tdd::clause(&Vtree::projection(&home, [VarId(1), VarId(3)])?, [1, 3])?;
+/// let mut g = Tdd::cube(&Vtree::projection(&home, [VarId(1), VarId(4)])?, [1, 4])?;
+/// f.marginalize(|v| v == VarId(1))?;
+/// g.marginalize(|v| v == VarId(1))?;
+/// let sum = add(f, g)?;
+/// assert_eq!(sum.vtree().num_leaves(), 2);
+/// // Under x3 and x4 true, x1 counts 2 + 1 for each value of the free x2.
+/// let mut counter = sum.counter()?;
+/// counter.observe([3, 4])?;
+/// assert_eq!(counter.model_count()?, 6u32.into());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// The work follows the operands' pairs. A Boolean level, one with no
@@ -120,7 +139,8 @@ use super::overlay::{ABSENT, LevelOverlay, Overlay, Pieces, Scratch, leaf_index,
 /// projections of one home; [`OperationError::MarginalLevel`] naming the lowest level that one
 /// operand has summed out and the other has not, an internal summed-out
 /// level of an operand that would move to a larger projection, or a region
-/// of either operand on two projections;
+/// of one operand on two projections that the other does not record over
+/// the same variables;
 /// [`OperationError::SharedModel`] when neither operand has a summed-out
 /// level and they share a model, whose count of two only a summed-out level
 /// could hold; [`OperationError::IncompatibleWeights`] for a summed-out
