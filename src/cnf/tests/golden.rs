@@ -112,8 +112,8 @@ fn the_single_pair_rule_counts_stored_pairs() {
 fn without_a_structural_leaf_there_is_no_true_variable() {
     // x1 ∨ x2 with both leaves summed out: one pair of two positive counts,
     // and the output's is the only variable.
-    let tree = Arc::new(Vtree::balanced(2));
-    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 2]).unwrap();
+    let tree = crate::vtree::Home::new(Vtree::balanced(2));
+    let mut f = Tdd::clause(&tree, [1, 2]).unwrap();
     let (left, right) = tree.children(tree.root());
     crate::test_helpers::sum_levels(&mut f, &[left, right]).unwrap();
     assert_marginal_canonical(&f);
