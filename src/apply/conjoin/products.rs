@@ -490,60 +490,6 @@ impl Products {
         Ok(true)
     }
 
-    /// Child level `c`'s products by `f` node, for a passing `f` over a
-    /// carrier `g` of `g_width` nodes there: row `r`, the `f` node `pinned`
-    /// (one row) or `r` (`rows` rows), holds `(g node, product)` pairs at
-    /// `entries[2 * offsets[r]..2 * offsets[r + 1]]`. Builds nothing and
-    /// returns false where the products fill more than a quarter of the
-    /// rows' cells, as [`Products::invert_columns`] does.
-    ///
-    /// # Errors
-    ///
-    /// [`OperationError::OverBudget`] when the tables' growth is refused.
-    pub(super) fn rows_by_f(
-        &self,
-        eng: &Engine,
-        c: usize,
-        (pinned, rows): (Option<u32>, usize),
-        g_width: usize,
-        offsets: &mut Vec<u32>,
-        entries: &mut Vec<u32>,
-    ) -> Result<bool, OperationError> {
-        let lim = eng.limits();
-        let row = |f: u32| match pinned {
-            Some(p) => (f == p).then_some(0),
-            None => ((f as usize) < rows).then_some(f as usize),
-        };
-        let height = if pinned.is_some() { 1 } else { rows };
-        let list = &self.product_lists[c];
-        offsets.clear();
-        lim.try_resize(offsets, height + 1, 0)?;
-        for e in list {
-            if let Some(r) = row(e.f_idx.0) {
-                offsets[r + 1] += 1;
-            }
-        }
-        for r in 0..height {
-            offsets[r + 1] += offsets[r];
-        }
-        if 4 * offsets[height] as usize > height * g_width {
-            return Ok(false);
-        }
-        entries.clear();
-        lim.try_resize(entries, 2 * offsets[height] as usize, 0)?;
-        for e in list {
-            if let Some(r) = row(e.f_idx.0) {
-                let at = &mut offsets[r];
-                entries[2 * *at as usize] = e.g_idx.0;
-                entries[2 * *at as usize + 1] = e.prod_idx.0;
-                *at += 1;
-            }
-        }
-        offsets.copy_within(0..height, 1);
-        offsets[0] = 0;
-        Ok(true)
-    }
-
     /// Child level `c`'s products along each of `rows` nodes of the narrow
     /// operand, one row of `width`, the carrier's nodes there, in `out`:
     /// with `carrier_f`, row `r` holds cell `(k, r)` at `k`, else `(r, k)`,

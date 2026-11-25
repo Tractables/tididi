@@ -19,7 +19,6 @@ mod one_sided;
 mod owed;
 mod pair_floor;
 mod pair_rows;
-mod pass_rows;
 mod relabel;
 mod probe;
 mod projected;
