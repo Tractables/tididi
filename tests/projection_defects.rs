@@ -90,7 +90,7 @@ fn finish_refuses_a_level_that_names_a_leaf_both_ways() {
     // the leaf of x1 as free, the second as a literal, which trim, reading
     // the first pair, would turn into true.
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = Home::new(Vtree::balanced(2));
     let root = vtree.root();
     let (x1, _) = vtree.children(root);
     let mut b = Tdd::builder(&eng, &vtree).unwrap();

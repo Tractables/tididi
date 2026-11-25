@@ -1,6 +1,6 @@
 //! Table operations checked against an independent set of bit assignments.
 use std::collections::BTreeSet;
-use std::sync::Arc;
+use tididi::vtree::Home;
 
 use tididi::io::{read_tdd, write_tdd};
 use tididi::test_helpers::{assert_canonical, eval, packed_rows, Lcg};
@@ -26,7 +26,7 @@ fn literals(vars: &[VarId], row: u64) -> Vec<Literal> {
 #[test]
 fn table_update_project_rename_combine_and_reload_sequence() {
     let vars = [VarId(9), VarId(2), VarId(14), VarId(5), VarId(7), VarId(11)];
-    let vtree = Arc::new(Vtree::balanced_over(&vars).unwrap());
+    let vtree = Home::new(Vtree::balanced_over(&vars).unwrap());
     let mut rng = Lcg::new(0x41ac_98ee_5532);
     let mut rows: BTreeSet<u64> = (0..18).map(|_| rng.next_u64() & 63).collect();
     let mut f = Tdd::from_models(&vtree, &vars, &rows.iter().copied().collect::<Vec<_>>()).unwrap();
@@ -84,7 +84,7 @@ fn row_construction_crosses_word_and_sort_boundaries() {
     let mut rng = Lcg::new(0x1234_5678_abcd);
     for width in [16, 17, 63, 64, 65] {
         let vars: Vec<_> = (1..=width).map(VarId).collect();
-        let vtree = Arc::new(Vtree::balanced(width));
+        let vtree = Home::new(Vtree::balanced(width));
         let mut rows = BTreeSet::new();
         for _ in 0..40 {
             rows.insert((0..width).map(|_| rng.next_u64() & 1 == 1).collect::<Vec<bool>>());
@@ -97,7 +97,7 @@ fn row_construction_crosses_word_and_sort_boundaries() {
         }
     }
     let vars: Vec<_> = (1..=15).map(VarId).collect();
-    let vtree = Arc::new(Vtree::balanced(15));
+    let vtree = Home::new(Vtree::balanced(15));
     for len in [16_383, 16_384, 16_385] {
         let rows: Vec<u64> = (0..len).rev().collect();
         let f = Tdd::from_models(&vtree, &vars, &rows).unwrap();

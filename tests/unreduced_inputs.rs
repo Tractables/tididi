@@ -11,6 +11,8 @@
 
 use std::sync::Arc;
 
+use tididi::vtree::Home;
+
 use num_bigint::BigUint;
 use tididi::diagram::Literal;
 use tididi::reduce::ReductionPlan;
@@ -26,7 +28,7 @@ use tididi::{Engine, Tdd};
 #[test]
 fn expansion_of_a_twice_negated_diagram_negates() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = Tdd::one(&vtree).and_clause([-1i32, -2]).unwrap();
     let a = eng.negate(&f).unwrap();
     let b = eng.negate(&a).unwrap();
@@ -243,7 +245,7 @@ fn step(eng: &Engine, rng: &mut Rng, vtree: &Arc<Vtree>, pool: &[(Tdd, Table)], 
         }
         25 => {
             let mut r = f.clone();
-            let target = Arc::new(Vtree::random(n, rng.next()));
+            let target = Home::new(Vtree::random(n, rng.next()));
             if eng.restructure_to(&mut r, &target, 1 << 20).is_err() {
                 return None;
             }

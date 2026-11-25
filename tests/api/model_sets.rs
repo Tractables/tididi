@@ -1,6 +1,6 @@
 //! Building a circuit from a table of assignments, as a consumer sees it.
 
-use std::sync::Arc;
+use tididi::vtree::Home;
 
 use tididi::limits::{LimitConfig, OperationError};
 use tididi::test_helpers::{assert_canonical, packed_rows};
@@ -29,7 +29,7 @@ fn a_relation_and_its_reverse_meet_on_a_shared_vtree() {
     // over the second and third block gives the paths of length two.
     let width = 3;
     let edges = [(0u32, 1u32), (1, 2), (2, 3), (3, 0), (0, 3), (5, 5)];
-    let vtree = Arc::new(Vtree::linear(3 * width));
+    let vtree = Home::new(Vtree::linear(3 * width));
 
     let first = [block(1, width), block(1 + width, width)].concat();
     let second = [block(1 + width, width), block(1 + 2 * width, width)].concat();
@@ -54,7 +54,7 @@ fn a_relation_and_its_reverse_meet_on_a_shared_vtree() {
 
 #[test]
 fn a_hundred_variables_span_two_words_per_row() {
-    let vtree = Arc::new(Vtree::balanced(100));
+    let vtree = Home::new(Vtree::balanced(100));
     let vars: Vec<VarId> = (1..=100).map(VarId).collect();
     // Row k sets the variables whose position is a multiple of k + 2.
     let rows = packed_rows(100, (0..8usize).map(|k| (0..100).map(|i| i % (k + 2) == 0).collect::<Vec<bool>>()));
@@ -66,14 +66,14 @@ fn a_hundred_variables_span_two_words_per_row() {
 
 #[test]
 fn the_degenerate_sizes_are_the_constants() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     assert!(Tdd::from_models(&vtree, &[VarId(1)], &[]).unwrap().is_zero());
     assert_eq!(Tdd::from_models(&vtree, &[], &[0]).unwrap().model_count().unwrap(), 16u32.into());
 }
 
 #[test]
 fn a_budget_that_cannot_hold_the_rows_refuses() {
-    let vtree = Arc::new(Vtree::linear(10));
+    let vtree = Home::new(Vtree::linear(10));
     let rows: Vec<u64> = (0..500u64).map(|k| k * 7 % 1024).collect();
     let vars: Vec<VarId> = (1..=10).map(VarId).collect();
     let refused = vtree
@@ -92,7 +92,7 @@ fn a_table_written_as_columns_reads_back_as_the_same_circuit() {
     use tididi::diagram::RowSelection;
     let width = 3;
     let edges = [(0u32, 1u32), (1, 2), (2, 3), (3, 0), (0, 3), (5, 5)];
-    let vtree = Arc::new(Vtree::balanced(2 * width));
+    let vtree = Home::new(Vtree::balanced(2 * width));
     let (from, to) = (block(1, width), block(1 + width, width));
     let columns: [&[VarId]; 2] = [&from, &to];
     let sources: Vec<u32> = edges.iter().map(|e| e.0).collect();

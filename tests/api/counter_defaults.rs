@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use tididi::vtree::Home;
 
 use tididi::{Engine, OperationError, Tdd, Vtree};
 use tididi::diagram::{Arithmetic, RationalWeights, Weights};
@@ -9,7 +10,7 @@ use tididi::vtree::VarId;
 
 #[test]
 fn default_counter_matches_evidence_after_pin_changes_and_failed_updates() {
-    let tree = Arc::new(Vtree::balanced(3));
+    let tree = Home::new(Vtree::balanced(3));
     let f = Tdd::clause(&tree, [1, -2]).unwrap();
     assert_canonical(&f);
     let mut counter: ModelCounter<'_> = f.counter().unwrap();
@@ -36,7 +37,7 @@ fn default_counter_matches_evidence_after_pin_changes_and_failed_updates() {
 fn batch_counter_observes_limits_on_construction_and_cached_reads() {
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    let tree = Arc::new(Vtree::balanced(3));
+    let tree = Home::new(Vtree::balanced(3));
     let f = Tdd::clause(&tree, [1, -2]).unwrap();
     assert_canonical(&f);
     let context = f.context();
@@ -66,7 +67,7 @@ fn batch_counter_observes_limits_on_construction_and_cached_reads() {
 
 #[test]
 fn persistent_counter_preserves_pins_and_recovers_after_a_refused_binding() {
-    let tree = Arc::new(Vtree::balanced(3));
+    let tree = Home::new(Vtree::balanced(3));
     let f = Tdd::clause(&tree, [1, -2]).unwrap();
     assert_canonical(&f);
     let mut counter = f.counter().unwrap();
@@ -102,7 +103,7 @@ fn persistent_counter_remains_send() {
 
 #[test]
 fn default_counter_rejects_weighted_marginal_values() {
-    let tree = Arc::new(Vtree::balanced(3).with_weights(Weights::new(RationalWeights::unit(3), Arithmetic::ExactRational)).unwrap());
+    let tree = std::sync::Arc::new(Vtree::balanced(3).with_weights(Weights::new(RationalWeights::unit(3), Arithmetic::ExactRational)).unwrap());
     let mut f = Tdd::clause(&tree, [1, -2]).unwrap();
     assert_canonical(&f);
     f.marginalize_levels(&[tree.root()]).unwrap();

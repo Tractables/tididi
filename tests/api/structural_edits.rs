@@ -1,6 +1,6 @@
 //! Storage edits for callers that establish diagram invariants themselves.
 
-use std::sync::Arc;
+use tididi::vtree::Home;
 use tididi::{Engine, Tdd, Vtree};
 use tididi::diagram::{ChildPair, NEG_LEAF_IDX, POS_LEAF_IDX, TddNodeId};
 use tididi::test_helpers::assert_canonical;
@@ -8,7 +8,7 @@ use tididi::test_helpers::assert_canonical;
 #[test]
 fn unchecked_builder_matches_checked_construction() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = Home::new(Vtree::balanced(2));
     let root = vtree.root();
     let build = || {
         let mut builder = Tdd::builder(&eng, &vtree).unwrap();
@@ -30,7 +30,7 @@ fn summing_out_a_root_of_several_nodes_follows_the_output() {
     // Three root nodes with 1, 1 and 2 models, the output the second: the
     // first two values merge when the root is summed out.
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = std::sync::Arc::new(Vtree::balanced(2));
     let root = vtree.root();
     let mut b = Tdd::builder(&eng, &vtree).unwrap();
     b.push(&eng, root, &[ChildPair::new(POS_LEAF_IDX, POS_LEAF_IDX)]).unwrap();

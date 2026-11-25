@@ -623,7 +623,7 @@ fn unary(log: &mut Log, eng: &Engine, home: &Home, n: u32, f: &Tdd, hf: &Tdd, rn
         t.rotation_search(&mut MinimizePairs, &RotationSearchConfig::default()).map_err(|e| format!("{e:?}"))?;
         eng.transport(t, home, |v| v, usize::MAX).map(|r| r.0).map_err(|r| format!("{:?}", r.error))
     }, &tf);
-    let target = Arc::new(Vtree::random(n, rng.below(1000)));
+    let target = Home::new(Vtree::random(n, rng.below(1000)));
     log.any(n, "restructure_to", || {
         let mut t = f.clone();
         t.restructure_to(&target, usize::MAX).map(|_| t)
