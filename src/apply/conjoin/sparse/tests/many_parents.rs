@@ -2,7 +2,6 @@
 //! parent: each f parent hands the emit at most one candidate, and the
 //! output must be the dense grid's, the walk's lookups pipelined or not.
 use crate::vtree::Home;
-use std::sync::Arc;
 
 use num_bigint::BigUint;
 
@@ -34,14 +33,14 @@ fn vtree() -> Home {
 /// `(a b)` it has one parent per key, each holding one pair, while `g` holds
 /// the same `(a, b)` rows for all but two keys in one parent. The level's
 /// parents outnumber its candidates.
-fn keyed_join(eng: &Engine, vtree: &Arc<Vtree>, thresholds: SparseThresholds) -> Tdd {
+fn keyed_join(eng: &Engine, vtree: &crate::vtree::Home, thresholds: SparseThresholds) -> Tdd {
     let (a, b, c) = blocks();
     let f_rows: Vec<Vec<u64>> = (0..12u64).map(|k| vec![k, (k * 5) % 8, k]).collect();
     let g_rows: Vec<Vec<u64>> = (0..12u64).filter(|k| k % 5 != 4).map(|k| vec![k, (k * 5) % 8]).collect();
     let (fv, fr) = pack(&[&a, &b, &c], &f_rows);
     let (gv, gr) = pack(&[&a, &b], &g_rows);
-    let f = eng.from_models(&crate::vtree::Home::unchecked(vtree), &fv, &fr).unwrap();
-    let g = eng.from_models(&crate::vtree::Home::unchecked(vtree), &gv, &gr).unwrap();
+    let f = eng.from_models(vtree, &fv, &fr).unwrap();
+    let g = eng.from_models(vtree, &gv, &gr).unwrap();
 
     let _forced = ForcedThresholds::install(thresholds);
     eng.and(f, g).expect("an unarmed engine refuses nothing")

@@ -4,7 +4,6 @@
 //! inner-g children do, which a g operand free over the outer child makes
 //! true at every outer: all of its pairs sit under one key.
 use crate::vtree::Home;
-use std::sync::Arc;
 
 use num_bigint::BigUint;
 
@@ -63,7 +62,7 @@ fn blocks_and_vtree() -> ([Vec<VarId>; 3], Home) {
 fn fk_join(
     eng: &Engine,
     [o, p, c]: &[Vec<VarId>; 3],
-    vtree: &Arc<Vtree>,
+    vtree: &crate::vtree::Home,
     thresholds: SparseThresholds,
 ) -> Tdd {
     // Fixed rows: keys 0..12 each with one to three fact rows, and a
@@ -80,8 +79,8 @@ fn fk_join(
     }
     let (fv, fr) = pack(&[o, p], &fact);
     let (gv, gr) = pack(&[o, c], &dim);
-    let f = eng.from_models(&crate::vtree::Home::unchecked(vtree), &fv, &fr).unwrap();
-    let g = eng.from_models(&crate::vtree::Home::unchecked(vtree), &gv, &gr).unwrap();
+    let f = eng.from_models(vtree, &fv, &fr).unwrap();
+    let g = eng.from_models(vtree, &gv, &gr).unwrap();
 
     let _forced = ForcedThresholds::install(thresholds);
     eng.and(f, g).expect("an unarmed engine refuses nothing")

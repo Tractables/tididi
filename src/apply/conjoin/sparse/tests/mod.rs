@@ -1,7 +1,6 @@
 use super::*;
 
 use std::cell::Cell;
-use std::sync::Arc;
 
 use crate::vtree::{VarId, Vtree};
 
@@ -171,17 +170,17 @@ fn rows(seed: u64, n: usize, cols: usize, bits: u32) -> Vec<Vec<u64>> {
 }
 
 /// The vtrees the joins run on: three subtrees paired every way under the root.
-fn paired(x: &Vtree, y: &Vtree, z: &Vtree) -> Vec<Arc<Vtree>> {
+fn paired(x: &Vtree, y: &Vtree, z: &Vtree) -> Vec<crate::vtree::Home> {
     let join = |l: &Vtree, r: &Vtree| Vtree::join(l, r).unwrap();
     vec![
-        Arc::new(join(&join(x, y), z)),
-        Arc::new(join(x, &join(y, z))),
-        Arc::new(join(&join(x, z), y)),
+        crate::vtree::Home::new(join(&join(x, y), z)),
+        crate::vtree::Home::new(join(x, &join(y, z))),
+        crate::vtree::Home::new(join(&join(x, z), y)),
     ]
 }
 
 /// [`paired`] over three blocks, each a balanced subtree.
-fn vtrees(a: &[VarId], b: &[VarId], c: &[VarId]) -> Vec<Arc<Vtree>> {
+fn vtrees(a: &[VarId], b: &[VarId], c: &[VarId]) -> Vec<crate::vtree::Home> {
     let bal = |x: &[VarId]| Vtree::balanced_over(x).unwrap();
     paired(&bal(a), &bal(b), &bal(c))
 }

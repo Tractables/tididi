@@ -3,7 +3,7 @@ use crate::{Engine, Tdd};
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights, WeightValue};
 
 
-use crate::test_helpers::{assert_canonical, rat};
+use crate::test_helpers::{assert_canonical, rat, summing};
 use crate::vtree::{VarId, Vtree};
 
 #[test]
@@ -13,24 +13,25 @@ fn requested_targets_are_completed_after_identity_and_self_conjunction() {
         let (left, _) = plain.children(plain.root());
         let leaf = plain.leaf_of(VarId(1)).unwrap();
         for arithmetic in [None, Some(Arithmetic::ExactRational), Some(Arithmetic::SignedLog), Some(Arithmetic::ScaledFloat)] {
-            let mut tree = plain.clone();
-            if let Some(arithmetic) = arithmetic {
-                let weights = RationalWeights::from_literals(&vec![
-                    LiteralWeights { negative: rat(1, 3), positive: rat(2, 3) }; 4
-                ]);
-                tree = tree.with_weights(Weights::new(weights, arithmetic)).unwrap();
-            }
-            let tree = Arc::new(tree);
-            let f = eng.clause(&crate::vtree::Home::unchecked(&tree), [1, 2]).unwrap();
-            let disjoint = eng.clause(&crate::vtree::Home::unchecked(&tree), [3, 4]).unwrap();
+            let tree = match arithmetic {
+                Some(arithmetic) => {
+                    let weights = RationalWeights::from_literals(&vec![
+                        LiteralWeights { negative: rat(1, 3), positive: rat(2, 3) }; 4
+                    ]);
+                    crate::vtree::Home::weighted(plain.clone(), Weights::new(weights, arithmetic)).unwrap()
+                }
+                None => crate::vtree::Home::new(plain.clone()),
+            };
+            let f = eng.clause(&tree, [1, 2]).unwrap();
+            let disjoint = eng.clause(&tree, [3, 4]).unwrap();
             assert_canonical(&f);
             assert_canonical(&disjoint);
-            for g in [f.clone(), eng.one(&crate::vtree::Home::unchecked(&tree)), disjoint] {
+            for g in [f.clone(), eng.one(&tree), disjoint] {
                 assert_canonical(&g);
                 for targets in [vec![left], vec![tree.root()], vec![leaf, left, left], vec![tree.root(), leaf, left]] {
                     let mut expected = eng.and(f.clone(), g.clone()).unwrap();
-                    crate::test_helpers::marginalize_under(&eng, &mut expected, &targets).unwrap();
-                    let mut actual = crate::test_helpers::and_marginalizing_under(&eng, f.clone(), g.clone(), &targets).unwrap();
+                    eng.marginalize(&mut expected, summing(&tree, &targets)).unwrap();
+                    let mut actual = eng.and_marginalizing_where(f.clone(), g.clone(), summing(&tree, &targets)).unwrap();
                     if arithmetic.is_some() {
                         let a = eng.weighted_value(&actual).unwrap().unwrap();
                         let b = eng.weighted_value(&expected).unwrap().unwrap();
@@ -57,10 +58,10 @@ fn requested_targets_are_completed_after_identity_and_self_conjunction() {
 #[test]
 fn target_completion_preserves_false_and_empty_requests() {
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(4));
-    let f = eng.clause(&crate::vtree::Home::unchecked(&tree), [1, 2]).unwrap();
+    let tree = crate::vtree::Home::new(Vtree::balanced(4));
+    let f = eng.clause(&tree, [1, 2]).unwrap();
     assert_canonical(&f);
-    let zero = Tdd::zero(&crate::vtree::Home::unchecked(&tree));
+    let zero = Tdd::zero(&tree);
     assert_canonical(&zero);
     let result = crate::test_helpers::and_marginalizing_under(&eng, f.clone(), zero, &[tree.root()]).unwrap();
     assert!(result.is_zero());
@@ -94,8 +95,14 @@ fn collapse_operands(eng: &Engine) -> (Tdd, Tdd, Arc<Vtree>) {
 fn closed_target_subtrees_match_the_two_step_result() {
     use crate::limits::{LimitConfig, SparseRoute};
     let eng = Engine::new();
-    let (f, g, tree) = collapse_operands(&eng);
+    let tree = crate::vtree::Home::new(Vtree::balanced(8));
     let root = tree.root();
+    let mut f = eng.clause(&tree, [1, 2, 3, 4]).unwrap();
+    f = eng.and(f, eng.clause(&tree, [-1, -3, 5, 6]).unwrap()).unwrap();
+    f = eng.and(f, eng.clause(&tree, [2, -4, 7, 8]).unwrap()).unwrap();
+    let mut g = eng.clause(&tree, [3, 5, 7]).unwrap();
+    g = eng.and(g, eng.clause(&tree, [-4, -6, 8]).unwrap()).unwrap();
+    eng.marginalize(&mut f, |v| v.0 <= 2).unwrap();
     let (left, right) = tree.children(root);
     let (_, lr) = tree.children(left);
     let (rl, rr) = tree.children(right);
@@ -114,12 +121,12 @@ fn closed_target_subtrees_match_the_two_step_result() {
             vec![root, left, lr, right, rl, rr],
         ] {
             let mut expected = eng.and(f.clone(), g.clone()).unwrap();
-            crate::test_helpers::marginalize_under(&eng, &mut expected, &targets).unwrap();
-            let mut actual = crate::test_helpers::and_marginalizing_under(&eng, f.clone(), g.clone(), &targets).unwrap();
+            eng.marginalize(&mut expected, summing(&tree, &targets)).unwrap();
+            let mut actual = eng.and_marginalizing_where(f.clone(), g.clone(), summing(&tree, &targets)).unwrap();
             let count = expected.model_count().unwrap();
             assert_eq!(actual.model_count().unwrap(), count, "{targets:?}, floor {min_grid}");
             assert_eq!(
-                crate::test_helpers::and_model_count_under(&eng, f.clone(), g.clone(), &targets).unwrap(),
+                eng.and_model_count(f.clone(), g.clone(), summing(&tree, &targets)).unwrap(),
                 count,
                 "counted, {targets:?}, floor {min_grid}",
             );

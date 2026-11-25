@@ -5,7 +5,6 @@
 //! whether the child counts fit the grouped `u64` path, spill past `u128`,
 //! or are exact big counts.
 use std::collections::BTreeSet;
-use std::sync::Arc;
 
 use num_bigint::BigUint;
 
@@ -24,7 +23,7 @@ fn vtrees(
     c: &[VarId],
     free_a: &[VarId],
     free_b: &[VarId],
-) -> Vec<Arc<Vtree>> {
+) -> Vec<crate::vtree::Home> {
     let bal = |x: &[VarId]| Vtree::balanced_over(x).unwrap();
     let side = |x: &[VarId], free: &[VarId]| {
         if free.is_empty() {
@@ -135,8 +134,8 @@ fn a_counted_root_is_the_count_of_the_conjunction() {
             for vtree in vtrees(&a, &b, &c, free_a, free_b) {
                 for ((fv, fr), (gv, gr), tuples) in &joins {
                     let expected = BigUint::from(*tuples) * &scale;
-                    let f = eng.from_models(&crate::vtree::Home::unchecked(&vtree), fv, fr).unwrap();
-                    let g = eng.from_models(&crate::vtree::Home::unchecked(&vtree), gv, gr).unwrap();
+                    let f = eng.from_models(&vtree, fv, fr).unwrap();
+                    let g = eng.from_models(&vtree, gv, gr).unwrap();
                     assert_canonical(&f);
                     assert_canonical(&g);
                     for targets in target_sets(&vtree, &a) {
@@ -179,8 +178,8 @@ fn a_wide_counted_root_is_the_count_of_the_built_conjunction() {
         ];
         for vtree in vtrees(&a, &b, &c, &[], &[]) {
             for ((fv, fr), (gv, gr)) in &joins {
-                let f = eng.from_models(&crate::vtree::Home::unchecked(&vtree), fv, fr).unwrap();
-                let g = eng.from_models(&crate::vtree::Home::unchecked(&vtree), gv, gr).unwrap();
+                let f = eng.from_models(&vtree, fv, fr).unwrap();
+                let g = eng.from_models(&vtree, gv, gr).unwrap();
                 assert_canonical(&f);
                 assert_canonical(&g);
                 let built = eng.and(f.clone(), g.clone()).unwrap();
@@ -208,7 +207,7 @@ fn a_wide_counted_root_is_the_count_of_the_built_conjunction() {
 fn a_false_operand_and_a_self_conjunction_count_through_the_shortcuts() {
     let eng = Engine::new();
     let (a, b) = (block(1, 3), block(4, 3));
-    let vtree = Arc::new(
+    let vtree = crate::vtree::Home::new(
         Vtree::join(
             &Vtree::balanced_over(&a).unwrap(),
             &Vtree::balanced_over(&b).unwrap(),
@@ -216,9 +215,9 @@ fn a_false_operand_and_a_self_conjunction_count_through_the_shortcuts() {
         .unwrap(),
     );
     let (fv, fr) = pack(&[&a, &b], &rows(7, 20, 2, 3));
-    let f = eng.from_models(&crate::vtree::Home::unchecked(&vtree), &fv, &fr).unwrap();
+    let f = eng.from_models(&vtree, &fv, &fr).unwrap();
     assert_canonical(&f);
-    let zero = eng.from_models(&crate::vtree::Home::unchecked(&vtree), &fv, &[]).unwrap();
+    let zero = eng.from_models(&vtree, &fv, &[]).unwrap();
     assert_canonical(&zero);
     let expected = eng.model_count(&f).unwrap();
     assert_eq!(

@@ -74,10 +74,10 @@ fn a_conjunction_keeps_no_counts() {
 /// Any change to the levels drops the counts; a copy keeps them.
 #[test]
 fn a_change_to_the_levels_drops_the_counts() {
-    let vtree = Arc::new(Vtree::balanced(6));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(6));
     let eng = Engine::new();
-    let mut f = eng.clause(&crate::vtree::Home::unchecked(&vtree), [1, -2, 5]).unwrap();
-    f = eng.and(f, eng.clause(&crate::vtree::Home::unchecked(&vtree), [2, 3, -6]).unwrap()).unwrap();
+    let mut f = eng.clause(&vtree, [1, -2, 5]).unwrap();
+    f = eng.and(f, eng.clause(&vtree, [2, 3, -6]).unwrap()).unwrap();
     eng.minimize(&mut f).unwrap();
     let f = counted(&eng, &f);
     assert!(f.clone().has_level_counts(), "a clone");
@@ -85,7 +85,7 @@ fn a_change_to_the_levels_drops_the_counts() {
     let changed = [
         ("condition", eng.condition_var(f.clone(), VarId(2), true).unwrap()),
         ("exists", eng.exists_vars(f.clone(), &[VarId(3)]).unwrap()),
-        ("or", eng.or(f.clone(), eng.clause(&crate::vtree::Home::unchecked(&vtree), [4]).unwrap()).unwrap()),
+        ("or", eng.or(f.clone(), eng.clause(&vtree, [4]).unwrap()).unwrap()),
     ];
     for (what, g) in changed {
         assert!(!g.has_level_counts() || kept_columns_are_folded_counts(&eng, &g, what) > 0, "{what}: stale counts");

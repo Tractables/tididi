@@ -1,7 +1,6 @@
 //! A streamed sum-out level whose column outgrows the slots a marginal
 //! reference can name is refused, whatever its value domain.
 
-use std::sync::Arc;
 
 use crate::{Engine, OperationError, Tdd};
 use crate::diagram::{Arithmetic, RationalWeights, Weights};
@@ -9,10 +8,10 @@ use crate::test_helpers::{rand_cnf, CnfShape, Lcg};
 use crate::vtree::{Vtree, VtreeIdx};
 
 /// The conjunction of `clauses` over `tree`.
-fn conjoin_all(eng: &Engine, tree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
-    let mut d = eng.one(&crate::vtree::Home::unchecked(tree));
+fn conjoin_all(eng: &Engine, tree: &crate::vtree::Home, clauses: &[Vec<i32>]) -> Tdd {
+    let mut d = eng.one(tree);
     for clause in clauses {
-        let c = eng.clause(&crate::vtree::Home::unchecked(tree), clause.iter().copied()).unwrap();
+        let c = eng.clause(tree, clause.iter().copied()).unwrap();
         d = eng.and(d, c).unwrap();
     }
     d
@@ -30,7 +29,7 @@ fn value(eng: &Engine, d: &Tdd) -> String {
 fn a_streamed_column_past_the_slot_cap_is_refused() {
     let eng = Engine::new();
     let num_vars = 10;
-    let tree = Arc::new(Vtree::balanced(num_vars));
+    let tree = crate::vtree::Home::new(Vtree::balanced(num_vars));
     let mut rng = Lcg::new(23);
     let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 10, width: 3 });
     let (a, b) = clauses.split_at(clauses.len() / 2);
@@ -43,7 +42,7 @@ fn a_streamed_column_past_the_slot_cap_is_refused() {
     ];
     for store in &stores {
         let tree = match store {
-            Some(store) => Arc::new(Vtree::clone(&tree).with_weights(store.clone()).unwrap()),
+            Some(store) => crate::vtree::Home::weighted(Vtree::clone(&tree), store.clone()).unwrap(),
             None => tree.clone(),
         };
         let (f, g) = (conjoin_all(&eng, &tree, a), conjoin_all(&eng, &tree, b));

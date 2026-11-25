@@ -4,20 +4,19 @@
 //! for the rest, and a level where f and g have one node each takes its
 //! pairs from the scatter directly. Before any reduction, every way must
 //! build the dense grid's nodes.
-use std::sync::Arc;
 
 use super::inner_index::{block, pack};
 use super::{random_rows, vtrees, ForcedThresholds, SparseThresholds};
 use crate::diagram::Tdd;
 use crate::reduce::ReductionPlan;
 use crate::test_helpers::{assert_canonical, normalized_levels};
-use crate::vtree::{VarId, Vtree};
+use crate::vtree::VarId;
 use crate::Engine;
 
 /// `f ∧ g` under `thresholds`.
-fn conjoin(eng: &Engine, vtree: &Arc<Vtree>, f: (&[VarId], &[u64]), g: (&[VarId], &[u64]), thresholds: SparseThresholds) -> Tdd {
-    let f = eng.from_models(&crate::vtree::Home::unchecked(vtree), f.0, f.1).unwrap();
-    let g = eng.from_models(&crate::vtree::Home::unchecked(vtree), g.0, g.1).unwrap();
+fn conjoin(eng: &Engine, vtree: &crate::vtree::Home, f: (&[VarId], &[u64]), g: (&[VarId], &[u64]), thresholds: SparseThresholds) -> Tdd {
+    let f = eng.from_models(vtree, f.0, f.1).unwrap();
+    let g = eng.from_models(vtree, g.0, g.1).unwrap();
     let _forced = ForcedThresholds::install(thresholds);
     eng.and(f, g).expect("an unarmed engine refuses nothing")
 }

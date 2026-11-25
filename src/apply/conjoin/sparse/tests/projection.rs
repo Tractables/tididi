@@ -3,7 +3,6 @@
 //! node a side walked by outer key. The walk grows the level's pair arena
 //! once, to its projected candidates, instead of doubling it at each fill,
 //! and the level is the dense grid's.
-use std::sync::Arc;
 
 use super::inner_index::{block, pack};
 use super::{ForcedThresholds, SparseThresholds};
@@ -40,7 +39,7 @@ fn vtree() -> Home {
 /// nodes makes 63 candidates at `(a b)`.
 fn crossed_join(
     eng: &Engine,
-    vtree: &Arc<Vtree>,
+    vtree: &crate::vtree::Home,
     thresholds: SparseThresholds,
 ) -> (Tdd, Vec<(VtreeIdx, Route, u64)>, VtreeIdx) {
     let (a, b, c) = blocks();
@@ -63,8 +62,8 @@ fn crossed_join(
         .collect();
     let (fv, fr) = pack(&[&a, &b, &c], &f_rows);
     let (gv, gr) = pack(&[&a, &b], &g_rows);
-    let f = eng.from_models(&crate::vtree::Home::unchecked(vtree), &fv, &fr).unwrap();
-    let g = eng.from_models(&crate::vtree::Home::unchecked(vtree), &gv, &gr).unwrap();
+    let f = eng.from_models(vtree, &fv, &fr).unwrap();
+    let g = eng.from_models(vtree, &gv, &gr).unwrap();
     let (f, g) = on_one(eng, f, g);
     let ab = f.vtree().children(f.vtree().root()).0;
     assert_eq!(
@@ -121,7 +120,7 @@ fn a_level_of_many_more_candidates_than_pairs_grows_its_arena_once() {
 /// has 254,016 pairs.
 fn root_join(
     eng: &Engine,
-    vtree: &Arc<Vtree>,
+    vtree: &crate::vtree::Home,
     thresholds: SparseThresholds,
 ) -> (Tdd, Vec<(VtreeIdx, Route, u64)>, VtreeIdx) {
     let (a, b, c) = blocks();
@@ -141,8 +140,8 @@ fn root_join(
     }
     let (fv, fr) = pack(&[&a, &b, &c], &f_rows);
     let (gv, gr) = pack(&[&a, &b, &c], &g_rows);
-    let f = eng.from_models(&crate::vtree::Home::unchecked(vtree), &fv, &fr).unwrap();
-    let g = eng.from_models(&crate::vtree::Home::unchecked(vtree), &gv, &gr).unwrap();
+    let f = eng.from_models(vtree, &fv, &fr).unwrap();
+    let g = eng.from_models(vtree, &gv, &gr).unwrap();
     let (f, g) = on_one(eng, f, g);
     let root = f.vtree().root();
     assert_eq!(
@@ -254,7 +253,7 @@ fn small_leaf_levels_sized_ahead_build_and_stop_as_left_to_grow() {
     .into_iter()
     .enumerate()
     {
-        let vtree = Arc::new(vtree);
+        let vtree = crate::vtree::Home::new(vtree);
         let vars: Vec<u32> = (1..=14).collect();
         for _ in 0..4 {
             let mut f = rand_conj_over(&vtree, &vars, 12, 3, false, &mut rng);

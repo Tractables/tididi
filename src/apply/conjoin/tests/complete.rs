@@ -13,7 +13,7 @@ use crate::test_helpers::{assert_canonical, assert_same_shape, rand_conj_over, s
 use crate::vtree::Vtree;
 
 /// A random function of `vars`, minimized, on `vtree`.
-fn function_of(vtree: &Arc<Vtree>, vars: &[u32], rng: &mut Lcg) -> Tdd {
+fn function_of(vtree: &crate::vtree::Home, vars: &[u32], rng: &mut Lcg) -> Tdd {
     let mut f = rand_conj_over(vtree, vars, 10, 3, false, rng);
     f.minimize().unwrap();
     f
@@ -87,12 +87,12 @@ fn disjoint_supports_read_both_sides_by_arithmetic() {
 /// `x_a ↔ x_b` for each pair of `pairs`: on a balanced vtree with every `a`
 /// left of the root and every `b` right of it, the root holds one pair for
 /// each assignment of the `a`s.
-fn equalities(vtree: &Arc<Vtree>, pairs: &[(i32, i32)]) -> Tdd {
+fn equalities(vtree: &crate::vtree::Home, pairs: &[(i32, i32)]) -> Tdd {
     let eng = Engine::new();
-    let mut f = Tdd::one(&crate::vtree::Home::unchecked(vtree));
+    let mut f = Tdd::one(vtree);
     for &(a, b) in pairs {
-        f = eng.and(f, Tdd::clause(&crate::vtree::Home::unchecked(vtree), [-a, b]).unwrap()).unwrap();
-        f = eng.and(f, Tdd::clause(&crate::vtree::Home::unchecked(vtree), [a, -b]).unwrap()).unwrap();
+        f = eng.and(f, Tdd::clause(vtree, [-a, b]).unwrap()).unwrap();
+        f = eng.and(f, Tdd::clause(vtree, [a, -b]).unwrap()).unwrap();
     }
     f
 }
@@ -324,7 +324,7 @@ fn cross_block_subtrees(balanced: bool) -> [Vtree; 4] {
 /// Vtrees on which `m` and `t` are the two sides of one level, its parent
 /// joining them with `c`, `((c (m t)) x)`, with the cross on either side
 /// and with `x` above or beside it, on balanced and linear blocks.
-fn cross_vtrees() -> Vec<(String, Arc<Vtree>)> {
+fn cross_vtrees() -> Vec<(String, crate::vtree::Home)> {
     let mut out = Vec::new();
     for (blocks_name, balanced) in [("balanced", true), ("linear", false)] {
         let [c, m, t, x] = cross_block_subtrees(balanced);
@@ -335,7 +335,7 @@ fn cross_vtrees() -> Vec<(String, Arc<Vtree>)> {
             ("(x (c (m t)))", join(&x, &join(&c, &join(&m, &t)))),
             ("(c ((m t) x))", join(&c, &join(&join(&m, &t), &x))),
         ] {
-            out.push((format!("{name}, {blocks_name} blocks"), Arc::new(vtree)));
+            out.push((format!("{name}, {blocks_name} blocks"), crate::vtree::Home::new(vtree)));
         }
     }
     out
@@ -344,7 +344,7 @@ fn cross_vtrees() -> Vec<(String, Arc<Vtree>)> {
 /// `f(c, m, x)` and `g(c, t)` as sets of models: up to three per value of
 /// `c` each, some values of `c` in neither, so most cells of the level
 /// `(m t)` are named by no product of its parent.
-fn cross_operands(vtree: &Arc<Vtree>, rng: &mut Lcg) -> (Tdd, Tdd) {
+fn cross_operands(vtree: &crate::vtree::Home, rng: &mut Lcg) -> (Tdd, Tdd) {
     let [c, m, t, x] = cross_blocks();
     let [cb, mb, tb, xb] = CROSS_BITS;
     let (mut f_rows, mut g_rows) = (Vec::new(), Vec::new());
@@ -358,7 +358,7 @@ fn cross_operands(vtree: &Arc<Vtree>, rng: &mut Lcg) -> (Tdd, Tdd) {
     }
     let f_vars: Vec<_> = c.iter().chain(&m).chain(&x).copied().collect();
     let g_vars: Vec<_> = c.iter().chain(&t).copied().collect();
-    (Tdd::from_models(&crate::vtree::Home::unchecked(vtree), &f_vars, &f_rows).unwrap(), Tdd::from_models(&crate::vtree::Home::unchecked(vtree), &g_vars, &g_rows).unwrap())
+    (Tdd::from_models(vtree, &f_vars, &f_rows).unwrap(), Tdd::from_models(vtree, &g_vars, &g_rows).unwrap())
 }
 
 /// A cross under a shared block: `f` is constant-true over `t` and `g`
@@ -406,7 +406,7 @@ fn a_sparse_parent_reads_a_complete_child_by_arithmetic() {
 /// Vtrees whose root joins the cross `(m t)` with `(c x)`, either way round,
 /// on balanced and linear blocks: each operand is one node at the root, so
 /// the root is the one product a sum takes.
-fn root_cross_vtrees() -> Vec<(String, Arc<Vtree>)> {
+fn root_cross_vtrees() -> Vec<(String, crate::vtree::Home)> {
     let mut out = Vec::new();
     for (blocks_name, balanced) in [("balanced", true), ("linear", false)] {
         let [c, m, t, x] = cross_block_subtrees(balanced);
@@ -415,7 +415,7 @@ fn root_cross_vtrees() -> Vec<(String, Arc<Vtree>)> {
             ("((m t) (c x))", join(&join(&m, &t), &join(&c, &x))),
             ("((x c) (t m))", join(&join(&x, &c), &join(&t, &m))),
         ] {
-            out.push((format!("{name}, {blocks_name} blocks"), Arc::new(vtree)));
+            out.push((format!("{name}, {blocks_name} blocks"), crate::vtree::Home::new(vtree)));
         }
     }
     out

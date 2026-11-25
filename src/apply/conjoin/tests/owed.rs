@@ -2,7 +2,6 @@
 //! operands owed, not the levels it carried from an operand at its fixpoint;
 //! minimizing from those worklists reaches the canonical diagram.
 use crate::vtree::Home;
-use std::sync::Arc;
 
 use crate::diagram::Pass;
 use crate::test_helpers::{assert_canonical, assert_same_shape, compile_clauses, test_cases, vtree_shapes};
@@ -85,12 +84,12 @@ fn contracted_unpruned_operands_owe_the_contraction_their_twins() {
 /// The clauses split in two, each half compiled on `vtree`; with `settled`
 /// both halves are minimized, else each is a bare conjunction that still
 /// owes its contraction.
-fn halves(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<i32>], settled: bool) -> (Tdd, Tdd) {
+fn halves(eng: &Engine, vtree: &crate::vtree::Home, clauses: &[Vec<i32>], settled: bool) -> (Tdd, Tdd) {
     let (a, b) = clauses.split_at(clauses.len() / 2);
     let half = |part: &[Vec<i32>]| {
-        let mut f = eng.cube(&crate::vtree::Home::unchecked(vtree), std::iter::empty::<i32>()).unwrap();
+        let mut f = eng.cube(vtree, std::iter::empty::<i32>()).unwrap();
         for c in part {
-            f = eng.and(f, eng.clause(&crate::vtree::Home::unchecked(vtree), c.iter().copied()).unwrap()).unwrap();
+            f = eng.and(f, eng.clause(vtree, c.iter().copied()).unwrap()).unwrap();
         }
         if settled {
             eng.minimize(&mut f).unwrap();
@@ -205,12 +204,12 @@ fn built_operands_give_their_conjunction_its_loose_levels() {
         let fv: Vec<VarId> = (1..=half + 1).map(VarId).collect();
         let gv: Vec<VarId> = (half..=num_vars).map(VarId).collect();
         for (label, home) in vtree_shapes(num_vars) {
-            let vtree: &Arc<Vtree> = &home;
+            let vtree: &crate::vtree::Home = &home;
             for round in 0..4 {
                 let mut rows = |width: usize| -> Vec<u64> { (0..1u64 << width).filter(|_| rng.below(3) != 0).collect() };
                 let (f_rows, g_rows) = (rows(fv.len()), rows(gv.len()));
-                let f = eng.from_models(&crate::vtree::Home::unchecked(vtree), &fv, &f_rows).unwrap();
-                let g = eng.from_models(&crate::vtree::Home::unchecked(vtree), &gv, &g_rows).unwrap();
+                let f = eng.from_models(vtree, &fv, &f_rows).unwrap();
+                let g = eng.from_models(vtree, &gv, &g_rows).unwrap();
                 assert!(f.dirty.loose().is_some_and(|l| l.is_empty()), "{label}");
                 assert!(g.dirty.loose().is_some_and(|l| l.is_empty()), "{label}");
                 let out = eng.and(f, g).unwrap();

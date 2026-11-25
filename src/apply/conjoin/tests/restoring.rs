@@ -8,13 +8,13 @@ use std::sync::Arc;
 
 use crate::limits::{LimitConfig, StopAt, StopRules};
 use crate::test_helpers::{known, same_storage as same};
-use crate::vtree::{Home, VarId};
+use crate::vtree::Home;
 use crate::{Engine, Tdd, Vtree};
 
 /// Two operands whose supports overlap on a few variables of a balanced
 /// vtree over 12, so the sweep takes identity levels from both before it
 /// reaches the shared ones.
-fn operands(eng: &Engine, vtree: &Arc<Vtree>) -> (Tdd, Tdd) {
+fn operands(eng: &Engine, vtree: &crate::vtree::Home) -> (Tdd, Tdd) {
     (build(eng, vtree, F_CLAUSES), build(eng, vtree, G_CLAUSES))
 }
 
@@ -22,10 +22,10 @@ const F_CLAUSES: &[&[i32]] = &[&[1, 2, -7], &[-1, 3], &[2, -3, 8], &[4, 5], &[-5
 const G_CLAUSES: &[&[i32]] = &[&[7, 8, -9], &[-8, 10], &[9, -10, 11], &[-11, 12, 1], &[6, -12]];
 
 /// The conjunction of `clauses` on `vtree`, minimized.
-fn build(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[&[i32]]) -> Tdd {
-    let mut f = eng.cube(&crate::vtree::Home::unchecked(vtree), std::iter::empty::<i32>()).unwrap();
+fn build(eng: &Engine, vtree: &crate::vtree::Home, clauses: &[&[i32]]) -> Tdd {
+    let mut f = eng.cube(vtree, std::iter::empty::<i32>()).unwrap();
     for c in clauses {
-        let c = eng.clause(&crate::vtree::Home::unchecked(vtree), c.iter().copied()).unwrap();
+        let c = eng.clause(vtree, c.iter().copied()).unwrap();
         f = eng.and(f, c).unwrap();
     }
     eng.minimize(&mut f).unwrap();
@@ -110,41 +110,36 @@ fn on_one_vtree(eng: &Engine) -> (Tdd, Tdd) {
     operands(eng, &Home::new(Vtree::balanced(12)))
 }
 
-/// The variables `vars` as a projection of `home`.
-fn projection(home: &Home, vars: impl IntoIterator<Item = u32>) -> Arc<Vtree> {
-    Vtree::projection(home, vars.into_iter().map(VarId)).unwrap()
-}
-
 /// [`operands`] on projections of a balanced home over 13: `f` on the
 /// variables 1 to 12, `g` on its own, inside them.
 fn nested(eng: &Engine) -> (Tdd, Tdd) {
-    let home = Home::new(Arc::new(Vtree::balanced(13)));
-    let f = build(eng, &projection(&home, 1..=12), F_CLAUSES);
-    let g = build(eng, &projection(&home, std::iter::once(1).chain(6..=12)), G_CLAUSES);
+    let home = Home::new(Vtree::balanced(13));
+    let f = build(eng, &home, F_CLAUSES);
+    let g = build(eng, &home, G_CLAUSES);
     (f, g)
 }
 
 /// [`operands`] on two allocations of one projection.
 fn equal_layouts(eng: &Engine) -> (Tdd, Tdd) {
-    let home = Home::new(Arc::new(Vtree::balanced(13)));
-    let (f, _) = operands(eng, &projection(&home, 1..=12));
-    let (_, g) = operands(eng, &projection(&home, 1..=12));
+    let home = Home::new(Vtree::balanced(13));
+    let (f, _) = operands(eng, &home);
+    let (_, g) = operands(eng, &home);
     (f, g)
 }
 
-/// [`operands`] on one allocation of a projection.
+/// [`operands`] built in one call on a home over 13.
 fn one_projection(eng: &Engine) -> (Tdd, Tdd) {
-    let home = Home::new(Arc::new(Vtree::balanced(13)));
-    operands(eng, &projection(&home, 1..=12))
+    let home = Home::new(Vtree::balanced(13));
+    operands(eng, &home)
 }
 
 /// [`operands`] on projections of a balanced home over 13 with neither
 /// leaf set inside the other: `f` on the variables 1 to 9, `g` on 1 and 6
 /// to 12.
 fn union(eng: &Engine) -> (Tdd, Tdd) {
-    let home = Home::new(Arc::new(Vtree::balanced(13)));
-    let f = build(eng, &projection(&home, 1..=9), F_CLAUSES);
-    let g = build(eng, &projection(&home, std::iter::once(1).chain(6..=12)), G_CLAUSES);
+    let home = Home::new(Vtree::balanced(13));
+    let f = build(eng, &home, F_CLAUSES);
+    let g = build(eng, &home, G_CLAUSES);
     (f, g)
 }
 
@@ -182,10 +177,10 @@ fn every_stop_gives_the_operands_back() {
 #[test]
 fn a_refused_adopting_conjunction_leaves_the_next_one_right() {
     let eng = Engine::new();
-    let home = Home::new(Arc::new(Vtree::linear(13)));
+    let home = Home::new(Vtree::linear(13));
     let (f, spread) = nested(&eng);
-    let deep = build(&eng, &projection(&home, 11..=12), &[&[11, -12]]);
-    let on_linear = build(&eng, &projection(&home, 1..=12), F_CLAUSES);
+    let deep = build(&eng, &home, &[&[11, -12]]);
+    let on_linear = build(&eng, &home, F_CLAUSES);
     for (f, g) in [(&f, &spread), (&on_linear, &deep)] {
         let expected = eng.and(f.clone(), g).unwrap();
         let mut refusals = 0;
@@ -218,14 +213,14 @@ fn a_refused_adopting_conjunction_leaves_the_next_one_right() {
 #[test]
 fn a_forced_chain_is_reached_to_the_root() {
     let eng = Engine::new();
-    let home = Home::new(Arc::new(Vtree::linear(14)));
+    let home = Home::new(Vtree::linear(14));
     let chain: Vec<[i32; 2]> = (1..13).map(|v| [v, -(v + 1)]).collect();
     let clauses: Vec<&[i32]> = chain.iter().map(|c| &c[..]).collect();
-    let f = build(&eng, &projection(&home, 1..=13), &clauses);
-    let g = build(&eng, &projection(&home, 12..=13), &[&[12, 13]]);
+    let f = build(&eng, &home, &clauses);
+    let g = build(&eng, &home, &[&[12, 13]]);
     let mut with_g = clauses.clone();
     with_g.push(&[12, 13]);
-    let expected = build(&eng, &projection(&home, 1..=13), &with_g);
+    let expected = build(&eng, &home, &with_g);
     let out = eng.and(f, &g).unwrap();
     assert!(eng.equivalent(&out, &expected).unwrap());
     let again = eng.and(out, &g).unwrap();
@@ -238,10 +233,10 @@ fn a_forced_chain_is_reached_to_the_root() {
 #[test]
 fn a_summed_out_conjunction_refused_at_each_reserve_gives_the_operands_back() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(8));
+    let vtree = Home::new(Vtree::balanced(8));
     let f = build(&eng, &vtree, &[&[5, 6], &[-7, 8], &[6, -8]]);
     let mut g = build(&eng, &vtree, &[&[2, 5], &[-4, 6], &[7, 8, -2], &[1, -6]]);
-    crate::test_helpers::marginalize_under(&eng, &mut g, &[vtree.children(vtree.root()).0]).unwrap();
+    eng.marginalize(&mut g, |v| v.0 <= 4).unwrap();
     assert!(g.has_marginal_level());
     // `equivalent` refuses a summed-out level: the counts stand in for it.
     let count = |t: &Tdd| Engine::new().model_count(t).unwrap();

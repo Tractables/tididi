@@ -85,19 +85,19 @@ fn check_and(f: &Tdd, g: &Tdd, what: &str) -> usize {
 }
 
 /// A random function of `vars`, minimized, on `vtree`.
-fn function_of(vtree: &Arc<Vtree>, vars: &[u32], rng: &mut Lcg) -> Tdd {
+fn function_of(vtree: &crate::vtree::Home, vars: &[u32], rng: &mut Lcg) -> Tdd {
     let mut f = rand_conj_over(vtree, vars, 10, 3, false, rng);
     f.minimize().unwrap();
     f
 }
 
 /// `x_a ↔ x_b` for each pair of `pairs`.
-fn equalities(vtree: &Arc<Vtree>, pairs: &[(i32, i32)]) -> Tdd {
+fn equalities(vtree: &crate::vtree::Home, pairs: &[(i32, i32)]) -> Tdd {
     let eng = Engine::new();
-    let mut f = Tdd::one(&crate::vtree::Home::unchecked(vtree));
+    let mut f = Tdd::one(vtree);
     for &(a, b) in pairs {
-        f = eng.and(f, Tdd::clause(&crate::vtree::Home::unchecked(vtree), [-a, b]).unwrap()).unwrap();
-        f = eng.and(f, Tdd::clause(&crate::vtree::Home::unchecked(vtree), [a, -b]).unwrap()).unwrap();
+        f = eng.and(f, Tdd::clause(vtree, [-a, b]).unwrap()).unwrap();
+        f = eng.and(f, Tdd::clause(vtree, [a, -b]).unwrap()).unwrap();
     }
     f
 }

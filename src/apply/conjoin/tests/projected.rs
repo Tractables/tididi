@@ -46,7 +46,7 @@ fn clause(vars: &[VarId], rng: &mut Lcg) -> Vec<i32> {
 /// A random CNF over the projection of `home` on `vars`, built on it.
 fn cnf_on(eng: &Engine, home: &Home, vars: &[VarId], rng: &mut Lcg) -> Tdd {
     let vtree = Vtree::projection(home, vars.iter().copied()).unwrap();
-    let mut f = Tdd::one(&crate::vtree::Home::unchecked(&vtree));
+    let mut f = Tdd::one(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)));
     for _ in 0..1 + rng.below(4) {
         f = eng.and_clause(f, &clause(vars, rng)).unwrap();
     }
@@ -150,8 +150,8 @@ fn join_at_the_root_carries_what_the_operands_owe() {
 fn and_across_homes_is_refused() {
     let eng = Engine::new();
     let (a, b) = (Home::new(Vtree::balanced(4)), Home::new(Vtree::balanced(4)));
-    let f = Tdd::clause(&crate::vtree::Home::unchecked(&Vtree::projection(&a, [VarId(1)]).unwrap()), [1]).unwrap();
-    let g = Tdd::clause(&crate::vtree::Home::unchecked(&Vtree::projection(&b, [VarId(2)]).unwrap()), [2]).unwrap();
+    let f = Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&Vtree::projection(&a, [VarId(1)]).unwrap())), [1]).unwrap();
+    let g = Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&Vtree::projection(&b, [VarId(2)]).unwrap())), [2]).unwrap();
     assert_eq!(eng.and(&f, &g).unwrap_err(), OperationError::VtreeMismatch);
     let h = Tdd::clause(&a, [3]).unwrap();
     assert_eq!(eng.and(&h, &g).unwrap_err(), OperationError::VtreeMismatch);
@@ -192,7 +192,7 @@ fn absent_variables_leave_the_operand() {
     let eng = Engine::new();
     let hm = Home::new(Vtree::balanced(6));
     let own = Vtree::projection(&hm, [VarId(2), VarId(5)]).unwrap();
-    let f = eng.and_clause(crate::test_helpers::padded(Tdd::one(&crate::vtree::Home::unchecked(&own)), &own), &[2, -5]).unwrap();
+    let f = eng.and_clause(crate::test_helpers::padded(Tdd::one(&crate::vtree::Home::new(std::sync::Arc::clone(&own))), &own), &[2, -5]).unwrap();
     let same = |g: Tdd| {
         assert!(Arc::ptr_eq(g.vtree(), &own));
         assert!(eng.equivalent(&g, &f).unwrap());
@@ -303,11 +303,11 @@ fn and_with_a_literal_keeps_only_reached_nodes() {
     let hm = Home::new(Vtree::random(6, 101));
     let x1 = Vtree::projection(&hm, [VarId(1)]).unwrap();
     let x3_x5 = Vtree::projection(&hm, [VarId(3), VarId(5)]).unwrap();
-    let literal = Tdd::clause(&crate::vtree::Home::unchecked(&x1), [-1]).unwrap();
+    let literal = Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&x1)), [-1]).unwrap();
     let mut reduced = literal.clone();
     eng.minimize(&mut reduced).unwrap();
     for f in [literal, reduced] {
-        let h = crate::and(f, Tdd::clause(&crate::vtree::Home::unchecked(&x3_x5), [3, -3, -5]).unwrap()).unwrap();
+        let h = crate::and(f, Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&x3_x5)), [3, -3, -5]).unwrap()).unwrap();
         assert_eq!(unreached(&h), [], "{:?}", h.dirty.loose());
     }
 }
@@ -318,8 +318,8 @@ fn and_with_a_literal_keeps_only_reached_nodes() {
 fn operand(eng: &Engine, home: &Home, vars: &[VarId], rng: &mut Lcg) -> Tdd {
     let one = Vtree::projection(home, [vars[0]]).unwrap();
     let mut f = match rng.below(6) {
-        0 => Tdd::clause(&crate::vtree::Home::unchecked(&one), [if rng.coin() { vars[0].0 as i32 } else { -(vars[0].0 as i32) }]).unwrap(),
-        1 => crate::test_helpers::padded(Tdd::one(&crate::vtree::Home::unchecked(&one)), &one),
+        0 => Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&one)), [if rng.coin() { vars[0].0 as i32 } else { -(vars[0].0 as i32) }]).unwrap(),
+        1 => crate::test_helpers::padded(Tdd::one(&crate::vtree::Home::new(std::sync::Arc::clone(&one))), &one),
         _ => cnf_on(eng, home, vars, rng),
     };
     if rng.below(3) == 0 {
@@ -398,7 +398,7 @@ fn a_conjunction_on_homes_leaves_no_more_unnamed_nodes_than_on_roots() {
             let num_vars = 6 + (round % 5) as u32;
             let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 12, width: 3 });
             for (_, shape) in vtree_shapes(num_vars) {
-                let root = Home::unchecked(&Arc::new(Vtree::clone(&shape)));
+                let root = crate::vtree::Home::new(Vtree::clone(&shape));
                 let vtree = if on_home { &shape } else { &root };
                 let mut f = eng.clause(vtree, clauses[0].iter().copied()).unwrap();
                 for clause in &clauses[1..] {
@@ -423,7 +423,7 @@ fn a_pass_level_with_carrier_g_emits_its_live_cells() {
     use crate::test_helpers::assert_same_shape;
     let cnf = |home: &Home, vars: &[VarId], rng: &mut Lcg| {
         let eng = Engine::new();
-        let mut f = Tdd::one(&Home::unchecked(&Vtree::projection(home, vars.iter().copied()).unwrap()));
+        let mut f = Tdd::one(&crate::vtree::Home::new(std::sync::Arc::clone(&Vtree::projection(home, vars.iter().copied()).unwrap())));
         for _ in 0..2 + rng.below(4 + vars.len() as u64) {
             f = eng.and_clause(f, &clause(vars, rng)).unwrap();
         }

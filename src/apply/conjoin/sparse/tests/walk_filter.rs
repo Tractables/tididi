@@ -43,8 +43,8 @@ fn a_filtered_walk_counts_what_the_unfiltered_walk_counts() {
         ];
         for vtree in vtrees(&a, &b, &c) {
             for ((fv, fr), (gv, gr)) in &joins {
-                let f = eng.from_models(&crate::vtree::Home::unchecked(&vtree), fv, fr).unwrap();
-                let g = eng.from_models(&crate::vtree::Home::unchecked(&vtree), gv, gr).unwrap();
+                let f = eng.from_models(&vtree, fv, fr).unwrap();
+                let g = eng.from_models(&vtree, gv, gr).unwrap();
                 assert_canonical(&f);
                 assert_canonical(&g);
                 let built = eng.and(f.clone(), g.clone()).unwrap();

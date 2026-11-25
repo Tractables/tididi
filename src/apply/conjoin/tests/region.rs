@@ -218,7 +218,7 @@ fn and_on_projections_with_regions_matches_the_smooth_form() {
         let clause: Vec<i32> = picked.into_iter().map(|var| if rng.coin() { var } else { -var }).collect();
         let clause_vars: Vec<VarId> = clause.iter().map(|l| VarId(l.unsigned_abs())).collect();
         let lits = Vtree::projection(&home, clause_vars).unwrap();
-        let lits = Tdd::clause(&crate::vtree::Home::unchecked(&lits), clause.iter().copied()).unwrap();
+        let lits = Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&lits)), clause.iter().copied()).unwrap();
         let smooth_clause = eng.and_clause(a.smooth.clone(), &clause).unwrap();
         case.check(&what("and_clause"), &[&a.f, &lits], eng.and_clause(a.f.clone(), &clause), &smooth_clause, false);
         // Three operands, left and right.
@@ -239,7 +239,7 @@ fn and_on_projections_with_regions_matches_the_smooth_form() {
 /// smooth form on the home, summed out at the home nodes `at`.
 fn summed_clause(eng: &Engine, home: &Home, lits: &[i32], at: &[VtreeIdx]) -> Operand {
     let own = Vtree::projection(home, lits.iter().map(|l| VarId(l.unsigned_abs()))).unwrap();
-    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&own), lits.iter().copied()).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&own)), lits.iter().copied()).unwrap();
     let smooth = on_home(&f, home);
     if !at.is_empty() {
         eng.marginalize(&mut f, under(home, at)).unwrap();
@@ -487,7 +487,7 @@ fn a_wrong_answer_of_the_predicate_is_refused_where_it_meets_a_leaf() {
 fn summing_out_the_root_follows_the_output_when_equal_counts_merge() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(2));
-    let not_x1 = Tdd::clause(&crate::vtree::Home::unchecked(&Vtree::projection(&home, [VarId(1)]).unwrap()), [-1]).unwrap();
+    let not_x1 = Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&Vtree::projection(&home, [VarId(1)]).unwrap())), [-1]).unwrap();
     let summed = eng.and_marginalizing_where(Tdd::one(&home), &not_x1, |_| true).unwrap();
     assert_eq!(summed.model_count().unwrap(), BigUint::from(2u32));
 }
@@ -504,11 +504,11 @@ fn e9c_summing_before_and_after_a_conjunction_with_a_literal() {
     let e = join(&join(&leaf(2), &leaf(3)), &leaf(4));
     let home = Home::new(join(&leaf(1), &join(&e, &leaf(5))));
     let own = Vtree::projection(&home, [1, 2, 3, 4].map(VarId)).unwrap();
-    let mut phi1 = Tdd::one(&crate::vtree::Home::unchecked(&own));
+    let mut phi1 = Tdd::one(&crate::vtree::Home::new(std::sync::Arc::clone(&own)));
     for clause in [&[-1, 2, 3, 4][..], &[1, 2, 3, -4], &[1, 2, -3, 4], &[-2, -3]] {
         phi1 = phi1.and_clause(clause).unwrap();
     }
-    let z = Tdd::clause(&crate::vtree::Home::unchecked(&Vtree::projection(&home, [VarId(5)]).unwrap()), [5]).unwrap();
+    let z = Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&Vtree::projection(&home, [VarId(5)]).unwrap())), [5]).unwrap();
     let is_e = |v: VarId| (2..=4).contains(&v.0);
     let mut before = phi1.clone();
     before.marginalize(is_e).unwrap();

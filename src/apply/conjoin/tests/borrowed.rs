@@ -46,9 +46,9 @@ fn handed_back(back: &Cow<'_, Tdd>, t: &Tdd, borrowed: bool) -> bool {
 /// arm builds levels that are f's; formulas over the two halves of the
 /// variables, whose levels the identity fast paths carry; a cube against a
 /// formula, for the relabelling route; a formula and itself; and a formula
-/// and the false diagram. With `homes`, each shape is a home and the
-/// operands are on its projections, most pairs on two different ones.
-fn cases(nvars: u32, seed: u64, homes: bool) -> Vec<(String, Tdd, Tdd)> {
+/// and the false diagram. Each shape is a home and the operands are on its
+/// projections, most pairs on two different ones.
+fn cases(nvars: u32, seed: u64) -> Vec<(String, Tdd, Tdd)> {
     let mut rng = Lcg::new(seed);
     let mut out = Vec::new();
     let half = (nvars / 2) as i32;
@@ -56,11 +56,7 @@ fn cases(nvars: u32, seed: u64, homes: bool) -> Vec<(String, Tdd, Tdd)> {
     let shift = |clauses: &[Vec<i32>], by: i32| -> Vec<Vec<i32>> {
         clauses.iter().map(|c| c.iter().map(|l| l.signum() * ((l.abs() - 1) % half + 1 + by)).collect()).collect()
     };
-    let shapes = match homes {
-        true => vtree_shapes(nvars).into_iter().map(|(name, home)| (name, Arc::clone(&home))).collect(),
-        false => bare_roots(vtree_shapes(nvars)),
-    };
-    for (name, vtree) in shapes {
+    for (name, vtree) in vtree_shapes(nvars) {
         let eng = Engine::new();
         let minimized = |clauses: &[Vec<i32>]| {
             let mut f = compile_clauses_on(&eng, &vtree, clauses);
@@ -75,8 +71,8 @@ fn cases(nvars: u32, seed: u64, homes: bool) -> Vec<(String, Tdd, Tdd)> {
             out.push((format!("{name}, {nvars} variables, halves {case}"), minimized(&shift(&a, 0)), minimized(&shift(&b, half))));
         }
         let f = minimized(&cnf(&mut rng, 2 * nvars as usize, 3));
-        let cube = eng.cube(&crate::vtree::Home::unchecked(&vtree), [1, -(nvars as i32)]).unwrap();
-        let zero = eng.and(eng.literal(&crate::vtree::Home::unchecked(&vtree), 1).unwrap(), eng.literal(&crate::vtree::Home::unchecked(&vtree), -1).unwrap()).unwrap();
+        let cube = eng.cube(&vtree, [1, -(nvars as i32)]).unwrap();
+        let zero = eng.and(eng.literal(&vtree, 1).unwrap(), eng.literal(&vtree, -1).unwrap()).unwrap();
         out.push((format!("{name}, {nvars} variables, cube"), f.clone(), cube));
         out.push((format!("{name}, {nvars} variables, itself"), f.clone(), f.clone()));
         out.push((format!("{name}, {nvars} variables, false"), f, zero));
@@ -161,7 +157,7 @@ fn a_borrowed_operand_conjoins_as_an_owned_one() {
     let before = lent_levels();
     let mut checked = 0;
     for nvars in [6, 10, 14] {
-        checked += check_against_owned(&cases(nvars, 0xb0_77ed + u64::from(nvars), true), false);
+        checked += check_against_owned(&cases(nvars, 0xb0_77ed + u64::from(nvars)), false);
     }
     assert!(checked > 1000, "only {checked} conjunctions");
     assert!(lent_levels() > before, "no level the leaf arm made f's: the copy of a borrowed f went untested");
@@ -169,7 +165,7 @@ fn a_borrowed_operand_conjoins_as_an_owned_one() {
 
 #[test]
 fn a_borrowed_operand_conjoins_as_an_owned_one_keeping_counts() {
-    assert!(check_against_owned(&cases(10, 0xc0_0475, true), true) > 100);
+    assert!(check_against_owned(&cases(10, 0xc0_0475), true) > 100);
 }
 
 /// As [`a_borrowed_operand_conjoins_as_an_owned_one`], on 6 variables: an
@@ -177,7 +173,7 @@ fn a_borrowed_operand_conjoins_as_an_owned_one_keeping_counts() {
 /// by the nested route, and so is a borrowed one.
 #[test]
 fn a_borrowed_operand_on_a_projection_conjoins_as_an_owned_one() {
-    assert!(check_against_owned(&cases(6, 0xb0_77ed, true), false) > 0);
+    assert!(check_against_owned(&cases(6, 0xb0_77ed), false) > 0);
 }
 
 /// A weighted operand, or one with a marginal level, is read in place: the
@@ -185,16 +181,16 @@ fn a_borrowed_operand_on_a_projection_conjoins_as_an_owned_one() {
 #[test]
 fn a_weighted_or_marginal_borrowed_operand_conjoins_as_an_owned_one() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(8));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(8));
     let g = compile_clauses_on(&eng, &vtree, &[vec![2, 5], vec![-4, 6], vec![7, 8, -2], vec![1, -6]]);
     let values: Vec<LiteralWeights<_>> = (0..8).map(|i| LiteralWeights { negative: rat(i + 1, 1), positive: rat(i + 2, 1) }).collect();
     let weights = Weights::new(RationalWeights::from_literals(&values), Arithmetic::ExactRational);
-    let weighted_tree = Arc::new(Vtree::balanced(8).with_weights(weights).unwrap());
+    let weighted_tree = crate::vtree::Home::weighted(Vtree::balanced(8), weights).unwrap();
     let f_weighted = compile_clauses_on(&eng, &weighted_tree, &[vec![1, 2, -3], vec![3, 4], vec![-5, 6, 7], vec![8, -1]]);
     let g_weighted = compile_clauses_on(&eng, &weighted_tree, &[vec![2, 5], vec![-4, 6], vec![7, 8, -2], vec![1, -6]]);
     // g with the variables 1 to 4 summed out, and a formula over the others.
     let mut marginal = g.clone();
-    crate::test_helpers::marginalize_under(&eng, &mut marginal, &[vtree.children(vtree.root()).0]).unwrap();
+    eng.marginalize(&mut marginal, |v| v.0 <= 4).unwrap();
     assert!(marginal.has_marginal_level());
     let right = compile_clauses_on(&eng, &vtree, &[vec![5, 6], vec![-7, 8], vec![6, -8]]);
     for (a, b, what) in [(&f_weighted, &g_weighted, "weighted"), (&right, &marginal, "marginal")] {
@@ -215,7 +211,7 @@ fn a_weighted_or_marginal_borrowed_operand_conjoins_as_an_owned_one() {
 #[test]
 fn a_refused_conjunction_hands_back_what_it_was_given() {
     let mut refusals = 0;
-    for (what, f, g) in cases(10, 0x7ef_05ed, true).into_iter().step_by(4) {
+    for (what, f, g) in cases(10, 0x7ef_05ed).into_iter().step_by(4) {
         for (a, b) in [(&f, &g), (&g, &f)] {
             for (borrow_a, borrow_b) in [(false, false)].into_iter().chain(BORROWS) {
                 for arm in ["work", "reserve"] {
@@ -444,15 +440,13 @@ fn reserves(eng: &Engine, run: impl Fn() -> bool) -> u32 {
 #[test]
 fn borrowed_operands_on_two_allocations_of_one_layout_are_not_copied() {
     let eng = Engine::new();
-    let home = crate::vtree::Home::new(Arc::new(Vtree::balanced(9)));
+    let home = crate::vtree::Home::new(Vtree::balanced(9));
     let on = || Vtree::projection(&home, (1..=8).map(VarId)).unwrap();
     let (a, b) = (on(), on());
     assert!(!Arc::ptr_eq(&a, &b));
-    let clauses = |vtree: &Arc<Vtree>| {
-        let f = eng.clause(&crate::vtree::Home::unchecked(vtree), [1, -4, 6]).unwrap();
-        eng.and(f, eng.clause(&crate::vtree::Home::unchecked(vtree), [-2, 5, 8]).unwrap()).unwrap()
-    };
-    let (f, g_apart, g_shared) = (clauses(&a), eng.clause(&crate::vtree::Home::unchecked(&b), [2, -6, 7]).unwrap(), eng.clause(&crate::vtree::Home::unchecked(&a), [2, -6, 7]).unwrap());
+    let clause = |vtree: &Arc<Vtree>, lits: &[i32]| eng.clause_on(vtree, &lits.iter().map(|&l| crate::Literal::try_from(l).unwrap()).collect::<Vec<_>>()).unwrap();
+    let f = eng.and(clause(&a, &[1, -4, 6]), clause(&a, &[-2, 5, 8])).unwrap();
+    let (g_apart, g_shared) = (clause(&b, &[2, -6, 7]), clause(&a, &[2, -6, 7]));
     let apart = reserves(&eng, || eng.and(&f, &g_apart).is_ok());
     let shared = reserves(&eng, || eng.and(&f, &g_shared).is_ok());
     assert_eq!(apart, shared, "a conjunction across two allocations copies an operand");

@@ -9,14 +9,14 @@ use crate::test_helpers::assert_canonical;
 use crate::vtree::Vtree;
 
 /// The conjunction of `clauses` on `vtree`.
-fn cnf(vtree: &Arc<Vtree>, clauses: &[[i32; 2]], ternary: &[[i32; 3]]) -> Tdd {
+fn cnf(vtree: &crate::vtree::Home, clauses: &[[i32; 2]], ternary: &[[i32; 3]]) -> Tdd {
     let eng = Engine::new();
-    let mut f = Tdd::one(&crate::vtree::Home::unchecked(vtree));
+    let mut f = Tdd::one(vtree);
     for c in clauses {
-        f = eng.and(f, Tdd::clause(&crate::vtree::Home::unchecked(vtree), *c).unwrap()).unwrap();
+        f = eng.and(f, Tdd::clause(vtree, *c).unwrap()).unwrap();
     }
     for c in ternary {
-        f = eng.and(f, Tdd::clause(&crate::vtree::Home::unchecked(vtree), *c).unwrap()).unwrap();
+        f = eng.and(f, Tdd::clause(vtree, *c).unwrap()).unwrap();
     }
     f
 }

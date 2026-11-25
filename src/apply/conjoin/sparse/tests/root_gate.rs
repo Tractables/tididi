@@ -97,7 +97,7 @@ fn the_engine_sparse_route_decides_the_gate() {
 /// blocks `bits` wide: `A_i` and `B_i` the `i`-th of `blocks` equal
 /// intervals of the values, moved up by `shift` and wrapped. The root is
 /// one node of `blocks` pairs, `(A_i, B_i)`.
-fn rectangles(eng: &Engine, vtree: &Arc<Vtree>, bits: u32, blocks: u64, shift: u64) -> Tdd {
+fn rectangles(eng: &Engine, vtree: &crate::vtree::Home, bits: u32, blocks: u64, shift: u64) -> Tdd {
     let (a, b) = (block(1, bits), block(1 + bits, bits));
     let (n, width) = (1u64 << bits, (1u64 << bits) / blocks);
     let mut rows = Vec::new();
@@ -109,7 +109,7 @@ fn rectangles(eng: &Engine, vtree: &Arc<Vtree>, bits: u32, blocks: u64, shift: u
         }
     }
     let (vars, packed) = pack(&[&a, &b], &rows);
-    eng.from_models(&crate::vtree::Home::unchecked(vtree), &vars, &packed).unwrap()
+    eng.from_models(vtree, &vars, &packed).unwrap()
 }
 
 #[test]
