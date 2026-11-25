@@ -133,7 +133,7 @@ impl<'a> StoredPairs<'a> {
     /// ```compile_fail,E0597
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let vtree = Home::new(Vtree::balanced(2));
     /// let diagram = Tdd::one(&vtree);
     /// let level = diagram.level(vtree.root());
     /// let stored = level.stored().unwrap();

@@ -283,7 +283,7 @@ fn random_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, used: &[u32], rng
         let (mut p, mut q) = (f.clone(), g.clone());
         eng.pool_search(&mut [&mut p, &mut q], &PoolSearchConfig::default()).map(|_| p)
     });
-    let target = Arc::new(Vtree::random(n, rng.below(1000)));
+    let target = Home::new(Vtree::random(n, rng.below(1000)));
     a.run("restructure_to", || {
         let mut t = f.clone();
         t.restructure_to(&target, usize::MAX).map(|_| t)

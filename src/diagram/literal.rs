@@ -89,11 +89,11 @@ impl TryFrom<i32> for Literal {
 /// Returns [`OperationError::InvalidLiteral`](crate::OperationError::InvalidLiteral) for zero.
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::Tdd;
 /// use tididi::vtree::Vtree;
 ///
-/// let vtree = Arc::new(Vtree::balanced(3));
+/// let vtree = Home::new(Vtree::balanced(3));
 /// let dimacs: Vec<i32> = vec![1, -2];
 /// let from_slice = Tdd::clause(&vtree, &dimacs)?;
 /// assert_eq!(from_slice.model_count()?, Tdd::clause(&vtree, [1, -2])?.model_count()?);
@@ -110,11 +110,11 @@ impl TryFrom<&i32> for Literal {
 /// Copy a borrowed literal, so [`crate::Tdd::clause`] accepts a `&[Literal]`.
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{Literal, Tdd};
 /// use tididi::vtree::{VarId, Vtree};
 ///
-/// let vtree = Arc::new(Vtree::balanced(3));
+/// let vtree = Home::new(Vtree::balanced(3));
 /// let lits: Vec<Literal> = vec![Literal::pos(VarId(1)), Literal::neg(VarId(2))];
 /// let from_slice = Tdd::clause(&vtree, &lits)?;
 /// assert_eq!(from_slice.model_count()?, Tdd::clause(&vtree, [1, -2])?.model_count()?);

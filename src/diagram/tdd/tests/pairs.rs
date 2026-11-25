@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use crate::test_helpers::bare_roots;
 use super::*;
 use crate::diagram::LevelState;
@@ -22,7 +23,7 @@ fn census(f: &Tdd) -> usize {
 
 #[test]
 fn pair_count_keeps_each_closed_level_once() {
-    let vtree = Arc::new(Vtree::balanced(6));
+    let vtree = Home::new(Vtree::balanced(6));
     let mut f = Tdd::clause(&vtree, [1, 2, -3]).unwrap() & Tdd::clause(&vtree, [-1, 4, 5]).unwrap();
     f.minimize().unwrap();
     assert!(f.levels.is_closed());

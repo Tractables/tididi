@@ -98,11 +98,11 @@ impl Tdd {
     /// inside a batch with resource limits.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
     /// use tididi::diagram::{ChildDecoder, ChildRef, NodeIdx};
     ///
-    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let vtree = Home::new(Vtree::balanced(4));
     /// let f = Tdd::clause(&vtree, [1, 3])? & Tdd::clause(&vtree, [-2, 4])?;
     /// let g = f.renumber_top_down()?;
     /// assert!(g.equivalent(&f)?);

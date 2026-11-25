@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use super::*;
 use crate::{Engine, OperationError};
 use crate::limits::{LimitConfig, StopAt, StopRules};
@@ -18,7 +19,7 @@ fn checked_assembly_charges_worklists_even_when_levels_are_already_allocated() {
 
 #[test]
 fn checked_assembly_polls_while_seeding_worklists() {
-    let tree = Arc::new(Vtree::linear(16));
+    let tree = Home::new(Vtree::linear(16));
     let source = Tdd::one(&tree);
     assert_canonical(&source);
     let eng = Engine::new();
@@ -27,7 +28,7 @@ fn checked_assembly_polls_while_seeding_worklists() {
     let _scope = eng.limits().scope(LimitConfig::none().with_stop_rules(StopRules {
         unconditional: Some(StopAt::WorkUnits(3)), ..StopRules::default()
     }));
-    let assembly = crate::diagram::Assembly::from_levels(&eng, tree, source.levels.into_vec());
+    let assembly = crate::diagram::Assembly::from_levels(&eng, Arc::clone(&tree), source.levels.into_vec());
     assert_eq!(assembly.finish(output).err(), Some(OperationError::Stopped));
     assert_eq!(eng.limits().meters().work_units, 3);
 }
@@ -73,7 +74,7 @@ fn operation_assembly_reads_the_vtree_weights_and_recycles_refused_results() {
 fn unwinding_discards_unfinished_output_storage() {
     use crate::diagram::Assembly;
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = Home::new(Vtree::balanced(2));
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _output = Assembly::new(&eng, &vtree).unwrap();
         panic!("interrupted output construction");

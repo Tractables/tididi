@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use crate::diagram::{ChildPair, TddNodeId, POS_LEAF_IDX, NEG_LEAF_IDX, ONE_LEAF_IDX};
 use crate::{Engine, Tdd};
 use crate::test_helpers::assert_canonical;
@@ -36,7 +37,7 @@ fn interning_indexes_prior_pushes_and_copy_replaces_the_entire_level() {
 fn finish_and_the_reader_refuse_a_level_that_mixes_leaf_forms() {
     use crate::diagram::TddBuildError;
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(2));
+    let tree = Home::new(Vtree::balanced(2));
     let root = tree.root();
     let (x, _) = tree.children(root);
     let mut b = Tdd::builder(&eng, &tree).unwrap();
@@ -57,7 +58,7 @@ fn finish_refuses_mixed_leaf_forms_on_either_side_and_beside_a_wide_child() {
     use crate::diagram::{NodeIdx, TddBuildError};
     use crate::vtree::VarId;
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(2));
+    let tree = Home::new(Vtree::balanced(2));
     let root = tree.root();
     let mut b = Tdd::builder(&eng, &tree).unwrap();
     let node = b.push(&eng, root, &[ChildPair::new(POS_LEAF_IDX, ONE_LEAF_IDX), ChildPair::new(NEG_LEAF_IDX, POS_LEAF_IDX)]).unwrap();
@@ -67,7 +68,7 @@ fn finish_refuses_mixed_leaf_forms_on_either_side_and_beside_a_wide_child() {
     let leaf = |v: u32| Vtree::leaf(VarId(v));
     let pair = |l: u32, r: u32| Vtree::join(&leaf(l), &leaf(r)).unwrap();
     let wide = Vtree::join(&pair(2, 3), &pair(4, 5)).unwrap();
-    let tree = Arc::new(Vtree::join(&leaf(1), &wide).unwrap());
+    let tree = Home::new(Vtree::join(&leaf(1), &wide).unwrap());
     let root = tree.root();
     let build = |first| {
         let mut b = Tdd::builder(&eng, &tree).unwrap();
@@ -117,7 +118,7 @@ fn fill(
 
 #[test]
 fn every_refusal_point_answers_over_budget_and_returns_the_buffers() {
-    let tree = Arc::new(Vtree::balanced(4));
+    let tree = Home::new(Vtree::balanced(4));
     let mut refused = 0;
     for cut in 0..10u32 {
         let eng = Engine::new();
@@ -144,7 +145,7 @@ fn every_refusal_point_answers_over_budget_and_returns_the_buffers() {
 
 #[test]
 fn a_refused_level_take_leaves_the_builder_over_budget() {
-    let tree = Arc::new(Vtree::balanced(4));
+    let tree = Home::new(Vtree::balanced(4));
     let eng = Engine::new();
     eng.refuse_nth_reserve(0);
     assert_eq!(Tdd::builder(&eng, &tree).unwrap_err(), crate::OperationError::OverBudget);
@@ -154,7 +155,7 @@ fn a_refused_level_take_leaves_the_builder_over_budget() {
 
 #[test]
 fn a_full_level_answers_index_overflow() {
-    let tree = Arc::new(Vtree::balanced(2));
+    let tree = Home::new(Vtree::balanced(2));
     let eng = Engine::new();
     let root = tree.root();
     let mut b = Tdd::builder(&eng, &tree).unwrap();
@@ -179,7 +180,7 @@ fn interning_recovers_after_an_index_update_is_refused() {
     use crate::OperationError;
 
     for multiple_pairs in [false, true] {
-        let vtree = Arc::new(Vtree::balanced(2));
+        let vtree = Home::new(Vtree::balanced(2));
         let root = vtree.root();
         let eng = Engine::new();
         let mut builder = Tdd::builder(&eng, &vtree).unwrap();
@@ -222,7 +223,7 @@ fn interning_recovers_after_an_index_update_is_refused() {
 fn a_repeated_pair_is_found_among_many() {
     use crate::diagram::NodeIdx;
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(8));
+    let tree = Home::new(Vtree::balanced(8));
     let root = tree.root();
     let build = |extra: Option<(u32, u32)>| {
         let mut b = Tdd::builder(&eng, &tree).unwrap();
@@ -252,7 +253,7 @@ fn a_repeated_pair_is_found_among_many() {
 fn a_repeated_pair_is_found_between_wide_children() {
     use crate::diagram::NodeIdx;
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(32));
+    let tree = Home::new(Vtree::balanced(32));
     let root = tree.root();
     let build = |extra: Option<(u32, u32)>| {
         let mut b = Tdd::builder(&eng, &tree).unwrap();

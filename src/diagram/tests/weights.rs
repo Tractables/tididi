@@ -1,5 +1,6 @@
 //! Diagrams on a weighted vtree, and the weight values a level holds.
 
+use crate::vtree::Home;
 use std::sync::Arc;
 
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
@@ -205,7 +206,7 @@ fn named_weight_layouts_evaluate_the_same_literals() {
     })
     .unwrap();
     assert_eq!(from_rows, from_columns);
-    let tree = Arc::new(Vtree::balanced(2));
+    let tree = Home::new(Vtree::balanced(2));
     for (literals, expected) in [
         ([1, -2], rat(15, 77)),
         ([-1, -2], rat(-2, 11)),
