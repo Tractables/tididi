@@ -11,15 +11,16 @@ use crate::*;
 #[repr(C)]
 pub struct TididiWeight { pub variable: u32, pub negative: *const c_char, pub positive: *const c_char }
 pub(crate) unsafe fn weights(f: &tididi::Tdd, values: *const TididiWeight, len: usize) -> Result<RationalWeights> {
-    let mut rows = vec![LiteralWeights { negative: BigRational::one(), positive: BigRational::one() }; f.vtree().num_vars() as usize];
+    let vtree = domain(f);
+    let mut rows = vec![LiteralWeights { negative: BigRational::one(), positive: BigRational::one() }; vtree.num_vars() as usize];
     let mut seen = HashSet::new();
     for value in unsafe { array(values, len)? } {
-        let var = variable(value.variable)?; check_variables(f.vtree(), [var])?;
+        let var = variable(value.variable)?; check_variables(&vtree, [var])?;
         if !seen.insert(var) { return Err(invalid("duplicate weight variable")); }
         rows[var.idx()] = LiteralWeights { negative: unsafe { text(value.negative)? }.parse().map_err(invalid)?, positive: unsafe { text(value.positive)? }.parse().map_err(invalid)? };
     }
-    for level in f.vtree().bottomup() {
-        if let tididi::vtree::VtreeNode::Leaf { var, .. } = f.vtree().node(level) && !seen.contains(var) { return Err(invalid(format!("missing weights for variable {}", var.0))); }
+    for level in vtree.bottomup() {
+        if let tididi::vtree::VtreeNode::Leaf { var, .. } = vtree.node(level) && !seen.contains(var) { return Err(invalid(format!("missing weights for variable {}", var.0))); }
     }
     Ok(RationalWeights::from_literals(&rows))
 }
@@ -36,7 +37,7 @@ pub unsafe extern "C" fn tididi_weighted_count(value: *const TididiCircuit, valu
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_weighted_ratio(numerator: *const TididiCircuit, denominator: *const TididiCircuit, values: *const TididiWeight, len: usize, out: *mut *mut c_char, config: *const TididiLimits) -> *mut TididiError {
     boundary(|| { let out = unsafe { vacant(out)? }; let f = unsafe { borrow(numerator)? }; let g = unsafe { borrow(denominator)? };
-        if !Arc::ptr_eq(f.vtree(), g.vtree()) { return Err(invalid("circuits must share one vtree")); }
+        if !Arc::ptr_eq(&domain(&f), &domain(&g)) { return Err(invalid("circuits must share one vtree")); }
         let weights = unsafe { weights(&f, values, len)? }; let config = unsafe { limits(config)? };
         let denominator = run(f.vtree(), config.clone(), |e| e.evaluate(&g, &weights))?;
         if denominator.is_zero() { return Err(invalid("denominator has zero weight")); }

@@ -312,7 +312,7 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
         || f.satisfying_assignment(),
         |x, y| match (x, y) {
             (None, None) => true,
-            (Some(m), Some(_)) => f.clone().condition(m.iter().copied()).unwrap().is_sat().unwrap(),
+            (Some(m), Some(r)) => m.len() == r.len() && f.clone().condition(m.iter().copied()).unwrap().is_sat().unwrap(),
             _ => false,
         },
     );

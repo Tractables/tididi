@@ -5,14 +5,23 @@ use std::time::{Duration, Instant};
 use pyo3::prelude::*;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::types::PyBool;
-use tididi::{Literal, Vtree};
+use tididi::{Literal, Tdd, Vtree};
 use tididi::limits::LimitConfig;
-use tididi::vtree::VarId;
+use tididi::vtree::{Home, VarId};
 
 /// A shared variable decomposition. Reuse one vtree for circuits you will combine.
 #[pyclass(name = "Vtree", module = "tididi", skip_from_py_object, frozen)]
 #[derive(Clone)]
 pub struct PyVtree(pub Arc<Vtree>);
+
+impl PyVtree {
+    /// `vtree` made a home: a circuit built on it is held on the home's projection on the variables
+    /// it uses, so it stores no level for any other variable.
+    fn home(vtree: Vtree) -> Self { Self(Arc::clone(&Home::new(vtree))) }
+}
+
+/// The vtree a circuit was built on: the home of its projection.
+pub fn domain(f: &Tdd) -> Arc<Vtree> { Arc::clone(&f.home().expect("a binding circuit is on a home")) }
 
 #[pymethods]
 impl PyVtree {
@@ -20,20 +29,20 @@ impl PyVtree {
     #[staticmethod]
     fn balanced(n: u32) -> PyResult<Self> {
         if n == 0 { return Err(PyValueError::new_err("a vtree needs at least one variable")); }
-        Ok(Self(Arc::new(Vtree::balanced(n))))
+        Ok(Self::home(Vtree::balanced(n)))
     }
 
     /// Build a balanced vtree with leaves in the supplied order of distinct positive IDs.
     #[staticmethod]
     fn balanced_over(variables: Vec<u32>) -> PyResult<Self> {
         let variables = variable_ids(&variables)?;
-        Vtree::balanced_over(&variables).map(|v| Self(Arc::new(v))).map_err(value_error)
+        Vtree::balanced_over(&variables).map(Self::home).map_err(value_error)
     }
 
     /// Build a right-linear vtree with leaves in the supplied order.
     #[staticmethod]
     fn linear(variables: Vec<u32>) -> PyResult<Self> {
-        Vtree::linear_from_order(&variable_ids(&variables)?).map(|v| Self(Arc::new(v))).map_err(value_error)
+        Vtree::linear_from_order(&variable_ids(&variables)?).map(Self::home).map_err(value_error)
     }
 
     /// Build a one-variable vtree.
@@ -45,13 +54,13 @@ impl PyVtree {
     /// Join disjoint vtrees under a new root, leaving both inputs usable.
     #[staticmethod]
     fn join(left: &Self, right: &Self) -> PyResult<Self> {
-        Vtree::join(&left.0, &right.0).map(|v| Self(Arc::new(v))).map_err(value_error)
+        Vtree::join(&left.0, &right.0).map(Self::home).map_err(value_error)
     }
 
     /// Parse .vtree text. Reuse the returned object when loading related circuits.
     #[staticmethod]
     fn from_text(text: &str) -> PyResult<Self> {
-        Vtree::from_text(text).map(|v| Self(Arc::new(v))).map_err(value_error)
+        Vtree::from_text(text).map(Self::home).map_err(value_error)
     }
 
     /// Serialize the shape and variable IDs as .vtree text.

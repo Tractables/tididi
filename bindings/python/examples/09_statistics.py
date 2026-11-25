@@ -24,7 +24,12 @@ def widest_node(circuit):
 
 level, node, pairs = widest_node(exclusive)
 print(f"Widest XOR node: {pairs} pairs at vtree node {level}")
-print("Widest literal node:", widest_node(x1)[2], "pair")
+
+# %%
+# A Python vtree is a home: each circuit stores levels only for the variables
+# it uses. A literal is decided by its variable's leaf alone, so it stores no
+# internal node and ``widest_node`` returns None.
+print("Widest literal node:", widest_node(x1))
 print("Total XOR pairs:", exclusive.pair_count())
 print("Satisfying assignments:", exclusive.model_count())
 

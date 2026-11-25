@@ -3,11 +3,16 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tididi::{Engine, Literal, Tdd, Vtree};
 use tididi::limits::LimitConfig;
-use tididi::vtree::VarId;
+use tididi::vtree::{Home, VarId};
 use crate::*;
 
 /// A shared vtree handle. Circuits retain the vtree after this handle is freed.
 pub struct TididiVtree(Arc<Vtree>);
+/// A handle on `vtree` made a home: a circuit built on it is held on the home's projection on the
+/// variables it uses, so it stores no level for any other variable.
+fn domain_handle(vtree: Vtree) -> *mut TididiVtree { Box::into_raw(Box::new(TididiVtree(Arc::clone(&Home::new(vtree))))) }
+/// The vtree a circuit was built on: the home of its projection.
+pub(crate) fn domain(f: &Tdd) -> Arc<Vtree> { Arc::clone(&f.home().expect("a binding circuit is on a home")) }
 /// Per-operation limits and options. Pass NULL for unlimited work and no options, or initialize with
 /// tididi_limits_default.
 #[repr(C)]
@@ -76,26 +81,26 @@ pub(crate) unsafe fn vtree<'a>(value: *const TididiVtree) -> Result<&'a Arc<Vtre
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_vtree_balanced(n: u32, out: *mut *mut TididiVtree) -> *mut TididiError {
     boundary(|| { let out = unsafe { vacant(out)? }; if n == 0 { return Err(invalid("a vtree needs at least one variable")); }
-        *out = Box::into_raw(Box::new(TididiVtree(Arc::new(Vtree::balanced(n))))); Ok(()) })
+        *out = domain_handle(Vtree::balanced(n)); Ok(()) })
 }
 /// Build a balanced vtree over distinct positive variable IDs in the given leaf order.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_vtree_balanced_over(order: *const u32, len: usize, out: *mut *mut TididiVtree) -> *mut TididiError {
     boundary(|| { let out = unsafe { vacant(out)? }; let vars = variables(unsafe { array(order, len)? })?;
-        *out = Box::into_raw(Box::new(TididiVtree(Arc::new(Vtree::balanced_over(&vars).map_err(invalid)?)))); Ok(()) })
+        *out = domain_handle(Vtree::balanced_over(&vars).map_err(invalid)?); Ok(()) })
 }
 /// Build a right-linear vtree over distinct positive IDs in the supplied order.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_vtree_linear(order: *const u32, len: usize, out: *mut *mut TididiVtree) -> *mut TididiError {
     boundary(|| { let out = unsafe { vacant(out)? }; let vars = variables(unsafe { array(order, len)? })?;
-        *out = Box::into_raw(Box::new(TididiVtree(Arc::new(Vtree::linear_from_order(&vars).map_err(invalid)?)))); Ok(()) })
+        *out = domain_handle(Vtree::linear_from_order(&vars).map_err(invalid)?); Ok(()) })
 }
 /// Join disjoint vtrees under a new root. Borrows both inputs; the result is a new domain.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_vtree_join(left: *const TididiVtree, right: *const TididiVtree, out: *mut *mut TididiVtree) -> *mut TididiError {
     boundary(|| { let out = unsafe { vacant(out)? };
         let joined = Vtree::join(unsafe { vtree(left)? }, unsafe { vtree(right)? }).map_err(invalid)?;
-        *out = Box::into_raw(Box::new(TididiVtree(Arc::new(joined)))); Ok(()) })
+        *out = domain_handle(joined); Ok(()) })
 }
 /// Serialize the vtree as an owned UTF-8 string. Free it with tididi_string_free.
 #[unsafe(no_mangle)]
@@ -106,7 +111,7 @@ pub unsafe extern "C" fn tididi_vtree_to_text(value: *const TididiVtree, out: *m
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_vtree_from_text(value: *const c_char, out: *mut *mut TididiVtree) -> *mut TididiError {
     boundary(|| { let out = unsafe { vacant(out)? }; let parsed = Vtree::from_text(unsafe { text(value)? }).map_err(invalid)?;
-        *out = Box::into_raw(Box::new(TididiVtree(Arc::new(parsed)))); Ok(()) })
+        *out = domain_handle(parsed); Ok(()) })
 }
 /// Release idle operation buffers without changing circuits.
 #[unsafe(no_mangle)]
@@ -122,5 +127,5 @@ pub unsafe extern "C" fn tididi_vtree_free(value: *mut TididiVtree) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_circuit_vtree(value: *const TididiCircuit, out: *mut *mut TididiVtree) -> *mut TididiError {
     boundary(|| { let out = unsafe { vacant(out)? }; let f = unsafe { borrow(value)? };
-        *out = Box::into_raw(Box::new(TididiVtree(Arc::clone(f.vtree())))); Ok(()) })
+        *out = Box::into_raw(Box::new(TididiVtree(domain(&f)))); Ok(()) })
 }

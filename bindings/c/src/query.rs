@@ -97,8 +97,9 @@ pub struct TididiNodeSizes(Vec<TididiNodeSize>);
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_node_sizes(value: *const TididiCircuit, out: *mut *mut TididiNodeSizes) -> *mut TididiError {
     boundary(|| { let out = unsafe { vacant(out)? }; let f = unsafe { borrow(value)? };
-        let rows = f.vtree().bottomup().flat_map(|v| f.level(v).internal_inputs_iter()
-            .map(move |(i, pairs)| TididiNodeSize { vtree_node: v.0, local_node: i, pairs: pairs.len() })).collect();
+        let vtree = f.vtree();
+        let rows = vtree.bottomup().flat_map(|v| f.level(v).internal_inputs_iter()
+            .map(move |(i, pairs)| TididiNodeSize { vtree_node: vtree.home_node(v).0, local_node: i, pairs: pairs.len() })).collect();
         *out = Box::into_raw(Box::new(TididiNodeSizes(rows))); Ok(()) })
 }
 /// Return the length of a live, nonnull node-size snapshot.
