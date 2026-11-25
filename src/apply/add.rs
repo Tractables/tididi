@@ -389,6 +389,14 @@ fn sum_levels(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
         let levels = assembly.levels_mut();
         levels[leaf.idx()].become_marginal(store, None);
     }
+    // A region holds values, as a summed-out internal level does; no
+    // summed-out level is above it.
+    for region in vtree.regions() {
+        let (fl, gl) = (&f.levels[region.idx()], &g.levels[region.idx()]);
+        let (counts, big) = joined_store(eng, fl, gl)?;
+        shift[region.idx()] = fl.marginal_counts().map_or(0, <[u128]>::len) as u32;
+        assembly.levels_mut()[region.idx()].become_marginal(counts, big);
+    }
 
     let mut built: Vec<Option<Pieces>> = Vec::new();
     lim.reserve_exact(&mut built, n)?;

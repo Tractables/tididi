@@ -5,6 +5,7 @@ use num_bigint::BigUint;
 use super::*;
 use crate::diagram::{Arithmetic, RationalWeights, Weights};
 use crate::test_helpers::{assert_canonical, compile_clauses_on, node_value, rand_cnf, under, vtree_shapes, CnfShape, Lcg};
+use crate::vtree::{Home, VarId};
 use crate::{and, or};
 
 /// The count `f` gives the assignment `bits` of variables `1..=n`, bit `i`
@@ -325,4 +326,32 @@ fn every_refused_reserve_of_a_sum_leaves_the_operands() {
         }
     }
     assert!(refused > 0, "no sum refused");
+}
+
+/// The values `f` gives the assignments of variables `1..=n` agree with
+/// `root`'s, `f` on a projection and `root` on a copy of its home's tree.
+fn assert_reads_as(f: &Tdd, root: &Tdd, n: u32, label: &str) {
+    crate::test_helpers::check::check_all_fast(f, label);
+    for bits in 0..1u64 << n {
+        assert_eq!(value(f, n, bits), value(root, n, bits), "{label}: assignment {bits:b}");
+    }
+}
+
+/// On the projection of `((x1 x2) (x3 x4))` on `{x1, x3}`, `x1` summed out
+/// of `x1 ∨ x3` is a region; the diagram added to itself counts as the sum
+/// on the root does.
+#[test]
+fn a_diagram_with_a_region_adds_to_itself() {
+    let eng = Engine::new();
+    let home = Home::new(Vtree::balanced(4));
+    let vtree = Vtree::projection(&home, [VarId(1), VarId(3)]).unwrap();
+    let mut f = Tdd::clause(&vtree, [1, 3]).unwrap();
+    eng.marginalize(&mut f, |v| v == VarId(1)).unwrap();
+    assert_eq!(f.vtree().regions().count(), 1);
+    let root = Arc::new(Vtree::clone(home.vtree()));
+    let mut r = Tdd::clause(&root, [1, 3]).unwrap();
+    eng.marginalize_levels(&mut r, &[root.leaf_of(VarId(1)).unwrap()]).unwrap();
+    let twice = eng.add(f.clone(), f).unwrap();
+    assert_eq!(twice.vtree().regions().count(), 1);
+    assert_reads_as(&twice, &eng.add(r.clone(), r).unwrap(), 4, "x1 + x3, twice");
 }
