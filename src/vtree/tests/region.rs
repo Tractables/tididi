@@ -32,14 +32,16 @@ fn free_vars(own: &Vtree) -> Vec<VarId> {
 }
 
 /// The variables of the home leaves under own node `t`'s home node that
-/// `own` does not have as a leaf, right to left; none when every variable
-/// outside the extents is a leaf: the reference for [`Vtree::free_set_under`].
+/// `own` has neither as a leaf nor in an extent, right to left; none when
+/// every variable outside the extents is a leaf: the reference for
+/// [`Vtree::free_set_under`].
 fn free_vars_under(own: &Vtree, t: VtreeIdx) -> Vec<VarId> {
     let Some(home) = own.link_home().map(|home| &**home).filter(|_| own.free_leaves() > 0) else { return Vec::new() };
+    let free = free_vars(own);
     home.subtree(own.home_node(t))
         .filter(|&h| home.node(h).is_leaf())
         .map(|h| home.leaf_var(h))
-        .filter(|&var| own.leaf_of(var).is_none())
+        .filter(|var| free.contains(var))
         .collect()
 }
 

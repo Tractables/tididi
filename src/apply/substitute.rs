@@ -25,6 +25,9 @@ impl Engine {
         } else {
             self.substitute_with(f, replacements.iter().map(|&(var, diagram)| (var, Replacement::Diagram(diagram))))?
         };
+        if replacements.is_empty() {
+            return Ok(result);
+        }
         super::extend::trimmed(self, result)
     }
 

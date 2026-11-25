@@ -584,6 +584,9 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, dropped: Option<&[Vtr
     lim.check_stop()?;
     let root = vtree.root();
     if vtree.node(root).is_leaf() {
+        if f.levels[root.idx()].is_marginal() && !vtree.node(root).is_region() {
+            return summed_root_leaf(eng, f, home);
+        }
         if f.output.local != ONE_LEAF_IDX || vtree.node(root).is_region() || f.levels[root.idx()].is_marginal() {
             return Ok(false);
         }
@@ -1098,6 +1101,33 @@ fn own_counts(
         out.set(VtreeIdx(u as u32), column);
     }
     Ok(out)
+}
+
+/// A summed-out root leaf, whose output names a slot of its pinned column
+/// or an inline count by label, as the region of its variable holding that
+/// one value.
+#[cold]
+fn summed_root_leaf(eng: &Engine, f: &mut Tdd, home: &Home) -> Result<bool, OperationError> {
+    let root = f.vtree.root();
+    let label = crate::diagram::LeafLabel::from_idx(f.output.local.idx());
+    let leaf = &f.levels[root.idx()];
+    let mut level = TddLevel::new();
+    match leaf.is_weight_marginal() {
+        true => {
+            let value = leaf.weight_values().expect("a weight-marginal leaf holds its column")[label as usize].clone();
+            let mut column = Vec::new();
+            eng.limits().try_push(&mut column, value)?;
+            MarginalStorage::new(&mut level).install_weights(column);
+        }
+        false => {
+            level.become_marginal(Vec::new(), None);
+            push_count_slot(eng, &mut level, Count::from_u128(crate::diagram::leaf_count(label)))?;
+        }
+    }
+    let own = Vtree::project_regions(home, Vec::new(), vec![f.vtree.folded_region(root)]);
+    let output = TddNodeId { vtree: own.root(), local: NodeIdx(0) };
+    replace(eng, f, crate::build::seat_canonical(eng, &own, vec![level], output));
+    Ok(true)
 }
 
 fn replace(eng: &Engine, f: &mut Tdd, by: Tdd) {

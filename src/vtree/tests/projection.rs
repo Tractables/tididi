@@ -273,3 +273,17 @@ fn renaming_keeps_the_shape() {
     assert!(matches!(own.renamed(|_| VarId(1), 8), Err(VtreeError::OverlappingVariable(VarId(1)))));
     assert!(own.renamed(|v| v, 6).is_err());
 }
+
+/// The empty projection has the shape of the empty projection alone,
+/// whatever its home, and compares without reading a root it lacks.
+#[test]
+fn same_tree_reads_the_empty_projection() {
+    let home = Home::new(Vtree::balanced(4));
+    let other = Home::new(Vtree::balanced(6));
+    let empty = Vtree::empty_projection(&home);
+    let one = Vtree::projection(&home, [VarId(2)]).unwrap();
+    assert!(empty.same_tree(&empty));
+    assert!(empty.same_tree(&Vtree::empty_projection(&other)));
+    assert!(!empty.same_tree(&one) && !one.same_tree(&empty));
+    assert!(!empty.same_tree(&home) && !home.same_tree(&empty));
+}

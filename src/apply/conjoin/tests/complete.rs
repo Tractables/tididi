@@ -466,3 +466,42 @@ fn summing_a_child_of_a_cross_root_keeps_the_count() {
         }
     }
 }
+
+/// [`one_pair_columns_give_back_their_table`] with each operand on the
+/// projection of a home on its variables, placed on their union.
+#[test]
+fn one_pair_columns_give_back_their_table_on_a_home() {
+    use std::borrow::Cow;
+    let fv: Vec<u32> = (1..=16).filter(|v| v % 2 == 1 || *v == 2 || *v == 4).collect();
+    let gv: Vec<u32> = (1..=16).filter(|v| v % 2 == 0 || *v == 13 || *v == 15).collect();
+    let meter = |f: &Tdd, g: &Tdd| {
+        let eng = Engine::new();
+        eng.and(f.clone(), g.clone()).unwrap();
+        eng.limits().meters().in_flight_bytes
+    };
+    // A draw whose support is all of `vars`: one that minimizes onto fewer
+    // leaves pads the rest when placed, and no level then reads one g
+    // pair a column.
+    let on_projection = |home: &crate::vtree::Home, vars: &[u32], rng: &mut Lcg| {
+        loop {
+            let f = function_of(home, vars, rng);
+            if f.vtree().num_leaves() as usize == vars.len() {
+                return f;
+            }
+        }
+    };
+    for (shape, vtree) in [("balanced", Vtree::balanced(16)), ("random", Vtree::random(16, 0x5eed_a907))] {
+        let home = crate::vtree::Home::new(vtree);
+        let mut rng = Lcg::new(0x5eed_a908);
+        let before = complete_census();
+        for round in 0..4 {
+            let f = on_projection(&home, &fv, &mut rng);
+            let g = on_projection(&home, &gv, &mut rng);
+            let [f, g] = crate::apply::extend::on_one(&Engine::new(), [Cow::Owned(f), Cow::Owned(g)]).unwrap().map(Cow::into_owned);
+            let lone = meter(&f, &g);
+            let read = column_reads(|| meter(&f, &g));
+            assert_eq!(lone, read, "{shape}, round {round}: the meter after the conjunction moved with the column reads");
+        }
+        assert!(complete_census()[4] > before[4], "{shape}: no level read one g pair a column");
+    }
+}

@@ -1218,3 +1218,74 @@ fn the_walk_polls_the_engine_limits() {
         assert!(matches!(eng.restrict_to_care(f.clone(), &care), Err(OperationError::Stopped)));
     }
 }
+
+/// On a home, a care on the projection of one block restricts an `f` on
+/// every variable, and the other way round, through the public entry: the
+/// shape `restrict_differing_root_randomized` re-roots a diagram for, which
+/// a home reaches with operands on different projections.
+#[test]
+fn restrict_across_projections_randomized() {
+    let nvars = 6u32;
+    let home = crate::vtree::Home::new(Vtree::balanced(nvars));
+    let vtree = &*home;
+    let all_vars: Vec<u32> = (1..=nvars).collect();
+    let mut rng = Lcg::new(0x5eed_0fd1_ff00_7a12);
+    let (mut across, mut shrinks) = (0u32, 0u32);
+    for _ in 0..300 {
+        let block: Vec<u32> = match rng.coin() {
+            true => vec![1, 2, 3],
+            false => vec![4, 5, 6],
+        };
+        let wide = rand_conj_over(vtree, &all_vars, 4, 3, false, &mut rng);
+        let narrow = rand_conj_over(vtree, &block, 4, 3, false, &mut rng);
+        for (f, care) in [(&wide, &narrow), (&narrow, &wide)] {
+            if f.is_zero() || count_is_zero(care) {
+                continue;
+            }
+            across += !Arc::ptr_eq(f.vtree(), care.vtree()) as u32;
+            let g = f.clone().restrict_to_care(care).unwrap().into_tdd();
+            crate::test_helpers::check::check_all_fast(&g, "restrict_to_care across projections");
+            assert_sound_on_truth_table(f, care, &g, nvars);
+            let (gp, fp) = (reachable_pairs(&g), reachable_pairs(f));
+            assert!(gp <= fp, "restrict_to_care grew beyond f: {gp} > {fp}");
+            shrinks += (gp < fp) as u32;
+        }
+    }
+    assert!(across >= 100, "too few cases across projections: {across}");
+    assert!(shrinks > 0, "no shrink on any case across projections");
+}
+
+/// On a home, the public restriction's unminimized output conjoins with a
+/// diagram on another projection and minimizes to a valid diagram of the
+/// conjunction.
+#[test]
+fn restrict_output_on_a_home_conjoins() {
+    use crate::test_helpers::check::check_all_fast;
+    let eng = Engine::new();
+    let mut rng = Lcg::new(0x0bad_f00d_1337_c0df);
+    let mut conjoined = 0;
+    for nvars in 2u32..=5 {
+        let home = crate::vtree::Home::new(Vtree::balanced(nvars));
+        let vtree = &*home;
+        for _ in 0..150 {
+            let f = rand_conj(vtree, nvars, 4, nvars as u64, false, &mut rng);
+            let c = rand_conj(vtree, nvars, 4, nvars as u64, false, &mut rng);
+            let other = rand_conj(vtree, nvars, 4, nvars as u64, false, &mut rng);
+            if count_is_zero(&c) || f.is_zero() {
+                continue;
+            }
+            let g = f.clone().restrict_to_care(&c).unwrap().into_tdd();
+            check_all_fast(&g, "restrict_to_care on a home");
+            assert_sound_on_truth_table(&f, &c, &g, nvars);
+            let mut p = eng.and(g.clone(), other.clone()).unwrap();
+            p.minimize().unwrap();
+            assert_canonical(&p);
+            for mask in 0..(1u32 << nvars) {
+                let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
+                assert_eq!(eval(&p, &asn), eval(&g, &asn) && eval(&other, &asn), "at {asn:?}");
+            }
+            conjoined += !Arc::ptr_eq(g.vtree(), other.vtree()) as u32;
+        }
+    }
+    assert!(conjoined >= 100, "too few conjunctions across projections: {conjoined}");
+}

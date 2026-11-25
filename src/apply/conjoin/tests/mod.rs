@@ -18,6 +18,7 @@ mod marginal_subsumed;
 mod one_sided;
 mod owed;
 mod pair_rows;
+mod pass_rows;
 mod relabel;
 mod probe;
 mod projected;

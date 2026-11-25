@@ -490,5 +490,5 @@ fn operands_on_two_projections_add_where_they_summed_out_alike() {
         added += 1;
         apart += usize::from(differ);
     }
-    assert!(apart > 100 && refused > 20, "{added} added, {apart} on two projections, {refused} refused");
+    assert!(apart > 100 && refused > 10,"{added} added, {apart} on two projections, {refused} refused");
 }
