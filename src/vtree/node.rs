@@ -277,8 +277,12 @@ impl Vtree {
     /// Corresponding nodes are reached by the same left/right steps from the
     /// root; their indices and traversal positions may differ. This comparison
     /// ignores execution contexts and allocation identity. Binary diagram
-    /// operations still require a shared `Arc<Vtree>`.
+    /// operations still require a shared `Arc<Vtree>`. The empty projection
+    /// has the shape of the empty projection alone.
     pub fn same_tree(&self, other: &Vtree) -> bool {
+        if self.nodes.is_empty() || other.nodes.is_empty() {
+            return self.nodes.is_empty() && other.nodes.is_empty();
+        }
         let mut pairs = vec![(self.root(), other.root())];
         while let Some((a, b)) = pairs.pop() {
             match (self.node(a), other.node(b)) {

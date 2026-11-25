@@ -149,6 +149,125 @@ fn projecting_a_leaf_output_preserves_weights() {
     );
 }
 
+/// On a home, summing every variable leaves the constant on no leaf with
+/// the sum's value: projecting a variable it no longer reads keeps it.
+#[test]
+fn a_projection_after_a_full_sum_keeps_the_sum() {
+    let values = vec![LiteralWeights { negative: rat(2, 1), positive: rat(2, 1) }];
+    let weights = Weights::new(RationalWeights::from_literals(&values), Arithmetic::ExactRational);
+    let tree = crate::vtree::Home::weighted(Vtree::balanced(1), weights).unwrap();
+    let eng = Engine::new();
+    let mut marginal = Tdd::clause(tree.vtree(), [1]).unwrap();
+    eng.marginalize(&mut marginal, |_| true).unwrap();
+    assert_eq!(exact_weight(&eng.weighted_value(&marginal).unwrap().unwrap()), rat(2, 1));
+    match eng.exists_var(marginal, VarId(1)) {
+        Ok(projected) => assert_eq!(exact_weight(&eng.weighted_value(&projected).unwrap().unwrap()), rat(2, 1)),
+        Err(e) => assert!(matches!(e, OperationError::MarginalLevel(_)), "{e:?}"),
+    }
+    let home = crate::vtree::Home::new(Vtree::balanced(2));
+    for lit in [1, -1] {
+        let mut counted = Tdd::clause(home.vtree(), [lit]).unwrap();
+        eng.marginalize(&mut counted, |_| true).unwrap();
+        assert_marginal_canonical(&counted);
+        assert_eq!(counted.model_count().unwrap(), 2u32.into());
+        assert!(matches!(eng.exists_var(counted.clone(), VarId(1)), Err(OperationError::MarginalLevel(_))));
+        assert!(matches!(eng.and(counted, Tdd::clause(home.vtree(), [1]).unwrap()), Err(OperationError::MarginalLevel(_))));
+    }
+}
+
+/// The truth table of `truth` with `var` projected out.
+fn exists_row(truth: &[bool], var: u32) -> Vec<bool> {
+    let bit = 1usize << (var - 1);
+    (0..truth.len()).map(|m| truth[m | bit] || truth[m & !bit]).collect()
+}
+
+/// Whether `truth` reads `var`.
+fn reads(truth: &[bool], var: u32) -> bool {
+    exists_row(truth, var) != truth
+}
+
+/// Every weighted entry that can sum a home diagram out, against the
+/// enumerated weighted sum: a diagram whose sum reads a summed variable keeps
+/// a summed-out level, which projection and conjunction refuse, and one
+/// that does not stays structural and projects as the oracle does.
+#[test]
+fn sums_on_a_home_agree_with_enumeration() {
+    let mut rng = crate::test_helpers::Lcg::new(0x5eed_0011);
+    for round in 0..300 {
+        let n = 1 + rng.below(4) as u32;
+        let values: Vec<_> = (0..n)
+            .map(|_| LiteralWeights {
+                negative: rat(rng.below(5) as i64 - 1, 1 + rng.below(3) as i64),
+                positive: rat(rng.below(5) as i64 - 1, 1 + rng.below(3) as i64),
+            })
+            .collect();
+        let weights = Weights::new(RationalWeights::from_literals(&values), Arithmetic::ExactRational);
+        let shape = if rng.coin() { Vtree::balanced(n) } else { Vtree::random(n, rng.next_u64()) };
+        let tree = crate::vtree::Home::weighted(shape, weights).unwrap();
+        let eng = Engine::new();
+        let cnf = |rng: &mut crate::test_helpers::Lcg| {
+            crate::test_helpers::rand_cnf(rng, n, crate::test_helpers::CnfShape { clauses: 3, width: 2 })
+        };
+        let (fc, gc) = (cnf(&mut rng), cnf(&mut rng));
+        let (ft, gt) = (truth_table(n, &fc), truth_table(n, &gc));
+        let f = compile_clauses_on(&eng, tree.vtree(), &fc);
+        let g = compile_clauses_on(&eng, tree.vtree(), &gc);
+        let summed: Vec<bool> = (0..n).map(|_| rng.coin()).collect();
+        let summable = |v: VarId| summed[v.0 as usize - 1];
+        let oracle = |truth: &[bool]| weighted_sum(truth, &values).0;
+        let value = |t: &Tdd| exact_weight(&eng.weighted_value(t).unwrap().unwrap());
+        let keeps_sum = |truth: &[bool]| (1..=n).any(|v| summed[v as usize - 1] && reads(truth, v));
+        let canonical = |t: &Tdd| {
+            let t = crate::test_helpers::minimized(&eng, Ok(t.clone()));
+            match t.has_marginal_level() {
+                true => assert_marginal_canonical(&t),
+                false => assert_canonical(&t),
+            }
+        };
+        let what = format!("round {round}: {n} variables, f {fc:?}, g {gc:?}, summed {summed:?}");
+
+        let mut m = f.clone();
+        eng.marginalize(&mut m, summable).unwrap();
+        canonical(&m);
+        assert_eq!(value(&m), oracle(&ft), "marginalize, {what}");
+        assert_eq!(m.has_marginal_level(), keeps_sum(&ft), "{what}");
+        for v in 1..=n {
+            match eng.exists_var(m.clone(), VarId(v)) {
+                Ok(p) => {
+                    assert!(!m.has_marginal_level(), "exists x{v} of a sum, {what}");
+                    assert_eq!(value(&p), oracle(&exists_row(&ft, v)), "exists x{v}, {what}");
+                }
+                Err(e) => assert!(m.has_marginal_level() && matches!(e, OperationError::MarginalLevel(_)), "exists x{v}: {e:?}, {what}"),
+            }
+        }
+
+        let fg: Vec<bool> = ft.iter().zip(&gt).map(|(a, b)| *a && *b).collect();
+        let c = eng.and_marginalizing_where(f.clone(), g.clone(), summable).unwrap();
+        canonical(&c);
+        assert_eq!(value(&c), oracle(&fg), "and_marginalizing_where, {what}");
+        // A summed variable an operand read may stay a region where the
+        // conjunction does not read it.
+        assert!(c.has_marginal_level() || !keeps_sum(&fg), "and_marginalizing_where, {what}");
+
+        let x = 1 + rng.below(u64::from(n)) as i32;
+        let split = |lit: i32| {
+            let mut h = eng.and(f.clone(), Tdd::clause(tree.vtree(), [lit]).unwrap()).unwrap();
+            eng.marginalize(&mut h, summable).unwrap();
+            h
+        };
+        match eng.add(split(x), split(-x)) {
+            Ok(sum) => {
+                canonical(&sum);
+                assert_eq!(value(&sum), oracle(&ft), "add, {what}");
+            }
+            Err(e) => assert!(
+                matches!(e, OperationError::MarginalLevel(_) | OperationError::SharedModel | OperationError::IncompatibleWeights),
+                "add: {e:?}, {what}"
+            ),
+        }
+    }
+}
+
 #[test]
 fn an_empty_clause_preserves_the_accumulators_weights() {
     let eng = Engine::new();
@@ -251,3 +370,4 @@ fn ite_on_a_weighted_vtree_is_weighted() {
         }
     }
 }
+

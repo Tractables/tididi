@@ -360,3 +360,92 @@ fn and_across_projections_lists_its_loose_levels() {
     }
     assert!(known > 100 && unreached_known > 5, "{known} results know their loose levels, {unreached_known} of them hold a node they do not reach");
 }
+
+/// A chain of pass-throughs over a leaf holds only the literals the level
+/// above it names: `x1 ∧ ¬x3` read on the projection on `x1, x2, x3` passes
+/// over the leaf it reads as one literal, so its conjunction with `x2`, by
+/// either route that reads it there, leaves no node no pair names.
+#[test]
+fn a_chain_over_a_leaf_holds_the_literal_its_reader_names() {
+    use crate::test_helpers::unnamed_node_count;
+    let eng = Engine::new();
+    for home in [Vtree::linear(3), Vtree::reverse_linear(3)] {
+        let hm = Home::new(home);
+        let f = eng.and(eng.clause(hm.vtree(), [1]).unwrap(), eng.clause(hm.vtree(), [-3]).unwrap()).unwrap();
+        let g = eng.clause(hm.vtree(), [2]).unwrap();
+        let union = Vtree::projection(&hm, [VarId(1), VarId(2), VarId(3)]).unwrap();
+        let mut placed = conjoin_onto(&eng, (&f).into(), (&g).into(), &union, false).map_err(|r| r.error).unwrap();
+        crate::reduce::close_constant(&eng, &mut placed);
+        for (route, out) in [("and", eng.and(&f, &g).unwrap()), ("onto", placed)] {
+            assert_eq!(unnamed_node_count(&out), 0, "{route}: a node no pair names");
+            assert_eq!(out.model_count().unwrap(), 1u32.into(), "{route}");
+        }
+    }
+}
+
+/// Conjoining clauses one at a time on a home leaves, after each
+/// conjunction and its contraction, no more nodes no pair names than on the
+/// home vtree itself, summed over the same clauses and vtrees, with no prune
+/// in between.
+#[test]
+fn a_conjunction_on_homes_leaves_no_more_unnamed_nodes_than_on_roots() {
+    use crate::test_helpers::{rand_cnf, unnamed_node_count, vtree_shapes, CnfShape};
+    let eng = Engine::new();
+    let mut unnamed = [0usize; 2];
+    for (k, on_home) in [false, true].into_iter().enumerate() {
+        let mut rng = Lcg::new(17);
+        for round in 0..24 {
+            let num_vars = 6 + (round % 5) as u32;
+            let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 12, width: 3 });
+            for (_, shape) in vtree_shapes(num_vars) {
+                let hm = Home::new(Vtree::clone(&shape));
+                let vtree = if on_home { hm.vtree() } else { &shape };
+                let mut f = eng.clause(vtree, clauses[0].iter().copied()).unwrap();
+                for clause in &clauses[1..] {
+                    f = eng.and(f, eng.clause(vtree, clause.iter().copied()).unwrap()).unwrap();
+                    eng.reduce(&mut f, ReductionPlan::Contract).unwrap();
+                    unnamed[k] += unnamed_node_count(&f);
+                }
+            }
+        }
+    }
+    let [roots, homes] = unnamed;
+    assert!(roots > 100, "expected nodes no pair names on roots, got {roots}");
+    assert!(homes <= roots, "{homes} nodes no pair names on homes, {roots} on roots");
+}
+
+/// A pass level whose passing operand is `f` and whose passed child keeps a
+/// product list emits only its live cells, and its level is the one the
+/// route that emits every cell builds.
+#[test]
+fn a_pass_level_with_carrier_g_emits_its_live_cells() {
+    use crate::limits::{LimitConfig, SparseRoute};
+    use crate::test_helpers::assert_same_shape;
+    let cnf = |home: &Home, vars: &[VarId], rng: &mut Lcg| {
+        let eng = Engine::new();
+        let mut f = Tdd::one(&Vtree::projection(home, vars.iter().copied()).unwrap());
+        for _ in 0..2 + rng.below(4 + vars.len() as u64) {
+            f = eng.and_clause(f, &clause(vars, rng)).unwrap();
+        }
+        f
+    };
+    let before = pass_listed_g_census();
+    for seed in 0..400u64 {
+        let hm = Home::new(rotated_home(10 + (seed % 12) as u32 * 2, seed));
+        let home = Arc::clone(hm.vtree());
+        let mut rng = Lcg::new(seed ^ 0x2545_f491);
+        for (fv, gv) in leaf_set_pairs(&home, &mut rng) {
+            let (f, g) = (cnf(&hm, &fv, &mut rng), cnf(&hm, &gv, &mut rng));
+            for (a, b) in [(&f, &g), (&g, &f)] {
+                let eng = Engine::new();
+                let _scope = eng.limits().scope(LimitConfig::none().with_sparse_route(SparseRoute::new(1, 0)));
+                let out = eng.and(a, b).unwrap();
+                let oracle = pass_listed_off(|| eng.and(a, b).unwrap());
+                assert_same_shape(&out, &oracle, &format!("seed {seed}: {fv:?} and {gv:?}"));
+            }
+        }
+    }
+    let [levels, emitted, cells] = std::array::from_fn(|k| pass_listed_g_census()[k] - before[k]);
+    assert!(levels > 0, "no pass level with carrier g read its child's list");
+    assert!(emitted < cells, "{levels} levels emitted {emitted} of {cells} cells");
+}

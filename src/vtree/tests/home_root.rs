@@ -7,6 +7,7 @@ use std::sync::Arc;
 use num_rational::BigRational;
 
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
+use crate::vtree::rng::Lcg;
 use crate::vtree::{Home, VarId, Vtree};
 use crate::{Engine, OperationError, Tdd};
 
@@ -38,22 +39,65 @@ fn and_marginalizing_by_targets_refuses_a_home_root() {
     assert!(names(&error, "targets", "`and_marginalizing_where`"), "{error:?}");
 }
 
-/// The weighted route of `and_model_count` on a home's root goes through
-/// the `_where` form, as on a projection, since targets are refused there:
-/// it answers as on a root vtree of the same shape.
+/// Random clauses over `vars`, two or three literals each, and their
+/// conjunction on `vtree`.
+fn cnf(rng: &mut Lcg, vtree: &Arc<Vtree>, vars: &[u32], clauses: usize) -> (Vec<Vec<i32>>, Tdd) {
+    let mut cnf = Vec::new();
+    let mut f = Tdd::cube(vtree, std::iter::empty::<i32>()).unwrap();
+    for _ in 0..clauses {
+        let mut clause: Vec<i32> = Vec::new();
+        while clause.len() < 2 + rng.below(2) as usize {
+            let var = vars[rng.below(vars.len() as u64) as usize] as i32;
+            if !clause.iter().any(|l| l.abs() == var) {
+                clause.push(if rng.coin() { var } else { -var });
+            }
+        }
+        f = crate::and(f, Tdd::clause(vtree, clause.iter().copied()).unwrap()).unwrap();
+        cnf.push(clause);
+    }
+    (cnf, f)
+}
+
+/// With weights attached, `and_model_count` with targets gives the integer
+/// count of the conjunction, literal weights ignored: on a weighted root
+/// vtree, on a weighted home's root and on projections of that home.
 #[test]
-fn weighted_and_model_count_on_a_home_root() {
+fn weighted_and_model_count_with_targets_counts_models() {
+    const N: u32 = 6;
     let eng = Engine::new();
-    let half = || BigRational::new(1.into(), 2.into());
-    let weights = Weights::new(RationalWeights::from_literals(&vec![LiteralWeights { negative: half(), positive: half() }; 2]), Arithmetic::ExactRational);
-    let home = Home::weighted(Vtree::balanced(2), weights.clone()).unwrap();
-    let plain = Arc::new(Vtree::balanced(2).with_weights(weights).unwrap());
-    let count = |vtree: &Arc<Vtree>| {
-        let f = Tdd::cube(vtree, [1, 2]).unwrap();
-        let g = Tdd::clause(vtree, [1, -2]).unwrap();
-        eng.and_model_count(f, g, &[vtree.root()])
+    let weights = || {
+        let w = |i: u32| LiteralWeights { negative: BigRational::new((i + 1).into(), 3.into()), positive: BigRational::new(2.into(), 7.into()) };
+        Weights::new(RationalWeights::from_literals(&(0..N).map(w).collect::<Vec<_>>()), Arithmetic::ExactRational)
     };
-    assert_eq!(count(home.vtree()), count(&plain));
+    let home = Home::weighted(Vtree::random(N, 3), weights()).unwrap();
+    let plain = Arc::new(Vtree::random(N, 3).with_weights(weights()).unwrap());
+    let all: Vec<u32> = (1..=N).collect();
+    let mut rng = Lcg::new(11);
+    let mut summed = 0;
+    for round in 0..240 {
+        let (fv, gv): (Vec<u32>, Vec<u32>) = match round % 3 {
+            0 | 1 => (all.clone(), all.clone()),
+            _ => (all.iter().copied().filter(|_| rng.coin()).collect(), all.iter().copied().filter(|_| rng.coin()).collect()),
+        };
+        if fv.len() < 3 || gv.len() < 3 {
+            continue;
+        }
+        let on = |vars: &[u32]| match round % 3 {
+            0 => Arc::clone(&plain),
+            1 => Arc::clone(home.vtree()),
+            _ => Vtree::projection(&home, vars.iter().map(|&v| VarId(v))).unwrap(),
+        };
+        let (nf, ng) = (1 + rng.below(3) as usize, 1 + rng.below(3) as usize);
+        let (fc, f) = cnf(&mut rng, &on(&fv), &fv, nf);
+        let (gc, g) = cnf(&mut rng, &on(&gv), &gv, ng);
+        let v = Arc::clone(f.vtree());
+        let targets: Vec<_> = v.bottomup().filter(|&t| !v.node(t).is_leaf() && rng.coin()).collect();
+        summed += usize::from(!targets.is_empty());
+        let expected = crate::test_helpers::brute_force_count(N, &[fc, gc].concat());
+        let count = eng.and_model_count(f, g, &targets).unwrap_or_else(|e| panic!("round {round}: {e}"));
+        assert_eq!(count, expected.into(), "round {round}");
+    }
+    assert!(summed > 100, "{summed} rounds with targets");
 }
 
 /// `marginalize` refuses an internal summed-out level that is not a region

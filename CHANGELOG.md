@@ -55,6 +55,11 @@ Breaking changes:
   it canonical.
 - `Engine::from_models_direct` is removed. `Engine::from_models` builds the
   same diagram.
+- `Engine::marginal_product_count` is removed. On projections of one home
+  an operand records only the summed-out variables of its own projection,
+  so the product could not tell which variables both operands had summed
+  out. For `Σ_S (f · g)`, the count of a conjunction with the variables `S`
+  summed out, use `Engine::and_marginalizing_where`.
 - `Tdd::restrict_to_care` and `Engine::restrict_to_care` borrow `care` and
   no longer reduce it first. The walk's cost follows `care` as written, so
   reduce an unreduced care before the call.
@@ -130,6 +135,8 @@ Added:
 
 Fixed:
 
+- `Vtree::same_tree` panicked on the empty projection. It now answers
+  whether both vtrees are empty.
 - `Tdd::marginalize_levels` and `Engine::marginalize_levels` on the root
   level of a diagram with several root nodes, as `TddBuilder` can build,
   could report another node's count when two root nodes had equal counts;

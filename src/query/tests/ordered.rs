@@ -183,6 +183,30 @@ fn constants_and_refusals() {
 }
 
 #[test]
+fn constants_and_refusals_on_a_home() {
+    let home = crate::vtree::Home::new(Vtree::linear(3));
+    let vtree = home.vtree();
+    let key: &[VarId] = &[VarId(1), VarId(2)];
+    assert_eq!(Tdd::zero(vtree).ordered_models(&[key, &[VarId(3)]], &[false, false], 1, 5).unwrap(), Some(vec![vec![], vec![]]));
+    let one = Tdd::one(vtree).ordered_models(&[key, &[VarId(3)]], &[true, false], 1, 5).unwrap().unwrap();
+    assert_eq!(one, vec![vec![3, 3, 2, 2, 1], vec![0, 1, 0, 1, 0]]);
+    // A key read least significant bit first is not the spine.
+    assert_eq!(Tdd::one(vtree).ordered_models(&[&[VarId(2), VarId(1)]], &[false], 1, 5).unwrap(), None);
+    let f = Tdd::clause(vtree, [1, 3]).unwrap();
+    assert_eq!(f.ordered_models(&[key], &[false], 1, 5).unwrap_err(), OperationError::UnlistedLiteral(VarId(3)));
+    // No column: one empty model, as `ordered_keys` gives.
+    assert_eq!(Tdd::one(vtree).ordered_models(&[], &[], 0, 5).unwrap(), Some(vec![]));
+    assert_eq!(Tdd::one(vtree).ordered_keys(&[], &[], 5).unwrap(), Some(vec![]));
+    // Columns that list no variable: one model, every code 0.
+    for keys in [0, 1] {
+        assert_eq!(Tdd::one(vtree).ordered_models(&[&[], &[]], &[false, true], keys, 5).unwrap(), Some(vec![vec![0], vec![0]]));
+        assert_eq!(Tdd::zero(vtree).ordered_models(&[&[]], &[false], keys, 5).unwrap(), Some(vec![vec![]]));
+    }
+    assert_eq!(Tdd::one(vtree).ordered_keys(&[&[]], &[false], 5).unwrap(), Some(vec![vec![0]]));
+    assert_eq!(Tdd::one(vtree).ordered_models(&[&[]], &[false], 0, 0).unwrap(), Some(vec![vec![]]));
+}
+
+#[test]
 fn the_first_keys_are_the_least_distinct_values_on_a_key_spine() {
     // Random functions on a key spine over a random rest that no column
     // lists: the first `limit` values the keys take, distinct and in
@@ -355,4 +379,39 @@ fn streams_past_the_list_cap_are_refused() {
         }
     }
     assert!(refused > 0, "no list cap refused a stream");
+}
+
+/// On a home, a listed variable the diagram's projection dropped is free:
+/// `model_columns`, `ordered_models` and `ordered_keys` answer as for the
+/// same function on a plain root, and still refuse a variable the home lacks.
+#[test]
+fn readers_on_a_home_take_a_dropped_variable_as_free() {
+    use crate::vtree::Home;
+    let home = Home::new(Vtree::linear(4));
+    let root = Arc::new(Vtree::linear(4));
+    let on_home = Tdd::clause(home.vtree(), [1, 3]).unwrap();
+    let on_root = Tdd::clause(&root, [1, 3]).unwrap();
+    assert!(on_home.vtree().leaf_of(VarId(2)).is_none(), "the projection keeps variable 2");
+    let columns: &[&[VarId]] = &[&[VarId(1), VarId(2)], &[VarId(3), VarId(4)]];
+    let rows = |f: &Tdd| {
+        let mut table = f.model_columns(columns).unwrap();
+        let read = table.to_columns();
+        read[0].iter().copied().zip(read[1].iter().copied()).collect::<BTreeSet<_>>()
+    };
+    assert_eq!(rows(&on_home), rows(&on_root));
+    assert_eq!(rows(&on_home).len(), 12);
+    for descending in [[false, false], [true, false]] {
+        assert_eq!(
+            on_home.ordered_models(columns, &descending, 2, 20).unwrap(),
+            on_root.ordered_models(columns, &descending, 2, 20).unwrap(),
+        );
+        assert_eq!(
+            on_home.ordered_keys(columns, &descending, 20).unwrap(),
+            on_root.ordered_keys(columns, &descending, 20).unwrap(),
+        );
+    }
+    let all = Tdd::one(home.vtree());
+    assert_eq!(all.model_columns(&[&[VarId(2), VarId(4)]]).unwrap().rows(), 4);
+    let missing: &[&[VarId]] = &[&[VarId(9)]];
+    assert!(matches!(on_home.model_columns(missing), Err(OperationError::VariableNotInVtree(VarId(9)))));
 }

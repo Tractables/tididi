@@ -366,3 +366,48 @@ fn a_refused_column_table_builds_the_same_levels() {
     }
     assert!(absorbed > 0, "no best-effort reserve refused");
 }
+
+/// [`a_refused_column_table_builds_the_same_levels`] on a home, summing the
+/// variables under the root's left child, so the levels above it stay
+/// structural. A run again after a refusal takes the levels the refused
+/// one parked, which must come back as a fresh level, the hint of
+/// [`TddLevel::uneven`](crate::diagram::TddLevel) included.
+#[test]
+fn a_refused_column_table_builds_the_same_levels_on_a_home() {
+    let mut rng = Lcg::new(0x3c5e_a1f8);
+    let n = 10u32;
+    let vars: Vec<VarId> = (1..=n).map(VarId).collect();
+    let route = SparseRoute { sparsity: 64, min_grid: usize::MAX };
+    let mut absorbed = 0;
+    for (name, vtree) in vtree_shapes(n).into_iter().take(2) {
+        let home = crate::vtree::Home::new(Vtree::clone(&vtree));
+        let vtree = home.vtree();
+        let mut operand = || {
+            let models: Vec<u64> = (0..1u64 << n).filter(|_| rng.below(2) == 0).collect();
+            Tdd::from_models(vtree, &vars, &models).unwrap()
+        };
+        let (f, g) = (operand(), operand());
+        let left = vtree.children(vtree.root()).0;
+        let summed: Vec<VarId> = vtree.leaf_bottomup().filter(|&(t, _)| vtree.in_subtree(t, left)).map(|(_, v)| v).collect();
+        let summable = |v: VarId| summed.contains(&v);
+        let want = {
+            let eng = Engine::new();
+            let _route = eng.limits().scope(LimitConfig::none().with_sparse_route(route));
+            word_cells_on(|| eng.and_marginalizing_where(f.clone(), g.clone(), summable).unwrap())
+        };
+        let eng = Engine::new();
+        let _route = eng.limits().scope(LimitConfig::none().with_sparse_route(route));
+        let swept = word_cells_on(|| {
+            eng.sweep_reserves(
+                &crate::OperationError::OverBudget,
+                || eng.and_marginalizing_where(f.clone(), g.clone(), summable),
+                |out, at| {
+                    assert_eq!(format!("{:?}", out.levels), format!("{:?}", want.levels), "{name}, {at}");
+                    assert_eq!(out.model_count(), want.model_count(), "{name}, {at}");
+                },
+            )
+        });
+        absorbed += swept.absorbed;
+    }
+    assert!(absorbed > 0, "no best-effort reserve refused");
+}

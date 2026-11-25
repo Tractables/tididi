@@ -275,7 +275,7 @@ fn step(name: &'static str) {
 fn check_case(case: &Case) {
     /// One claim of the battery, by the name a failure report gives it.
     type Claim = (&'static str, fn(&Case));
-    let claims: [Claim; 18] = [
+    let claims: [Claim; 17] = [
         ("count against enumeration", count_matches_enumeration),
         ("operation orders agree", orders_agree),
         ("operations against enumeration", operations_match_enumeration),
@@ -287,7 +287,6 @@ fn check_case(case: &Case) {
         ("streaming marginalization against enumeration", streaming_marginalization_matches_enumeration),
         ("weighted composition against enumeration", weighted_composition_matches_enumeration),
         ("a tight budget refuses", a_tight_budget_refuses_rather_than_panics),
-        ("marginal products against enumeration", marginal_products_match_enumeration),
         ("a marginalized child against the two-step diagram", a_marginalized_child_is_the_two_step_diagram),
         ("projections against enumeration", projections_match_enumeration),
         ("marginal evaluations against enumeration", marginal_evaluations_match_enumeration),
@@ -525,7 +524,14 @@ fn sums_match_enumeration(case: &Case) {
     for d in [&mut f, &mut g] {
         eng.marginalize_levels(d, &targets).expect("an unarmed engine refuses nothing");
     }
-    let sum = eng.add(f, g).expect("an unarmed engine refuses nothing");
+    // On two projections of a home a region is refused, and operands that
+    // record no summed-out variable add as a disjunction.
+    let apart = !Arc::ptr_eq(f.vtree(), g.vtree());
+    let sum = match eng.add(f, g) {
+        Ok(sum) => sum,
+        Err(OperationError::MarginalLevel(_) | OperationError::SharedModel) if apart => return,
+        Err(e) => panic!("a sum with levels summed out: {e}"),
+    };
     assert_canonical(&sum);
     let hidden = targets.iter().fold(0u32, |m, &t| m | vars_under(&case.vtree, t));
     let mut want: std::collections::BTreeMap<u32, u64> = std::collections::BTreeMap::new();
@@ -1315,49 +1321,6 @@ fn a_clause_naming_one_variable_twice_is_the_clause_it_spells() {
         vec![vec![3, -4], vec![4, -3], vec![-4], vec![3, 2, 1], vec![-4, -3], vec![4, -4]],
         "vtree 7\nL 0 2\nL 1 1\nL 2 3\nL 3 4\nI 4 0 1\nI 5 2 4\nI 6 3 5\n",
     ));
-}
-
-/// Two halves of the clauses, each with one drawn scope summed out: their
-/// product over the variables left, each half's count taken over the scope on
-/// its own, is what enumeration gives, and so is either half's square.
-fn marginal_products_match_enumeration(case: &Case) {
-    let split = case.clauses.len() / 2;
-    let targets = draw_marginal_targets(case);
-    let eng = Engine::new();
-    let vtree = &case.vtree;
-    let summed_out = |var: u32| {
-        let mut t = vtree.leaf_of(VarId(var)).expect("a variable of the case");
-        loop {
-            if targets.contains(&t) {
-                return true;
-            }
-            match vtree.node(t).parent() {
-                Some(p) => t = p,
-                None => return false,
-            }
-        }
-    };
-    let kept: u64 = (1..=case.num_vars).filter(|&v| !summed_out(v)).map(|v| 1u64 << (v - 1)).sum();
-    let mut halves = Vec::new();
-    for clauses in [&case.clauses[..split], &case.clauses[split..]] {
-        let mut f = compile_clauses(&case.vtree, clauses);
-        if !f.is_zero() && !targets.is_empty() {
-            eng.marginalize_levels(&mut f, &targets).unwrap();
-            assert_canonical_after_minimize(&f);
-        }
-        let mut m = vec![0u64; 1 << case.num_vars];
-        for (a, sat) in truth_table(case.num_vars, clauses).into_iter().enumerate() {
-            m[a & kept as usize] += u64::from(sat);
-        }
-        halves.push((f, m));
-    }
-    let want = |a: &[u64], b: &[u64]| -> BigUint {
-        (0..1u64 << case.num_vars).filter(|x| x & !kept == 0).map(|x| BigUint::from(a[x as usize]) * b[x as usize]).sum()
-    };
-    let ((f, mf), (g, mg)) = (&halves[0], &halves[1]);
-    assert_eq!(eng.marginal_product_count(f, g).unwrap(), want(mf, mg), "the product of the halves");
-    assert_eq!(eng.marginal_product_count(f, f).unwrap(), want(mf, mf), "the first half squared");
-    assert_eq!(eng.marginal_product_count(g, &g.clone()).unwrap(), want(mg, mg), "the second half squared");
 }
 
 /// A pair side named without the numbering of nodes and value slots: a leaf

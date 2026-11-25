@@ -372,7 +372,7 @@ pub(crate) fn contract_all_twins_known(eng: &Engine, tdd: &mut Tdd, marginal: Op
 
 /// [`contract_all_twins`], dropping the nodes no pair names that a whole
 /// search lists where `drop_unnamed`.
-fn sweep_twins(eng: &Engine, tdd: &mut Tdd, drop_unnamed: bool, marginal: Option<bool>) -> Result<(), OperationError> {
+pub(super) fn sweep_twins(eng: &Engine, tdd: &mut Tdd, drop_unnamed: bool, marginal: Option<bool>) -> Result<(), OperationError> {
     let lim = eng.limits();
     let num_nodes = tdd.vtree.num_nodes();
 

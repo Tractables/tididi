@@ -61,6 +61,7 @@
 //! The work is `f`'s pairs read once, plus these, whatever `g`'s size: each
 //! read is a binary search in one run at most.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use smallvec::SmallVec;
@@ -582,16 +583,28 @@ impl Plan {
     }
 }
 
-/// Refuse operands an indexed walk does not read.
-fn check_operands(
-    f: &Tdd,
-    g: &Tdd,
-    index: &PairIndex,
-) -> Result<(), OperationError> {
-    super::check_vtree(f, g)?;
+/// The operands of an indexed walk on one vtree, and the index of the second.
+type OnOne<'a> = (Cow<'a, Tdd>, Cow<'a, Tdd>, Cow<'a, PairIndex>);
+
+/// `f` and `g` on one vtree, with an index of `g` there: as they are where
+/// `f`'s projection lies inside `g`'s; otherwise both placed on the union of
+/// the two projections, as [`Engine::and`] places its operands, and `g`
+/// indexed there anew.
+fn on_one<'a>(
+    eng: &Engine,
+    f: &'a Tdd,
+    g: &'a Tdd,
+    index: &'a PairIndex,
+) -> Result<OnOne<'a>, OperationError> {
+    index.check(g)?;
     f.require_structure()?;
     g.require_structure()?;
-    index.check(g)
+    let [f, placed] = super::extend::on_one(eng, [Cow::Borrowed(f), Cow::Borrowed(g)])?;
+    let index = match Arc::ptr_eq(placed.vtree(), g.vtree()) {
+        true => Cow::Borrowed(index),
+        false => Cow::Owned(eng.pair_index(&placed)?),
+    };
+    Ok((f, placed, index))
 }
 
 /// [`Engine::and_indexed`] with the work its walk did.
@@ -602,8 +615,8 @@ pub(crate) fn and_indexed_counted(
     index: &PairIndex,
 ) -> Result<(Tdd, IndexedWork), OperationError> {
     let _op = eng.limits().enter()?;
-    let f = super::extend::onto(eng, f, g.vtree())?;
-    let (result, work) = and_indexed_on(eng, &f, g, index)?;
+    let (f, g, index) = on_one(eng, f, g, index)?;
+    let (result, work) = and_indexed_on(eng, &f, &g, &index)?;
     Ok((super::extend::trimmed(eng, result)?, work))
 }
 
@@ -614,7 +627,6 @@ fn and_indexed_on(
     index: &PairIndex,
 ) -> Result<(Tdd, IndexedWork), OperationError> {
     let lim = eng.limits();
-    check_operands(f, g, index)?;
     if f.is_zero() || g.is_zero() {
         return Ok((
             crate::build::constant_like(eng, f, false)?,
@@ -694,13 +706,13 @@ pub(crate) fn sum_indexed_counted<A: ColumnAlgebra>(
 ) -> Result<(A::Column, IndexedWork), OperationError> {
     let lim = eng.limits();
     let _op = lim.enter()?;
-    let f = super::extend::onto(eng, f, g.vtree())?;
-    let f = &*f;
-    check_operands(f, g, index)?;
-    let vtree = Arc::clone(f.vtree());
-    if at.idx() >= vtree.num_nodes() {
+    if at.idx() >= g.vtree().num_nodes() {
         return Err(OperationError::LevelNotInVtree(at));
     }
+    let (f, placed, index) = on_one(eng, f, g, index)?;
+    let at = super::extend::nodes_on(eng, g.vtree(), placed.vtree(), &[at])?.map_or(at, |on| on[0]);
+    let (f, g, index) = (&*f, &*placed, &*index);
+    let vtree = Arc::clone(f.vtree());
     if vtree.node(at).is_leaf() {
         return Err(OperationError::InertOption {
             option: "sum_indexed at a leaf",
@@ -797,6 +809,13 @@ impl Engine {
     /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical));
     /// [`Engine::minimize`](crate::Engine::minimize) certifies it.
     ///
+    /// On projections of one home the operands are read on one vtree, and
+    /// the result is trimmed to the leaves it uses, as [`Engine::and`]'s is.
+    /// Where `f`'s projection lies inside `g`'s, `f` is placed on `g`'s and
+    /// `index` is read as it is; otherwise both are placed on the union of
+    /// the two projections and `g` is indexed there anew, which reads all of
+    /// `g` at [`PairIndex`]'s cost.
+    ///
     /// # Work
     ///
     /// Always: `f`'s pairs are read once, and each live product costs at
@@ -810,8 +829,9 @@ impl Engine {
     /// products and copies and costs at most `9 · |keys(f)| + 81` index
     /// reads, where `keys(f)` is the set of assignments to κ that extend to
     /// a model of `f`: the work is `O(|f| + |keys(f)| · |vtree|)`, whatever
-    /// the size of `g`. Without the precondition the result is the same
-    /// function; only the bound is lost.
+    /// the size of `g`, where `f`'s projection lies inside `g`'s. Without
+    /// the precondition the result is the same function; only the bound is
+    /// lost.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -838,8 +858,8 @@ impl Engine {
     /// # Errors
     ///
     /// [`OperationError::VtreeMismatch`] when `g` and the index do not share
-    /// one vtree, or `f` is on neither it nor a projection of its home inside
-    /// it, [`OperationError::IndexMismatch`] when the index was
+    /// one vtree, or `f` is on another home than `g` (off a home, on another
+    /// vtree), [`OperationError::IndexMismatch`] when the index was
     /// built from another diagram than `g`, [`OperationError::MarginalLevel`]
     /// when either operand has a marginal level,
     /// [`OperationError::InertOption`] when either is weighted,
@@ -856,6 +876,12 @@ impl Engine {
     /// that the node holds and that extend to a model of `g`, of the
     /// product of their leaf values. `g` is read only through `index`, a
     /// [`PairIndex`] built from `g`, and `f ∧ g` is never built.
+    ///
+    /// `at` is a node of `g`'s vtree. Where `f` lies on another projection
+    /// of `g`'s home, both are read on the vtree
+    /// [`and_indexed`](Self::and_indexed) reads them on, and `at` stands for
+    /// its node over the same node of the home, `f`'s level there the level
+    /// of `f` placed on that vtree.
     ///
     /// Slot `i` of the column is node `i` of `f`'s level at `at`, one per
     /// node, as [`Tdd::evaluate_columns_at`] numbers them; a node that

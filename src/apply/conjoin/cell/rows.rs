@@ -780,6 +780,7 @@ fn emit_row<L: ChildLookup, R: ChildLookup, S: PairSink>(
         } else {
             let (l, r) = rows[0];
             let ((ln, l), (rn, r)) = (left.view(node_idx, l), right.view(node_idx, r));
+            let (ln, rn) = (crate::isa::defined_here(ln), crate::isa::defined_here(rn));
             for q in g_pairs {
                 // Safety: as above.
                 unsafe { push_candidate(&mut out, (left, right), (ln, rn), (l, r), q) };

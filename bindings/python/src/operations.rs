@@ -37,9 +37,9 @@ pub fn take_operands(py: Python<'_>, operands: &[Py<PyCircuit>],
         }
     }
     let mut borrowed = operands.iter().map(|f| f.try_borrow_mut(py)).collect::<Result<Vec<_>, _>>()?;
-    let vtree = Arc::clone(borrowed[0].get()?.vtree());
+    let vtree = domain::domain(borrowed[0].get()?);
     for f in &borrowed {
-        if !Arc::ptr_eq(f.get()?.vtree(), &vtree) {
+        if !Arc::ptr_eq(&domain::domain(f.get()?), &vtree) {
             return Err(PyValueError::new_err("circuits must share the same Vtree object"));
         }
     }

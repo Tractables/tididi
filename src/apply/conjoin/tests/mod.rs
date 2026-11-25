@@ -19,6 +19,7 @@ mod one_sided;
 mod owed;
 mod pair_floor;
 mod pair_rows;
+mod pass_rows;
 mod relabel;
 mod probe;
 mod projected;
@@ -790,6 +791,42 @@ pub(super) fn note_as_operand(t: usize, of_f: bool) {
 /// since the last call, each with whether the operand is f.
 pub(super) fn take_as_operand() -> Vec<(u32, bool)> {
     AS_OPERAND.with(|c| std::mem::take(&mut *c.borrow_mut()))
+}
+
+thread_local! {
+    /// Whether no pass level on this thread reads its passed child's
+    /// product list by carrier node ([`pass_listed_off`]).
+    static PASS_LISTED_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The pass levels on this thread so read where the carrier is `g`:
+    /// their count, the cells they emitted and the cells of their grids
+    /// ([`pass_listed_g_census`]).
+    static PASS_LISTED_G: std::cell::Cell<[u64; 3]> = const { std::cell::Cell::new([0; 3]) };
+}
+
+pub(super) fn pass_listed_forced_off() -> bool {
+    PASS_LISTED_OFF.with(std::cell::Cell::get)
+}
+
+pub(super) fn note_pass_listed(carrier_f: bool, cells: usize, grid: usize) {
+    if !carrier_f {
+        PASS_LISTED_G.with(|c| {
+            let [levels, emitted, all] = c.get();
+            c.set([levels + 1, emitted + cells as u64, all + grid as u64]);
+        });
+    }
+}
+
+/// Run `f` with every pass level emitting all its cells: the oracle the
+/// listed pass levels are checked against.
+pub(super) fn pass_listed_off<R>(f: impl FnOnce() -> R) -> R {
+    with_flag(&PASS_LISTED_OFF, f)
+}
+
+/// The pass levels with carrier `g` on this thread so far that read their
+/// passed child's list by carrier node: their count, the cells they
+/// emitted and the cells of their grids.
+pub(super) fn pass_listed_g_census() -> [u64; 3] {
+    PASS_LISTED_G.with(std::cell::Cell::get)
 }
 
 thread_local! {

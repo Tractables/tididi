@@ -23,6 +23,9 @@ pub(crate) struct Observations {
     pub(crate) free: Vec<(VarId, bool)>,
     pub(crate) retention: Retention,
     pub(crate) evaluated: bool,
+    /// The value over the home the cache kept at its last read stands for
+    /// the current pins.
+    pub(crate) home_current: bool,
 }
 
 impl Observations {
@@ -31,7 +34,7 @@ impl Observations {
         eng.limits().try_resize(&mut pins, pin_slots, PinState::default())?;
         let mut changed = Vec::new();
         if pin_slots != 0 && retention == Retention::All { eng.limits().reserve_exact(&mut changed, pin_slots)?; }
-        Ok(Self { pins, changed, free: Vec::new(), retention, evaluated: false })
+        Ok(Self { pins, changed, free: Vec::new(), retention, evaluated: false, home_current: false })
     }
 
     pub(crate) fn set_pin(&mut self, tdd: &Tdd, var: VarId, val: Option<bool>) -> Result<(), OperationError> {
@@ -68,7 +71,10 @@ impl Observations {
         for leaf in 0..self.pins.len() {
             if self.pins[leaf].value.is_some() { self.set_leaf_pin(VtreeIdx(leaf as u32), None); }
         }
-        self.free.clear();
+        if !self.free.is_empty() {
+            self.free.clear();
+            self.home_current = false;
+        }
     }
 
     /// The pin on `var`, a validated variable.
@@ -81,9 +87,10 @@ impl Observations {
 
     fn set_any_pin(&mut self, leaf: Option<VtreeIdx>, var: VarId, val: Option<bool>) {
         let Some(leaf) = leaf else {
-            self.free.retain(|&(v, _)| v != var);
-            if let Some(value) = val {
-                self.free.push((var, value));
+            if self.pin_of(None, var) != val {
+                self.free.retain(|&(v, _)| v != var);
+                self.free.extend(val.map(|value| (var, value)));
+                self.home_current = false;
             }
             return;
         };
@@ -94,7 +101,7 @@ impl Observations {
     /// state; `None` for a home variable a projection does not have.
     pub(crate) fn validate_pin(&self, tdd: &Tdd, var: VarId) -> Result<Option<VtreeIdx>, OperationError> {
         let Some(leaf) = tdd.vtree.leaf_of(var) else {
-            return if tdd.vtree.home_has(var) { Ok(None) } else { Err(OperationError::VariableNotInVtree(var)) };
+            return if tdd.vtree.home_has(var) { Ok(None) } else { Err(tdd.vtree.no_leaf_for(var)) };
         };
         // An implicit integer leaf can remain below a marginal parent.
         for level in std::iter::once(leaf).chain(tdd.vtree.node(leaf).parent()) {
@@ -107,6 +114,9 @@ impl Observations {
 
     /// Update a validated leaf's pin and record its deferred refresh once.
     fn set_leaf_pin(&mut self, leaf: VtreeIdx, val: Option<bool>) {
+        if self.pins[leaf.idx()].value != val {
+            self.home_current = false;
+        }
         if self.retention == Retention::Frontier {
             if self.pins[leaf.idx()].value != val {
                 self.pins[leaf.idx()].value = val;
@@ -155,6 +165,7 @@ impl Observations {
 
     pub(crate) fn invalidate(&mut self) {
         self.evaluated = false;
+        self.home_current = false;
         self.clear_changed();
     }
 
@@ -172,7 +183,7 @@ pub(crate) trait CachedQuery {
     /// One level's cached values.
     type Col: Column;
     /// The value a read returns.
-    type Output;
+    type Output: Clone;
     /// The fold that recomputes a column, borrowing the query and the pins.
     type Fold<'a>: LevelFold<Col = Self::Col> where Self: 'a;
 
@@ -200,6 +211,10 @@ pub(crate) trait CachedQuery {
 pub(crate) struct QueryCache<Q: CachedQuery> {
     query: Q,
     cols: Vec<Q::Col>,
+    /// The last read's value over the home, where the diagram's projection
+    /// lacks a home variable: kept because recomputing it calls the query
+    /// once per such variable.
+    home: Option<Q::Output>,
     pub(super) observations: Observations,
 }
 
@@ -215,15 +230,28 @@ impl<Q: CachedQuery> QueryCache<Q> {
         cols.resize_with(tdd.vtree.num_nodes(), Q::Col::default);
         let observations = Observations::new(eng, pin_slots, retention)?;
         lim.check_stop()?;
-        Ok(Self { query, cols, observations })
+        Ok(Self { query, cols, home: None, observations })
     }
 
     /// Refresh pending observations and return the output node's value under
     /// `eng`'s limits. Stops are checked even for a cached or constant answer.
     pub(super) fn read(&mut self, eng: &Engine, tdd: &Tdd) -> Result<Q::Output, OperationError> {
+        if self.observations.home_current
+            && let Some(home) = &self.home
+        {
+            let lim = eng.limits();
+            let _op = lim.enter()?;
+            lim.check_stop()?;
+            return Ok(home.clone());
+        }
         Ok(match self.read_own(eng, tdd)? {
             Some(own) if tdd.is_zero() || tdd.vtree.free_leaves() == 0 => own,
-            own => self.query.over_home(own, tdd, &self.observations.free),
+            own => {
+                let home = self.query.over_home(own, tdd, &self.observations.free);
+                self.home = Some(home.clone());
+                self.observations.home_current = true;
+                home
+            }
         })
     }
 

@@ -21,6 +21,7 @@
 //! moved, whatever its size.
 
 use crate::apply::conjoin::held::Held;
+use crate::diagram::EncodedChildRef;
 use super::identity::publish_identity_level;
 use super::products::{FNodeIdx, GNodeIdx, Grid, ProductEntry, ProductNodeIdx};
 use super::*;
@@ -370,15 +371,15 @@ pub(super) fn take_pass_level(
     // scattered into one row of the carrier's width per passing node.
     let (si, sk) = if carrier_f { (1, widths.1) } else { (widths.1, 1) };
     let stride = if carrier_f { widths.0 } else { widths.1 };
-    // Where the carrier is `f` the cells of one carrier node are emitted
-    // together, so a sparse child's products are read by carrier node
+    // A sparse child's products are read by the carrier's node there
     // instead: offsets in `columns`, then each one's passing nodes and
     // products in `inverse`.
     let mut columns = pools.relabel_left.checkout(eng);
     let mut inverse = pools.relabel_right.checkout(eng);
     let mut sparse = false;
     if let Some(Grid::Lists) = grid {
-        sparse = carrier_f && run.products.invert_columns(eng, c, (pinned, wp), stride, &mut columns, &mut inverse)?;
+        sparse = !pass_listed_forced_off()
+            && run.products.invert_columns(eng, c, carrier_f, (pinned, wp), stride, (&mut columns, &mut inverse))?;
         if !sparse {
             run.products.scatter_columns(eng, c, carrier_f, (pinned, wp), stride, &mut columns)?;
         }
@@ -426,8 +427,8 @@ pub(super) fn take_pass_level(
     // Safety, for the reads below: a structural reference indexes its child
     // level, whose width the grid and the columns were built over.
     match (passed_left, grid) {
-        (true, Some(Grid::Lists)) if sparse => rows.emit_sparse::<true>(lim, level, &mut list, &columns, &inverse)?,
-        (false, Some(Grid::Lists)) if sparse => rows.emit_sparse::<false>(lim, level, &mut list, &columns, &inverse)?,
+        (true, Some(Grid::Lists)) if sparse => rows.emit_listed::<true>(lim, level, &mut list, &columns, &inverse)?,
+        (false, Some(Grid::Lists)) if sparse => rows.emit_listed::<false>(lim, level, &mut list, &columns, &inverse)?,
         (true, None) => rows.emit::<true, true, _>(level, &mut map, |i| { let x = fixed(i) as usize; move |k| CONJOIN_GRID[k as usize][x] })?,
         (false, None) => rows.emit::<false, true, _>(level, &mut map, |i| { let x = fixed(i) as usize; move |k| CONJOIN_GRID[k as usize][x] })?,
         (true, Some(Grid::Cells)) => rows.emit::<true, false, _>(level, &mut map, |i| { let b = base(i); move |k| (b + k as usize * sk) as u32 })?,
@@ -446,7 +447,10 @@ pub(super) fn take_pass_level(
         level.leave_live_pairs(pairs);
     }
     match sparse {
-        true => run.products.publish_listed(ti, (wf, wg), list, nodes),
+        true => {
+            note_pass_listed(carrier_f, list.len(), wf * wg);
+            run.products.publish_listed(ti, (wf, wg), list, nodes)
+        }
         false => run.products.publish_cells(eng, ti, wg, &map, nodes),
     }
 }
@@ -519,15 +523,16 @@ impl PassRows<'_> {
         }
     }
 
-    /// [`PassRows::emit`] where the carrier is `f` and the passed child's
-    /// products are listed: the products of each carrier node `x` there are
+    /// [`PassRows::emit`] where the passed child's products are listed by
+    /// the carrier's node there: those of carrier node `y` are
     /// `inverse[2 * k]`, the passing node, and `inverse[2 * k + 1]`, the
-    /// product, for `k` from `offsets[x]` to `offsets[x + 1]`. A carrier
-    /// node's pairs are carried to their products with every passing node at
-    /// once and grouped by passing node, so a cell where all die costs no
-    /// pass over the node's pairs. The live cells go to `list` in cell order,
-    /// and a dead one is written nowhere.
-    fn emit_sparse<const LEFT: bool>(
+    /// product, for `k` from `offsets[y]` to `offsets[y + 1]`. Only the
+    /// products of the carrier's pairs are visited, so a dead cell costs
+    /// nothing. The live cells go to `list` in cell order. A listed child is
+    /// internal: on a chain over a leaf it lists no product of a label the
+    /// chain leaves out ([`Held::literals`]), so the cells of that label die
+    /// here.
+    fn emit_listed<const LEFT: bool>(
         &mut self,
         lim: &crate::limits::Limits,
         level: &mut TddLevel,
@@ -535,7 +540,23 @@ impl PassRows<'_> {
         offsets: &[u32],
         inverse: &[u32],
     ) -> Result<(), OperationError> {
-        debug_assert!(!self.f_major && self.literals.is_none());
+        let products = |y: u32| &inverse[2 * offsets[y as usize] as usize..2 * offsets[y as usize + 1] as usize];
+        match self.f_major {
+            true => self.emit_listed_by_passing::<LEFT>(lim, level, list, &products),
+            false => self.emit_listed_by_carrier::<LEFT>(lim, level, list, &products),
+        }
+    }
+
+    /// [`PassRows::emit_listed`] where the carrier is `f`, whose node is
+    /// the major index: a carrier node's pairs are carried to their products
+    /// with every passing node at once and grouped by passing node.
+    fn emit_listed_by_carrier<'p, const LEFT: bool>(
+        &mut self,
+        lim: &crate::limits::Limits,
+        level: &mut TddLevel,
+        list: &mut Vec<ProductEntry>,
+        products: &impl Fn(u32) -> &'p [u32],
+    ) -> Result<(), OperationError> {
         let carrier = self.carrier;
         // A product's pair keyed by its passing node, then by its place in
         // the carrier node, so that a sort groups the cells and keeps the
@@ -544,14 +565,12 @@ impl PassRows<'_> {
             crate::limits::growth::Transient::new(lim, Vec::new());
         carrier.try_for_each_node::<OperationError>(0..self.width, |x, pairs| {
             self.gate.poll(pairs.len() as u64)?;
-            let side = |pair: &ChildPair| if LEFT { (pair.left.raw(), pair.right) } else { (pair.right.raw(), pair.left) };
-            let products = |x: u32| &inverse[2 * offsets[x as usize] as usize..2 * offsets[x as usize + 1] as usize];
             // A one-pair node's products sorted by passing node are its cells
             // in order. A child's list is not always in cell order.
             if let [pair] = pairs
-                && products(side(pair).0).chunks_exact(2).is_sorted_by_key(|found| found[0])
+                && products(passed_side::<LEFT>(pair).0).chunks_exact(2).is_sorted_by_key(|found| found[0])
             {
-                let (y, other) = side(pair);
+                let (y, other) = passed_side::<LEFT>(pair);
                 let found = products(y);
                 lim.reserve(list, found.len() / 2)?;
                 for found in found.chunks_exact(2) {
@@ -560,56 +579,121 @@ impl PassRows<'_> {
                         g_idx: GNodeIdx(found[0]),
                         prod_idx: ProductNodeIdx(level.nodes.stored().len() as u32),
                     });
-                    level.nodes.stored_mut().push(EncodedNode::inline(match LEFT {
-                        true => ChildPair::new(NodeIdx(found[1]), other),
-                        false => ChildPair::new(other, NodeIdx(found[1])),
-                    }));
+                    level.nodes.stored_mut().push(EncodedNode::inline(carried::<LEFT>(other, found[1])));
                 }
                 self.inline += found.len() / 2;
                 return Ok(());
             }
-            let total: usize = pairs.iter().map(|pair| products(side(pair).0).len() / 2).sum();
+            let total: usize = pairs.iter().map(|pair| products(passed_side::<LEFT>(pair).0).len() / 2).sum();
             if total == 0 {
                 return Ok(());
             }
             cell.clear();
             lim.reserve(&mut *cell, total)?;
             for pair in pairs {
-                let (x, other) = side(pair);
-                for found in products(x).chunks_exact(2) {
-                    let (i, product) = (found[0], found[1]);
-                    let pair = match LEFT {
-                        true => ChildPair::new(NodeIdx(product), other),
-                        false => ChildPair::new(other, NodeIdx(product)),
-                    };
+                let (y, other) = passed_side::<LEFT>(pair);
+                for found in products(y).chunks_exact(2) {
                     let seq = cell.len() as u64;
-                    cell.push(((i as u64) << 32 | seq, pair));
+                    cell.push(((found[0] as u64) << 32 | seq, carried::<LEFT>(other, found[1])));
                 }
             }
             cell.sort_unstable_by_key(|&(key, _)| key);
             lim.reserve(list, cell.len())?;
             let mut k = 0;
             while k < cell.len() {
-                let i = (cell[k].0 >> 32) as usize;
-                let end = k + cell[k..].iter().take_while(|&&(key, _)| (key >> 32) as usize == i).count();
-                list.push(ProductEntry {
-                    f_idx: FNodeIdx(x as u32),
-                    g_idx: GNodeIdx(i as u32),
-                    prod_idx: ProductNodeIdx(level.nodes.stored().len() as u32),
-                });
-                if end - k == 1 {
-                    level.nodes.stored_mut().push(EncodedNode::inline(cell[k].1));
-                    self.inline += 1;
-                } else {
-                    let out = level.pairs.stored_mut();
-                    let start = out.len();
-                    out.extend(cell[k..end].iter().map(|&(_, pair)| pair));
-                    level.try_push_multi_by_range(self.width_cap, start, end - k)?;
-                }
+                let i = cell[k].0 >> 32;
+                let end = k + cell[k..].iter().take_while(|&&(key, _)| key >> 32 == i).count();
+                self.push_cell(level, list, (x as u32, i as u32), &cell[k..end])?;
                 k = end;
             }
             Ok(())
         })
+    }
+
+    /// [`PassRows::emit_listed`] where the passing operand is `f`, whose
+    /// node is the major index: the products of every carrier pair are
+    /// gathered in carrier order into one bucket per passing node, a stable
+    /// counting sort, so a bucket holds its cells in carrier node order and
+    /// each cell's pairs in the carrier's order.
+    fn emit_listed_by_passing<'p, const LEFT: bool>(
+        &mut self,
+        lim: &crate::limits::Limits,
+        level: &mut TddLevel,
+        list: &mut Vec<ProductEntry>,
+        products: &impl Fn(u32) -> &'p [u32],
+    ) -> Result<(), OperationError> {
+        use crate::limits::growth::Transient;
+        let carrier = self.carrier;
+        // Bucket `i` starts at `ends[i]`, which then runs to its end as the
+        // bucket is written.
+        let mut ends: Transient<'_, Vec<usize>> = Transient::new(lim, Vec::new());
+        lim.try_resize(&mut *ends, self.passing + 1, 0)?;
+        carrier.for_each_node_pair(|_, pair| {
+            for found in products(passed_side::<LEFT>(&pair).0).chunks_exact(2) {
+                ends[found[0] as usize + 1] += 1;
+            }
+        });
+        for i in 0..self.passing {
+            ends[i + 1] += ends[i];
+        }
+        let total = ends[self.passing];
+        if total == 0 {
+            return Ok(());
+        }
+        let mut bucket: Transient<'_, Vec<(u32, ChildPair)>> = Transient::new(lim, Vec::new());
+        lim.try_resize(&mut *bucket, total, (0, ChildPair::new(NodeIdx(0), NodeIdx(0))))?;
+        carrier.try_for_each_node::<OperationError>(0..self.width, |j, pairs| {
+            self.gate.poll(pairs.len() as u64)?;
+            for pair in pairs {
+                let (y, other) = passed_side::<LEFT>(pair);
+                for found in products(y).chunks_exact(2) {
+                    let at = &mut ends[found[0] as usize];
+                    bucket[*at] = (j as u32, carried::<LEFT>(other, found[1]));
+                    *at += 1;
+                }
+            }
+            Ok(())
+        })?;
+        lim.reserve(list, total)?;
+        let mut start = 0;
+        for i in 0..self.passing {
+            let end = ends[i];
+            self.gate.poll((end - start) as u64)?;
+            let mut k = start;
+            while k < end {
+                let j = bucket[k].0;
+                let run = k + bucket[k..end].iter().take_while(|&&(x, _)| x == j).count();
+                self.push_cell(level, list, (i as u32, j), &bucket[k..run])?;
+                k = run;
+            }
+            start = end;
+        }
+        Ok(())
+    }
+
+    /// Write the cell `(f, g)`, whose pairs are those of `run` in order, as
+    /// the next node of `level`, and its entry in `list`, which has room.
+    fn push_cell<K>(
+        &mut self,
+        level: &mut TddLevel,
+        list: &mut Vec<ProductEntry>,
+        (f, g): (u32, u32),
+        run: &[(K, ChildPair)],
+    ) -> Result<(), OperationError> {
+        list.push(ProductEntry {
+            f_idx: FNodeIdx(f),
+            g_idx: GNodeIdx(g),
+            prod_idx: ProductNodeIdx(level.nodes.stored().len() as u32),
+        });
+        if let [(_, pair)] = run {
+            level.nodes.stored_mut().push(EncodedNode::inline(*pair));
+            self.inline += 1;
+            return Ok(());
+        }
+        let out = level.pairs.stored_mut();
+        let start = out.len();
+        out.extend(run.iter().map(|(_, pair)| *pair));
+        level.try_push_multi_by_range(self.width_cap, start, run.len())
     }
 
     /// The cell of passing node `i` with the carrier node of `pairs`.
@@ -683,6 +767,22 @@ impl PassRows<'_> {
         } else {
             level.try_push_multi_by_range(self.width_cap, start, survivors)
         }
+    }
+}
+
+/// A carrier pair's child on the passed side, and its other side.
+#[inline(always)]
+fn passed_side<const LEFT: bool>(pair: &ChildPair) -> (u32, EncodedChildRef) {
+    if LEFT { (pair.left.raw(), pair.right) } else { (pair.right.raw(), pair.left) }
+}
+
+/// The carrier pair whose passed side became `product` and whose other side
+/// is `other`.
+#[inline(always)]
+fn carried<const LEFT: bool>(other: EncodedChildRef, product: u32) -> ChildPair {
+    match LEFT {
+        true => ChildPair::new(NodeIdx(product), other),
+        false => ChildPair::new(other, NodeIdx(product)),
     }
 }
 

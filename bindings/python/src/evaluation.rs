@@ -22,17 +22,18 @@ pub(crate) fn weights(py: Python<'_>, f: &Tdd, values: &Bound<'_, PyDict>) -> Py
         if !value.is_instance(&fraction)? { return Err(PyTypeError::new_err("weights must be int or fractions.Fraction")); }
         value.extract()
     };
-    let mut weights = vec![LiteralWeights { negative: BigRational::one(), positive: BigRational::one() }; f.vtree().num_vars() as usize];
+    let vtree = domain::domain(f);
+    let mut weights = vec![LiteralWeights { negative: BigRational::one(), positive: BigRational::one() }; vtree.num_vars() as usize];
     let mut supplied = HashSet::new();
     for (key, value) in values.iter() {
         let var = domain::variable_id(key.extract()?)?;
-        domain::check_variables(f.vtree(), [var])?;
+        domain::check_variables(&vtree, [var])?;
         let (negative, positive) = value.extract::<(Bound<'_, PyAny>, Bound<'_, PyAny>)>()?;
         weights[var.idx()] = LiteralWeights { negative: rational(negative)?, positive: rational(positive)? };
         supplied.insert(var);
     }
-    for t in f.vtree().bottomup() {
-        if let tididi::vtree::VtreeNode::Leaf { var, .. } = f.vtree().node(t)
+    for t in vtree.bottomup() {
+        if let tididi::vtree::VtreeNode::Leaf { var, .. } = vtree.node(t)
             && !supplied.contains(var) {
             return Err(PyValueError::new_err(format!("missing weights for variable {}", var.0)));
         }

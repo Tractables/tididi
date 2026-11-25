@@ -3,8 +3,9 @@ use std::ops::Range;
 use super::home::{Home, HomeLink};
 use super::{VarId, Vtree, VtreeIdx};
 
-/// The home variables a diagram on a projection does not have, as an
-/// evaluation passes them to [`EvalAlgebra::free`] and [`ColumnAlgebra::free`].
+/// The home variables a diagram on a projection has neither as a leaf nor
+/// in a summed region, as an evaluation passes them to
+/// [`EvalAlgebra::free`] and [`ColumnAlgebra::free`].
 ///
 /// It is a view of the projection: making one, [`len`](Self::len) and
 /// [`intervals`](Self::intervals) cost nothing of the home's size, so an
@@ -23,7 +24,6 @@ use super::{VarId, Vtree, VtreeIdx};
 pub struct FreeVars<'a> {
     link: &'a HomeLink,
     window: (u32, u32),
-    extents_free: bool,
     /// Home ranks taken out of the set, ascending, each in it.
     pins: &'a [u32],
     len: u32,
@@ -50,13 +50,8 @@ impl<'a> FreeVars<'a> {
     pub fn intervals(&self) -> impl Iterator<Item = Range<u32>> + 'a {
         let link = self.link;
         let (lo, hi) = self.window;
-        let skip_anchors = self.extents_free && !link.regions.is_empty();
         let start = link.ranks().partition_point(|&r| r < lo);
-        let mut own = (start..link.ranks().len())
-            .map(move |i| (i, link.ranks()[i]))
-            .take_while(move |&(_, r)| r < hi)
-            .filter(move |&(i, _)| !skip_anchors || link.regions.binary_search_by_key(&(i as u32), |region| region.at).is_err())
-            .map(|(_, r)| r);
+        let mut own = link.ranks()[start..].iter().copied().take_while(move |&r| r < hi);
         let mut next = lo;
         let mut gaps = std::iter::from_fn(move || loop {
             let end = own.next();
@@ -67,9 +62,7 @@ impl<'a> FreeVars<'a> {
             }
         });
         let mut removed: Vec<(u32, u32)> = self.pins.iter().map(|&r| (r, r + 1)).collect();
-        if !self.extents_free {
-            removed.extend(link.regions.iter().flat_map(|region| region.extent.iter().copied()));
-        }
+        removed.extend(link.regions.iter().flat_map(|region| region.extent.iter().copied()));
         removed.sort_unstable();
         let (mut j, mut rest) = (0, None::<Range<u32>>);
         std::iter::from_fn(move || loop {
@@ -124,21 +117,29 @@ impl Vtree {
         let link = self.home.as_ref()?;
         let len = self.free_leaves();
         let window = (0, link.home.vtree().num_leaves());
-        (len > 0).then_some(FreeVars { link, window, extents_free: false, pins: &[], len })
+        (len > 0).then_some(FreeVars { link, window, pins: &[], len })
     }
 
     /// The variables of the home leaves under own node `t`'s home node that
-    /// this vtree does not have as a leaf, those in extents included; `None`
-    /// when there is none or when every home variable outside the extents is
-    /// a leaf.
+    /// this vtree has neither as a leaf nor in an extent; `None` when there
+    /// is none or when every home variable outside the extents is a leaf.
+    ///
+    /// A region's counts value its whole extent, so no node's set holds a
+    /// rank of an extent, even one outside the region's own home node.
     pub(crate) fn free_set_under(&self, t: VtreeIdx) -> Option<FreeVars<'_>> {
         let link = self.home.as_ref().filter(|_| self.free_leaves() > 0)?;
         let Range { start: lo, end: hi } = link.home.rank_range(self.home_node(t));
         let (a, b) = (link.ranks().partition_point(|&r| r < lo), link.ranks().partition_point(|&r| r < hi));
         let anchors = link.regions.partition_point(|region| (region.at as usize) < b)
             - link.regions.partition_point(|region| (region.at as usize) < a);
-        let len = hi - lo - (b - a - anchors) as u32;
-        (len > 0).then_some(FreeVars { link, window: (lo, hi), extents_free: true, pins: &[], len })
+        let in_extents: u32 = link
+            .regions
+            .iter()
+            .flat_map(|region| region.extent.iter())
+            .map(|&(start, end)| end.min(hi).saturating_sub(start.max(lo)))
+            .sum();
+        let len = hi - lo - (b - a - anchors) as u32 - in_extents;
+        (len > 0).then_some(FreeVars { link, window: (lo, hi), pins: &[], len })
     }
 
     /// The ranks of those of `vars` in [`free_set`](Self::free_set),

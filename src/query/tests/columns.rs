@@ -184,6 +184,32 @@ fn constants_and_degenerate_tables() {
 }
 
 #[test]
+fn constants_and_degenerate_tables_on_a_home() {
+    let home = crate::vtree::Home::new(Vtree::balanced(3));
+    let vtree = home.vtree();
+    let mut zero = Tdd::zero(vtree).model_columns(&[&[VarId(1)]]).unwrap();
+    assert_eq!(zero.rows(), 0);
+    assert_eq!(zero.to_columns(), vec![Vec::<u32>::new()]);
+    let mut zero = Tdd::zero(vtree).model_columns(&[&[]]).unwrap();
+    assert_eq!(zero.rows(), 0);
+    assert_eq!(zero.to_columns(), vec![Vec::<u32>::new()]);
+    let mut one = Tdd::one(vtree).model_columns(&[]).unwrap();
+    assert_eq!((one.rows(), one.width()), (1, 0));
+    assert!(one.to_columns().is_empty());
+    let mut one = Tdd::one(vtree).model_columns(&[&[], &[]]).unwrap();
+    assert_eq!((one.rows(), one.width()), (1, 2));
+    assert!(one.ascending());
+    assert_eq!(one.to_columns(), vec![vec![0], vec![0]]);
+    let mut one = Tdd::one(vtree).model_columns(&[&[], &[VarId(2)]]).unwrap();
+    assert_eq!(one.to_columns(), vec![vec![0, 0], vec![0, 1]]);
+    // A one-variable vtree: the output is a leaf node.
+    let leaf = crate::vtree::Home::new(Vtree::leaf(VarId(5)));
+    for (f, want) in [(Tdd::one(leaf.vtree()), vec![0, 1]), (crate::literal(leaf.vtree(), -5).unwrap(), vec![0])] {
+        assert_eq!(f.model_columns(&[&[VarId(5)]]).unwrap().to_columns(), vec![want]);
+    }
+}
+
+#[test]
 fn malformed_columns_are_refused() {
     let vtree = Arc::new(Vtree::balanced(40));
     let f = Tdd::clause(&vtree, [1, 2]).unwrap();

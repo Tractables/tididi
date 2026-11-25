@@ -317,7 +317,11 @@ fn decode_on_home(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
     }
     let mut tdd = decode_levels(bytes, &own)?;
     let built = |e: crate::diagram::TddBuildError| malformed(format!("the records do not form a diagram: {e}"));
-    crate::diagram::check_seated_pairs(&tdd).map_err(built)?;
+    match tdd.weights() {
+        None => crate::diagram::check_seated_pairs(&tdd),
+        Some(_) => crate::diagram::check_seated_weighted(&tdd),
+    }
+    .map_err(built)?;
     crate::diagram::trim_on_home(&mut tdd).map_err(|e| super::build_error(e, built))?;
     Ok(tdd)
 }

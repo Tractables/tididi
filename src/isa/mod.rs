@@ -67,5 +67,26 @@ pub(crate) fn prefetch_at<T>(slice: &[T], k: usize) {
     prefetch_line(slice.as_ptr().wrapping_add(k));
 }
 
+/// `slice`, its address passed through an empty `asm!` block, so the
+/// compiler cannot compute it ahead of this call: a slice taken in a loop
+/// body then stays defined there, and an inner loop's reads through it
+/// find it in a register. Hoisted out of a loop that also calls out of
+/// line, the address lives across those calls, and the register allocator
+/// has reloaded it from the stack on every read in the inner loop. An
+/// identity off `x86_64` and under Miri.
+#[inline(always)]
+pub(crate) fn defined_here<T>(slice: &[T]) -> &[T] {
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    {
+        let mut a = slice.as_ptr().addr();
+        // Safety: the block is empty; it reads and writes no memory.
+        unsafe { core::arch::asm!("/* {0} */", inout(reg) a, options(nomem, nostack, preserves_flags)) };
+        // Safety: `a` is `slice`'s own address.
+        unsafe { core::slice::from_raw_parts(slice.as_ptr().with_addr(a), slice.len()) }
+    }
+    #[cfg(not(all(target_arch = "x86_64", not(miri))))]
+    slice
+}
+
 #[cfg(test)]
 pub(crate) mod tests;

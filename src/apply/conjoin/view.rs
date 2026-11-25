@@ -12,8 +12,8 @@
 //! ([`super::held::Held::carry`]).
 //!
 //! A pass-through chain over a leaf that its reader names as `Pos` or `Neg`
-//! holds those two labels as its nodes 0 and 1, so the own level that reads
-//! the chain is renumbered: the view holds a copy of it, renumbered, in
+//! holds the literals the reader names as its nodes, `Pos` first, so the own
+//! level that reads the chain is renumbered: the view holds a copy of it, renumbered, in
 //! place of the diagram's. So does an image whose inline counts a
 //! pass-through over a region takes as nodes.
 
@@ -27,7 +27,7 @@ use crate::diagram::{
 };
 use crate::limits::{Limits, OperationError};
 use crate::restructure::embed::{image_above, literal_chain, moved_loose, Chain, Plan};
-use crate::restructure::placement::{first_ref, push_free_level, PassThrough};
+use crate::restructure::placement::{named_labels, push_free_level, PassThrough};
 use crate::vtree::{Vtree, VtreeIdx};
 
 /// Where the view finds the operand's level at a node of `U`.
@@ -62,7 +62,7 @@ pub(crate) struct View {
     empty: TddLevel,
     output: TddNodeId,
     dirty: Dirty,
-    /// The tops of the chains over a leaf read as `Pos` and `Neg`, sorted.
+    /// The tops of the chains over a leaf read as literals, sorted.
     tops: Vec<VtreeIdx>,
     /// The levels [`View::pass_through`] built.
     reached: Vec<VtreeIdx>,
@@ -184,14 +184,14 @@ impl View {
         if passes[into.root().idx()] {
             view.output.local = crate::diagram::NodeIdx(0);
         }
-        // The tops of the chains over a leaf read as `Pos` and `Neg`, whose
-        // levels hold a node per literal whether the reader names it or not.
+        // The tops of the chains over a leaf read as literals, whose readers
+        // owe the inner pass where they owe the leaf pass (`moved_dirty`).
         let mut tops = Vec::new();
         let one = 1 << crate::diagram::ONE_LEAF_IDX.0;
         for &t in plan.cone_nodes() {
             if passes[t.idx()]
-                && view.literals(tdd, t.idx()).is_some_and(|rows| rows & one == 0)
                 && into.node(t).parent().is_none_or(|p| !passes[p.idx()])
+                && view.literals(tdd, t.idx()).is_some_and(|rows| rows & one == 0)
                 && let Err(error) = eng.limits().try_push(&mut tops, t)
             {
                 return Err((error, view.release(plan).0));
@@ -199,7 +199,15 @@ impl View {
         }
         tops.sort_unstable();
         match copied_dirty(eng, &tdd.dirty, tdd.vtree(), into, plan, &tops) {
-            Ok(dirty) => {
+            Ok(mut dirty) => {
+                // A pass over a leaf has a node for each of the leaf's labels,
+                // of which its reader may name some only.
+                let all: u8 = (1 << crate::diagram::LEAF_WIDTH) - 1;
+                for &t in plan.cone_nodes() {
+                    if passes[t.idx()] && view.literals(tdd, t.idx()).is_some_and(|rows| rows != all) {
+                        dirty.add_loose(t.0);
+                    }
+                }
                 view.dirty = dirty;
                 Ok(view)
             }
@@ -232,8 +240,8 @@ impl View {
 
     /// Where `t`, a node the operand passes through, passes over a leaf
     /// below the operand's top, the labels of the leaf that reach a node,
-    /// one bit each: those the level that reads the leaf names, the two
-    /// literals or the One label alone, as a placement's chain holds them.
+    /// one bit each: those the level that reads the leaf names, the One
+    /// label alone or the literals it names.
     pub(crate) fn literals(&self, tdd: &Tdd, t: usize) -> Option<u8> {
         let source = tdd.vtree();
         let Slot::Own(x) = self.at[t] else { return None };
@@ -243,9 +251,9 @@ impl View {
         }
         let reader = source.node(x).parent().expect("a leaf below the top has a parent");
         let side = if source.children(reader).0 == x { ChildSide::Left } else { ChildSide::Right };
-        Some(match first_ref(&tdd.levels[reader.idx()], side) {
-            Some(label) if label == crate::diagram::ONE_LEAF_IDX => 1 << crate::diagram::ONE_LEAF_IDX.0,
-            _ => 1 << crate::diagram::POS_LEAF_IDX.0 | 1 << crate::diagram::NEG_LEAF_IDX.0,
+        Some(match named_labels(&tdd.levels[reader.idx()], side) {
+            0 => 1 << crate::diagram::POS_LEAF_IDX.0 | 1 << crate::diagram::NEG_LEAF_IDX.0,
+            labels => labels,
         })
     }
 
@@ -256,7 +264,7 @@ impl View {
     }
 
     /// Where the view finds each level, the levels it built, the output and
-    /// the sorted tops of the chains over a leaf read as `Pos` and `Neg`.
+    /// the sorted tops of the chains over a leaf read as literals.
     pub(crate) fn into_parts(self) -> (Vec<Slot>, Vec<TddLevel>, TddNodeId, Vec<VtreeIdx>) {
         (self.at, self.built, self.output, self.tops)
     }
@@ -315,10 +323,10 @@ impl View {
                     return Err(marginal_leaf(plan, through.carries));
                 }
                 true => {
-                    let read = |p: VtreeIdx, side: ChildSide| first_ref(view.level(tdd, p.idx()), view.oriented(plan, p, side));
-                    let chain = literal_chain(into, (|p| plan.covered_by(p).is_some(), |p| plan.is_free(p)), read, tdd.output.local, t);
+                    let named = |p: VtreeIdx, side: ChildSide| named_labels(view.level(tdd, p.idx()), view.oriented(plan, p, side));
+                    let chain = literal_chain(into, (|p| plan.covered_by(p).is_some(), |p| plan.is_free(p)), named, tdd.output.local, t);
                     match chain {
-                        Chain::Literals(top) => lim.try_push(&mut literal_tops, top)?,
+                        Chain::Literals(top, labels) => lim.try_push(&mut literal_tops, (top, labels))?,
                         Chain::Output(_) => view.output.local = NodeIdx(0),
                         Chain::One => {}
                     }
@@ -329,7 +337,7 @@ impl View {
         }
         gate.flush()?;
         view.renumber(lim, tdd, plan, &literal_tops)?;
-        literal_tops.sort_unstable();
+        let literal_tops = chain_tops(lim, &literal_tops)?;
         match worklists {
             true => view.dirty = copied_dirty(eng, &tdd.dirty, tdd.vtree(), into, plan, &literal_tops)?,
             false => view.tops = literal_tops,
@@ -475,10 +483,10 @@ impl View {
         Ok(())
     }
 
-    /// Point the readers of the chain tops `tops` at the chains' nodes 0
-    /// and 1 for `Pos` and `Neg`: each reader a renumbered copy of its own
-    /// level.
-    fn renumber(&mut self, lim: &Limits, tdd: &Tdd, plan: &Plan, tops: &[VtreeIdx]) -> Result<(), OperationError> {
+    /// Point the readers of the chain tops `tops`, each with the literals
+    /// its chain holds, at the chains' nodes ([`Chain::remap`]): each
+    /// reader a renumbered copy of its own level.
+    fn renumber(&mut self, lim: &Limits, tdd: &Tdd, plan: &Plan, tops: &[(VtreeIdx, u8)]) -> Result<(), OperationError> {
         if tops.is_empty() {
             return Ok(());
         }
@@ -546,39 +554,62 @@ impl View {
     }
 }
 
+/// The tops of `tops`, chain tops with the literals each chain holds,
+/// sorted.
+pub(crate) fn chain_tops(lim: &Limits, tops: &[(VtreeIdx, u8)]) -> Result<Vec<VtreeIdx>, OperationError> {
+    let mut out = Vec::new();
+    lim.reserve_exact(&mut out, tops.len())?;
+    out.extend(tops.iter().map(|&(top, _)| top));
+    out.sort_unstable();
+    Ok(out)
+}
+
 /// The levels of `vtree` that read the chain tops `tops`, each once, with
-/// the sides on which it reads one.
-pub(crate) fn chain_readers(lim: &Limits, vtree: &Vtree, tops: &[VtreeIdx]) -> Result<Vec<(VtreeIdx, Sides<bool>)>, OperationError> {
-    let mut parents: Vec<(VtreeIdx, Sides<bool>)> = Vec::new();
+/// the literals the chain it reads on each side holds, none on a side that
+/// reads no chain.
+pub(crate) fn chain_readers(lim: &Limits, vtree: &Vtree, tops: &[(VtreeIdx, u8)]) -> Result<Vec<(VtreeIdx, Sides<u8>)>, OperationError> {
+    let mut parents: Vec<(VtreeIdx, Sides<u8>)> = Vec::new();
     lim.reserve_exact(&mut parents, tops.len())?;
-    for &top in tops {
+    for &(top, labels) in tops {
         let parent = vtree.node(top).parent().expect("a chain that reaches the root reads no level");
-        let left = vtree.children(parent).0 == top;
-        parents.push((parent, Sides { left, right: !left }));
+        let sides = match vtree.children(parent).0 == top {
+            true => Sides { left: labels, right: 0 },
+            false => Sides { left: 0, right: labels },
+        };
+        parents.push((parent, sides));
     }
     parents.sort_unstable_by_key(|&(parent, _)| parent.0);
     parents.dedup_by(|later, kept| {
         let same = later.0 == kept.0;
         if same {
-            kept.1 = Sides { left: kept.1.left || later.1.left, right: kept.1.right || later.1.right };
+            kept.1 = Sides { left: kept.1.left | later.1.left, right: kept.1.right | later.1.right };
         }
         same
     });
     Ok(parents)
 }
 
-/// Point the references of `level` on its `moving` sides, each of which
-/// reads a chain over a leaf, at the chain's nodes 0 and 1 for `Pos` and
-/// `Neg`; `decoders` are its children's levels'.
+/// Point the references of `level` on its sides that read a chain over a
+/// leaf, `moving` giving the literals each such chain holds, at the chain's
+/// nodes ([`Chain::remap`]); `decoders` are its children's levels'.
 pub(crate) fn read_chain_nodes(
     lim: &Limits,
     level: &mut TddLevel,
-    moving: Sides<bool>,
+    moving: Sides<u8>,
     decoders: Sides<crate::diagram::ChildDecoder>,
 ) -> Result<(), OperationError> {
-    const REMAP: [u32; 3] = [u32::MAX, 0, 1];
-    let planned = plan_sides_remap(lim, level, moving, decoders, &REMAP)?;
-    finish_sides_remap(level, planned, moving, decoders, &REMAP);
+    let side = |left: bool| Sides { left, right: !left };
+    let passes: &[(Sides<bool>, u8)] = match (moving.left, moving.right) {
+        (0, labels) => &[(side(false), labels)],
+        (labels, 0) => &[(side(true), labels)],
+        (left, right) if left == right => &[(Sides { left: true, right: true }, left)],
+        (left, right) => &[(side(true), left), (side(false), right)],
+    };
+    for &(sides, labels) in passes {
+        let remap = Chain::remap(labels);
+        let planned = plan_sides_remap(lim, level, sides, decoders, &remap)?;
+        finish_sides_remap(level, planned, sides, decoders, &remap);
+    }
     level.forget_held_pairs();
     level.close();
     level.settle_held_pairs();
@@ -595,16 +626,15 @@ fn marginal_leaf(plan: &Plan, carried: VtreeIdx) -> OperationError {
 
 /// Ready `carried`, the worklists of a diagram on `source`, for
 /// [`moved_dirty`]: room for the inner pass's share of the leaf pass's, and
-/// the room for the listed loose levels, returned, where some are listed or
-/// `chains` (a chain over a leaf read as `Pos` and `Neg`) may list them.
-pub(crate) fn reserve_moved(eng: &Engine, carried: &mut Dirty, source: &Vtree, chains: bool) -> Result<Vec<u32>, OperationError> {
+/// the room for the listed loose levels, returned, where some are listed.
+pub(crate) fn reserve_moved(eng: &Engine, carried: &mut Dirty, source: &Vtree) -> Result<Vec<u32>, OperationError> {
     carried.reserve_leaf_owes_inner(eng)?;
-    listed_room(eng, carried.loose(), source, chains)
+    listed_room(eng, carried.loose(), source)
 }
 
-fn listed_room(eng: &Engine, loose: Option<&LooseLevels>, source: &Vtree, chains: bool) -> Result<Vec<u32>, OperationError> {
+fn listed_room(eng: &Engine, loose: Option<&LooseLevels>, source: &Vtree) -> Result<Vec<u32>, OperationError> {
     let mut listed = Vec::new();
-    if loose.is_some_and(|loose| !loose.is_empty() || chains) {
+    if loose.is_some_and(|loose| !loose.is_empty()) {
         // `moved_loose` lists at most the two children of each image of an
         // internal level.
         eng.limits().reserve_exact(&mut listed, 2 * source.internal_bottomup_slice().len())?;
@@ -616,7 +646,8 @@ fn listed_room(eng: &Engine, loose: Option<&LooseLevels>, source: &Vtree, chains
 /// from `source` onto `into` as [`crate::restructure::embed::place`] moves
 /// worklists; `placed` is the image of each source node and the images
 /// that are mirrored, `tops` the sorted tops of the chains over a leaf read
-/// as `Pos` and `Neg`.
+/// as literals, whose readers owe the inner pass where they owe the leaf
+/// pass.
 pub(crate) fn moved_dirty(
     mut carried: Dirty,
     listed: Vec<u32>,
@@ -641,7 +672,7 @@ pub(crate) fn copied_dirty(
 ) -> Result<Dirty, OperationError> {
     let map = &plan.embedding.levels;
     let mut carried = from.remapped_on(eng, map, !tops.is_empty(), keeps_fused(source, into, map))?;
-    let listed = listed_room(eng, from.loose(), source, !tops.is_empty())?;
+    let listed = listed_room(eng, from.loose(), source)?;
     finish_moved(&mut carried, from.loose(), listed, (source, into), (&plan.embedding.levels, |t| plan.is_mirrored(t)), tops);
     Ok(carried)
 }
@@ -677,7 +708,7 @@ fn finish_moved(
     }
     carried.dedup_above(into.num_nodes());
     if let Some(loose) = loose {
-        moved_loose(source, into, placed, loose, tops, &mut listed);
+        moved_loose(source, into, placed, loose, &mut listed);
         carried.set_loose(Some(listed));
     }
 }

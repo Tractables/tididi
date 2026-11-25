@@ -800,6 +800,15 @@ impl Dirty {
         self.list(pass).clear();
     }
 
+    /// Empty every pass's list, for a diagram certified at its reduction
+    /// fixpoint.
+    #[inline]
+    pub(crate) fn clear_lists(&mut self) {
+        for pass in Pass::ALL {
+            self.clear(pass);
+        }
+    }
+
     /// True when no pass has work left: a whole-diagram
     /// [`minimize`](Tdd::minimize) ended, and nothing was edited since.
     #[inline]

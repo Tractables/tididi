@@ -275,3 +275,43 @@ fn constructors_come_out_certified_at_their_reduction_fixpoint() {
         }
     }
 }
+
+/// On a home, a relation from `from_models` comes out certified with no
+/// level left on a reduction worklist: the closing trim that drops its free
+/// leaves (balanced, x1 x3 x5: levels 3 and 4) clears what it certifies.
+#[test]
+fn a_relation_on_a_home_comes_out_at_its_reduction_fixpoint() {
+    let eng = &crate::Engine::new();
+    for (shape, vtree) in vtree_shapes(5) {
+        let hm = crate::vtree::Home::new(vtree);
+        let f = eng.from_models(hm.vtree(), &[VarId(1), VarId(3), VarId(5)], &[0b101, 0b010, 0b111]).unwrap();
+        crate::test_helpers::check::check_trimmed(&f, false).unwrap();
+        assert!(f.levels.is_canonical(f.output), "{shape}: the output is not certified");
+        let mut again = f.clone();
+        again.levels.forget();
+        again.minimize().unwrap();
+        assert_same_shape(&again, &f, shape);
+        assert!(f.dirty.is_empty(), "{shape}: a level was left on a worklist: {:?}", f.dirty);
+    }
+}
+
+/// A constant on a home lies on its empty projection and is canonical
+/// there, as a constant on a root is.
+#[test]
+fn constants_on_a_home_come_out_certified() {
+    let eng = &crate::Engine::new();
+    for (shape, vtree) in vtree_shapes(5) {
+        let hm = crate::vtree::Home::new(vtree);
+        let home = std::sync::Arc::clone(hm.vtree());
+        let built = [
+            constant_one(eng, &home),
+            constant_zero(eng, &home),
+            eng.cube(&home, std::iter::empty::<Literal>()).unwrap(),
+            eng.from_models(&home, &[], &[0]).unwrap(),
+            constant_like(eng, &constant_one(eng, &home), false).unwrap(),
+        ];
+        for f in built {
+            assert!(f.levels.is_canonical(f.output), "{shape}: the constant is not certified");
+        }
+    }
+}

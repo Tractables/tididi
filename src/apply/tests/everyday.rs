@@ -2,6 +2,7 @@ use super::*;
 use crate::diagram::{Arithmetic, RationalWeights, Weights};
 use crate::limits::{LimitConfig, StopAt, StopRules};
 use crate::{Literal, OperationError};
+use crate::vtree::Home;
 
 fn function(tree: &Arc<Vtree>, bits: u16, reverse: bool) -> Tdd {
     let eng = Engine::new();
@@ -291,7 +292,9 @@ fn invalid_maps_and_marginal_inputs_are_rejected_even_for_constants() {
     let eng = Engine::new();
     let tree = Arc::new(Vtree::balanced(4));
     let x = eng.literal(&tree, 1).unwrap();
-    for f in [Tdd::zero(&tree), Tdd::one(&tree)] {
+    let home = Home::new(Vtree::balanced(4));
+    let home_x = eng.literal(home.vtree(), 1).unwrap();
+    for (f, x) in [(Tdd::zero(&tree), &x), (Tdd::one(&tree), &x), (eng.zero(home.vtree()), &home_x), (eng.one(home.vtree()), &home_x)] {
         assert_eq!(
             eng.rename_vars(f.clone(), &[(VarId(1), VarId(5))])
                 .unwrap_err(),
@@ -303,7 +306,7 @@ fn invalid_maps_and_marginal_inputs_are_rejected_even_for_constants() {
             OperationError::DuplicateVariable(VarId(1))
         );
         assert_eq!(
-            eng.substitute(f.clone(), &[(VarId(1), &x), (VarId(1), &x)])
+            eng.substitute(f.clone(), &[(VarId(1), x), (VarId(1), x)])
                 .unwrap_err(),
             OperationError::DuplicateVariable(VarId(1))
         );
@@ -542,12 +545,13 @@ fn renaming_and_literal_substitution_agree_for_all_three_variable_maps() {
 fn rename_validates_each_entry_before_shortcuts_or_literal_construction() {
     let eng = Engine::new();
     let tree = Arc::new(Vtree::balanced(2));
+    let home = Home::new(Vtree::balanced(2));
     let maps = [
         (vec![(VarId(1), VarId(1)), (VarId(1), VarId(10))], OperationError::DuplicateVariable(VarId(1))),
         (vec![(VarId(1), VarId(10)), (VarId(1), VarId(1))], OperationError::VariableNotInVtree(VarId(10))),
         (vec![(VarId(9), VarId(10))], OperationError::VariableNotInVtree(VarId(9))),
     ];
-    for f in [eng.one(&tree), eng.zero(&tree)] {
+    for f in [eng.one(&tree), eng.zero(&tree), eng.one(home.vtree()), eng.zero(home.vtree())] {
         assert_canonical(&f);
         let _limits = eng.limits().scope(LimitConfig::none().with_output_node_cap(Some(0)));
         for (map, error) in &maps {

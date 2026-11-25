@@ -444,8 +444,11 @@ impl Tdd {
     /// otherwise false `care` produces an unsatisfiable outcome.
     ///
     /// Marginal levels in this function are retained; marginal levels in `care`
-    /// place no constraint on their discarded subtrees. Every outcome retains this
-    /// function's weights and arithmetic; the care set's weights are ignored.
+    /// place no constraint on their discarded subtrees. Where a summed extent of
+    /// one operand holds a variable of the other or meets one of its summed
+    /// extents, no projection holds both, and this function is returned
+    /// unchanged. Every outcome retains this function's weights and arithmetic;
+    /// the care set's weights are ignored.
     ///
     /// # Errors
     ///
@@ -834,13 +837,14 @@ impl Tdd {
     /// Return a complete satisfying assignment, or `None` if the function is false.
     ///
     /// The assignment contains one literal per vtree variable, sorted by identifier,
-    /// including free variables. The current traversal assigns false to free leaves;
+    /// including free variables; on a projection, one per variable of its home. The
+    /// current traversal assigns false to free variables;
     /// the chosen model may change after minimization or restructuring. The diagram
     /// must be structural but need not be minimized. It is borrowed and unchanged;
     /// attached weights are ignored.
     ///
-    /// The walk and temporary space are linear in the vtree size. Sorting the
-    /// returned literals takes O(n log n) for n variables.
+    /// The walk and temporary space are linear in the vtree size, on a projection its
+    /// home's. Sorting the returned literals takes O(n log n) for n variables.
     ///
     /// # Errors
     ///
@@ -988,7 +992,10 @@ impl Tdd {
     /// read as [`evaluate`](Self::evaluate) reads it. The borrowed diagram is
     /// unchanged. On a projection the subtree is that of `at`'s node in the
     /// home, its variables the projection lacks valued by
-    /// [`EvalAlgebra::free`](crate::diagram::EvalAlgebra::free).
+    /// [`EvalAlgebra::free`](crate::diagram::EvalAlgebra::free). A summed
+    /// region's variables are not lacked: the region's counts value all of
+    /// them at the level that holds the region, also those outside that
+    /// level's node in the home.
     ///
     /// # Errors
     ///
@@ -1041,7 +1048,7 @@ impl Tdd {
     /// none above it, and no slot for the counts `at`'s parent carries
     /// inline. The borrowed diagram is unchanged. On a projection
     /// [`ColumnAlgebra::free`] values the variables under `at`'s node in the
-    /// home that the projection lacks.
+    /// home that the projection lacks, a summed region's not among them.
     ///
     /// # Errors
     ///

@@ -28,24 +28,43 @@ fn apply_update(batch: &mut Maintenance<'_>, model: &[i32], insert: bool) -> Res
 /// On implicit levels and on stored ones alike ([`same_as_stored`]).
 #[test]
 fn an_edit_and_a_rebuild_reach_the_same_diagram() {
-    same_as_stored(an_edit_and_a_rebuild);
+    same_as_stored(|| an_edit_and_a_rebuild(false));
 }
 
-/// The cases of [`an_edit_and_a_rebuild_reach_the_same_diagram`]: the
-/// edited diagrams, minimized.
-fn an_edit_and_a_rebuild() -> Vec<Tdd> {
+#[test]
+fn an_edit_and_a_rebuild_on_a_home_hold_what_the_stored_route_holds() {
+    same_as_stored(|| an_edit_and_a_rebuild(true));
+}
+
+/// The cases of [`an_edit_and_a_rebuild_reach_the_same_diagram`], on homes
+/// or on roots: the edited diagrams, minimized.
+fn an_edit_and_a_rebuild(homes: bool) -> Vec<Tdd> {
     let mut out = Vec::new();
     // Both routes over every assignment of every small case. `check_determinism`
     // is quadratic in the level widths, so the sweep stops at five variables.
     let mut edits = [0u32; 2];
     for (num_vars, clauses) in test_cases() {
         if num_vars > 5 { continue; }
-        for (shape, vtree) in sweep_shapes(num_vars) {
-            let mut f = compile_clauses(&vtree, &clauses);
-            f.minimize().expect("minimizing fits");
+        for (shape, shape_vtree) in sweep_shapes(num_vars) {
+            let compiled = |vtree: &Arc<Vtree>| {
+                let mut f = compile_clauses(vtree, &clauses);
+                f.minimize().expect("minimizing fits");
+                f
+            };
+            let on_root = compiled(&shape_vtree);
             for bits in 0..(1u64 << num_vars) {
                 let model = assignment(num_vars, bits);
                 for insert in [true, false] {
+                    // A fresh context a case: its level pool recycles the
+                    // pair arenas earlier cases returned, and an implicit
+                    // level returns none, so on a shared context the two
+                    // routes would describe arenas of other capacities.
+                    let context = Arc::new(crate::Context::new());
+                    let home = crate::vtree::Home::new(Vtree::clone(&shape_vtree).with_context(context));
+                    let (vtree, f) = match homes {
+                        true => (Arc::clone(home.vtree()), compiled(home.vtree())),
+                        false => (Arc::clone(&shape_vtree), on_root.clone()),
+                    };
                     let mut got = f.clone();
                     let mut batch = got.maintain().expect("the index fits");
                     apply_update(&mut batch, &model, insert).expect("the update fits");
@@ -631,3 +650,4 @@ fn the_false_exit_on_a_weighted_home_keeps_its_weights() {
     f.minimize().unwrap();
     assert_eq!(f.weighted_value().unwrap().unwrap().as_rational().into_owned(), rat(27, 1));
 }
+

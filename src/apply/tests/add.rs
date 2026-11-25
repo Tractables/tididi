@@ -5,6 +5,7 @@ use num_bigint::BigUint;
 use super::*;
 use crate::diagram::{Arithmetic, RationalWeights, Weights};
 use crate::test_helpers::{assert_canonical, compile_clauses_on, node_value, rand_cnf, under, vtree_shapes, CnfShape, Lcg};
+use crate::vtree::{Home, VarId};
 use crate::{and, or};
 
 /// The count `f` gives the assignment `bits` of variables `1..=n`, bit `i`
@@ -325,4 +326,98 @@ fn every_refused_reserve_of_a_sum_leaves_the_operands() {
         }
     }
     assert!(refused > 0, "no sum refused");
+}
+
+/// The values `f` gives the assignments of variables `1..=n`, times
+/// `2^free`, agree with `root`'s, `f` on a projection and `root` on a copy of
+/// its home's tree: `free` variables `root` summed out are free in `f`.
+fn assert_reads_as(f: &Tdd, root: &Tdd, n: u32, free: u32, label: &str) {
+    crate::test_helpers::check::check_all_fast(f, label);
+    for bits in 0..1u64 << n {
+        let reading = match f.vtree().num_nodes() {
+            0 => BigUint::from(u8::from(f.is_one())),
+            _ => value(f, n, bits),
+        };
+        assert_eq!(reading << free, value(root, n, bits), "{label}: assignment {bits:b}");
+    }
+}
+
+/// On the projection of `((x1 x2) (x3 x4))` on `{x1, x3}`, `x1` summed out
+/// of `x1 ∨ x3` is a region; the diagram added to itself counts as the sum
+/// on the root does.
+#[test]
+fn a_diagram_with_a_region_adds_to_itself() {
+    let eng = Engine::new();
+    let home = Home::new(Vtree::balanced(4));
+    let vtree = Vtree::projection(&home, [VarId(1), VarId(3)]).unwrap();
+    let mut f = Tdd::clause(&vtree, [1, 3]).unwrap();
+    eng.marginalize(&mut f, |v| v == VarId(1)).unwrap();
+    assert_eq!(f.vtree().regions().count(), 1);
+    let root = Arc::new(Vtree::clone(home.vtree()));
+    let mut r = Tdd::clause(&root, [1, 3]).unwrap();
+    eng.marginalize_levels(&mut r, &[root.leaf_of(VarId(1)).unwrap()]).unwrap();
+    let twice = eng.add(f.clone(), f).unwrap();
+    assert_eq!(twice.vtree().regions().count(), 1);
+    assert_reads_as(&twice, &eng.add(r.clone(), r).unwrap(), 4, 0, "x1 + x3, twice");
+}
+
+/// Two random CNFs on projections of a random home of 3 to 8 variables,
+/// each with the variables under one home node summed out, a node whose
+/// variables both use: where the two record the same regions, the sum reads
+/// as the sum on the root; where they record different ones, for different
+/// nodes or for one whose sum one operand no longer records, it is refused.
+#[test]
+fn operands_on_two_projections_add_where_they_summed_out_alike() {
+    use crate::marginal::tests::region::{check_form, on_home, operand, under as within};
+    let eng = Engine::new();
+    let (mut added, mut refused, mut apart) = (0, 0, 0);
+    for seed in 0..400u64 {
+        let mut rng = Lcg::new(seed);
+        let n = 3 + rng.below(6) as u32;
+        let home = Home::new(Vtree::random(n, seed));
+        let mut vars = || -> Vec<VarId> { (1..=n).filter(|_| rng.below(4) != 0).map(VarId).collect() };
+        let (fv, gv) = (vars(), vars());
+        let (f, g) = (operand(&eng, &home, &fv, &mut rng), operand(&eng, &home, &gv, &mut rng));
+        let h = home.vtree();
+        let both: Vec<VtreeIdx> = h
+            .bottomup()
+            .filter(|&t| h.subtree(t).filter(|&u| h.node(u).is_leaf()).all(|u| [&f, &g].iter().all(|d| d.vtree().leaf_of(h.leaf_var(u)).is_some())))
+            .collect();
+        if both.is_empty() {
+            continue;
+        }
+        let at = |rng: &mut Lcg| both[rng.below(both.len() as u64) as usize];
+        let hf = at(&mut rng);
+        let hg = if rng.below(4) == 0 { at(&mut rng) } else { hf };
+        let what = format!("seed {seed}, {n} variables, {hf:?} and {hg:?}");
+        let root = Arc::new(Vtree::clone(h));
+        let (mut fr, mut gr) = (on_home(&f, &root), on_home(&g, &root));
+        let (mut f, mut g) = (f, g);
+        eng.marginalize(&mut f, within(&home, &[hf])).unwrap();
+        eng.marginalize(&mut g, within(&home, &[hg])).unwrap();
+        let recorded = |d: &Tdd| d.vtree().regions().map(|t| d.vtree().region_at(t)).collect::<Vec<_>>();
+        let same = recorded(&f) == recorded(&g);
+        let width = |d: &Tdd| d.vtree().regions().map(|t| d.vtree().region_at(t).1.iter().map(|&(lo, hi)| hi - lo).sum::<u32>()).sum::<u32>();
+        let summed = width(&g);
+        // Operands of which neither records a sum add as Boolean ones.
+        if hf != hg && same || summed == 0 && width(&f) == 0 {
+            continue;
+        }
+        let differ = !Arc::ptr_eq(f.vtree(), g.vtree());
+        let sum = eng.add(f, g);
+        if !same {
+            assert!(matches!(sum, Err(OperationError::MarginalLevel(_))), "{what}: {sum:?}");
+            refused += 1;
+            continue;
+        }
+        let sum = sum.unwrap_or_else(|e| panic!("{what}: {e:?}"));
+        check_form(&sum, &what);
+        eng.marginalize_levels(&mut fr, &[hf]).unwrap();
+        eng.marginalize_levels(&mut gr, &[hf]).unwrap();
+        // A region the sum fills is dropped, its variables free.
+        assert_reads_as(&sum, &eng.add(fr, gr).unwrap(), n, summed - width(&sum), &what);
+        added += 1;
+        apart += usize::from(differ);
+    }
+    assert!(apart > 100 && refused > 10,"{added} added, {apart} on two projections, {refused} refused");
 }

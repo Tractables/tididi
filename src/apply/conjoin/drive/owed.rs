@@ -75,11 +75,14 @@ use crate::vtree::{Vtree, VtreeIdx};
 /// `g`; a level the sweep stopped short of is free in `g`, and taken from
 /// `f`, with what it holds.
 ///
-/// A level under a free one keeps what the operand's entry counted of it
-/// ([`Engine::unnamed_nodes`](crate::Engine::unnamed_nodes)): its nodes and
-/// its parent's pairs are that operand's. So does a level that was moved
-/// untouched or taken free from the operand that its parent was moved
-/// untouched from. Every other level is uncounted.
+/// A level keeps what an operand's entry counted of it
+/// ([`Engine::unnamed_nodes`](crate::Engine::unnamed_nodes)) where its
+/// nodes, their pairs and its parent's pairs are that operand's: a level
+/// free, or moved untouched, under a free one taken from that operand, and
+/// a level moved untouched or taken free from the operand its parent was
+/// moved untouched from. A level the sweep built under a free one is
+/// uncounted: its parent names the nodes it named, but their pairs are the
+/// sweep's. Every other level is uncounted.
 ///
 /// [`Cone::chain`]: super::super::setup::Cone::chain
 pub(super) fn loose_levels(
@@ -103,7 +106,8 @@ pub(super) fn loose_levels(
                 .parent()
                 .is_some_and(|p| taken_free(p) && (carried_from_f(cone, p.idx()) == (by == 1)));
             if under_free && internal(VtreeIdx(c)) {
-                loose.insert_counted(c, unnamed);
+                let untouched = taken_free(VtreeIdx(c)) || run.lists.identity_carrier(c as usize) == by;
+                loose.insert_counted(c, unnamed.filter(|_| untouched));
             }
         }
     }

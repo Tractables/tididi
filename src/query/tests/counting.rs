@@ -93,6 +93,46 @@ fn test_node_counts_basic() {
     assert_eq!(*out_count, BigUint::from(8u32));
 }
 
+/// On a home a constant lies on the empty projection, which has no level:
+/// its node counts have no column, and its model count reads the home.
+#[test]
+fn test_node_counts_basic_on_a_home() {
+    let eng = &crate::Engine::new();
+    let home = crate::vtree::Home::new(Vtree::balanced(3));
+    for value in [false, true] {
+        let tdd = if value { constant_one(eng, home.vtree()) } else { crate::build::constant_zero(eng, home.vtree()) };
+        assert_eq!(tdd.vtree().num_nodes(), 0);
+        assert!(node_counts(&tdd).is_empty());
+        assert!(tdd.node_counts_u128().unwrap().is_empty());
+        assert_eq!(tdd.model_count().unwrap(), BigUint::from(8 * u32::from(value)));
+    }
+}
+
+/// The diagram queries answer on a constant on a home's empty projection.
+#[test]
+fn queries_answer_on_the_empty_projection() {
+    let eng = &crate::Engine::new();
+    let home = crate::vtree::Home::new(Vtree::balanced(3));
+    let x = Tdd::clause(home.vtree(), [2]).unwrap();
+    for value in [false, true] {
+        let mut f = if value { constant_one(eng, home.vtree()) } else { crate::build::constant_zero(eng, home.vtree()) };
+        let n = u32::from(value);
+        assert_eq!(f.model_count().unwrap(), BigUint::from(8 * n));
+        assert_eq!(f.projected_model_count(&[VarId(1)]).unwrap(), BigUint::from(2 * n));
+        assert_eq!(f.is_sat().unwrap(), value);
+        let all_false: Vec<Literal> = (1..=3).map(|v| Literal::neg(VarId(v))).collect();
+        assert_eq!(f.satisfying_assignment().unwrap(), value.then_some(all_false));
+        assert_eq!(f.support().unwrap(), Vec::new());
+        assert!(f.equivalent(&f).unwrap());
+        assert_eq!(f.implies(&x).unwrap(), !value);
+        assert_eq!(x.implies(&f).unwrap(), value);
+        f.attach_level_counts().unwrap();
+        assert_eq!(f.model_count().unwrap(), BigUint::from(8 * n));
+        let _ = f.implied_literals().unwrap();
+        let _ = f.weighted_value().unwrap();
+    }
+}
+
 // --- Overflow tests ---
 
 /// Conditioning collapses a false result to ZERO on `is_sat`'s answer, so on
