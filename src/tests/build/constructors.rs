@@ -1,3 +1,4 @@
+use crate::test_helpers::bare_roots;
 use crate::diagram::ChildDecoder;
 use std::sync::Arc;
 
@@ -243,7 +244,7 @@ fn a_clause_reads_its_literals_as_a_set() {
 #[test]
 fn constructors_come_out_certified_at_their_reduction_fixpoint() {
     let eng = &crate::Engine::new();
-    for (shape, vtree) in vtree_shapes(5) {
+    for (shape, vtree) in bare_roots(vtree_shapes(5)) {
         let built = [
             constant_one(eng, &vtree),
             constant_zero(eng, &vtree),

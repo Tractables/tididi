@@ -4,6 +4,7 @@
 //! a level; and the levels a conjunction builds as an operand holds them,
 //! moved, copied or found once built, owed no twin search.
 
+use crate::test_helpers::bare_roots;
 use std::sync::Arc;
 
 use super::*;
@@ -23,7 +24,7 @@ const SPARSE: SparseRoute = SparseRoute { sparsity: 1, min_grid: 0 };
 fn cases(nvars: u32, seed: u64) -> Vec<(String, Arc<Vtree>, Tdd, Tdd)> {
     let mut rng = Lcg::new(seed);
     let mut out = Vec::new();
-    for (name, vtree) in vtree_shapes(nvars) {
+    for (name, vtree) in bare_roots(vtree_shapes(nvars)) {
         for case in 0..6 {
             let eng = Engine::new();
             let base = rand_cnf(&mut rng, nvars, CnfShape { clauses: 2 * nvars as usize, width: 3 });

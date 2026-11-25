@@ -469,7 +469,7 @@ fn leaf(v: u32) -> Vtree {
 fn fixed_cases(a: &mut Audit, eng: &Engine) {
     a.inputs.clear();
     let lit = |v: u32, sign: bool| Literal { var: VarId(v), sign };
-    let xyz = Arc::clone(Home::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap()).vtree());
+    let xyz = Arc::clone(&Home::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap()));
     let hm = Home::new(Arc::clone(&xyz));
     let (root, xy) = (xyz.root(), xyz.children(xyz.root()).0);
     let trimmed = |mut t: Tdd| {
@@ -487,7 +487,7 @@ fn fixed_cases(a: &mut Audit, eng: &Engine) {
     let x_y_any = unminimized((POS, NEG));
     let y_x_any = unminimized((NEG, POS));
     a.case = "restructure_to (x (y z)) from ((x y) z), level (x y) {(Pos, Pos), (Neg, Pos)}, root {(n0, Pos)}".into();
-    let x_yz = Arc::clone(Home::new(Vtree::join(&leaf(1), &Vtree::join(&leaf(2), &leaf(3)).unwrap()).unwrap()).vtree());
+    let x_yz = Arc::clone(&Home::new(Vtree::join(&leaf(1), &Vtree::join(&leaf(2), &leaf(3)).unwrap()).unwrap()));
     a.run("restructure_to [fixed]", || {
         let mut t = y_x_any.clone();
         t.restructure_to(&x_yz, usize::MAX).map(|_| t)
@@ -517,7 +517,7 @@ fn fixed_cases(a: &mut Audit, eng: &Engine) {
     a.run("or of x and not x [fixed]", || eng.or(x.clone(), x.clone().negate().unwrap()));
 
     a.case = "(x, y) root {(Pos, Pos), (Neg, Neg)}, key the leaf x".into();
-    let two = Arc::clone(Home::new(Vtree::join(&leaf(1), &leaf(2)).unwrap()).vtree());
+    let two = Arc::clone(&Home::new(Vtree::join(&leaf(1), &leaf(2)).unwrap()));
     let same = built(eng, &two, &[(two.root(), vec![(POS, POS), (NEG, NEG)])]);
     let key = two.children(two.root()).0;
     a.run("project_to_subtree on a leaf [fixed]", || eng.project_to_subtree(&same, key));
@@ -550,7 +550,7 @@ fn fixed_cases(a: &mut Audit, eng: &Engine) {
         let v = f.vtree();
         let at = v.bottomup().find(|&t| !v.node(t).is_leaf() && v.node(v.children(t).0).is_leaf() && v.node(v.children(t).1).is_leaf()).ok_or("no level over x y")?;
         let slots = f.reference_slot_count(at);
-        let into = Arc::clone(Home::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &Vtree::balanced_over(&[VarId(4), VarId(5)]).unwrap()).unwrap()).vtree());
+        let into = Arc::clone(&Home::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &Vtree::balanced_over(&[VarId(4), VarId(5)]).unwrap()).unwrap()));
         eng.tag_level(&f, at, &into, |v| v, &vec![Some(0); slots], &[VarId(4), VarId(5)], &[0b10]).map_err(|e| format!("{e:?}"))
     });
 
@@ -573,7 +573,7 @@ impl FoldMonoid for Sum {
 /// day 0, so that the totals do not read the day of an open store.
 fn prefix_fold_case() -> Result<Tdd, String> {
     let chain = |low: Vtree| Vtree::join(&leaf(1), &Vtree::join(&leaf(2), &Vtree::join(&leaf(3), &low).unwrap()).unwrap()).unwrap();
-    let vtree = Arc::clone(Home::new(chain(Vtree::join(&leaf(4), &leaf(5)).unwrap())).vtree());
+    let vtree = Arc::clone(&Home::new(chain(Vtree::join(&leaf(4), &leaf(5)).unwrap())));
     let into = Arc::new(chain(Vtree::join(&leaf(4), &Vtree::join(&leaf(5), &leaf(6)).unwrap()).unwrap()));
     let row = |store: u64, day: u64, amount: u64| store | (day >> 1) << 1 | (day & 1) << 2 | amount << 3;
     let vars: Vec<VarId> = (1..=5).map(VarId).collect();
@@ -595,7 +595,7 @@ fn prefix_fold_case() -> Result<Tdd, String> {
 #[test]
 fn audit_i1_constant_operands_do_not_panic() {
     let eng = Engine::new();
-    let home = Arc::clone(Home::new(Vtree::balanced(3)).vtree());
+    let home = Arc::clone(&Home::new(Vtree::balanced(3)));
     let hm = Home::new(Arc::clone(&home));
     for mut c in [Tdd::one(&home), Tdd::zero(&home)] {
         c.trim(&hm).unwrap();
@@ -620,7 +620,7 @@ fn audit_i1_every_producer() {
         let mut rng = Lcg::new(seed ^ 0x11a7);
         let scattered = seed % 2 == 1;
         let n = if scattered { 8 + rng.below(17) as u32 } else { 3 + rng.below(6) as u32 };
-        let home = Arc::clone(Home::new(Vtree::random(n, seed)).vtree());
+        let home = Arc::clone(&Home::new(Vtree::random(n, seed)));
         let mut used: Vec<u32> = (1..=n).collect();
         if scattered {
             for i in (1..used.len()).rev() {
@@ -645,7 +645,7 @@ fn audit_i1_minimize_stopped_after_a_contraction() {
     use crate::limits::{LimitConfig, StopCallback, StopDecision};
     use std::sync::atomic::{AtomicUsize, Ordering};
     let eng = Engine::new();
-    let xyz = Arc::clone(Home::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap()).vtree());
+    let xyz = Arc::clone(&Home::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap()));
     let (root, xy) = (xyz.root(), xyz.children(xyz.root()).0);
     let f = built(&eng, &xyz, &[(xy, vec![(POS, POS), (POS, NEG)]), (root, vec![(0, POS)])]);
     let polls = Arc::new(AtomicUsize::new(0));
@@ -806,7 +806,7 @@ fn audit_i1_exists_with_pruning_names_exactly_the_targets() {
 /// ((x y) z) with x, y, z = 1, 2, 3 on a home weighted by `ws`, x ∧ z with
 /// the level (x y) {(Pos, Pos), (Pos, Neg)}: y a full twin side.
 fn x_and_z_over_a_twin(eng: &Engine, ws: Weights) -> (Arc<Vtree>, Tdd) {
-    let xyz = Arc::clone(Home::weighted(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap(), ws).unwrap().vtree());
+    let xyz = Arc::clone(&Home::weighted(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap(), ws).unwrap());
     let (root, xy) = (xyz.root(), xyz.children(xyz.root()).0);
     let f = built(eng, &xyz, &[(xy, vec![(POS, POS), (POS, NEG)]), (root, vec![(0, POS)])]);
     (xyz, f)

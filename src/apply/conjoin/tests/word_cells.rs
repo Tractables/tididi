@@ -2,6 +2,7 @@
 //! loop that reads every candidate off the child grids: the same diagram,
 //! each node's pairs in the same order, and the same work.
 
+use crate::test_helpers::bare_roots;
 use super::pair_rows::{conjoin, split_support_cases};
 use super::*;
 use crate::Engine;
@@ -213,7 +214,7 @@ fn the_streamed_levels_read_by_vectors_fold_what_the_row_loop_folds() {
     let before = word_cells_levels();
     let mut cases = 0usize;
     let mut operands: Vec<(String, Arc<Vtree>, Tdd, Tdd)> = Vec::new();
-    for (name, vtree) in vtree_shapes(16) {
+    for (name, vtree) in bare_roots(vtree_shapes(16)) {
         for case in 0..2 {
             let eng = Engine::new();
             let shape = CnfShape {
@@ -232,7 +233,7 @@ fn the_streamed_levels_read_by_vectors_fold_what_the_row_loop_folds() {
     }
     for (n, one_ins) in [(10u32, &[2, 3][..]), (14, &[3, 8])] {
         let vars: Vec<VarId> = (1..=n).map(VarId).collect();
-        for (name, vtree) in vtree_shapes(n) {
+        for (name, vtree) in bare_roots(vtree_shapes(n)) {
             for &one_in in one_ins {
                 let mut operand = || {
                     let models: Vec<u64> =
@@ -342,7 +343,7 @@ fn a_refused_column_table_builds_the_same_levels() {
     let vars: Vec<VarId> = (1..=n).map(VarId).collect();
     let route = SparseRoute { sparsity: 64, min_grid: usize::MAX };
     let mut absorbed = 0;
-    for (name, vtree) in vtree_shapes(n).into_iter().take(2) {
+    for (name, vtree) in bare_roots(vtree_shapes(n)).into_iter().take(2) {
         let mut operand = || {
             let models: Vec<u64> = (0..1u64 << n).filter(|_| rng.below(2) == 0).collect();
             Tdd::from_models(&vtree, &vars, &models).unwrap()

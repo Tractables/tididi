@@ -73,7 +73,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let vtree_of = |vars: &[u32]| -> Result<Arc<Vtree>, Box<dyn std::error::Error>> {
         Ok(match projected {
             true => Vtree::projection(&home, vars.iter().map(|&v| VarId(v)))?,
-            false => Arc::clone(home.vtree()),
+            false => Arc::clone(&home),
         })
     };
 

@@ -73,7 +73,7 @@ impl Engine {
         } else if tdd.is_one() {
             let free = tdd.vtree.free_set().expect("a vtree with no node is a projection, and a home has a leaf");
             let (first, rest) = free.split_first().expect("not empty");
-            let h = free.home().vtree().leaf_of(first).expect("a home leaf");
+            let h = free.home().leaf_of(first).expect("a home leaf");
             let mut col = algebra.column(h, LEAF_WIDTH);
             for i in 0..LEAF_WIDTH {
                 algebra.leaf(h, first, LeafLabel::from_idx(i), &mut col);

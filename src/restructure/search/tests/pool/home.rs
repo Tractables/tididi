@@ -81,8 +81,8 @@ fn vars(v: &Vtree) -> Vec<VarId> {
 /// and the same functions on the home's root. With `full`,
 /// every member is on all the home's leaves, all on one vtree if `share`.
 fn pools(eng: &Engine, home: &Home, full: bool, share: bool, rng: &mut Lcg) -> (Vec<Tdd>, Vec<Tdd>) {
-    let n = home.vtree().num_leaves();
-    let root = Arc::clone(home.vtree());
+    let n = home.num_leaves();
+    let root = Arc::clone(home);
     let (mut own, mut embedded): (Vec<Tdd>, Vec<Tdd>) = (Vec::new(), Vec::new());
     let all: Vec<VarId> = (1..=n).map(VarId).collect();
     let full_vtree = Vtree::projection(home, all.iter().copied()).unwrap();
@@ -143,9 +143,9 @@ fn check_pool(eng: &Engine, before: &[Tdd], after: &[Tdd], embedded: &[Tdd], kep
             continue;
         }
         match a.vtree().home() {
-            None => assert!(Arc::ptr_eq(a.vtree(), home.vtree())),
+            None => assert!(Arc::ptr_eq(a.vtree(), &home)),
             Some(h) => {
-                assert!(Arc::ptr_eq(h.vtree(), home.vtree()));
+                assert!(Arc::ptr_eq(&h, &home));
                 let again = Vtree::projection(&home, vars(a.vtree())).unwrap();
                 assert_eq!(again.num_nodes(), a.vtree().num_nodes());
                 for t in (0..again.num_nodes() as u32).map(VtreeIdx) {
@@ -229,7 +229,7 @@ fn members_with_every_leaf_make_the_moves_of_the_search_on_the_root() {
         let kept = stats.accepts > 0;
         check_pool(&eng, &own, &searched, &on_root, kept);
         if kept {
-            let lifted = Arc::clone(searched[0].home().unwrap().vtree());
+            let lifted = Arc::clone(&searched[0].home().unwrap());
             assert_eq!(shape(&lifted, lifted.root()), shape(on_root[0].vtree(), on_root[0].vtree().root()), "seed {seed}");
         }
     }
@@ -248,7 +248,7 @@ fn a_pool_move_on_projections_ends_on_one_home() {
         let home = random_home(n, seed, &mut rng);
         let full = rng.below(4) == 0;
         let (own, embedded) = pools(&eng, &home, full, rng.coin(), &mut rng);
-        let internal: Vec<VtreeIdx> = home.vtree().internal_bottomup().map(|(v, _, _)| v).collect();
+        let internal: Vec<VtreeIdx> = home.internal_bottomup().map(|(v, _, _)| v).collect();
         if internal.is_empty() {
             continue;
         }

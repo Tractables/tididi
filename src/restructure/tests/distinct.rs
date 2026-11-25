@@ -1,3 +1,4 @@
+use crate::test_helpers::bare_roots;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -54,7 +55,7 @@ fn check(eng: &Engine, f: &Tdd) {
 #[test]
 fn the_threshold_counts_the_distinct_values_of_the_sibling() {
     for (num_vars, clauses) in test_cases() {
-        for (_, vtree) in vtree_shapes(num_vars) {
+        for (_, vtree) in bare_roots(vtree_shapes(num_vars)) {
             let f = compile_clauses(&vtree, &clauses);
             check(&Engine::new(), &f);
         }
@@ -155,7 +156,7 @@ fn every_refused_reserve_of_a_distinct_count_leaves_the_operand() {
 /// conditioned and quantified at random, then trimmed to the leaves it
 /// names, so that a sibling may hold a home variable it has no leaf for.
 fn on_a_projection(home: &Home, n: u32, rng: &mut Lcg) -> Tdd {
-    let mut f = rand_conj(home.vtree(), n, 4, 3, false, rng);
+    let mut f = rand_conj(home, n, 4, 3, false, rng);
     for _ in 0..rng.below(4) {
         let var = VarId(1 + rng.below(n as u64) as u32);
         f = match rng.coin() {
@@ -185,7 +186,7 @@ fn counts_on_a_projection_range_over_the_home() {
         let mut rng = Lcg::new(seed);
         let n = 2 + rng.below(11) as u32;
         let home = Home::new(Vtree::random(n, seed));
-        let at_home = home.vtree();
+        let at_home = &home;
         let f = on_a_projection(&home, n, &mut rng);
         let own = f.vtree();
         let truth: Vec<Vec<bool>> = (0..1u64 << n)
@@ -262,7 +263,7 @@ fn a_key_by_variables_names_the_home_node_where_an_own_index_does_not() {
         let mut rng = Lcg::new(seed);
         let n = 2 + rng.below(9) as u32;
         let home = Home::new(Vtree::random(n, seed));
-        let at_home = home.vtree();
+        let at_home = &home;
         let f = on_a_projection(&home, n, &mut rng);
         let root = eng.and(rand_conj(at_home, n, 4, 3, false, &mut rng), rand_conj(at_home, n, 4, 3, false, &mut rng)).unwrap();
         for g in [&f, &root] {
@@ -337,7 +338,7 @@ fn a_count_that_returns_its_operand_copies_it_within_the_budget() {
     use crate::limits::LimitConfig;
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(16));
-    let at_home = home.vtree();
+    let at_home = &home;
     let key = at_home.children(at_home.root()).0;
     let kv = vars_under(at_home, key);
     let mut rng = Lcg::new(7);

@@ -57,7 +57,7 @@ pub(super) fn widen<L: crate::LiteralInput>(eng: &Engine, f: Tdd, lits: &[L]) ->
     let m = dedup(added);
     let added = &added[..m];
     let home = f.vtree.link_home().expect("only a projection is widened");
-    let full = f.vtree.num_leaves() as usize + m == home.vtree().num_leaves() as usize;
+    let full = f.vtree.num_leaves() as usize + m == home.num_leaves() as usize;
     let constant = f.vtree.num_nodes() == 0 || f.is_zero() || f.is_one();
     if full || constant || f.has_marginal_level() {
         let own = f.vtree.leaf_bottomup().map(|(_, var)| var);

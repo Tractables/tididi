@@ -55,7 +55,7 @@ fn also_on_home(f: &Tdd, vtree: &Arc<Vtree>, read: impl Fn(&Arc<Vtree>) -> Resul
         return;
     }
     let home = Home::new(Vtree::clone(vtree));
-    let g = match read(home.vtree()) {
+    let g = match read(&home) {
         Ok(g) => g,
         // The binary reader looks for a repeated pair only on a home, where
         // the trim would count it once.

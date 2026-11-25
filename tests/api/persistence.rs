@@ -117,10 +117,10 @@ fn named_roots_and_weight_metadata_survive_a_fresh_context() {
         let named_query = engine
             .xor(
                 engine
-                    .literal(restored_weighted.vtree(), tididi::Literal::pos(names["rain"]))
+                    .literal(&restored_weighted, tididi::Literal::pos(names["rain"]))
                     .unwrap(),
                 engine
-                    .literal(restored_weighted.vtree(), tididi::Literal::pos(names["sensor"]))
+                    .literal(&restored_weighted, tididi::Literal::pos(names["sensor"]))
                     .unwrap(),
             )
             .unwrap();

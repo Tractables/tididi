@@ -66,7 +66,7 @@ impl Engine {
     /// // x1 ∨ ¬x2 becomes x6 ∨ ¬x5; x6 is right of x5 in `home`.
     /// let (g, stats) = engine.transport(&f, &home, |v| VarId(7 - v.0), 0).map_err(|r| r.error)?;
     /// assert_eq!((stats.rotations, stats.mirrors), (0, 1));
-    /// assert!(Arc::ptr_eq(g.vtree().home().unwrap().vtree(), home.vtree()));
+    /// assert!(Arc::ptr_eq(&g.vtree().home().unwrap(), &home));
     /// assert_eq!(engine.model_count(&g)?, 192u32.into()); // 3/4 of 2^8
     ///
     /// // (x1 x2) and x3 on a balanced home; x1 and (x2 x3) on a linear one.
@@ -375,7 +375,7 @@ impl Ranked {
         }
         taken.sort_unstable();
         if let Some(w) = taken.windows(2).find(|w| w[0] == w[1]) {
-            let variable = home.vtree().leaf_bottomup().find(|&(_, var)| home.rank(var) == Some(w[0])).expect("a home leaf").1;
+            let variable = home.leaf_bottomup().find(|&(_, var)| home.rank(var) == Some(w[0])).expect("a home leaf").1;
             return Err(TransportError::Overlap { variable });
         }
         order.sort_unstable();

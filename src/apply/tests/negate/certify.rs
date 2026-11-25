@@ -2,6 +2,7 @@
 //! certified, and a full reduction with the certificate dropped finds nothing
 //! to merge.
 
+use crate::test_helpers::bare_roots;
 use std::sync::Arc;
 
 use crate::reduce::ReductionPlan;
@@ -24,7 +25,7 @@ fn the_complement_of_a_minimized_operand_is_minimal_once_pruned() {
     let mut rng = Lcg::new(0x1c3f_0a77);
     let mut cases = 0usize;
     for num_vars in [2u32, 3, 5, 8] {
-        for (name, vtree) in vtree_shapes(num_vars) {
+        for (name, vtree) in bare_roots(vtree_shapes(num_vars)) {
             let mut operands = vec![Tdd::one(&vtree), Tdd::zero(&vtree)];
             for round in 0..16 {
                 // Few short clauses give dense functions, many long ones sparse

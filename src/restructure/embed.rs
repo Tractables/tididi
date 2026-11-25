@@ -327,7 +327,7 @@ impl Plan {
     ) -> bool {
         let mut cursor = RankCursor { ranks, next: 0 };
         let placed = match source.leaf_ranks() {
-            Some((own, own_ranks)) if Arc::ptr_eq(own.vtree(), home.vtree()) => {
+            Some((own, own_ranks)) if Arc::ptr_eq(own, home) => {
                 own_ranks.iter().enumerate().all(|(i, &rank)| {
                     let leaf = VtreeIdx(i as u32);
                     let var = source.leaf_var(leaf);

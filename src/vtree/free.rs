@@ -123,7 +123,7 @@ impl Vtree {
     pub(crate) fn free_set(&self) -> Option<FreeVars<'_>> {
         let link = self.home.as_ref()?;
         let len = self.free_leaves();
-        let window = (0, link.home.vtree().num_leaves());
+        let window = (0, link.home.num_leaves());
         (len > 0).then_some(FreeVars { link, window, extents_free: false, pins: &[], len })
     }
 

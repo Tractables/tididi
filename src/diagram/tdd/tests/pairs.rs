@@ -1,3 +1,4 @@
+use crate::test_helpers::bare_roots;
 use super::*;
 use crate::diagram::LevelState;
 use crate::test_helpers::check::check_implicit_levels;
@@ -92,7 +93,7 @@ fn conjunctions(eng: &crate::Engine, seed: u64) -> Vec<Tdd> {
     use crate::test_helpers::{rand_cnf, vtree_shapes, CnfShape, Lcg};
     let mut rng = Lcg::new(seed);
     let mut out = Vec::new();
-    for (_, vtree) in vtree_shapes(8) {
+    for (_, vtree) in bare_roots(vtree_shapes(8)) {
         for _ in 0..6 {
             let mut f = Tdd::one(&vtree);
             for (k, clause) in rand_cnf(&mut rng, 8, CnfShape { clauses: 8, width: 3 }).into_iter().enumerate() {

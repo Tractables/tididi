@@ -6,7 +6,6 @@ use std::sync::Arc;
 use crate::test_helpers::check::reachable_true_labels;
 use crate::test_helpers::{rand_conj, stored_levels, vtree_shapes};
 use crate::vtree::rng::Lcg;
-use crate::vtree::Home;
 use crate::{Engine, Tdd};
 
 use super::*;
@@ -20,8 +19,8 @@ fn operands() -> Vec<(String, Tdd, Tdd)> {
         let mut rng = Lcg::new(seed ^ 0x2e2);
         let n = 6 + rng.below(5) as u32;
         for (shape, home) in vtree_shapes(n).into_iter().filter(|(s, _)| matches!(*s, "balanced" | "linear")) {
-            let hm = Home::new(home);
-            let home = Arc::clone(hm.vtree());
+            let hm = home;
+            let home = Arc::clone(&hm);
             let make = |rng: &mut Lcg| {
                 let mut f = rand_conj(&home, n, 2 + rng.below(6), 3, false, rng);
                 f.minimize().unwrap();
@@ -78,6 +77,6 @@ fn audit_i1_routes_operands_name_no_one() {
     for (case, f, g) in operands() {
         assert_eq!(reachable_true_labels(&f), Ok(None), "{case}");
         assert_eq!(reachable_true_labels(&g), Ok(None), "{case}");
-        assert!(f.vtree().num_nodes() == 0 || Arc::ptr_eq(f.vtree().link_home().map(Home::vtree).unwrap_or(f.vtree()), g.vtree().link_home().map(Home::vtree).unwrap_or(g.vtree())) || g.vtree().num_nodes() == 0, "{case}: one home");
+        assert!(f.vtree().num_nodes() == 0 || Arc::ptr_eq(f.vtree().link_home().map(|home| &**home).unwrap_or(f.vtree()), g.vtree().link_home().map(|home| &**home).unwrap_or(g.vtree())) || g.vtree().num_nodes() == 0, "{case}: one home");
     }
 }

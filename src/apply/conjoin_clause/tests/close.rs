@@ -18,7 +18,7 @@ fn trimmed(home: &Home, mut f: Tdd) -> Tdd {
 }
 
 fn closed(eng: &Engine, home: &Home, got: &Tdd, expected: &Tdd) -> Result<(), String> {
-    let on_home = |f: &Tdd| crate::test_helpers::embedded(f, home.vtree(), |v| v).unwrap().0;
+    let on_home = |f: &Tdd| crate::test_helpers::embedded(f, home, |v| v).unwrap().0;
     if !eng.equivalent(&on_home(got), &on_home(expected)).unwrap() {
         return Err("a different function".into());
     }
@@ -39,7 +39,7 @@ fn assert_all(failed: Vec<String>) {
 fn and_clause_on_a_home_ends_trimmed() {
     let eng = Engine::new();
     let home = Home::new(Vtree::join(&leaf(1), &leaf(2)).unwrap());
-    let two = Arc::clone(home.vtree());
+    let two = Arc::clone(&home);
     let y = trimmed(&home, eng.literal(&two, 2).unwrap());
     let x_or_y = eng.clause(&two, [1, 2]).unwrap();
     let cases: [(&str, Tdd, &[i32], Tdd); 5] = [
@@ -61,7 +61,7 @@ fn and_clause_on_a_home_ends_trimmed() {
 fn or_cube_on_a_home_ends_trimmed() {
     let eng = Engine::new();
     let home = Home::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap());
-    let xyz = Arc::clone(home.vtree());
+    let xyz = Arc::clone(&home);
     let x_or_z = trimmed(&home, eng.clause(&xyz, [1, 3]).unwrap());
     let x = trimmed(&home, eng.literal(&xyz, 1).unwrap());
     let cases: [(&str, Tdd, &[i32], Tdd); 4] = [
@@ -102,8 +102,8 @@ fn clause_results_list_their_loose_levels() {
         let home = Home::new(Vtree::random(6, seed));
         let bare = Arc::new(Vtree::random(6, seed));
         let lit = 1 + rng.below(6) as i32;
-        let x = Tdd::clause(home.vtree(), [lit]).unwrap();
-        let one_leaf = trimmed(&home, eng.and_clause(eng.clause(home.vtree(), [lit, 1 + lit % 6]).unwrap(), &[lit]).unwrap());
+        let x = Tdd::clause(&home, [lit]).unwrap();
+        let one_leaf = trimmed(&home, eng.and_clause(eng.clause(&home, [lit, 1 + lit % 6]).unwrap(), &[lit]).unwrap());
         let mut f = eng.clause(&bare, clause(&mut rng)).unwrap();
         let mut results = vec![("a literal on a home", x), ("trimmed to one leaf", one_leaf), ("a clause", f.clone())];
         for _ in 0..5 {
@@ -131,7 +131,7 @@ fn clauses_on_projections_keep_their_loose_levels() {
         let clause = |rng: &mut crate::test_helpers::Lcg| -> Vec<i32> {
             (0..3).map(|_| (1 + rng.below(10) as i32) * if rng.below(2) == 0 { 1 } else { -1 }).collect()
         };
-        let mut f = eng.clause(home.vtree(), clause(&mut rng)).unwrap();
+        let mut f = eng.clause(&home, clause(&mut rng)).unwrap();
         for i in 0..8 {
             f = eng.and_clause(f, &clause(&mut rng)).unwrap();
             if f.dirty.loose().is_none() {

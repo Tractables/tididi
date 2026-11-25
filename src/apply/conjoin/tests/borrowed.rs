@@ -6,6 +6,7 @@
 //! operand back as it was given, certificate and closed form included, and
 //! a borrowed one as the borrow, refused at the same work as the owned one.
 
+use crate::test_helpers::bare_roots;
 use std::borrow::Cow;
 use std::sync::Arc;
 
@@ -56,7 +57,7 @@ fn cases(nvars: u32, seed: u64) -> Vec<(String, Tdd, Tdd)> {
     let shift = |clauses: &[Vec<i32>], by: i32| -> Vec<Vec<i32>> {
         clauses.iter().map(|c| c.iter().map(|l| l.signum() * ((l.abs() - 1) % half + 1 + by)).collect()).collect()
     };
-    for (name, vtree) in vtree_shapes(nvars) {
+    for (name, vtree) in bare_roots(vtree_shapes(nvars)) {
         let eng = Engine::new();
         let minimized = |clauses: &[Vec<i32>]| {
             let mut f = compile_clauses_on(&eng, &vtree, clauses);
@@ -254,7 +255,7 @@ fn a_refused_conjunction_hands_back_what_it_was_given() {
 fn a_borrowed_operand_conjoins_onto_as_an_owned_one() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(8));
-    let into = Arc::clone(home.vtree());
+    let into = Arc::clone(&home);
     let mut rng = Lcg::new(0x0170);
     let mut checked = 0;
     for case in 0..8u32 {
@@ -347,7 +348,7 @@ fn a_borrowed_operand_sums_out_as_an_owned_one() {
     let mut rng = Lcg::new(0x5_0b0e);
     let (mut checked, mut marginal, mut refusals) = (0, 0, 0);
     for nvars in [6u32, 9] {
-        for (shape, tree) in vtree_shapes(nvars) {
+        for (shape, tree) in bare_roots(vtree_shapes(nvars)) {
             // Clauses over a window of three variables sliding left to
             // right, so that subtrees finish early in the walk and its
             // diagram carries marginal levels.

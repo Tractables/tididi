@@ -3,6 +3,7 @@
 //! shape, with one operand's support under each subtree in turn, on both
 //! product-store layouts; and operands handed back on a refusal.
 
+use crate::test_helpers::bare_roots;
 use std::sync::Arc;
 
 use super::*;
@@ -42,7 +43,7 @@ pub(super) fn function_of(vtree: &Arc<Vtree>, vars: &[u32], rng: &mut Lcg) -> Td
 pub(super) fn cases(nvars: u32, seed: u64) -> Vec<(String, Tdd, Tdd)> {
     let mut rng = Lcg::new(seed);
     let mut out = Vec::new();
-    for (shape, vtree) in vtree_shapes(nvars) {
+    for (shape, vtree) in bare_roots(vtree_shapes(nvars)) {
         let all: Vec<u32> = (1..=nvars).collect();
         for (t, _, _) in vtree.internal_bottomup() {
             if t == vtree.root() {

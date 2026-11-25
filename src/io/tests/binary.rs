@@ -2,6 +2,7 @@
 //! node for node, and refusals of every truncation, flipped bit and
 //! resealed corruption without a panic.
 
+use crate::test_helpers::bare_roots;
 use std::sync::Arc;
 
 use crate::diagram::{LevelCounts, Tdd};
@@ -97,7 +98,7 @@ fn the_checksum_is_xxh64() {
 #[test]
 fn compiled_formulas_round_trip_as_the_text_reader_reads_them() {
     for (num_vars, clauses) in test_cases() {
-        for (shape, vtree) in vtree_shapes(num_vars) {
+        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
             let f = compile_clauses(&vtree, &clauses);
             assert_canonical(&f);
             round_trip(&f, &format!("{clauses:?} on {shape}"));
@@ -435,7 +436,7 @@ fn assert_counts_folded(f: &Tdd, what: &str) {
 #[test]
 fn level_counts_round_trip() {
     for (num_vars, clauses) in test_cases() {
-        for (shape, vtree) in vtree_shapes(num_vars) {
+        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
             let what = format!("{clauses:?} on {shape}");
             let f = compile_clauses(&vtree, &clauses);
             let plain = binary(&f);

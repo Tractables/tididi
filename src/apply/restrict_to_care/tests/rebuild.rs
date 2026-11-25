@@ -1,3 +1,4 @@
+use crate::test_helpers::bare_roots;
 use std::sync::Arc;
 
 use super::*;
@@ -168,7 +169,7 @@ fn the_node_filter_agrees_with_the_rebuild_from_marks() {
     let mut compared = 0;
     for round in 0..16u32 {
         let n = 4 + round % 5;
-        for (_, vtree) in vtree_shapes(n) {
+        for (_, vtree) in bare_roots(vtree_shapes(n)) {
             let eng = Engine::new();
             let f = compile_clauses_on(
                 &eng,

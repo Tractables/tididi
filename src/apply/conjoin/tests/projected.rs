@@ -85,7 +85,7 @@ fn and_on_projections_is_and_on_the_home() {
     let eng = Engine::new();
     for seed in 0..30u64 {
         let hm = Home::new(rotated_home(2 + (seed % 12) as u32 * 2, seed));
-        let home = Arc::clone(hm.vtree());
+        let home = Arc::clone(&hm);
         let mut rng = Lcg::new(seed ^ 0x5bd1_e995);
         for (fv, gv) in leaf_set_pairs(&home, &mut rng) {
             let (f, g) = (cnf_on(&eng, &hm, &fv, &mut rng), cnf_on(&eng, &hm, &gv, &mut rng));
@@ -99,7 +99,7 @@ fn and_on_projections_is_and_on_the_home() {
                 eng.and(f.clone(), g.clone()).unwrap(),
             ];
             for mut h in results {
-                assert!(Arc::ptr_eq(h.home().unwrap().vtree(), &home));
+                assert!(Arc::ptr_eq(&h.home().unwrap(), &home));
                 if !h.is_zero() {
                     assert_eq!(h.vtree().num_leaves() as usize, union, "seed {seed}");
                 }
@@ -121,7 +121,7 @@ fn join_at_the_root_carries_what_the_operands_owe() {
     let mut owed = 0;
     for seed in 0..40u64 {
         let hm = Home::new(rotated_home(4 + (seed % 10) as u32 * 2, seed));
-        let home = Arc::clone(hm.vtree());
+        let home = Arc::clone(&hm);
         let mut rng = Lcg::new(seed ^ 0x2545_f491);
         let (l, r) = home.children(home.root());
         let (fv, gv) = (part(&vars_under(&home, l), &mut rng), part(&vars_under(&home, r), &mut rng));
@@ -153,7 +153,7 @@ fn and_across_homes_is_refused() {
     let f = Tdd::clause(&Vtree::projection(&a, [VarId(1)]).unwrap(), [1]).unwrap();
     let g = Tdd::clause(&Vtree::projection(&b, [VarId(2)]).unwrap(), [2]).unwrap();
     assert_eq!(eng.and(&f, &g).unwrap_err(), OperationError::VtreeMismatch);
-    let h = Tdd::clause(a.vtree(), [3]).unwrap();
+    let h = Tdd::clause(&a, [3]).unwrap();
     assert_eq!(eng.and(&h, &g).unwrap_err(), OperationError::VtreeMismatch);
 }
 
@@ -162,7 +162,7 @@ fn and_clause_extends_to_the_clause_variables() {
     let eng = Engine::new();
     for seed in 0..30u64 {
         let hm = Home::new(rotated_home(3 + (seed % 10) as u32 * 2, seed));
-        let home = Arc::clone(hm.vtree());
+        let home = Arc::clone(&hm);
         let all = vars_under(&home, home.root());
         let mut rng = Lcg::new(seed ^ 0x2545_f491);
         for _ in 0..6 {
@@ -172,7 +172,7 @@ fn and_clause_extends_to_the_clause_variables() {
             let expected = eng.and_clause(on_home(&f, &home), &lits).unwrap();
             let typed: Vec<crate::Literal> = lits.iter().map(|&l| crate::Literal::try_from(l).unwrap()).collect();
             for h in [eng.and_clause(f.clone(), &lits).unwrap(), eng.and_clause(f.clone(), &typed).unwrap()] {
-                assert!(Arc::ptr_eq(h.home().unwrap().vtree(), &home));
+                assert!(Arc::ptr_eq(&h.home().unwrap(), &home));
                 if lits.iter().any(|&l| lits.contains(&-l)) {
                     assert!(Arc::ptr_eq(h.vtree(), f.vtree()), "a true clause leaves the vtree");
                 } else if !h.is_zero() {
@@ -217,7 +217,7 @@ fn reductions_and_counts_run_on_projections() {
     let eng = Engine::new();
     for seed in 0..10u64 {
         let hm = Home::new(rotated_home(8 + seed as u32, seed));
-        let home = Arc::clone(hm.vtree());
+        let home = Arc::clone(&hm);
         let mut rng = Lcg::new(seed ^ 0x1234_5678);
         for (fv, gv) in leaf_set_pairs(&home, &mut rng) {
             let (f, g) = (cnf_on(&eng, &hm, &fv, &mut rng), cnf_on(&eng, &hm, &gv, &mut rng));
@@ -248,7 +248,7 @@ fn a_conjunction_placed_on_the_root_is_and_on_a_bare_root() {
     for seed in 0..60u64 {
         let n = 2 + (seed % 10) as u32;
         let hm = Home::new(rotated_home(n, seed));
-        let root = hm.vtree();
+        let root = &hm;
         let bare = Arc::new(Vtree::clone(root));
         let mut rng = Lcg::new(seed ^ 0x7f4a_7c15);
         let (l, r) = root.children(root.root());
@@ -271,7 +271,7 @@ fn a_conjunction_placed_on_the_root_is_and_on_a_bare_root() {
             }
             let expected = eng.and(on_home(&f, &bare), on_home(&g, &bare)).unwrap();
             for mut h in [eng.and(&f, &g).unwrap(), eng.and(f.clone(), g.clone()).unwrap()] {
-                assert!(Arc::ptr_eq(h.home().unwrap().vtree(), root), "seed {seed}");
+                assert!(Arc::ptr_eq(&h.home().unwrap(), root), "seed {seed}");
                 assert_eq!(eng.model_count(&h).unwrap(), eng.model_count(&expected).unwrap(), "seed {seed}");
                 assert!(eng.equivalent(&on_home(&h, &bare), &expected).unwrap(), "seed {seed}");
                 eng.minimize(&mut h).unwrap();
@@ -338,7 +338,7 @@ fn and_across_projections_lists_its_loose_levels() {
     let (mut known, mut unreached_known) = (0, 0);
     for seed in 0..60u64 {
         let hm = Home::new(rotated_home(2 + (seed % 10) as u32, seed));
-        let home = Arc::clone(hm.vtree());
+        let home = Arc::clone(&hm);
         let mut rng = Lcg::new(seed ^ 0x3c6e_f372);
         for (fv, gv) in leaf_set_pairs(&home, &mut rng) {
             let (f, g) = (operand(&eng, &hm, &fv, &mut rng), operand(&eng, &hm, &gv, &mut rng));

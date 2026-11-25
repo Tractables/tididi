@@ -55,7 +55,7 @@ fn false_conjunctions_hold_no_node() {
         let mut rng = Lcg(seed);
         let eng = Engine::new();
         let on_home = seed % 2 == 1;
-        let vtree = if on_home { Arc::clone(home.vtree()) } else { Arc::new(Vtree::balanced(N)) };
+        let vtree = if on_home { Arc::clone(&home) } else { Arc::new(Vtree::balanced(N)) };
         let (fc, gc) = (random_clauses(&mut rng), random_clauses(&mut rng));
         let (f, g) = (conjunction(&eng, &vtree, &fc), conjunction(&eng, &vtree, &gc));
         if f.is_zero() || g.is_zero() {

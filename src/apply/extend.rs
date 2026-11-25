@@ -135,7 +135,7 @@ fn extend<'a>(eng: &Engine, operands: Vec<Cow<'a, Tdd>>) -> Result<Vec<Cow<'a, T
     }
     if into.num_nodes() == 0 {
         let home = into.link_home().expect("a vtree with no node is a projection");
-        let (_, var) = home.vtree().leaf_bottomup().next().expect("a home has a leaf");
+        let (_, var) = home.leaf_bottomup().next().expect("a home has a leaf");
         into = Vtree::projection(home, [var]).expect("a variable of the home");
     }
     operands.into_iter().map(|f| extend_one(eng, f, &into)).collect()

@@ -19,7 +19,7 @@ pub(super) fn assert_same(got: &Vtree, want: &Vtree, what: &str) {
     assert!(got.var_to_leaf.is_empty() && want.var_to_leaf.is_empty(), "{what}");
     assert!(Arc::ptr_eq(got.context(), want.context()), "{what}");
     let (a, b) = (got.home.as_ref().unwrap(), want.home.as_ref().unwrap());
-    assert!(Arc::ptr_eq(a.home.vtree(), b.home.vtree()), "{what}");
+    assert!(Arc::ptr_eq(&a.home, &b.home), "{what}");
     assert_eq!((&a.slot, &a.regions), (&b.slot, &b.regions), "{what}");
     assert_eq!(got.validate(), Ok(()), "{what}");
 }
@@ -82,7 +82,7 @@ fn a_union_is_the_projection_on_both() {
             LeafSets::Equal(_) | LeafSets::BInA => assert!(Arc::ptr_eq(&union, &pa)),
             LeafSets::AInB => assert!(Arc::ptr_eq(&union, &pb)),
         }
-        assert!(Arc::ptr_eq(&Vtree::union(&pa, home.vtree()).unwrap(), home.vtree()));
+        assert!(Arc::ptr_eq(&Vtree::union(&pa, home).unwrap(), home));
     });
     assert!(unions > 300, "{unions} unions");
 }
@@ -193,7 +193,7 @@ fn an_extension_with_a_region_is_refused() {
 fn a_sub_projection_is_the_projection_on_the_kept_leaves() {
     cases(|home, a, _, rng| {
         let own = Vtree::projection(home, a.iter().copied()).unwrap();
-        for from in [&own, home.vtree()] {
+        for from in [&own, home] {
             let keep: Vec<bool> = (0..from.num_nodes()).map(|_| rng.below(4) != 0).collect();
             let kept: Vec<VarId> = from.leaf_bottomup().filter(|&(t, _)| keep[t.idx()]).map(|(_, v)| v).collect();
             let sub = from.sub_projection(home, |t| keep[t.idx()]);
@@ -205,7 +205,7 @@ fn a_sub_projection_is_the_projection_on_the_kept_leaves() {
                 assert_same(&sub.unwrap(), &Vtree::projection(home, kept).unwrap(), "sub-projection");
             }
         }
-        let stranger = Home::new((**home.vtree()).clone());
+        let stranger = Home::new(Vtree::clone(home));
         assert!(own.sub_projection(&stranger, |_| true).is_err());
     });
 }
@@ -217,7 +217,7 @@ fn node_over_is_the_lowest_common_ancestor_on_large_homes() {
     for seed in 0..12u64 {
         let n = 40 + 300 * seed as u32;
         let home = Home::new(Vtree::random(n, seed));
-        let tree = home.vtree();
+        let tree = &home;
         let mut rng = Lcg::new(seed);
         for _ in 0..400 {
             let (a, b) = (rng.below(u64::from(n)) as u32, rng.below(u64::from(n)) as u32);

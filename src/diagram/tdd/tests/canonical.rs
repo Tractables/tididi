@@ -85,7 +85,7 @@ fn a_diagram_reseated_on_another_allocation_of_its_projection_stays_closed() {
     use crate::vtree::{Home, VarId};
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(5));
-    let mut f = eng.xor(eng.literal(home.vtree(), 1).unwrap(), eng.clause(home.vtree(), [3, -4]).unwrap()).unwrap();
+    let mut f = eng.xor(eng.literal(&home, 1).unwrap(), eng.clause(&home, [3, -4]).unwrap()).unwrap();
     let first = Arc::clone(f.vtree());
     assert_eq!(first.num_leaves(), 3);
     let second = Vtree::projection(&home, [1, 3, 4].map(VarId)).unwrap();
@@ -113,7 +113,7 @@ fn a_diagram_reseated_on_another_allocation_of_its_projection_stays_closed() {
 fn reseating_a_diagram_on_a_home_off_the_home_panics_in_debug() {
     use crate::vtree::Home;
     let home = Home::new(Vtree::balanced(3));
-    let mut f = Tdd::clause(home.vtree(), [1, 2, 3]).unwrap();
+    let mut f = Tdd::clause(&home, [1, 2, 3]).unwrap();
     let bare = Arc::new(Vtree::balanced(3));
     // Safety: never reached past the debug check.
     unsafe { f.reseat_vtree_unchecked(&bare) };

@@ -241,9 +241,9 @@ impl std::fmt::Debug for RootIndex {
 /// let own = Vtree::projection(&home, [VarId(7), VarId(2)])?;
 /// let (left, right) = own.children(own.root());
 /// assert_eq!((own.leaf_var(left), own.leaf_var(right)), (VarId(2), VarId(7)));
-/// assert_eq!(own.home_node(own.root()), home.vtree().root());
-/// assert_eq!(home.node_over(home.rank(VarId(2)).unwrap(), home.rank(VarId(7)).unwrap()), home.vtree().root());
-/// assert_eq!(home.rank_range(home.vtree().root()), 0..8);
+/// assert_eq!(own.home_node(own.root()), home.root());
+/// assert_eq!(home.node_over(home.rank(VarId(2)).unwrap(), home.rank(VarId(7)).unwrap()), home.root());
+/// assert_eq!(home.rank_range(home.root()), 0..8);
 /// # Ok::<(), tididi::vtree::VtreeError>(())
 /// ```
 #[derive(Clone, Debug)]
@@ -259,22 +259,22 @@ impl Home {
     /// Panics if `vtree` is a root that is not a home and whose `Arc` is
     /// shared: the index cannot be set on it, and a home on a copy would not
     /// be the home of the diagrams already on it. Make the home first and
-    /// share [`Home::vtree`].
+    /// share its root (`Arc::clone(&home)`).
     ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::vtree::{Home, Vtree};
     ///
     /// let home = Home::new(Vtree::balanced(4));
-    /// let again = Home::new(Arc::clone(home.vtree()));
-    /// assert!(Arc::ptr_eq(again.vtree(), home.vtree()));
+    /// let again = Home::new(Arc::clone(&home));
+    /// assert!(Arc::ptr_eq(&again, &home));
     /// ```
     pub fn new(vtree: impl Into<Arc<Vtree>>) -> Self {
         let mut vtree = vtree.into();
         if let Some(home) = vtree.home() {
             return home;
         }
-        let root = Arc::get_mut(&mut vtree).expect("Home::new: the vtree is shared and not a home; make the home first and share Home::vtree");
+        let root = Arc::get_mut(&mut vtree).expect("Home::new: the vtree is shared and not a home; make the home first and share its root");
         root.index.set_home(Some(HomeIndex::new(root)));
         Home(vtree)
     }
@@ -290,7 +290,7 @@ impl Home {
     ///
     /// let weights = Weights::new(RationalWeights::unit(2), Arithmetic::ExactRational);
     /// let home = Home::weighted(Vtree::balanced(2), weights)?;
-    /// let f = Tdd::clause(home.vtree(), [1, 2])?;
+    /// let f = Tdd::clause(&home, [1, 2])?;
     /// assert_eq!(f.weighted_value()?.expect("the home is weighted").into_rational(), num_rational::BigRational::from_integer(3.into()));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -320,7 +320,7 @@ impl Home {
             };
         }
         weights.check_variables(vtree.leaf_bottomup().map(|(_, var)| var))?;
-        let root = Arc::get_mut(&mut vtree).expect("Home::weighted: the vtree is shared and not a home; make the home first and share Home::vtree");
+        let root = Arc::get_mut(&mut vtree).expect("Home::weighted: the vtree is shared and not a home; make the home first and share its root");
         root.index = RootIndex::new(Some(HomeIndex::new(root)), Some(weights));
         Ok(Home(vtree))
     }
@@ -329,11 +329,6 @@ impl Home {
     /// [`Home::new`].
     pub fn weights(&self) -> Option<&Weights> {
         self.0.index.weights()
-    }
-
-    /// The root vtree.
-    pub fn vtree(&self) -> &Arc<Vtree> {
-        &self.0
     }
 
     pub(super) fn index(&self) -> &HomeIndex {
@@ -374,13 +369,22 @@ impl Home {
     pub fn rank_range(&self, h: VtreeIdx) -> Range<u32> {
         let index = self.index();
         let slot = index.slot[h.idx()];
-        if self.vtree().node(h).is_leaf() {
+        if self.node(h).is_leaf() {
             return slot..slot + 1;
         }
         let n = index.leaf_at.len() as u32;
         let first = first_in(0, slot, |r| index.ancestor_gap(r, slot + 1) == slot);
         let end = first_in(slot + 1, n, |r| index.ancestor_gap(slot, r) != slot);
         first..end
+    }
+}
+
+impl std::ops::Deref for Home {
+    type Target = Arc<Vtree>;
+
+    /// The home's root.
+    fn deref(&self) -> &Arc<Vtree> {
+        &self.0
     }
 }
 
@@ -731,7 +735,7 @@ impl Vtree {
     /// let home = Home::new(Vtree::balanced(8));
     /// let own = Vtree::projection(&home, [VarId(7), VarId(2)])?;
     /// assert_eq!(own.num_leaves(), 2);
-    /// assert!(Arc::ptr_eq(own.home().unwrap().vtree(), home.vtree()));
+    /// assert!(Arc::ptr_eq(&own.home().unwrap(), &home));
     /// # Ok::<(), tididi::vtree::VtreeError>(())
     /// ```
     pub fn projection(home: &Home, vars: impl IntoIterator<Item = VarId>) -> Result<Arc<Vtree>, VtreeError> {
@@ -783,7 +787,7 @@ impl Vtree {
     pub fn empty_projection(home: &Home) -> Arc<Vtree> {
         let link = HomeLink { home: home.clone(), slot: Box::default(), regions: Box::default() };
         Arc::new(Vtree {
-            context: Arc::clone(&home.vtree().context),
+            context: Arc::clone(&home.context),
             nodes: Vec::new(),
             root: VtreeIdx(0),
             var_to_leaf: Vec::new(),
@@ -804,7 +808,7 @@ impl Vtree {
         };
         let (index, ranks) = (link.home.index(), link.ranks());
         let gap = *index.slot.get(h.idx())?;
-        if link.home.vtree().node(h).is_leaf() {
+        if link.home.node(h).is_leaf() {
             return self.node_at_home(h);
         }
         // The home leaves under `h` are a range of ranks around its gap, so
@@ -825,7 +829,7 @@ impl Vtree {
     /// The number of home leaves this vtree has neither as a leaf nor in an
     /// extent; 0 on a root.
     pub(crate) fn free_leaves(&self) -> u32 {
-        self.home.as_ref().map_or(0, |link| link.home.vtree().num_leaves() - self.leaf_count - link.in_extents())
+        self.home.as_ref().map_or(0, |link| link.home.num_leaves() - self.leaf_count - link.in_extents())
     }
 
     /// The home this vtree is on: a projection's home, or this vtree when it
@@ -838,8 +842,8 @@ impl Vtree {
     ///
     /// let home = Home::new(Vtree::balanced(4));
     /// let own = Vtree::projection(&home, [VarId(1), VarId(3)])?;
-    /// assert!(Arc::ptr_eq(own.home().unwrap().vtree(), home.vtree()));
-    /// assert!(Arc::ptr_eq(home.vtree().home().unwrap().vtree(), home.vtree()));
+    /// assert!(Arc::ptr_eq(&own.home().unwrap(), &home));
+    /// assert!(Arc::ptr_eq(&home.home().unwrap(), &home));
     /// assert!(Arc::new(Vtree::balanced(4)).home().is_none());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -898,7 +902,7 @@ impl Vtree {
         debug_assert_eq!(self.validate_home(), Ok(()));
         let slot = *link.home.index().slot.get(h.idx())?;
         let ranks = link.ranks();
-        if link.home.vtree().node(h).is_leaf() {
+        if link.home.node(h).is_leaf() {
             let i = ranks.binary_search(&slot).ok()?;
             return Some(link.childless(i));
         }
@@ -916,8 +920,8 @@ impl Vtree {
     /// projections.
     pub fn is_on(&self, home: &Home) -> bool {
         match self.link_home() {
-            Some(own) => Arc::ptr_eq(own.vtree(), home.vtree()),
-            None => std::ptr::eq(self, &**home.vtree()),
+            Some(own) => Arc::ptr_eq(own, home),
+            None => std::ptr::eq(self, Arc::as_ptr(home)),
         }
     }
 
@@ -930,12 +934,12 @@ impl Vtree {
         let Some(li) = inner.home.as_ref().filter(|li| li.regions.is_empty()) else { return false };
         let own = |j: usize| VtreeIdx(j as u32);
         match self.home.as_ref() {
-            None if std::ptr::eq(self, &**li.home.vtree()) => {
+            None if std::ptr::eq(self, Arc::as_ptr(&li.home)) => {
                 let index = li.home.index();
                 leaves.extend(li.ranks().iter().enumerate().map(|(j, &r)| (own(j), index.leaf_at[r as usize])));
                 true
             }
-            Some(ls) if ls.regions.is_empty() && Arc::ptr_eq(ls.home.vtree(), li.home.vtree()) && li.k() < ls.k() => {
+            Some(ls) if ls.regions.is_empty() && Arc::ptr_eq(&ls.home, &li.home) && li.k() < ls.k() => {
                 let mut j = 0;
                 ranks_within(li.ranks(), ls.ranks(), |i| {
                     leaves.push((own(j), own(i)));
@@ -961,7 +965,7 @@ impl Vtree {
     /// [`OperationError::VtreeMismatch`] when `a` and `b` have different
     /// homes (a root vtree is its own home).
     pub(crate) fn refuse_other_home(a: &Arc<Vtree>, b: &Arc<Vtree>) -> Result<(), OperationError> {
-        let root_of = |v: &Arc<Vtree>| Arc::as_ptr(v.link_home().map_or(v, Home::vtree));
+        let root_of = |v: &Arc<Vtree>| Arc::as_ptr(v.link_home().map_or(v, |home| &**home));
         match root_of(a) == root_of(b) {
             true => Ok(()),
             false => Err(OperationError::VtreeMismatch),
@@ -1035,7 +1039,7 @@ impl Vtree {
                             }));
                         };
                         Self::union_of((a, la), (b, lb), k, Some(&mut read_home));
-                        LeafSets::Union(Arc::clone(la.home.vtree()))
+                        LeafSets::Union(Arc::clone(&la.home))
                     }
                     Some(read) => {
                         let mut read_own = |t: VtreeIdx, readings: [Reading; 2], _: u32| read.read(t, readings);
@@ -1455,7 +1459,7 @@ impl Vtree {
     /// one leaf set has one allocation when it is the whole home.
     fn seated(home: &Home, k: usize, regions: bool, build: impl FnOnce() -> Vtree) -> Arc<Vtree> {
         match !regions && k == home.index().leaf_at.len() {
-            true => Arc::clone(home.vtree()),
+            true => Arc::clone(home),
             false => Arc::new(build()),
         }
     }
@@ -1593,7 +1597,7 @@ impl Vtree {
     pub(crate) fn region_vars(&self, t: VtreeIdx) -> (VarId, Vec<VarId>) {
         let link = self.home.as_ref().expect("a projection");
         let (anchor, extent) = self.region_at(t);
-        let var = |rank: u32| link.home.vtree().leaf_var(link.home.index().leaf_at[rank as usize]);
+        let var = |rank: u32| link.home.leaf_var(link.home.index().leaf_at[rank as usize]);
         (var(anchor), extent.iter().flat_map(|&(lo, hi)| lo..hi).map(var).collect())
     }
 
@@ -1667,7 +1671,7 @@ impl Vtree {
         let leaf_count = (nodes.len().div_ceil(2) - regions.len()) as u32;
         let topo = TopoOrder::identity(&nodes, leaf_count);
         Vtree {
-            context: Arc::clone(&home.vtree().context),
+            context: Arc::clone(&home.context),
             nodes,
             root,
             var_to_leaf: Vec::new(),
@@ -1691,7 +1695,7 @@ impl Vtree {
     #[cold]
     #[inline(never)]
     pub(super) fn projected_num_vars(&self) -> u32 {
-        self.home.as_ref().map_or(0, |link| link.home.vtree().num_vars())
+        self.home.as_ref().map_or(0, |link| link.home.num_vars())
     }
 
     /// A projection's childless nodes in its home's order, a home's root's
@@ -1733,7 +1737,7 @@ impl Vtree {
     /// and no two extents meet.
     fn validate_regions(&self, link: &HomeLink) -> Result<(), VtreeError> {
         let fail = |msg: String| Err(VtreeError::Invalid(format!("projection: {msg}")));
-        let n = link.home.vtree().num_leaves();
+        let n = link.home.num_leaves();
         let mut intervals = Vec::new();
         for (j, region) in link.regions.iter().enumerate() {
             let at = region.at as usize;
@@ -1787,7 +1791,7 @@ impl Vtree {
             return Ok(());
         }
         let ranks = link.ranks();
-        if ranks.windows(2).any(|w| w[0] >= w[1]) || ranks[k - 1] >= link.home.vtree().num_leaves() {
+        if ranks.windows(2).any(|w| w[0] >= w[1]) || ranks[k - 1] >= link.home.num_leaves() {
             return fail("the ranks are not ascending home ranks");
         }
         self.validate_regions(link)?;

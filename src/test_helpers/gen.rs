@@ -1,10 +1,7 @@
 //! The formulas and vtrees a test runs on, fixed and seeded.
 
 #[cfg(test)]
-use std::sync::Arc;
-
-#[cfg(test)]
-use crate::vtree::{VarId, Vtree};
+use crate::vtree::{Home, VarId, Vtree};
 
 pub use crate::vtree::rng::Lcg;
 
@@ -136,30 +133,37 @@ pub fn test_cases() -> Vec<(u32, Vec<Vec<i32>>)> {
 /// balanced, linear, three random seeds, the reversed linear order, and an
 /// interleaved linear order.
 #[cfg(test)]
-pub fn vtree_shapes(num_vars: u32) -> Vec<(&'static str, Arc<Vtree>)> {
+pub fn vtree_shapes(num_vars: u32) -> Vec<(&'static str, Home)> {
     let mut shapes = vec![
-        ("balanced", Arc::new(Vtree::balanced(num_vars))),
-        ("linear", Arc::new(Vtree::linear(num_vars))),
-        ("random(0)", Arc::new(Vtree::random(num_vars, 0))),
-        ("random(1)", Arc::new(Vtree::random(num_vars, 1))),
-        ("random(42)", Arc::new(Vtree::random(num_vars, 42))),
+        ("balanced", Home::new(Vtree::balanced(num_vars))),
+        ("linear", Home::new(Vtree::linear(num_vars))),
+        ("random(0)", Home::new(Vtree::random(num_vars, 0))),
+        ("random(1)", Home::new(Vtree::random(num_vars, 1))),
+        ("random(42)", Home::new(Vtree::random(num_vars, 42))),
     ];
     if num_vars >= 2 {
-        shapes.push(("linear reversed", Arc::new(Vtree::reverse_linear(num_vars))));
+        shapes.push(("linear reversed", Home::new(Vtree::reverse_linear(num_vars))));
     }
     if num_vars >= 4 {
         let mut interleaved: Vec<VarId> = (2..=num_vars).step_by(2).map(VarId).collect();
         interleaved.extend((1..=num_vars).step_by(2).map(VarId));
-        shapes.push(("linear interleaved", Arc::new(Vtree::linear_from_order(&interleaved).expect("the ids are distinct"))));
+        shapes.push(("linear interleaved", Home::new(Vtree::linear_from_order(&interleaved).expect("the ids are distinct"))));
     }
     shapes
+}
+
+/// The shapes on roots that are not homes, for the tests of entries that
+/// take no home and of the layout of a diagram on a root.
+#[cfg(test)]
+pub fn bare_roots(shapes: Vec<(&'static str, Home)>) -> Vec<(&'static str, std::sync::Arc<Vtree>)> {
+    shapes.into_iter().map(|(shape, home)| (shape, std::sync::Arc::new(Vtree::clone(&home)))).collect()
 }
 
 /// The three of [`vtree_shapes`] an exhaustive sweep over assignments takes:
 /// each cell compiles a second diagram per assignment, so the full list is
 /// more than the coverage is worth.
 #[cfg(test)]
-pub fn sweep_shapes(num_vars: u32) -> Vec<(&'static str, Arc<Vtree>)> {
+pub fn sweep_shapes(num_vars: u32) -> Vec<(&'static str, Home)> {
     vtree_shapes(num_vars)
         .into_iter()
         .filter(|(shape, _)| matches!(*shape, "balanced" | "linear" | "random(42)"))

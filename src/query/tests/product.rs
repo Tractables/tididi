@@ -2,6 +2,7 @@
 //! conjunction's count where the two operands summed out disjoint scopes, and
 //! on the refusals and big values its contract names.
 
+use crate::test_helpers::bare_roots;
 use super::*;
 use crate::test_helpers::{
     assert_canonical, compile_clauses_on, free_vars, marginal_diagrams, rand_cnf, stopping_engine, truth_table,
@@ -84,7 +85,7 @@ fn marginal_products_match_enumeration() {
     let (mut same_scope, mut mixed, mut refused) = (0, 0, 0);
     for round in 0..40 {
         let n = 3 + (round % 5) as u32;
-        for (name, vtree) in vtree_shapes(n) {
+        for (name, vtree) in bare_roots(vtree_shapes(n)) {
             let eng = Engine::new();
             let shape = CnfShape { clauses: n as usize, width: 3 };
             let (cl, cr) = (rand_cnf(&mut rng, n, shape), rand_cnf(&mut rng, n, shape));
@@ -124,7 +125,7 @@ fn disjoint_scopes_count_the_conjunction() {
     let mut compared = 0;
     for round in 0..30 {
         let n = 4 + (round % 4) as u32;
-        for (name, vtree) in vtree_shapes(n) {
+        for (name, vtree) in bare_roots(vtree_shapes(n)) {
             let eng = Engine::new();
             let nodes: Vec<VtreeIdx> = (0..vtree.num_nodes() as u32).map(VtreeIdx).filter(|&t| t != vtree.root()).collect();
             let tl = nodes[rng.below(nodes.len() as u64) as usize];
@@ -252,7 +253,7 @@ fn every_refused_reserve_of_a_product_count_leaves_the_operands() {
     let mut rng = Lcg::new(4);
     let mut refused = 0;
     for n in [4u32, 6] {
-        for (name, vtree) in vtree_shapes(n).into_iter().take(3) {
+        for (name, vtree) in bare_roots(vtree_shapes(n)).into_iter().take(3) {
             let eng = Engine::new();
             let shape = CnfShape { clauses: n as usize, width: 3 };
             let targets = draw_targets(&mut rng, &vtree);

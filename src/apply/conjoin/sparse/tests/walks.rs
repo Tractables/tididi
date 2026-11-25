@@ -5,6 +5,7 @@
 //! pipelined or not) and with none. All give the same levels, the same
 //! minimized diagram and the same count.
 
+use crate::test_helpers::bare_roots;
 use std::sync::Arc;
 
 use super::{ForcedPrefetch, ForcedThresholds, SparseThresholds};
@@ -85,7 +86,7 @@ fn sparse_walks_build_the_grids_levels() {
     let mut rng = Lcg::new(0x1eaf_1abe);
     let eng = Engine::new();
     for n in [6, 9] {
-        for (shape, vtree) in vtree_shapes(n) {
+        for (shape, vtree) in bare_roots(vtree_shapes(n)) {
             for round in 0..10 {
                 let f = operand(&vtree, n, &mut rng);
                 let g = operand(&vtree, n, &mut rng);

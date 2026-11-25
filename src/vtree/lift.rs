@@ -19,7 +19,7 @@ impl Vtree {
     /// `None` on a root vtree. Linear in the home's size.
     pub(crate) fn lifted_home(&self) -> Option<Home> {
         let link = self.home.as_ref()?;
-        let old = link.home.vtree();
+        let old = &link.home;
         let internals = self.internal_bottomup_slice();
         let mut stands = vec![false; old.num_nodes()];
         for &t in internals {

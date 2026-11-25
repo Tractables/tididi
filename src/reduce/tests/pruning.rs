@@ -2,6 +2,7 @@
 //!
 //! The fixtures these read are in `mod.rs`.
 
+use crate::test_helpers::bare_roots;
 use std::sync::Arc;
 
 use crate::reduce::prune::{PruneScope, Seeds, Select, Start, below_root_walk_applies, few_dropped, keep_marked, FEW_DROPPED, new_indices, prune_walk, prune_complement, settle_loose, settle_reads_all, UNREACHED};
@@ -201,7 +202,7 @@ fn a_contraction_drops_the_nodes_no_pair_names() {
     let eng = &crate::Engine::new();
     let mut rng = Lcg::new(0x51d2_7a03);
     let (mut before, mut after) = ([0usize; 2], [0usize; 2]);
-    for (shape, wide) in vtree_shapes(14) {
+    for (shape, wide) in bare_roots(vtree_shapes(14)) {
         for case in 0..32 {
             let marginal = case % 2 == 1;
             let (f, g) = (placed(eng, &mut rng, &wide), placed(eng, &mut rng, &wide));
@@ -530,7 +531,7 @@ fn complement_prunes(eng: &crate::Engine, rng: &mut crate::test_helpers::Lcg) ->
     let (mut cases, mut filled, mut bare, mut described) = (0usize, 0usize, 0usize, 0usize);
     let held = |tdd: &crate::Tdd| tdd.levels.iter().map(|l| l.pairs.implicit().is_some()).collect::<Vec<_>>();
     for shape in [CnfShape { clauses: 6, width: 3 }, CnfShape { clauses: 24, width: 5 }, CnfShape { clauses: 10, width: 2 }] {
-        for (name, vtree) in vtree_shapes(16) {
+        for (name, vtree) in bare_roots(vtree_shapes(16)) {
             for case in 0..30 {
                 let mut f = compile_clauses_on(eng, &vtree, &rand_cnf(rng, 16, shape));
                 eng.minimize(&mut f).unwrap();
@@ -936,7 +937,7 @@ fn the_unnamed_count_is_the_nodes_no_pair_of_the_parent_level_names() {
         let num_vars = 6 + (seed % 5) as u32;
         let mut rng = Lcg::new(seed ^ 0x0dd_c0de);
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 14, width: 3 });
-        for (label, vtree) in vtree_shapes(num_vars) {
+        for (label, vtree) in bare_roots(vtree_shapes(num_vars)) {
             let mut f = eng.cube(&vtree, std::iter::empty::<i32>()).unwrap();
             for (i, c) in clauses.iter().enumerate() {
                 f = match rng.below(2) {

@@ -138,7 +138,7 @@ fn operand(eng: &Engine, homes: &[Home], n: u32, rng: &mut Lcg) -> (Tdd, String)
 /// [`operand`], and the same function built on the home's root vtree.
 fn operand_and_twin(eng: &Engine, homes: &[Home], n: u32, rng: &mut Lcg) -> (Tdd, String, Tdd) {
     let home = &homes[rng.below(homes.len() as u64) as usize];
-    let root = home.vtree();
+    let root = home;
     let kind = rng.below(14);
     let s = subset(n, rng);
     match kind {
@@ -241,7 +241,7 @@ fn binary(log: &mut Log, eng: &Engine, n: u32, f: &Tdd, g: &Tdd, h: &Tdd, rng: &
     log.value("and_model_count some levels", || eng.and_model_count(f.clone(), g.clone(), &targets), popcount(&and));
     let (ws, literal_weights) = weights(n, rng);
     let (weighted, _) = tididi::test_helpers::weighted_sum(&and, &literal_weights);
-    let weighted_home = Home::weighted(Vtree::clone(home.vtree()), ws).unwrap();
+    let weighted_home = Home::weighted(Vtree::clone(&home), ws).unwrap();
     let exact = |t: &Tdd| t.weighted_value().map(|v| v.map(|v| tididi::test_helpers::exact_weight(&v)));
     for (name, targets) in [("weighted and", &[][..]), ("weighted and_marginalizing some levels", &targets[..])] {
         log.same(
@@ -275,7 +275,7 @@ fn operations_of_two_diagrams_in_every_form() {
     for seed in 0..400u64 {
         let mut rng = Lcg::new(seed ^ 0x51ed_270b);
         let n = 1 + rng.below(6) as u32;
-        let root = Arc::clone(Home::new(Vtree::random(n, seed)).vtree());
+        let root = Arc::clone(&Home::new(Vtree::random(n, seed)));
         // Two `Home` values of one root vtree.
         let homes = [Home::new(Arc::clone(&root)), Home::new(Arc::clone(&root))];
         HOME.set(Some(homes[0].clone()));
@@ -354,10 +354,10 @@ fn canonical(t: &Tdd) -> Result<(), String> {
     if !t.vtree().is_on(&home) {
         return Ok(());
     }
-    let n = home.vtree().num_vars();
+    let n = home.num_vars();
     let truth = table(t, n);
     let vars: Vec<VarId> = (1..=n).map(VarId).collect();
-    let mut expected = tididi::test_helpers::or_of_cubes(home.vtree(), &vars, |row| truth[row]);
+    let mut expected = tididi::test_helpers::or_of_cubes(&home, &vars, |row| truth[row]);
     expected.minimize().unwrap();
     expected.trim(&home).unwrap();
     let mut got = t.clone();
@@ -500,7 +500,7 @@ fn unary(log: &mut Log, eng: &Engine, home: &Home, n: u32, f: &Tdd, hf: &Tdd, rn
     let algebra = ws.algebra().clone();
     let (weighted, _) = tididi::test_helpers::weighted_sum(&tf, &literal_weights);
     log.value("evaluate", || f.evaluate(&algebra), weighted.clone());
-    let weighted_home = Home::weighted(Vtree::clone(home.vtree()), ws).unwrap();
+    let weighted_home = Home::weighted(Vtree::clone(home), ws).unwrap();
     let weighted_value = |t: &Tdd| {
         on_weighted(t, &weighted_home).weighted_value().map(|v| v.map(|v| tididi::test_helpers::exact_weight(&v))).map_err(|e| format!("{e:?}"))
     };
@@ -615,9 +615,9 @@ fn unary(log: &mut Log, eng: &Engine, home: &Home, n: u32, f: &Tdd, hf: &Tdd, rn
             || Ok(true),
         );
     }
-    let before = (**home.vtree()).clone();
+    let before = Vtree::clone(home);
     log.any(n, "rotation_search", || mutate(&|t| t.rotation_search(&mut MinimizePairs, &RotationSearchConfig::default()).map(drop)), &tf);
-    assert!(home.vtree().same_tree(&before), "a search changed the home: {}", log.case);
+    assert!(home.same_tree(&before), "a search changed the home: {}", log.case);
     log.any(n, "rotation_search, transport back", || {
         let mut t = f.clone();
         t.rotation_search(&mut MinimizePairs, &RotationSearchConfig::default()).map_err(|e| format!("{e:?}"))?;
@@ -639,7 +639,7 @@ fn operations_of_one_diagram_in_every_form() {
     for seed in 0..600u64 {
         let mut rng = Lcg::new(seed ^ 0x2545_f491);
         let n = 1 + rng.below(6) as u32;
-        let root = Arc::clone(Home::new(Vtree::random(n, seed)).vtree());
+        let root = Arc::clone(&Home::new(Vtree::random(n, seed)));
         let homes = [Home::new(Arc::clone(&root))];
         HOME.set(Some(homes[0].clone()));
         let (f, nf, hf) = operand_and_twin(&eng, &homes, n, &mut rng);
@@ -666,7 +666,7 @@ fn transports_in_every_form() {
         // zero-based positions differ in the bits of `mask` mirrors the
         // levels of those bits.
         let mask = rng.below(u64::from(n)) as u32;
-        let positions: Vec<VarId> = home.vtree().leaf_bottomup().map(|(_, var)| var).collect();
+        let positions: Vec<VarId> = home.leaf_bottomup().map(|(_, var)| var).collect();
         let mut in_order = positions.clone();
         in_order.sort_by_key(|&v| home.rank(v).unwrap());
         let map = |v: VarId| in_order[(home.rank(v).unwrap() ^ mask) as usize];
@@ -756,7 +756,7 @@ fn pools_in_every_form() {
         let mut rng = Lcg::new(seed ^ 0x1b87_3593);
         let n = 2 + rng.below(6) as u32;
         let home = Home::new(Vtree::random(n, seed));
-        let before = (**home.vtree()).clone();
+        let before = Vtree::clone(&home);
         let homes = std::slice::from_ref(&home);
         let mut members: Vec<(Tdd, String)> = (0..2 + rng.below(3)).map(|_| operand(&eng, homes, n, &mut rng)).collect();
         let (outsider, no) = operand(&eng, homes, n, &mut rng);
@@ -779,7 +779,7 @@ fn pools_in_every_form() {
             }
             Ok(Ok(accepts)) => accepts,
         };
-        assert!(home.vtree().same_tree(&before), "the search changed the home: {}", log.case);
+        assert!(home.same_tree(&before), "the search changed the home: {}", log.case);
         for (i, (m, _)) in members.iter().enumerate() {
             log.value("pool_search keeps each function", || Ok(table(m, n)), tables[i].clone());
             log.value("pool_search keeps each count", || m.model_count(), counts[i].clone());

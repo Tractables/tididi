@@ -1,3 +1,4 @@
+use crate::test_helpers::bare_roots;
 use super::*;
 
 use rustc_hash::FxHashMap;
@@ -40,7 +41,7 @@ fn an_edit_and_a_rebuild() -> Vec<Tdd> {
     let mut edits = [0u32; 2];
     for (num_vars, clauses) in test_cases() {
         if num_vars > 5 { continue; }
-        for (shape, vtree) in sweep_shapes(num_vars) {
+        for (shape, vtree) in bare_roots(sweep_shapes(num_vars)) {
             let mut f = compile_clauses(&vtree, &clauses);
             f.minimize().expect("minimizing fits");
             for bits in 0..(1u64 << num_vars) {
@@ -473,7 +474,7 @@ fn a_batch_on_a_projection_follows_the_diagram_across_projections() {
     use crate::vtree::Home;
     let eng = Engine::new();
     let home = Home::new(Vtree::join(&Vtree::join(&Vtree::leaf(VarId(1)), &Vtree::leaf(VarId(2))).unwrap(), &Vtree::leaf(VarId(3))).unwrap());
-    let all = Arc::clone(home.vtree());
+    let all = Arc::clone(&home);
     let on_home = |f: &Tdd| crate::test_helpers::embedded(f, &all, |v| v).unwrap().0;
     let mut f = eng.literal(&all, 2).unwrap();
     f.trim(&home).unwrap();
@@ -530,7 +531,7 @@ fn constants_on_a_home_take_both_updates() {
     use crate::vtree::Home;
     let home = Home::new(Vtree::balanced(4));
     let models: [&[i32]; 4] = [&[1, -2, 3, 4], &[-2, 4], &[], &[1, -1, 3]];
-    for constant in [Tdd::zero(home.vtree()), Tdd::one(home.vtree())] {
+    for constant in [Tdd::zero(&home), Tdd::one(&home)] {
         assert_eq!(constant.vtree().num_nodes(), 0);
         for model in models {
             for insert in [true, false] {
@@ -556,7 +557,7 @@ fn random_batches_on_a_home_match_the_clause_and_cube_entries() {
     for seed in 0..500u64 {
         let n = 2 + rng.below(7) as u32;
         let home = Home::new(Vtree::random(n, seed));
-        let mut f = crate::test_helpers::rand_conj(home.vtree(), n, 3, 3, false, &mut rng);
+        let mut f = crate::test_helpers::rand_conj(&home, n, 3, 3, false, &mut rng);
         f.minimize().unwrap();
         let mut want = f.clone();
         let start = Arc::clone(f.vtree());
@@ -593,7 +594,7 @@ fn random_batches_on_a_home_match_the_clause_and_cube_entries() {
 fn an_edit_after_a_rebuild_that_moved_the_vtree_is_an_edit() {
     use crate::vtree::Home;
     let home = Home::new(Vtree::balanced(3));
-    let mut f = Tdd::cube(home.vtree(), [1, 2]).unwrap();
+    let mut f = Tdd::cube(&home, [1, 2]).unwrap();
     assert_eq!(f.vtree().num_leaves(), 2);
     let first = Arc::clone(f.vtree());
     let mut batch = f.maintain().unwrap();
@@ -605,7 +606,7 @@ fn an_edit_after_a_rebuild_that_moved_the_vtree_is_an_edit() {
     // pairs; this assignment's path meets only singletons.
     batch.insert_model([-1, 2, 3]).unwrap();
     assert_eq!(batch.rebuilds(), 1, "the second update is an edit");
-    let want = by_operations(&by_operations(&Tdd::cube(home.vtree(), [1, 2]).unwrap(), &[1, 2, 3], false), &[-1, 2, 3], true);
+    let want = by_operations(&by_operations(&Tdd::cube(&home, [1, 2]).unwrap(), &[1, 2, 3], false), &[-1, 2, 3], true);
     assert_matches_operations(batch.diagram(), &want, "remove then insert");
 }
 
@@ -619,7 +620,7 @@ fn the_false_exit_on_a_weighted_home_keeps_its_weights() {
     use crate::vtree::Home;
     let table = vec![LiteralWeights { negative: rat(1, 1), positive: rat(3, 1) }; 3];
     let home = Home::weighted(Vtree::balanced(3), Weights::new(RationalWeights::from_literals(&table), Arithmetic::ExactRational)).unwrap();
-    let mut f = Tdd::cube(home.vtree(), [1, -2, 3]).unwrap();
+    let mut f = Tdd::cube(&home, [1, -2, 3]).unwrap();
     let mut batch = f.maintain().unwrap();
     batch.remove_model([1, -2, 3]).unwrap();
     assert_eq!(batch.rebuilds(), 0, "the removal is an edit");

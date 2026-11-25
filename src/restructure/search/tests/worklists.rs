@@ -1,5 +1,6 @@
 //! What a rotation trial does with the reduction obligations it inherits.
 
+use crate::test_helpers::bare_roots;
 use std::sync::Arc;
 
 use crate::Engine;
@@ -65,7 +66,7 @@ fn an_accepted_rotation_keeps_the_fusion_records_it_left_alone() {
     let mut rng = Lcg::new(41);
     let mut kept_records = 0;
     for num_vars in 5..9u32 {
-        for (shape, vtree) in vtree_shapes(num_vars) {
+        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
             let eng = Engine::new();
             let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 2 * num_vars as usize, width: 3 });
             let mut f = compile_clauses_on(&eng, &vtree, &clauses);
@@ -169,7 +170,7 @@ fn a_rotation_of_a_canonical_diagram_keeps_the_certificate() {
     let mut rng = Lcg::new(7);
     let mut tallies: [Tally; 4] = Default::default();
     for num_vars in 4..10u32 {
-        for ((shape, vtree), round) in vtree_shapes(num_vars).into_iter().flat_map(|s| [(s.clone(), 0), (s.clone(), 1), (s, 2)]) {
+        for ((shape, vtree), round) in bare_roots(vtree_shapes(num_vars)).into_iter().flat_map(|s| [(s.clone(), 0), (s.clone(), 1), (s, 2)]) {
             let eng = Engine::new();
             let cnf = |rng: &mut Lcg| rand_cnf(rng, num_vars, CnfShape { clauses: 2 * num_vars as usize, width: 3 });
             let mut f = compile_clauses_on(&eng, &vtree, &cnf(&mut rng));

@@ -1,3 +1,4 @@
+use crate::test_helpers::bare_roots;
 use std::sync::Arc;
 
 use crate::diagram::{TddNodeId, NodeIdx, LEAF_WIDTH};
@@ -68,7 +69,7 @@ fn cycling(f: &Tdd, at: VtreeIdx) -> Vec<Option<u32>> {
 #[test]
 fn tagged_nodes_carry_their_codes() {
     for (num_vars, clauses) in test_cases().into_iter().filter(|(n, _)| (2..=8).contains(n)) {
-        for (_, vtree) in vtree_shapes(num_vars) {
+        for (_, vtree) in bare_roots(vtree_shapes(num_vars)) {
             let f = compile_clauses(&vtree, &clauses);
             let (left, right) = vtree.children(vtree.root());
             for at in [vtree.root(), left, right] {
@@ -96,7 +97,7 @@ fn unreduced_diagrams_tag_to_canonical_ones() {
 fn a_level_summed_beside_the_tagged_one_is_not_read() {
     let eng = Engine::new();
     for (num_vars, clauses) in test_cases().into_iter().filter(|(n, _)| (4..=8).contains(n)) {
-        for (_, vtree) in vtree_shapes(num_vars) {
+        for (_, vtree) in bare_roots(vtree_shapes(num_vars)) {
             let (left, right) = vtree.children(vtree.root());
             if vtree.node(left).is_leaf() || vtree.node(right).is_leaf() {
                 continue;
@@ -291,7 +292,7 @@ fn wide_codes_share_the_cube_nodes_they_agree_on() {
 fn every_refused_reserve_of_a_tagging_leaves_the_operand() {
     let mut refused = 0;
     for (num_vars, clauses) in test_cases().into_iter().filter(|(n, _)| (4..=8).contains(n)).take(4) {
-        let vtree = vtree_shapes(num_vars).into_iter().next().unwrap().1;
+        let vtree = bare_roots(vtree_shapes(num_vars)).into_iter().next().unwrap().1;
         let f = compile_clauses(&vtree, &clauses);
         let count = f.model_count().unwrap();
         let (left, right) = vtree.children(vtree.root());

@@ -220,7 +220,7 @@ fn a_cube_on_a_diagram_an_earlier_call_placed_is_valid_and_canonical() {
     let eng = crate::Engine::new();
     let home = Home::new(Vtree::balanced(3));
     for x1 in [1, -1] {
-        let mut f = Tdd::clause(home.vtree(), [x1]).expect("a clause on the home");
+        let mut f = Tdd::clause(&home, [x1]).expect("a clause on the home");
         f.trim(&home).expect("trim fits");
         assert_eq!(f.vtree().num_leaves(), 1);
         let g = eng.or_cube(f, &[2, -2]).expect("a false cube");
@@ -231,7 +231,7 @@ fn a_cube_on_a_diagram_an_earlier_call_placed_is_valid_and_canonical() {
                 .check(got.output)
                 .unwrap_or_else(|e| panic!("{what}: the builder refuses the result: {e:?}"));
             assert_partition(&got, &what);
-            let mut want = Tdd::clause(home.vtree(), [x1]).expect("a clause on the home");
+            let mut want = Tdd::clause(&home, [x1]).expect("a clause on the home");
             want = eng.or_cube(want, &cube).expect("the disjunction fits");
             want.trim(&home).expect("trim fits");
             let (mut want, _) = crate::test_helpers::moved(&eng, want, got.vtree(), |v| v).expect("the support is in the result's vtree");

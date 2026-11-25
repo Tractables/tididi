@@ -44,8 +44,8 @@ pub(crate) fn on_home(f: &Tdd, home: &Arc<Vtree>) -> Tdd {
 /// projection on the same variables, whose node ids are those of `f`'s.
 pub(crate) fn reweighted(f: &Tdd, home: &Home, weighted: &Home) -> Tdd {
     let vars: Vec<VarId> = f.vtree().leaf_bottomup().map(|(_, var)| var).collect();
-    let vtree = if Arc::ptr_eq(f.vtree(), home.vtree()) {
-        Arc::clone(weighted.vtree())
+    let vtree = if Arc::ptr_eq(f.vtree(), home) {
+        Arc::clone(weighted)
     } else if vars.is_empty() {
         Vtree::empty_projection(weighted)
     } else {
@@ -177,7 +177,7 @@ fn marginalize_matches_the_smooth_form_on_the_home() {
     for case in 0..600u64 {
         let n = 1 + rng.below(64) as u32;
         let mut home = Home::new(Vtree::random(n, case));
-        let all: Vec<VarId> = home.vtree().leaf_bottomup().map(|(_, var)| var).collect();
+        let all: Vec<VarId> = home.leaf_bottomup().map(|(_, var)| var).collect();
         let used: Vec<VarId> = match rng.below(8) {
             0 => Vec::new(),
             1 => all.clone(),
@@ -190,7 +190,7 @@ fn marginalize_matches_the_smooth_form_on_the_home() {
             f = reweighted(&f, &home, &weighted);
             home = weighted;
         }
-        let home_vtree = Arc::clone(home.vtree());
+        let home_vtree = Arc::clone(&home);
         let mut g = on_root_copy(&f, &home_vtree);
         let mut before = Vec::new();
         for step in 0..1 + rng.below(2) {
@@ -247,7 +247,7 @@ fn a_closing_step_beside_a_region_drops_the_leaf_it_names_true() {
     let join = |a: &Vtree, b: &Vtree| Vtree::join(a, b).unwrap();
     let (ef, xy) = (join(&leaf(1), &leaf(2)), join(&leaf(3), &leaf(4)));
     let home = Home::new(join(&ef, &xy));
-    let mut f = Tdd::cube(home.vtree(), [1, 2, 3, 4]).unwrap();
+    let mut f = Tdd::cube(&home, [1, 2, 3, 4]).unwrap();
     f.marginalize(|v| v.0 <= 2).unwrap();
     assert_eq!(count_regions(&f), 1);
     for b in [true, false] {
@@ -258,7 +258,7 @@ fn a_closing_step_beside_a_region_drops_the_leaf_it_names_true() {
     }
     assert!(matches!(f.exists_var(VarId(3)), Err(OperationError::MarginalLevel(_))));
     for home in [Home::new(join(&ef, &xy)), Home::new(join(&xy, &ef))] {
-        let mut g = Tdd::cube(home.vtree(), [-4]).unwrap();
+        let mut g = Tdd::cube(&home, [-4]).unwrap();
         g = g.and_clause([-1, 3]).unwrap().and_clause([1, 2]).unwrap();
         g.marginalize(|v| v.0 <= 2).unwrap();
         assert_eq!(count_regions(&g), 1);
@@ -289,7 +289,7 @@ fn marginalize_levels_refuses_a_projection() {
     let own = Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)]).unwrap();
     let mut f = Tdd::clause(&own, [1, 2, 3]).unwrap();
     let before = f.clone();
-    let (left, _) = home.vtree().children(home.vtree().root());
+    let (left, _) = home.children(home.root());
     assert!(matches!(f.marginalize_levels(&[left]), Err(OperationError::InertOption { .. })));
     assert_eq!(f.levels.len(), before.levels.len());
     assert!(!f.has_marginal_level());
@@ -414,7 +414,7 @@ fn a_restricted_summed_diagram_conjoins_as_it_was() {
             g = reweighted(&g, &home, &weighted);
             home = weighted;
         }
-        let h = home.vtree();
+        let h = &home;
         let full: Vec<VtreeIdx> = h
             .bottomup()
             .filter(|&t| !h.node(t).is_leaf() && h.subtree(t).filter(|&u| h.node(u).is_leaf()).all(|u| g.vtree().leaf_of(h.leaf_var(u)).is_some()))

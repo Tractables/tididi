@@ -349,7 +349,7 @@ impl Engine {
         }
         let (mut tree, mut groups) = pool_tree(members)?;
         let pivot = mv.rotation.pivot;
-        if pivot.idx() >= tree.link_home().map_or(tree.num_nodes(), |home| home.vtree().num_nodes()) {
+        if pivot.idx() >= tree.link_home().map_or(tree.num_nodes(), |home| home.num_nodes()) {
             return Err(OperationError::LevelNotInVtree(pivot));
         }
         if members.iter().any(|m| m.has_marginal_level()) {
@@ -1056,7 +1056,7 @@ fn pool_tree(members: &[&mut Tdd]) -> Result<(Vtree, Groups), OperationError> {
     refuse_regions(members)?;
     let first = &members[0].vtree;
     let shared = members.iter().all(|m| Arc::ptr_eq(&m.vtree, first));
-    let home_of = |v: &Arc<Vtree>| v.link_home().map_or(Arc::as_ptr(v), |home| Arc::as_ptr(home.vtree()));
+    let home_of = |v: &Arc<Vtree>| v.link_home().map_or(Arc::as_ptr(v), |home| Arc::as_ptr(home));
     if members.iter().any(|m| home_of(&m.vtree) != home_of(first)) {
         return Err(OperationError::VtreeMismatch);
     }
@@ -1404,7 +1404,7 @@ fn end_on_home(eng: &Engine, members: &mut [&mut Tdd], union: Vtree, groups: Gro
                 return;
             }
             let home = Home::new(union);
-            let root = Arc::clone(home.vtree());
+            let root = Arc::clone(&home);
             for &i in on_union {
                 members[i].vtree = Arc::clone(&root);
             }

@@ -62,7 +62,7 @@ fn a_diagram_on_a_projection_reads_back_node_for_node() {
     let first = read_tdd(&mut text(&f).as_slice(), f.vtree()).unwrap();
     check_trimmed(&first, false).unwrap();
     assert_eq!(first.model_count().unwrap(), f.model_count().unwrap());
-    for vtree in [f.vtree(), &own, home.vtree(), &other] {
+    for vtree in [f.vtree(), &own, &home, &other] {
         for back in both_readers(&f, vtree) {
             let back = back.unwrap();
             assert!(back.vtree().is_on(&home));
@@ -75,12 +75,12 @@ fn a_diagram_on_a_projection_reads_back_node_for_node() {
 fn a_smooth_file_reads_onto_the_projection_on_its_support() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(4));
-    let root = Arc::new(Vtree::clone(home.vtree()));
+    let root = Arc::new(Vtree::clone(&home));
     let padded = x1_x3_padded(&eng, &root).unwrap();
     assert!(Arc::ptr_eq(padded.vtree(), &root));
     let own = Vtree::projection(&home, [1, 3].map(VarId)).unwrap();
     let expected = Tdd::cube(&own, [1, 3]).unwrap();
-    for back in both_readers(&padded, home.vtree()) {
+    for back in both_readers(&padded, &home) {
         let back = back.unwrap();
         check_trimmed(&back, false).unwrap();
         assert_same_nodes(&back, &expected, "the support");
@@ -92,7 +92,7 @@ fn a_smooth_file_reads_onto_the_projection_on_its_support() {
 fn finish_drops_a_leaf_every_pair_names_one() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(4));
-    let f = x1_x3_padded(&eng, home.vtree()).unwrap();
+    let f = x1_x3_padded(&eng, &home).unwrap();
     check_trimmed(&f, false).unwrap();
     let own = Vtree::projection(&home, [1, 3].map(VarId)).unwrap();
     let mut b = Tdd::builder(&eng, &own).unwrap();
@@ -106,7 +106,7 @@ fn finish_drops_a_leaf_every_pair_names_one() {
 fn finish_trims_a_summed_out_leaf_to_a_region() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(2));
-    let vtree = home.vtree();
+    let vtree = &home;
     let (x1, x2) = vtree.children(vtree.root());
     let mut donor = Tdd::cube(&Arc::new(Vtree::clone(vtree)), std::iter::empty::<i32>()).unwrap();
     donor.marginalize_levels(&[x2]).unwrap();
@@ -131,14 +131,14 @@ fn finish_trims_a_summed_out_leaf_to_a_region() {
 fn a_false_file_reads_to_the_constant() {
     let home = Home::new(Vtree::balanced(4));
     let own = Vtree::projection(&home, [1, 3].map(VarId)).unwrap();
-    let root = Arc::new(Vtree::clone(home.vtree()));
+    let root = Arc::new(Vtree::clone(&home));
     let ones = (own.num_leaves(), own.num_nodes(), own.topo_pos(own.root()));
     let files = [
         "p tdd 1 0 0 0 ZERO\n".to_string(),
         "p tdd 1 4 7 6 ZERO\n".to_string(),
         format!("p tdd 1 {} {} {} ZERO\n", ones.0, ones.1, ones.2),
     ];
-    for (written, vtree) in [(&root, home.vtree()), (&own, &own)] {
+    for (written, vtree) in [(&root, &*home), (&own, &own)] {
         for back in both_readers(&Tdd::zero(written), vtree) {
             let back = back.unwrap();
             assert!(back.is_zero() && back.vtree().num_nodes() == 0 && back.vtree().is_on(&home));
@@ -146,13 +146,13 @@ fn a_false_file_reads_to_the_constant() {
         let one = read_tdd(&mut "p tdd 1 0 0 0 ONE\n".as_bytes(), vtree).unwrap();
         assert!(one.is_one() && one.vtree().num_nodes() == 0 && one.vtree().is_on(&home));
     }
-    for (file, vtree) in files.iter().zip([home.vtree(), home.vtree(), &own]) {
+    for (file, vtree) in files.iter().zip([&home, &home, &own]) {
         let back = read_tdd(&mut file.as_bytes(), vtree).unwrap();
         assert!(back.is_zero() && back.vtree().num_nodes() == 0 && back.vtree().is_on(&home), "{file}");
     }
     // Counts that are neither 0 0 nor the supplied vtree's.
-    assert!(matches!(read_tdd(&mut files[2].as_bytes(), home.vtree()), Err(IoError::Format(_))));
-    assert!(matches!(read_tdd(&mut "p tdd 1 4 7 6 ONE\n".as_bytes(), home.vtree()), Err(IoError::Format(_))));
+    assert!(matches!(read_tdd(&mut files[2].as_bytes(), &home), Err(IoError::Format(_))));
+    assert!(matches!(read_tdd(&mut "p tdd 1 4 7 6 ONE\n".as_bytes(), &home), Err(IoError::Format(_))));
 }
 
 #[test]
@@ -162,25 +162,25 @@ fn a_file_of_another_tree_is_a_format_error() {
     let wider = Arc::new(Vtree::balanced(5));
     let cases = [Tdd::cube(&linear, [1, 4]).unwrap(), Tdd::cube(&wider, [1, 5]).unwrap()];
     for f in &cases {
-        for back in both_readers(f, home.vtree()) {
+        for back in both_readers(f, &home) {
             assert!(matches!(back, Err(IoError::Format(_))), "{:?}", back.map(|_| ()));
         }
     }
     // A header larger than the home, read before any allocation from it.
     let big = "p tdd 1 4000000000 7999999999 0 0\n";
-    assert!(matches!(read_tdd(&mut big.as_bytes(), home.vtree()), Err(IoError::Format(_))));
+    assert!(matches!(read_tdd(&mut big.as_bytes(), &home), Err(IoError::Format(_))));
 }
 
 #[test]
 fn a_version_2_file_whose_trim_drops_a_leaf_keeps_its_count() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(4));
-    let root = Arc::new(Vtree::clone(home.vtree()));
+    let root = Arc::new(Vtree::clone(&home));
     let mut padded = x1_x3_padded(&eng, &root).unwrap();
     padded.attach_level_counts().unwrap();
     let bytes = binary(&padded);
     assert_eq!(bytes[8], 2, "a version 2 file");
-    let back = read_tdd_binary(&mut bytes.as_slice(), home.vtree()).unwrap();
+    let back = read_tdd_binary(&mut bytes.as_slice(), &home).unwrap();
     assert_eq!(back.vtree().num_leaves(), 2);
     assert!(back.has_level_counts());
     assert_eq!(back.model_count().unwrap(), padded.model_count().unwrap());
@@ -211,7 +211,7 @@ fn a_pair_repeated_in_a_level_is_refused() {
     let lower = [2, 0, 2, 1, 2 | 1 << 2 | 2 << 4 | 1 << 6];
     let roots: [&[u8]; 2] = [&[1, 0, 1, 1, 1 | 1 << 1], &[1, 1, 2, 1, 1, 0, 1 << 3 | 1 << 5 | 1 << 6]];
     for (file, root) in texts.iter().zip(roots) {
-        for vtree in [&vtree, home.vtree()] {
+        for vtree in [&vtree, &home] {
             match read_tdd(&mut file.as_bytes(), vtree) {
                 Err(IoError::Format(m)) => assert!(m.contains("twice"), "{m}"),
                 other => panic!("{:?}", other.map(|_| ())),
@@ -220,7 +220,7 @@ fn a_pair_repeated_in_a_level_is_refused() {
         let body: Vec<u8> = [3, 5, 1, 2, 0, 3, 0, 1].iter().chain(&lower).chain(root).copied().collect();
         let bytes = sealed(&body);
         assert!(crate::io::read_tdd_binary(&mut bytes.as_slice(), &vtree).is_ok(), "trusted over a root");
-        match crate::io::read_tdd_binary(&mut bytes.as_slice(), home.vtree()) {
+        match crate::io::read_tdd_binary(&mut bytes.as_slice(), &home) {
             Err(IoError::Format(m)) => assert!(m.contains("twice"), "{m}"),
             other => panic!("{:?}", other.map(|_| ())),
         }

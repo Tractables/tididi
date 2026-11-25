@@ -25,7 +25,7 @@ fn free_vars(own: &Vtree) -> Vec<VarId> {
         while extents.next_if(|&(_, end)| end <= rank).is_some() {}
         let in_extent = extents.peek().is_some_and(|&(start, _)| start <= rank);
         if ranks.next_if_eq(&rank).is_none() && !in_extent {
-            free.push(link.home.vtree().leaf_var(leaf));
+            free.push(link.home.leaf_var(leaf));
         }
     }
     free
@@ -35,7 +35,7 @@ fn free_vars(own: &Vtree) -> Vec<VarId> {
 /// `own` does not have as a leaf, right to left; none when every variable
 /// outside the extents is a leaf: the reference for [`Vtree::free_set_under`].
 fn free_vars_under(own: &Vtree, t: VtreeIdx) -> Vec<VarId> {
-    let Some(home) = own.link_home().map(Home::vtree).filter(|_| own.free_leaves() > 0) else { return Vec::new() };
+    let Some(home) = own.link_home().map(|home| &**home).filter(|_| own.free_leaves() > 0) else { return Vec::new() };
     home.subtree(own.home_node(t))
         .filter(|&h| home.node(h).is_leaf())
         .map(|h| home.leaf_var(h))
@@ -81,7 +81,7 @@ fn with_regions(home: &Home, leaves: &[u32], regions: &[(&[u32], u32)]) -> Vtree
 /// The region at `anchor`'s home leaf.
 fn region_at(own: &Vtree, anchor: u32) -> VtreeIdx {
     let home = own.link_home().unwrap();
-    let t = own.node_at_home(home.vtree().leaf_of(VarId(anchor)).unwrap()).unwrap();
+    let t = own.node_at_home(home.leaf_of(VarId(anchor)).unwrap()).unwrap();
     assert!(own.node(t).is_region());
     t
 }
@@ -104,9 +104,9 @@ fn a_projection_with_extents_holds() {
     let first = region_at(&own, 2);
     let h = home.node_over(home.rank(VarId(3)).unwrap(), home.rank(VarId(4)).unwrap());
     assert_eq!(own.own_at(h), None, "ranks of the extent without its anchor");
-    assert_eq!(own.own_at(home.vtree().leaf_of(VarId(2)).unwrap()), Some(first));
-    assert_eq!(own.own_at(home.vtree().leaf_of(VarId(4)).unwrap()), None);
-    assert_eq!(own.own_at(home.vtree().leaf_of(VarId(6)).unwrap()), None);
+    assert_eq!(own.own_at(home.leaf_of(VarId(2)).unwrap()), Some(first));
+    assert_eq!(own.own_at(home.leaf_of(VarId(4)).unwrap()), None);
+    assert_eq!(own.own_at(home.leaf_of(VarId(6)).unwrap()), None);
 }
 
 #[test]
@@ -179,7 +179,7 @@ fn leaf_sets_refuse_overlaps_and_unite_the_rest() {
         let b = Arc::new(with_regions(&home, leaves, regions));
         assert_eq!(Vtree::leaf_sets(&a, &b).err(), Some(OperationError::MarginalLevel(region)), "{leaves:?}");
     }
-    assert_eq!(Vtree::leaf_sets(&a, home.vtree()).err(), Some(OperationError::MarginalLevel(region)));
+    assert_eq!(Vtree::leaf_sets(&a, &home).err(), Some(OperationError::MarginalLevel(region)));
     let fewer = Vtree::projection(&home, [VarId(1)]).unwrap();
     assert!(matches!(Vtree::leaf_sets(&a, &fewer), Ok(LeafSets::BInA)));
     assert!(matches!(Vtree::leaf_sets(&fewer, &a), Ok(LeafSets::AInB)));
@@ -258,8 +258,8 @@ fn random_regions_hold_and_count() {
             Role::Region(_) => anchors.iter().find(|&&a| roles[a as usize - 1] == roles[var as usize - 1]).map(|&a| region_at(&own, a)),
             _ => None,
         };
-        for h in home.vtree().bottomup() {
-            let under: Vec<u32> = home.rank_range(h).map(|r| home.vtree().leaf_var(home.index().leaf_at[r as usize]).0).collect();
+        for h in home.bottomup() {
+            let under: Vec<u32> = home.rank_range(h).map(|r| home.leaf_var(home.index().leaf_at[r as usize]).0).collect();
             let anchored = |a: u32| under.contains(&a);
             let one = region_of(under[0]).filter(|_| under.iter().all(|&v| roles[v as usize - 1] == roles[under[0] as usize - 1]))
                 .filter(|_| anchors.iter().any(|&a| roles[a as usize - 1] == roles[under[0] as usize - 1] && anchored(a)));
@@ -471,7 +471,7 @@ fn by_definition(home: &Vtree, h: VtreeIdx, kept: &[bool]) -> Option<Def> {
 /// it.
 fn is_by_definition(own: &Vtree, kept: &[bool], what: &str) {
     assert_eq!(own.validate(), Ok(()), "{what}");
-    let home = own.link_home().expect("a projection").vtree();
+    let home = &own.link_home().expect("a projection");
     let def = by_definition(home, home.root(), kept).expect("a kept leaf");
     let mut stack = vec![(own.root(), &def)];
     while let Some((t, def)) = stack.pop() {
@@ -494,7 +494,7 @@ fn is_by_definition(own: &Vtree, kept: &[bool], what: &str) {
 
 /// The home leaves of `ranks` as a table by home node.
 fn kept_of(home: &Home, ranks: impl IntoIterator<Item = u32>) -> Vec<bool> {
-    let mut kept = vec![false; home.vtree().num_nodes()];
+    let mut kept = vec![false; home.num_nodes()];
     for r in ranks {
         kept[home.index().leaf_at[r as usize].idx()] = true;
     }
@@ -524,14 +524,14 @@ fn the_producers_build_the_projection_by_definition() {
         let pb = Vtree::projection(&home, rb.iter().map(|&r| var(r))).unwrap();
         for (p, ranks) in [(&pa, &ra), (&pb, &rb)] {
             if ranks.len() == n as usize {
-                assert!(Arc::ptr_eq(p, home.vtree()));
+                assert!(Arc::ptr_eq(p, &home));
                 continue;
             }
             is_by_definition(p, &kept_of(&home, ranks.iter().copied()), "projection");
             let locals: Vec<VarId> = (1..=ranks.len() as u32).map(VarId).collect();
             let depth = |mut h: VtreeIdx| {
                 let mut d = 0;
-                while let Some(parent) = home.vtree().node(h).parent() {
+                while let Some(parent) = home.node(h).parent() {
                     (h, d) = (parent, d + 1);
                 }
                 d
@@ -547,7 +547,7 @@ fn the_producers_build_the_projection_by_definition() {
         both.dedup();
         let union = Vtree::union(&pa, &pb).unwrap();
         match both.len() == n as usize {
-            true => assert!(Arc::ptr_eq(&union, home.vtree())),
+            true => assert!(Arc::ptr_eq(&union, &home)),
             false => {
                 seen[0] += usize::from(!Arc::ptr_eq(&union, &pa) && !Arc::ptr_eq(&union, &pb));
                 is_by_definition(&union, &kept_of(&home, both.iter().copied()), "union");

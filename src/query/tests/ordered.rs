@@ -1,5 +1,6 @@
 //! `Tdd::ordered_models` against the models read off a truth table, sorted.
 
+use crate::test_helpers::bare_roots;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -152,7 +153,7 @@ fn no_key_columns_is_any_order_on_any_vtree() {
     // With no key, every vtree is a spine of nothing: the first models are
     // any `limit` distinct models.
     let mut rng = Lcg::new(73);
-    for (shape, vtree) in vtree_shapes(6) {
+    for (shape, vtree) in bare_roots(vtree_shapes(6)) {
         let clauses = rand_cnf(&mut rng, 6, CnfShape { clauses: 4, width: 3 });
         let truth = truth_table(6, &clauses);
         let f = compile_clauses(&vtree, &clauses);

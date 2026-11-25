@@ -1,6 +1,7 @@
 //! What a whole-diagram minimize leaves behind: no pending work, and a
 //! certificate the next minimize reads instead of running the passes again.
 
+use crate::test_helpers::bare_roots;
 use std::sync::Arc;
 
 use crate::diagram::Pass;
@@ -66,7 +67,7 @@ fn a_contraction_leaves_none_of_its_merges_on_its_own_worklist() {
     for round in 0..24 {
         let num_vars = 6 + (round % 5) as u32;
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 12, width: 3 });
-        for (shape, vtree) in vtree_shapes(num_vars) {
+        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
             let mut f = eng.clause(&vtree, clauses[0].iter().copied()).unwrap();
             for clause in &clauses[1..] {
                 let g = eng.clause(&vtree, clause.iter().copied()).unwrap();
@@ -103,7 +104,7 @@ fn a_marginal_contraction_leaves_no_merge_for_a_second() {
     for round in 0..24 {
         let num_vars = 6 + (round % 5) as u32;
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 14, width: 3 });
-        for (shape, vtree) in vtree_shapes(num_vars) {
+        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
             let half = clauses.len().div_ceil(2);
             let f = compile_clauses(&vtree, &clauses[..half]);
             let g = compile_clauses(&vtree, &clauses[half..]);

@@ -223,7 +223,7 @@ fn key_node(lim: &Limits, vtree: &Vtree, key: DistinctKey<'_>) -> Result<VtreeId
 /// home variables. With `S` empty every satisfying value of `K` has all
 /// `2^n` of them; with `K` empty the result is a constant.
 fn distinct_on_home(eng: &Engine, tdd: &Tdd, home: &Home, key: VtreeIdx, m: u64) -> Result<Tdd, DistinctError> {
-    let (lim, vtree, at_home) = (eng.limits(), tdd.vtree(), home.vtree());
+    let (lim, vtree, at_home) = (eng.limits(), tdd.vtree(), home);
     if key.idx() >= at_home.num_nodes() {
         return Err(OperationError::LevelNotInVtree(key).into());
     }

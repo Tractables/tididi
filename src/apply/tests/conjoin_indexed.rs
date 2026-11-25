@@ -71,7 +71,7 @@ fn cases() -> Vec<Tdd> {
     let mut rng = Lcg::new(0x0001_d5ed_2026_1011);
     let mut out = Vec::new();
     for nvars in [3u32, 5, 7] {
-        for (shape, vtree) in vtree_shapes(nvars) {
+        for (shape, vtree) in bare_roots(vtree_shapes(nvars)) {
             for round in 0..10 {
                 let label = format!("{shape} n={nvars} round {round}");
                 let f = rand_conj(&vtree, nvars, 4, 3, round % 2 == 0, &mut rng);
@@ -118,7 +118,7 @@ fn products_past_the_list_cap_are_refused() {
     let eng = Engine::new();
     let mut rng = Lcg::new(0x11a7_1dec_2026_1110);
     let nvars = 7;
-    for (shape, vtree) in vtree_shapes(nvars) {
+    for (shape, vtree) in bare_roots(vtree_shapes(nvars)) {
         let f = rand_conj(&vtree, nvars, 4, 3, false, &mut rng);
         let g = rand_conj(&vtree, nvars, 4, 3, false, &mut rng);
         let index = PairIndex::new(&g).unwrap();
@@ -248,7 +248,7 @@ fn sum_indexed_is_the_conjunctions_value() {
     let eng = Engine::new();
     let mut rng = Lcg::new(0x05ad_2026_1011);
     for nvars in [3u32, 5, 6] {
-        for (shape, vtree) in vtree_shapes(nvars) {
+        for (shape, vtree) in bare_roots(vtree_shapes(nvars)) {
             for (t, _, _) in vtree.internal_bottomup() {
                 let under = vars_under(&vtree, t);
                 // Count alone, then a weighted sum over the block under `at`.
@@ -338,7 +338,7 @@ fn errors_name_the_operand_the_index_does_not_fit() {
 fn the_index_finds_each_pair_by_its_sides() {
     let eng = Engine::new();
     let mut rng = Lcg::new(0x1d_2026_1011);
-    for (shape, vtree) in vtree_shapes(6) {
+    for (shape, vtree) in bare_roots(vtree_shapes(6)) {
         let mut g = rand_conj(&vtree, 6, 5, 3, true, &mut rng);
         g.minimize().unwrap();
         let index = PairIndex::new(&g).unwrap();
@@ -545,7 +545,7 @@ fn every_refused_reserve_of_an_indexed_conjunction_leaves_the_operands() {
         let mut rng = Lcg::new(0x0001_d5ed_2026_1116);
         let mut absorbed = 0;
         for nvars in [5u32, 7] {
-            for (shape, vtree) in vtree_shapes(nvars).into_iter().take(3) {
+            for (shape, vtree) in bare_roots(vtree_shapes(nvars)).into_iter().take(3) {
                 let f = rand_conj(&vtree, nvars, 4, 3, false, &mut rng);
                 let set = local_set(&vtree, &mut rng);
                 let g = rand_conj(&vtree, nvars, 4, 3, true, &mut rng);

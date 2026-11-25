@@ -301,7 +301,7 @@ fn products_past_the_list_cap_are_refused() {
     let mut rng = Lcg::new(0x11a7_ca2e_2026_1110);
     let nvars = 6;
     let mut refused = 0;
-    for (_, vtree) in vtree_shapes(nvars) {
+    for (_, vtree) in bare_roots(vtree_shapes(nvars)) {
         for _ in 0..4 {
             let f = rand_conj(&vtree, nvars, 4, 3, false, &mut rng);
             let c = rand_conj(&vtree, nvars, 4, 3, false, &mut rng);

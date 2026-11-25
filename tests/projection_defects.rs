@@ -62,7 +62,7 @@ fn summing_out_the_root_follows_the_output_when_equal_counts_merge() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(2));
     let not_x1 = Tdd::clause(&Vtree::projection(&home, [VarId(1)]).unwrap(), [-1]).unwrap();
-    let summed = eng.and_marginalizing_where(Tdd::one(home.vtree()), &not_x1, |_| true).unwrap();
+    let summed = eng.and_marginalizing_where(Tdd::one(&home), &not_x1, |_| true).unwrap();
     let count = catch_unwind(AssertUnwindSafe(|| summed.model_count().unwrap()));
     assert_eq!(count.ok(), Some(BigUint::from(2u32)), "the count of not x1 over two variables, its root summed out");
 }
@@ -110,7 +110,7 @@ fn and_clause_keeps_the_weights_when_it_adds_a_variable() {
     let weights = Weights::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational);
     let home = Home::weighted(Vtree::balanced(4), weights).unwrap();
     let f = Tdd::clause(&Vtree::projection(&home, [VarId(1)]).unwrap(), [1]).unwrap();
-    let on_home = Tdd::clause(home.vtree(), [1]).unwrap();
+    let on_home = Tdd::clause(&home, [1]).unwrap();
     assert_eq!(format!("{:?}", f.weighted_value()), format!("{:?}", on_home.weighted_value()));
     let expected = on_home.and_clause([3]).unwrap().weighted_value().unwrap();
     assert!(expected.is_some());

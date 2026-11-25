@@ -2,6 +2,7 @@
 //! again, a count that reads them is the count that folds, and a
 //! conjunction or any other change to the levels drops them.
 
+use crate::test_helpers::bare_roots;
 use std::sync::Arc;
 
 use super::*;
@@ -44,7 +45,7 @@ fn counted(eng: &Engine, f: &Tdd) -> Tdd {
 fn kept_columns_are_the_folds_columns() {
     let mut rng = Lcg::new(0x01e7_e1c0);
     let eng = Engine::new();
-    for (shape, vtree) in vtree_shapes(9) {
+    for (shape, vtree) in bare_roots(vtree_shapes(9)) {
         let all: Vec<u32> = (1..=9).collect();
         for _ in 0..4 {
             let f = function_of(&vtree, &all, &mut rng);

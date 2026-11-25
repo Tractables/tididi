@@ -2,6 +2,7 @@
 //! output cap both cut it between two spine levels, and the work clock is
 //! charged for the pairs it reads and writes.
 
+use crate::test_helpers::bare_roots;
 use std::sync::Arc;
 
 use crate::limits::LimitConfig;
@@ -41,7 +42,7 @@ fn the_rebuild_charges_the_pairs_it_reads_and_writes() {
     let mut rng = Lcg::new(0xc1a0_5e11);
     let n = 14u32;
     let mut charged = 0u64;
-    for (name, vtree) in vtree_shapes(n) {
+    for (name, vtree) in bare_roots(vtree_shapes(n)) {
         for case in 0..6 {
             let eng = Engine::new();
             let f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, CnfShape { clauses: 24, width: 3 }));

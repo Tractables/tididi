@@ -1,7 +1,7 @@
 //! Boolean queries over structural diagrams.
 
 use crate::diagram::{ChildPair, ChildSide, EncodedChildRef, NodeIdx, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX, TddNodeId};
-use crate::vtree::{Home, VarId, VtreeIdx, VtreeNode};
+use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 use crate::{Engine, Literal, OperationError, Tdd};
 use std::borrow::Cow;
 use rustc_hash::FxHashMap;
@@ -78,7 +78,7 @@ impl Engine {
         let mut gate = lim.gate();
         // False implies both signs, including variables absent from its
         // support and the home variables a projection lacks.
-        let vtree = f.vtree().link_home().map(Home::vtree).unwrap_or(f.vtree());
+        let vtree = f.vtree().link_home().map(|home| &**home).unwrap_or(f.vtree());
         for t in vtree.bottomup() {
             gate.poll(1)?;
             if let VtreeNode::Leaf { var, .. } = *vtree.node(t) {

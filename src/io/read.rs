@@ -345,14 +345,14 @@ fn check_problem_line(h: &ProblemLine, vtree: &Vtree, line: usize) -> Result<(),
 /// nothing larger is allocated from them.
 fn bound_problem_line(h: &ProblemLine, home: &Home, line: usize) -> Result<(), IoError> {
     let nodes = (2 * h.num_leaves as usize).saturating_sub(1);
-    if h.num_leaves > home.vtree().num_leaves() || h.num_vtree_nodes != nodes {
+    if h.num_leaves > home.num_leaves() || h.num_vtree_nodes != nodes {
         return Err(malformed(
             line,
             format!(
                 "file has {} leaves and {} vtree nodes, not a projection of the vtree's home of {} leaves",
                 h.num_leaves,
                 h.num_vtree_nodes,
-                home.vtree().num_leaves()
+                home.num_leaves()
             ),
         ));
     }

@@ -189,9 +189,9 @@ impl Tdd {
     ///
     /// let home = Home::new(Vtree::balanced(4));
     /// let f = Tdd::clause(&Vtree::projection(&home, [VarId(1), VarId(3)])?, [1, -3])?;
-    /// assert!(Arc::ptr_eq(f.home().unwrap().vtree(), home.vtree()));
-    /// let all = Tdd::clause(home.vtree(), [2, 4])?;
-    /// assert!(Arc::ptr_eq(all.home().unwrap().vtree(), home.vtree()));
+    /// assert!(Arc::ptr_eq(&f.home().unwrap(), &home));
+    /// let all = Tdd::clause(&home, [2, 4])?;
+    /// assert!(Arc::ptr_eq(&all.home().unwrap(), &home));
     /// assert!(Tdd::clause(&Arc::new(Vtree::balanced(4)), [1])?.home().is_none());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```

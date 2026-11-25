@@ -1028,7 +1028,7 @@ fn operands_on_projections_fold_as_on_their_home() {
         for shape in SHAPES {
             let (vtree, into) = blocks.vtrees(shape);
             let home = Home::new(Arc::unwrap_or_clone(vtree));
-            let vtree = Arc::clone(home.vtree());
+            let vtree = Arc::clone(&home);
             for seed in 1..=3u64 {
                 let mut rng = Lcg::new(seed * 7919 + u64::from(nk * 100 + m * 10 + nv));
                 let (points, values) = random(&mut rng, &blocks, 2 + seed);

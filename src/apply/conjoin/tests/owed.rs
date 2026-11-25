@@ -1,6 +1,7 @@
 //! A plain conjunction owes contraction the levels it built and what its
 //! operands owed, not the levels it carried from an operand at its fixpoint;
 //! minimizing from those worklists reaches the canonical diagram.
+use crate::test_helpers::bare_roots;
 use std::sync::Arc;
 
 use crate::diagram::Pass;
@@ -201,7 +202,7 @@ fn built_operands_give_their_conjunction_its_loose_levels() {
         // The two operands share two variables in the middle.
         let fv: Vec<VarId> = (1..=half + 1).map(VarId).collect();
         let gv: Vec<VarId> = (half..=num_vars).map(VarId).collect();
-        for (label, vtree) in vtree_shapes(num_vars) {
+        for (label, vtree) in bare_roots(vtree_shapes(num_vars)) {
             for round in 0..4 {
                 let mut rows = |width: usize| -> Vec<u64> { (0..1u64 << width).filter(|_| rng.below(3) != 0).collect() };
                 let (f_rows, g_rows) = (rows(fv.len()), rows(gv.len()));

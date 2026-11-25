@@ -1,3 +1,4 @@
+use crate::test_helpers::bare_roots;
 use super::*;
 use crate::build::constant_one;
 use crate::test_helpers::{
@@ -133,7 +134,7 @@ fn negate_matches_the_truth_table_on_random_formulas() {
     let eng = &crate::Engine::new();
     let mut rng = Lcg::new(0x5f37_59df);
     for num_vars in [3u32, 5, 7] {
-        for (_name, vtree) in vtree_shapes(num_vars) {
+        for (_name, vtree) in bare_roots(vtree_shapes(num_vars)) {
             for _ in 0..12 {
                 let clauses = rand_cnf(
                     &mut rng,

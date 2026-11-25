@@ -218,7 +218,7 @@ fn the_result_vtree_is_the_expanded_leaves_grafted_with_constants_and_free_varia
 fn a_class_of_a_home_variable_off_the_projection_only_agrees() {
     let eng = Engine::new();
     let home = crate::vtree::Home::new(eng.bind_vtree(Vtree::balanced(3)));
-    let f = eng.clause(home.vtree(), [1, -3]).unwrap();
+    let f = eng.clause(&home, [1, -3]).unwrap();
     assert!(f.vtree().leaf_of(VarId(2)).is_none());
     let truth: Vec<bool> = (0..8u64).map(|mask| mask & 1 == 1 || mask & 4 == 0).collect();
     for (class, free) in [(vec![pos(2), neg(4)], vec![VarId(5)]), (vec![neg(2)], vec![VarId(4), VarId(5)]), (vec![pos(2)], vec![VarId(5), VarId(4)])] {
@@ -417,7 +417,7 @@ fn a_constant_on_a_home_expands_over_the_classes() {
         free: vec![VarId(5)],
         num_vars: 5,
     };
-    for (f, value) in [(eng.one(home.vtree()), true), (eng.zero(home.vtree()), false)] {
+    for (f, value) in [(eng.one(&home), true), (eng.zero(&home), false)] {
         assert_eq!(f.vtree().num_leaves(), 0);
         let g = eng.expand_variables(&f, &expansion).unwrap();
         assert_canonical(&g);

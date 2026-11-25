@@ -1,5 +1,6 @@
 //! `Tdd::model_columns` against the models read off a truth table.
 
+use crate::test_helpers::bare_roots;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -96,7 +97,7 @@ fn read_in_random_batches(
 fn columns_match_projected_truth_tables_on_every_shape() {
     let mut rng = Lcg::new(7);
     for num_vars in [1u32, 2, 3, 5, 7, 9] {
-        for (shape, vtree) in vtree_shapes(num_vars) {
+        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
             for round in 0..12 {
                 let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 5, width: 3 });
                 let f = compile_clauses(&vtree, &clauses);
@@ -127,7 +128,7 @@ fn columns_of_unminimized_conjunctions_are_distinct() {
     // variable is listed, so determinism alone keeps the rows distinct.
     let mut rng = Lcg::new(11);
     for num_vars in [4u32, 6, 8] {
-        for (shape, vtree) in vtree_shapes(num_vars) {
+        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
             for round in 0..8 {
                 let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 6, width: 3 });
                 let mut f = Tdd::one(&vtree);
@@ -219,7 +220,7 @@ fn columns_on_whole_subtrees_match_projected_truth_tables() {
     // pruned and unminimized diagrams, whole and in batches.
     let mut rng = Lcg::new(23);
     for num_vars in [4u32, 6, 8, 10] {
-        for (shape, vtree) in vtree_shapes(num_vars) {
+        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
             let root = vtree.root();
             let VtreeNode::Internal { left, right, .. } = *vtree.node(root) else { continue };
             let mut splits = vec![vec![vars_below(&vtree, left), vars_below(&vtree, right)]];
@@ -258,7 +259,7 @@ fn columns_on_whole_subtrees_match_projected_truth_tables() {
 #[test]
 fn write_zeroed_matches_write_on_zeroed_buffers() {
     let mut rng = Lcg::new(31);
-    for (shape, vtree) in vtree_shapes(7) {
+    for (shape, vtree) in bare_roots(vtree_shapes(7)) {
         let clauses = rand_cnf(&mut rng, 7, CnfShape { clauses: 4, width: 3 });
         let f = compile_clauses(&vtree, &clauses);
         let columns: Vec<Vec<VarId>> = vec![(1..=3).map(VarId).collect(), (4..=7).map(VarId).collect()];
@@ -287,7 +288,7 @@ fn ascending_is_exact_on_lexicographic_layouts() {
     let mut rng = Lcg::new(41);
     let (mut cases, mut before, mut after) = (0, 0, 0);
     for num_vars in [2u32, 3, 5, 7, 9] {
-        for (shape, vtree) in vtree_shapes(num_vars) {
+        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
             let leaves = vars_below(&vtree, vtree.root());
             for round in 0..12 {
                 let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 4, width: 3 });
@@ -368,7 +369,7 @@ fn ranges_in_any_order_match_the_whole_table() {
     // falls back to a search when it starts before that point.
     let mut rng = Lcg::new(53);
     for num_vars in [5u32, 7, 9] {
-        for (shape, vtree) in vtree_shapes(num_vars) {
+        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
             for round in 0..6 {
                 let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 4, width: 3 });
                 let f = compile_clauses(&vtree, &clauses);
@@ -444,7 +445,7 @@ fn tables_past_the_list_cap_are_refused() {
     let mut rng = Lcg::new(0x7ab1_e5ca);
     let mut refused = 0;
     for num_vars in [3u32, 6, 9] {
-        for (shape, vtree) in vtree_shapes(num_vars) {
+        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
             let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 5, width: 3 });
             let f = compile_clauses(&vtree, &clauses);
             let columns = random_columns(&mut rng, num_vars);

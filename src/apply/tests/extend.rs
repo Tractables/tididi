@@ -242,7 +242,7 @@ fn operations_on_projections_are_operations_on_the_home() {
     let eng = Engine::new();
     for seed in 0..150u64 {
         let hm = Home::new(rotated_home(2 + (seed % 9) as u32, seed));
-        let home = Arc::clone(hm.vtree());
+        let home = Arc::clone(&hm);
         let mut rng = Lcg::new(seed ^ 0x5851_f42d);
         let all = vars_under(&home, home.root());
         for (k, (fv, gv)) in leaf_set_pairs(&home, &mut rng).into_iter().enumerate() {
@@ -299,7 +299,7 @@ fn false_of_nested_or_overlapping_leaf_sets_is_on_no_node() {
     let across = eng.and_clause(Tdd::cube(&on(&[2, 3]), [2]).unwrap(), &[3]).unwrap();
     let all = on(&[1, 2, 3, 4, 5]);
     let (every, but_x) = (Tdd::cube(&all, [1, 2, 3, 4, 5]).unwrap(), Tdd::cube(&all, [1, -2, 3, 4, 5]).unwrap());
-    assert!(Arc::ptr_eq(every.vtree(), home.vtree()));
+    assert!(Arc::ptr_eq(every.vtree(), &home));
     for (f, g) in [(&x, &wide), (&wide, &x), (&wide, &across), (&every, &but_x)] {
         let both = eng.and(f, g).unwrap();
         assert!(both.is_zero(), "{:?}", both.vtree().num_nodes());
@@ -350,7 +350,7 @@ fn a_conjunction_with_one_leaf_set_inside_the_other_is_the_conjunction_on_the_ho
     let mut nested = 0;
     for seed in 0..300u64 {
         let hm = Home::new(rotated_home(2 + (seed % 11) as u32, seed));
-        let home = Arc::clone(hm.vtree());
+        let home = Arc::clone(&hm);
         let mut rng = Lcg::new(seed ^ 0x2545_f491);
         let all = leaf_vars(&home).collect::<Vec<_>>();
         let outer = match part(&all, &mut rng) {
@@ -384,7 +384,7 @@ fn a_conjunction_with_a_literal_inside_an_equivalence_keeps_its_cone() {
     let eng = Engine::new();
     for seed in 0..12u64 {
         let hm = Home::new(rotated_home(2 + seed as u32 % 6, seed));
-        let home = Arc::clone(hm.vtree());
+        let home = Arc::clone(&hm);
         let vars = leaf_vars(&home).collect::<Vec<_>>();
         let (x, y) = (vars[0].0 as i32, vars[vars.len() - 1].0 as i32);
         let own = Vtree::projection(&hm, vars.iter().copied()).unwrap();
@@ -429,7 +429,7 @@ fn nested_cases(case: impl Fn(&Tdd, &Tdd) -> bool) -> usize {
     let mut picked = 0;
     for seed in 0..2000u64 {
         let hm = Home::new(rotated_home(3 + (seed % 8) as u32, seed));
-        let home = Arc::clone(hm.vtree());
+        let home = Arc::clone(&hm);
         let mut rng = Lcg::new(seed ^ 0x51ed_27a3);
         let all = leaf_vars(&home).collect::<Vec<_>>();
         let f = eng.and(unreduced(&eng, &hm, &all, &mut rng), unreduced(&eng, &hm, &all, &mut rng)).unwrap();
@@ -492,7 +492,7 @@ fn a_conjunction_reads_two_nodes_at_the_top_level_of_g() {
             0 => Arc::new(Vtree::linear(4 + (seed % 9) as u32)),
             _ => rotated_home(4 + (seed % 9) as u32, seed),
         });
-        let home = Arc::clone(hm.vtree());
+        let home = Arc::clone(&hm);
         let mut rng = Lcg::new(seed ^ 0x7f4a_7c15);
         let f = operand(&eng, &hm, &leaf_vars(&home).collect::<Vec<_>>(), &mut rng);
         let f_vars = leaf_vars(f.vtree()).collect::<Vec<_>>();
@@ -526,7 +526,7 @@ fn a_conjunction_reads_two_nodes_at_the_top_level_of_g() {
 /// places both operands on the union, node for node where both are trimmed;
 /// the result is on the projection on the merged variables, node for node.
 fn check_union(eng: &Engine, hm: &Home, f: &Tdd, g: &Tdd, trimmed: bool, what: &str) {
-    let home = hm.vtree();
+    let home = hm;
     let mut merged: Vec<VarId> = leaf_vars(f.vtree()).chain(leaf_vars(g.vtree())).collect();
     merged.sort_unstable();
     merged.dedup();
@@ -563,7 +563,7 @@ fn a_conjunction_across_leaf_sets_neither_equal_nor_nested_is_the_conjunction_on
     let mut kinds = [0usize; 4];
     for seed in 0..600u64 {
         let hm = Home::new(rotated_home(2 + (seed % 11) as u32, seed));
-        let all = leaf_vars(hm.vtree()).collect::<Vec<_>>();
+        let all = leaf_vars(&hm).collect::<Vec<_>>();
         let mut rng = Lcg::new(seed ^ 0x6a09_e667);
         let (f_vars, g_vars, kind) = match seed % 4 {
             0 => {
@@ -633,7 +633,7 @@ fn an_overlay_across_leaf_sets_is_the_overlay_of_the_placed_operands() {
     let mut kinds = [0usize; 5];
     for seed in 0..1000u64 {
         let hm = Home::new(rotated_home(2 + (seed % 9) as u32, seed));
-        let home = Arc::clone(hm.vtree());
+        let home = Arc::clone(&hm);
         let all = leaf_vars(&home).collect::<Vec<_>>();
         let mut rng = Lcg::new(seed ^ 0xbb67_ae85);
         let kind = (seed % 5) as usize;

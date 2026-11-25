@@ -1006,7 +1006,7 @@ fn parse_body(with_trailer: &[u8], vtree: &Arc<Vtree>, with_counts: bool) -> Res
 fn read_projection(body: &mut Body<'_>, home: &Home) -> Result<Arc<Vtree>, IoError> {
     let leaves = body.varint("leaf count")?;
     let nodes = body.varint("vtree node count")?;
-    let most = u64::from(home.vtree().num_leaves());
+    let most = u64::from(home.num_leaves());
     if leaves > most || nodes != (2 * leaves).saturating_sub(1) || nodes > body.left() as u64 {
         return Err(malformed(format!(
             "the file's vtree has {leaves} leaves and {nodes} nodes, not a projection of the \
