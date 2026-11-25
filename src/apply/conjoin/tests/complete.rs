@@ -263,7 +263,6 @@ fn one_pair_columns_read_as_their_columns() {
 /// pairs back to the in-flight byte meter: after the conjunction the meter
 /// reads the same as with every cell reading its column.
 #[test]
-#[ignore = "on homes no level of these operands reads one g pair a column (census slot 4 stays 0 on both shapes): the case moved to another route, so the meter check would pass without exercising it"]
 fn one_pair_columns_give_back_their_table() {
     let fv: Vec<u32> = (1..=16).filter(|v| v % 2 == 1 || *v == 2 || *v == 4).collect();
     let gv: Vec<u32> = (1..=16).filter(|v| v % 2 == 0 || *v == 13 || *v == 15).collect();
@@ -272,12 +271,21 @@ fn one_pair_columns_give_back_their_table() {
         eng.and(f.clone(), g.clone()).unwrap();
         eng.limits().meters().in_flight_bytes
     };
+    // A draw whose support is all of `vars`: one that minimizes onto fewer
+    // leaves pads the rest when placed, and no level then reads one g pair
+    // a column.
+    let drawn = |home: &Home, vars: &[u32], rng: &mut Lcg| loop {
+        let f = function_of(home, vars, rng);
+        if f.vtree().num_leaves() as usize == vars.len() {
+            return f;
+        }
+    };
     for (shape, vtree) in [("balanced", Home::new(Vtree::balanced(16))), ("random", Home::new(Vtree::random(16, 0x5eed_a907)))] {
         let mut rng = Lcg::new(0x5eed_a908);
         let before = complete_census();
         for round in 0..4 {
-            let f = function_of(&vtree, &fv, &mut rng);
-            let g = function_of(&vtree, &gv, &mut rng);
+            let f = drawn(&vtree, &fv, &mut rng);
+            let g = drawn(&vtree, &gv, &mut rng);
             let (f, g) = crate::test_helpers::on_one(&crate::Engine::new(), f, g);
             let lone = meter(&f, &g);
             let read = column_reads(|| meter(&f, &g));

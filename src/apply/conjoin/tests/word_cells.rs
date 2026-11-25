@@ -333,59 +333,23 @@ fn the_streamed_levels_read_by_vectors_fold_what_the_row_loop_folds() {
 
 /// The column and run tables a summing conjunction reads its g-pair
 /// vectors through are best-effort: refused at each reserve in turn, every
-/// granted conjunction builds the levels the unrefused one builds.
+/// granted conjunction builds the levels the unrefused one builds. Summing
+/// the variables under the root's left child keeps the levels above it
+/// structural; a run again after a refusal takes the levels the refused one
+/// parked, which must come back as fresh levels, the hint of
+/// [`TddLevel::uneven`](crate::diagram::TddLevel) included.
 #[test]
-#[ignore = "summing by variables, a conjunction run again after a refused column reserve (linear shape, reserve 836) stores other levels than the unrefused one"]
 fn a_refused_column_table_builds_the_same_levels() {
     let mut rng = Lcg::new(0x3c5e_a1f8);
     let n = 10u32;
     let vars: Vec<VarId> = (1..=n).map(VarId).collect();
     let route = SparseRoute { sparsity: 64, min_grid: usize::MAX };
     let mut absorbed = 0;
-    for (name, vtree) in bare_roots(vtree_shapes(n)).into_iter().take(2) {
+    for (name, home) in vtree_shapes(n).into_iter().take(2) {
+        let vtree: &Vtree = &home;
         let mut operand = || {
             let models: Vec<u64> = (0..1u64 << n).filter(|_| rng.below(2) == 0).collect();
-            Tdd::from_models(&crate::vtree::Home::unchecked(&vtree), &vars, &models).unwrap()
-        };
-        let (f, g) = (operand(), operand());
-        // The left subtree, so the levels above it stay structural.
-        let targets = [vtree.children(vtree.root()).0];
-        let (want, _) = word_cells_on(|| marginalize(&f, &g, &targets, route));
-        let eng = Engine::new();
-        let _route = eng.limits().scope(LimitConfig::none().with_sparse_route(route));
-        let swept = word_cells_on(|| {
-            eng.sweep_reserves(
-                &crate::OperationError::OverBudget,
-                || crate::test_helpers::and_marginalizing_under(&eng, f.clone(), g.clone(), &targets),
-                |out, at| {
-                    assert_eq!(format!("{:?}", out.levels), format!("{:?}", want.levels), "{name}, {at}");
-                    assert_eq!(out.model_count(), want.model_count(), "{name}, {at}");
-                },
-            )
-        });
-        absorbed += swept.absorbed;
-    }
-    assert!(absorbed > 0, "no best-effort reserve refused");
-}
-
-/// [`a_refused_column_table_builds_the_same_levels`] on a home, summing the
-/// variables under the root's left child, so the levels above it stay
-/// structural. A run again after a refusal takes the levels the refused
-/// one parked, which must come back as a fresh level, the hint of
-/// [`TddLevel::uneven`](crate::diagram::TddLevel) included.
-#[test]
-fn a_refused_column_table_builds_the_same_levels_on_a_home() {
-    let mut rng = Lcg::new(0x3c5e_a1f8);
-    let n = 10u32;
-    let vars: Vec<VarId> = (1..=n).map(VarId).collect();
-    let route = SparseRoute { sparsity: 64, min_grid: usize::MAX };
-    let mut absorbed = 0;
-    for (name, vtree) in vtree_shapes(n).into_iter().take(2) {
-        let home = crate::vtree::Home::new(Vtree::clone(&vtree));
-        let vtree = home.vtree();
-        let mut operand = || {
-            let models: Vec<u64> = (0..1u64 << n).filter(|_| rng.below(2) == 0).collect();
-            Tdd::from_models(vtree, &vars, &models).unwrap()
+            Tdd::from_models(&home, &vars, &models).unwrap()
         };
         let (f, g) = (operand(), operand());
         let left = vtree.children(vtree.root()).0;

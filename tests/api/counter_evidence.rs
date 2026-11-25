@@ -122,7 +122,6 @@ fn marginal_batches(retention: Retention) {
 }
 
 #[test]
-#[ignore = "on a home a pin on a variable of a summed-out region is accepted"]
 fn summed_out_bulk_updates_are_atomic_and_remaining_pins_can_be_cleared() {
     marginal_batches(Retention::All);
     marginal_batches(Retention::Frontier);
