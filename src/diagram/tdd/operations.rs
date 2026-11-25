@@ -1230,16 +1230,17 @@ impl Tdd {
     /// use tididi::{Engine, Tdd, Vtree};
     /// use tididi::vtree::Home;
     ///
-    /// // On a bare root a diagram keeps every leaf; transport keeps them.
-    /// let x2 = Tdd::clause(&Home::new(Vtree::balanced(4)), [2])?;
+    /// // A diagram built on a home is on the projection of its leaves already.
     /// let home = Home::new(Vtree::balanced(4));
-    /// let (mut f, _) = Engine::new().transport(&x2, &home, |v| v, 0).map_err(|r| r.error)?;
-    /// assert_eq!(f.vtree().num_leaves(), 4);
-    /// let count = f.model_count()?;
-    /// assert!(f.trim(&home)?);
+    /// let mut f = Tdd::clause(&home, [2])?;
     /// assert_eq!(f.vtree().num_leaves(), 1);
-    /// assert_eq!(f.model_count()?, count);
     /// assert!(!f.trim(&home)?);
+    /// assert_eq!(f.model_count()?, 8u32.into());
+    /// // Moved onto another home, it stays on its projection there.
+    /// let other = Home::new(Vtree::linear(4));
+    /// let (mut g, _) = Engine::new().transport(&f, &other, |v| v, 0).map_err(|r| r.error)?;
+    /// assert_eq!(g.vtree().num_leaves(), 1);
+    /// assert!(!g.trim(&other)?);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn trim(&mut self, home: &crate::vtree::Home) -> Result<bool, OperationError> {

@@ -920,11 +920,12 @@ impl Engine {
     /// let engine = Engine::new();
     /// // A group bit x1 above a two-bit value (x2, x3) and a two-bit key (x4, x5).
     /// let vtree = Home::new(Vtree::linear(5));
-    /// let (_, under) = vtree.children(vtree.root());
     /// let vars: Vec<VarId> = (2..=5).map(VarId).collect();
     /// // g: the value of each key; bit i of a row assigns vars[i].
     /// let g = Tdd::from_models(&vtree, &vars, &[0b00_01, 0b01_10, 0b10_10, 0b11_11])?;
     /// let index = PairIndex::new(&g)?;
+    /// // The node over (x2, x3, x4, x5): the root of g's vtree.
+    /// let under = g.vtree().root();
     /// // f: keys 0 and 1 in group x1, keys 2 and 3 in group ¬x1.
     /// let f = engine.or(engine.cube(&vtree, [1, -4])?, engine.cube(&vtree, [-1, 4])?)?;
     /// let counts = engine.sum_indexed(&f, &g, &index, under, &Counts)?;

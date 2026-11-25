@@ -80,7 +80,7 @@
 //! use std::sync::Arc;
 //! use tididi::vtree::Home;
 //! use num_bigint::BigUint;
-//! use tididi::{or, Tdd};
+//! use tididi::{and, or, Tdd};
 //! use tididi::diagram::{ChildRef, EncodedChildRef, ChildDecoder, ValueRef};
 //! use tididi::vtree::{Vtree, VtreeIdx};
 //!
@@ -107,13 +107,11 @@
 //!     let mut c: Vec<Vec<BigUint>> = (0..vtree.num_nodes())
 //!         .map(|i| vec![BigUint::ZERO; t.reference_slot_count(VtreeIdx(i as u32))])
 //!         .collect();
-//!     for (leaf, _var) in vtree.leaf_bottomup() {
-//!         c[leaf.idx()] = vec![2u32.into(), 1u32.into(), 1u32.into()]; // One, Pos, Neg
-//!     }
-//!     for (v, l, r) in vtree.internal_bottomup() {
+//!     for v in vtree.bottomup() {
 //!         let lvl = t.level(v);
 //!         if lvl.is_marginal() {
-//!             // The level's structure was summed out: read its values instead.
+//!             // The level's structure was summed out, into a region (a leaf
+//!             // of the vtree) or an internal level: read its values instead.
 //!             let counts = lvl.marginal_counts().unwrap();
 //!             for (i, &n) in counts.iter().enumerate() {
 //!                 c[v.idx()][i] = if n != u128::MAX { n.into() } else {
@@ -122,6 +120,11 @@
 //!             }
 //!             continue;
 //!         }
+//!         if vtree.node(v).is_leaf() {
+//!             c[v.idx()] = vec![2u32.into(), 1u32.into(), 1u32.into()]; // One, Pos, Neg
+//!             continue;
+//!         }
+//!         let (l, r) = vtree.children(v);
 //!         let (lv, rv) = (t.level(l).child_decoder(), t.level(r).child_decoder());
 //!         let (l_leaf, r_leaf) = (vtree.node(l).is_leaf(), vtree.node(r).is_leaf());
 //!         for (i, pairs) in lvl.internal_inputs_iter() {
@@ -136,22 +139,17 @@
 //!     c[t.output().vtree.idx()][t.output().local.idx()].clone()
 //! }
 //!
-//! // Sixty-four variables, so the left subtree carries thirty-two of them and
-//! // its node values straddle the width a reference can carry inline.
+//! // The left subtree of the home carries thirty-two variables, all read by
+//! // `f`, so its node values straddle the width a reference can carry inline.
 //! let vtree = Home::new(Vtree::balanced(64));
-//! let mut f = or(Tdd::cube(&vtree, [1, 2, 3])?, Tdd::cube(&vtree, [4, 33])?)?;
+//! let f = or(Tdd::cube(&vtree, [1, 2, 3])?, Tdd::cube(&vtree, [4, 33, 34])?)?;
+//! let mut f = and(f, Tdd::clause(&vtree, 5..=32)?)?;
 //! f.minimize()?;
-//! let expected = f.model_count()?;
+//! // `count` reads the leaves of `f`'s vtree, a projection of the home.
+//! let expected = f.model_count()? >> (64 - f.vtree().num_leaves());
 //!
-//! // Sum out the root's left subtree, bottom-up.
-//! let (left, _right) = vtree.children(vtree.root());
-//! let under = |mut t: VtreeIdx| loop {
-//!     if t == left { return true }
-//!     match vtree.node(t).parent() { Some(p) => t = p, None => return false }
-//! };
-//! let levels: Vec<VtreeIdx> =
-//!     vtree.internal_bottomup_slice().iter().copied().filter(|&t| under(t)).collect();
-//! f.marginalize_levels(&levels)?;
+//! // Sum out the root's left subtree.
+//! f.marginalize(|v| v.0 <= 32)?;
 //!
 //! let mut seen = Seen::default();
 //! assert_eq!(count(&f, &mut seen), expected);

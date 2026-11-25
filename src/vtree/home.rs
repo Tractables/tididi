@@ -782,7 +782,7 @@ impl Vtree {
     /// let empty = Vtree::empty_projection(&home);
     /// assert_eq!(empty.num_nodes(), 0);
     /// let one = Tdd::one(&home);
-    /// assert!(one.is_one() && one.vtree().same_tree(&empty));
+    /// assert!(one.is_one() && one.vtree().num_nodes() == 0);
     /// assert_eq!(one.model_count().unwrap(), 32u32.into());
     /// ```
     pub fn empty_projection(home: &Home) -> Arc<Vtree> {

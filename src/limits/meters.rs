@@ -46,19 +46,23 @@ pub struct ConjunctionProgress {
 /// use tididi::{Engine, OperationError, Tdd};
 ///
 /// // `z` selects a code `k`; `f` makes `x` equal it and `g` makes `y` equal
-/// // it, each over seven bits. Under the node joining `x` and `y`, `f`'s 128
-/// // nodes vary only in `x` and `g`'s only in `y`, so all 128 × 128 of their
-/// // products are satisfiable: the level holds 16 384 pairs, 128 KiB.
+/// // it, each over seven bits, and each asks for a set bit of the other's
+/// // code, so both read every variable. Under the node joining `x` and `y`,
+/// // `f`'s 128 nodes vary only in `x` and `g`'s only in `y`, and the 127 × 127
+/// // products of the codes other than zero are satisfiable: the level holds
+/// // 16 129 pairs, more than 64 KiB.
 /// let bits = |base: u32| (base..base + 7).map(VarId).collect::<Vec<_>>();
 /// let (x, y, z) = (bits(1), bits(8), bits(15));
 /// let xy = Vtree::join(&Vtree::balanced_over(&x)?, &Vtree::balanced_over(&y)?)?;
 /// let vtree = tididi::vtree::Home::new(Vtree::join(&xy, &Vtree::balanced_over(&z)?)?);
-/// let equal = |other: &[VarId]| {
+/// let equal = |other: &[VarId], set: &[VarId]| -> Result<Tdd, OperationError> {
 ///     let vars: Vec<VarId> = z.iter().chain(other).copied().collect();
 ///     let rows: Vec<u64> = (0..128u64).map(|k| k | k << 7).collect();
-///     Tdd::from_models(&vtree, &vars, &rows)
+///     let mut f = tididi::and(Tdd::from_models(&vtree, &vars, &rows)?, Tdd::clause(&vtree, set.iter().map(|v| v.0 as i32))?)?;
+///     f.minimize()?;
+///     Ok(f)
 /// };
-/// let (f, g) = (equal(&x)?, equal(&y)?);
+/// let (f, g) = (equal(&x, &y)?, equal(&y, &x)?);
 ///
 /// let engine = Engine::new();
 /// let budget = LimitConfig::none().with_memory_budget_bytes(Some(64 * 1024));
@@ -69,9 +73,9 @@ pub struct ConjunctionProgress {
 /// assert!(level.needed_bytes > level.headroom_bytes);
 /// drop(refused);
 ///
-/// // Without the budget the conjunction is built: `x = y = z`.
+/// // Without the budget the conjunction is built: `x = y = z`, not zero.
 /// let h = engine.and(f, g)?;
-/// assert_eq!(h.model_count()?, 128u32.into());
+/// assert_eq!(h.model_count()?, 127u32.into());
 /// # fn xy_root(vtree: &Vtree) -> tididi::vtree::VtreeIdx { vtree.children(vtree.root()).0 }
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```

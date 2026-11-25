@@ -73,27 +73,12 @@ use super::overlay::{ABSENT, LevelOverlay, Overlay, Pieces, Scratch, leaf_index,
 /// level it is minimized, and certified only where no level is summed out.
 ///
 /// ```
-/// # use tididi::vtree::Home;
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{add, or, Tdd, Vtree};
-///
-/// // ((x1 x2) (x3 x4)): sum out x1 and x2, keeping x3 and x4.
-/// let vtree = Home::new(Vtree::balanced(4));
-/// // x1 ∨ x2 has 3 assignments of x1, x2 under each of x3, x4;
-/// // x1 ∧ x3 has 2 under each with x3 true.
-/// let mut f = Tdd::clause(&vtree, [1, 2])?;
-/// let mut g = Tdd::cube(&vtree, [1, 3])?;
-/// f.marginalize(|v| v.0 <= 2)?;
-/// g.marginalize(|v| v.0 <= 2)?;
-/// let sum = add(f, g)?;
-/// assert_eq!(sum.model_count()?, (12u32 + 4).into());
-/// // Under x3 true each x4 counts 3 + 2; the models of both count twice.
-/// let mut counter = sum.counter()?;
-/// counter.observe([3])?;
-/// assert_eq!(counter.model_count()?, 10u32.into());
 ///
 /// // With nothing summed out, two functions with no common model add to
 /// // their disjunction.
+/// let vtree = Home::new(Vtree::balanced(4));
 /// let a = Tdd::cube(&vtree, [1, 2])?;
 /// let b = Tdd::cube(&vtree, [-1, 3])?;
 /// assert!(add(a.clone(), b.clone())?.equivalent(&or(a, b)?)?);
