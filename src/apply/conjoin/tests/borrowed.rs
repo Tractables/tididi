@@ -47,8 +47,9 @@ fn handed_back(back: &Cow<'_, Tdd>, t: &Tdd, borrowed: bool) -> bool {
 /// arm builds levels that are f's; formulas over the two halves of the
 /// variables, whose levels the identity fast paths carry; a cube against a
 /// formula, for the relabelling route; a formula and itself; and a formula
-/// and the false diagram.
-fn cases(nvars: u32, seed: u64) -> Vec<(String, Tdd, Tdd)> {
+/// and the false diagram. With `homes`, each shape is a home and the
+/// operands are on its projections, most pairs on two different ones.
+fn cases(nvars: u32, seed: u64, homes: bool) -> Vec<(String, Tdd, Tdd)> {
     let mut rng = Lcg::new(seed);
     let mut out = Vec::new();
     let half = (nvars / 2) as i32;
@@ -57,6 +58,10 @@ fn cases(nvars: u32, seed: u64) -> Vec<(String, Tdd, Tdd)> {
         clauses.iter().map(|c| c.iter().map(|l| l.signum() * ((l.abs() - 1) % half + 1 + by)).collect()).collect()
     };
     for (name, vtree) in vtree_shapes(nvars) {
+        let vtree = match homes {
+            true => Arc::clone(Home::new(Vtree::clone(&vtree)).vtree()),
+            false => vtree,
+        };
         let eng = Engine::new();
         let minimized = |clauses: &[Vec<i32>]| {
             let mut f = compile_clauses_on(&eng, &vtree, clauses);
@@ -157,7 +162,7 @@ fn a_borrowed_operand_conjoins_as_an_owned_one() {
     let before = lent_levels();
     let mut checked = 0;
     for nvars in [6, 10, 14] {
-        checked += check_against_owned(&cases(nvars, 0xb0_77ed + u64::from(nvars)), false);
+        checked += check_against_owned(&cases(nvars, 0xb0_77ed + u64::from(nvars), true), false);
     }
     assert!(checked > 1000, "only {checked} conjunctions");
     assert!(lent_levels() > before, "no level the leaf arm made f's: the copy of a borrowed f went untested");
@@ -165,7 +170,15 @@ fn a_borrowed_operand_conjoins_as_an_owned_one() {
 
 #[test]
 fn a_borrowed_operand_conjoins_as_an_owned_one_keeping_counts() {
-    assert!(check_against_owned(&cases(10, 0xc0_0475), true) > 100);
+    assert!(check_against_owned(&cases(10, 0xc0_0475, true), true) > 100);
+}
+
+/// As [`a_borrowed_operand_conjoins_as_an_owned_one`], on 6 variables: an
+/// owned operand on a projection that holds the other's leaves is conjoined
+/// by the nested route, and so is a borrowed one.
+#[test]
+fn a_borrowed_operand_on_a_projection_conjoins_as_an_owned_one() {
+    assert!(check_against_owned(&cases(6, 0xb0_77ed, true), false) > 0);
 }
 
 /// A weighted operand, or one with a marginal level, is read in place: the
@@ -203,9 +216,9 @@ fn a_weighted_or_marginal_borrowed_operand_conjoins_as_an_owned_one() {
 #[test]
 fn a_refused_conjunction_hands_back_what_it_was_given() {
     let mut refusals = 0;
-    for (what, f, g) in cases(10, 0x7ef_05ed).into_iter().step_by(4) {
+    for (what, f, g) in cases(10, 0x7ef_05ed, true).into_iter().step_by(4) {
         for (a, b) in [(&f, &g), (&g, &f)] {
-            for (borrow_a, borrow_b) in BORROWS {
+            for (borrow_a, borrow_b) in [(false, false)].into_iter().chain(BORROWS) {
                 for arm in ["work", "reserve"] {
                     for n in 0u64.. {
                         let attempt = |borrow: (bool, bool)| {
