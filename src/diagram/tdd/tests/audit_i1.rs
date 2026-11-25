@@ -170,7 +170,7 @@ fn reseated(t: &Tdd, onto: &Home) -> Tdd {
 
 /// A random function of `vars`, minimized and trimmed: it names no leaf
 /// `One` and sits on the projection of the home on its support.
-fn operand(home: &Arc<Vtree>, vars: &[u32], rng: &mut Lcg) -> Tdd {
+fn operand(home: &crate::vtree::Home, vars: &[u32], rng: &mut Lcg) -> Tdd {
     let mut f = rand_conj_over(home, vars, 4, 3, false, rng);
     for _ in 0..rng.below(3) {
         let var = VarId(vars[rng.below(vars.len() as u64) as usize]);
@@ -217,7 +217,7 @@ fn pick<T: Copy>(v: &[T], rng: &mut Lcg) -> Option<T> {
 }
 
 #[allow(clippy::too_many_lines)]
-fn random_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, used: &[u32], rng: &mut Lcg) {
+fn random_case(a: &mut Audit, eng: &Engine, home: &crate::vtree::Home, used: &[u32], rng: &mut Lcg) {
     let hm = Home::new(Arc::clone(home));
     let n = home.num_vars();
     let (f, g, h) = (operand(home, used, rng), operand(home, used, rng), operand(home, used, rng));
@@ -261,7 +261,7 @@ fn random_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, used: &[u32], rng
     a.run("ite", || eng.ite(f.clone(), g.clone(), h.clone()));
     a.run("xor", || eng.xor(f.clone(), g.clone()));
     a.run("substitute", || {
-        let mut l = crate::literal(&crate::vtree::Home::unchecked(home), i32::try_from(x.0).unwrap())?;
+        let mut l = crate::literal(home, i32::try_from(x.0).unwrap())?;
         l.trim(&hm)?;
         f.clone().substitute(&[(y, &l)])
     });
@@ -323,15 +323,15 @@ fn random_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, used: &[u32], rng
     a.run("reduce(Contract)", || mutate(&f, &|t| t.reduce(ReductionPlan::Contract)));
     a.run("attach_level_counts", || mutate(&f, &|t| t.attach_level_counts()));
     a.run("unnamed_nodes", || mutate(&f, &|t| eng.unnamed_nodes(t).map(drop)));
-    a.run("literal", || eng.literal(&crate::vtree::Home::unchecked(home), lit(x, b1)));
-    a.run("one", || Ok::<_, ()>(eng.one(&crate::vtree::Home::unchecked(home))));
-    a.run("zero", || Ok::<_, ()>(eng.zero(&crate::vtree::Home::unchecked(home))));
-    a.run("cube", || eng.cube(&crate::vtree::Home::unchecked(home), pair));
-    a.run("clause", || eng.clause(&crate::vtree::Home::unchecked(home), pair));
-    a.run("from_models", || Tdd::from_models(&crate::vtree::Home::unchecked(home), &[x, y], &[0b01, 0b10]));
-    a.run("from_columns", || eng.from_columns(&crate::vtree::Home::unchecked(home), &[&[x, y][..]], &[&[1u32, 2][..]], crate::diagram::RowSelection::All));
+    a.run("literal", || eng.literal(home, lit(x, b1)));
+    a.run("one", || Ok::<_, ()>(eng.one(home)));
+    a.run("zero", || Ok::<_, ()>(eng.zero(home)));
+    a.run("cube", || eng.cube(home, pair));
+    a.run("clause", || eng.clause(home, pair));
+    a.run("from_models", || Tdd::from_models(home, &[x, y], &[0b01, 0b10]));
+    a.run("from_columns", || eng.from_columns(home, &[&[x, y][..]], &[&[1u32, 2][..]], crate::diagram::RowSelection::All));
     // Cube x = 1, y free: value bits, then fixed bits.
-    a.run("from_cubes", || eng.from_cubes(&crate::vtree::Home::unchecked(home), &[x, y], &[0b01, 0b01]));
+    a.run("from_cubes", || eng.from_cubes(home, &[x, y], &[0b01, 0b01]));
     a.run("expand_variables", || {
         let classes = (1..=n).map(|v| vec![lit(VarId(v), true)]).collect();
         let expansion = crate::restructure::VariableExpansion { classes, constants: Vec::new(), free: Vec::new(), num_vars: n };
@@ -353,12 +353,12 @@ fn random_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, used: &[u32], rng
     a.run("write_tdd, read_tdd", || {
         let mut bytes = Vec::new();
         crate::io::write_tdd(&mut bytes, &f).map_err(|e| e.to_string())?;
-        crate::io::read_tdd(&mut bytes.as_slice(), &crate::vtree::Home::unchecked(home)).map_err(|e| e.to_string())
+        crate::io::read_tdd(&mut bytes.as_slice(), home).map_err(|e| e.to_string())
     });
     a.run("write_tdd_binary, read_tdd_binary", || {
         let mut bytes = Vec::new();
         crate::io::write_tdd_binary(&mut bytes, &f).map_err(|e| e.to_string())?;
-        crate::io::read_tdd_binary(&mut bytes.as_slice(), &crate::vtree::Home::unchecked(home)).map_err(|e| e.to_string())
+        crate::io::read_tdd_binary(&mut bytes.as_slice(), home).map_err(|e| e.to_string())
     });
     a.run("TddBuilder::finish", || rebuilt(eng, &f));
 
@@ -446,7 +446,7 @@ fn rebuilt(eng: &Engine, f: &Tdd) -> Result<Tdd, String> {
 
 /// A diagram built pair by pair on `vtree`, its output the last node pushed
 /// at the root.
-fn built(eng: &Engine, vtree: &Arc<Vtree>, nodes: &[(VtreeIdx, Vec<(u32, u32)>)]) -> Tdd {
+fn built(eng: &Engine, vtree: &crate::vtree::Home, nodes: &[(VtreeIdx, Vec<(u32, u32)>)]) -> Tdd {
     let mut b = Tdd::builder(eng, vtree).unwrap();
     let mut last = NodeIdx(0);
     for (t, pairs) in nodes {
@@ -469,7 +469,7 @@ fn leaf(v: u32) -> Vtree {
 fn fixed_cases(a: &mut Audit, eng: &Engine) {
     a.inputs.clear();
     let lit = |v: u32, sign: bool| Literal { var: VarId(v), sign };
-    let xyz = Arc::clone(&Home::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap()));
+    let xyz = Home::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap());
     let hm = Home::new(Arc::clone(&xyz));
     let (root, xy) = (xyz.root(), xyz.children(xyz.root()).0);
     let trimmed = |mut t: Tdd| {
@@ -477,7 +477,7 @@ fn fixed_cases(a: &mut Audit, eng: &Engine) {
         t
     };
     a.case = "or_cube(x or z on {x, z}, [x, y]) on ((x y) z)".into();
-    let x_or_z = trimmed(eng.clause(&crate::vtree::Home::unchecked(&xyz), [1, 3]).unwrap());
+    let x_or_z = trimmed(eng.clause(&xyz, [1, 3]).unwrap());
     a.run("or_cube by complement [fixed]", || x_or_z.clone().or_cube([lit(1, true), lit(2, true)]));
     a.case = "or_cube(x or z on {x, z}, [])".into();
     a.run("or_cube, empty cube [fixed]", || x_or_z.clone().or_cube::<Literal>([]));
@@ -487,7 +487,7 @@ fn fixed_cases(a: &mut Audit, eng: &Engine) {
     let x_y_any = unminimized((POS, NEG));
     let y_x_any = unminimized((NEG, POS));
     a.case = "restructure_to (x (y z)) from ((x y) z), level (x y) {(Pos, Pos), (Neg, Pos)}, root {(n0, Pos)}".into();
-    let x_yz = Arc::clone(&Home::new(Vtree::join(&leaf(1), &Vtree::join(&leaf(2), &leaf(3)).unwrap()).unwrap()));
+    let x_yz = Home::new(Vtree::join(&leaf(1), &Vtree::join(&leaf(2), &leaf(3)).unwrap()).unwrap());
     a.run("restructure_to [fixed]", || {
         let mut t = y_x_any.clone();
         t.restructure_to(&x_yz, usize::MAX).map(|_| t)
@@ -509,7 +509,7 @@ fn fixed_cases(a: &mut Audit, eng: &Engine) {
 
     a.case = "x or not x on the projection on x, weighted".into();
     let weighted = Home::weighted(Vtree::clone(&xyz), weights(3, &mut Lcg::new(7))).unwrap();
-    let x = trimmed(crate::literal(&crate::vtree::Home::unchecked(&xyz), 1).unwrap());
+    let x = trimmed(crate::literal(&xyz, 1).unwrap());
     let xw = reseated(&x, &weighted);
     a.run("or of x and not x, weighted [fixed]", || eng.or(xw.clone(), xw.clone().negate().unwrap()));
     a.run("add of x and not x, weighted [fixed]", || eng.add(xw.clone(), xw.clone().negate().unwrap()));
@@ -517,7 +517,7 @@ fn fixed_cases(a: &mut Audit, eng: &Engine) {
     a.run("or of x and not x [fixed]", || eng.or(x.clone(), x.clone().negate().unwrap()));
 
     a.case = "(x, y) root {(Pos, Pos), (Neg, Neg)}, key the leaf x".into();
-    let two = Arc::clone(&Home::new(Vtree::join(&leaf(1), &leaf(2)).unwrap()));
+    let two = Home::new(Vtree::join(&leaf(1), &leaf(2)).unwrap());
     let same = built(eng, &two, &[(two.root(), vec![(POS, POS), (NEG, NEG)])]);
     let key = two.children(two.root()).0;
     a.run("project_to_subtree on a leaf [fixed]", || eng.project_to_subtree(&same, key));
@@ -525,32 +525,32 @@ fn fixed_cases(a: &mut Audit, eng: &Engine) {
 
     a.case = "and_clause(y on {y}, [x, -x]) on (x y)".into();
     let y = {
-        let mut t = crate::literal(&crate::vtree::Home::unchecked(&two), 2).unwrap();
+        let mut t = crate::literal(&crate::vtree::Home::new(std::sync::Arc::clone(&two)), 2).unwrap();
         t.trim(&Home::new(Arc::clone(&two))).unwrap();
         t
     };
     a.run("and_clause, tautological [fixed]", || y.clone().and_clause([1, -1]));
 
     a.case = "rename_vars(x and y and z on (x (y z)), [(y, z)])".into();
-    let all = eng.cube(&crate::vtree::Home::unchecked(&x_yz), [1, 2, 3]).unwrap();
+    let all = eng.cube(&crate::vtree::Home::new(std::sync::Arc::clone(&x_yz)), [1, 2, 3]).unwrap();
     a.run("rename_vars [fixed]", || all.clone().rename_vars(&[(VarId(2), VarId(3))]));
 
     a.case = "constants and constructors on ((x y) z)".into();
-    a.run("negate of false on a vtree with nodes [fixed]", || Tdd::zero(&crate::vtree::Home::unchecked(&xyz)).negate());
-    a.run("one on a vtree with nodes [fixed]", || Ok::<_, ()>(Tdd::one(&crate::vtree::Home::unchecked(&xyz))));
-    a.run("literal [fixed]", || crate::literal(&crate::vtree::Home::unchecked(&xyz), 1));
-    a.run("cube [fixed]", || eng.cube(&crate::vtree::Home::unchecked(&xyz), [1, -2]));
-    a.run("clause [fixed]", || eng.clause(&crate::vtree::Home::unchecked(&xyz), [1, -2]));
-    a.run("from_models [fixed]", || Tdd::from_models(&crate::vtree::Home::unchecked(&xyz), &[VarId(1)], &[1]));
+    a.run("negate of false on a vtree with nodes [fixed]", || Tdd::zero(&xyz).negate());
+    a.run("one on a vtree with nodes [fixed]", || Ok::<_, ()>(Tdd::one(&xyz)));
+    a.run("literal [fixed]", || crate::literal(&xyz, 1));
+    a.run("cube [fixed]", || eng.cube(&xyz, [1, -2]));
+    a.run("clause [fixed]", || eng.clause(&xyz, [1, -2]));
+    a.run("from_models [fixed]", || Tdd::from_models(&xyz, &[VarId(1)], &[1]));
 
     a.case = "tag_level of ((x y) z) = (x and y and z) or (not (x and y) and not z) at (x y), both nodes tagged 0".into();
     a.run("tag_level [fixed]", || {
         let s = |e: OperationError| e.to_string();
-        let f = eng.or(eng.cube(&crate::vtree::Home::unchecked(&xyz), [1, 2, 3]).map_err(s)?, eng.and(&eng.clause(&crate::vtree::Home::unchecked(&xyz), [-1, -2]).map_err(s)?, &eng.literal(&crate::vtree::Home::unchecked(&xyz), -3).map_err(s)?).map_err(s)?).map_err(s)?;
+        let f = eng.or(eng.cube(&xyz, [1, 2, 3]).map_err(s)?, eng.and(&eng.clause(&xyz, [-1, -2]).map_err(s)?, &eng.literal(&xyz, -3).map_err(s)?).map_err(s)?).map_err(s)?;
         let v = f.vtree();
         let at = v.bottomup().find(|&t| !v.node(t).is_leaf() && v.node(v.children(t).0).is_leaf() && v.node(v.children(t).1).is_leaf()).ok_or("no level over x y")?;
         let slots = f.reference_slot_count(at);
-        let into = Arc::clone(&Home::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &Vtree::balanced_over(&[VarId(4), VarId(5)]).unwrap()).unwrap()));
+        let into = Home::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &Vtree::balanced_over(&[VarId(4), VarId(5)]).unwrap()).unwrap());
         eng.tag_level(&f, at, &into, |v| v, &vec![Some(0); slots], &[VarId(4), VarId(5)], &[0b10]).map_err(|e| format!("{e:?}"))
     });
 
@@ -573,15 +573,15 @@ impl FoldMonoid for Sum {
 /// day 0, so that the totals do not read the day of an open store.
 fn prefix_fold_case() -> Result<Tdd, String> {
     let chain = |low: Vtree| Vtree::join(&leaf(1), &Vtree::join(&leaf(2), &Vtree::join(&leaf(3), &low).unwrap()).unwrap()).unwrap();
-    let vtree = Arc::clone(&Home::new(chain(Vtree::join(&leaf(4), &leaf(5)).unwrap())));
+    let vtree = Home::new(chain(Vtree::join(&leaf(4), &leaf(5)).unwrap()));
     let into = Arc::new(chain(Vtree::join(&leaf(4), &Vtree::join(&leaf(5), &leaf(6)).unwrap()).unwrap()));
     let row = |store: u64, day: u64, amount: u64| store | (day >> 1) << 1 | (day & 1) << 2 | amount << 3;
     let vars: Vec<VarId> = (1..=5).map(VarId).collect();
     let hm = Home::new(Arc::clone(&vtree));
-    let mut sales = Tdd::from_models(&crate::vtree::Home::unchecked(&vtree), &vars, &[row(0, 0, 2), row(1, 0, 1)]).map_err(|e| e.to_string())?;
+    let mut sales = Tdd::from_models(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)), &vars, &[row(0, 0, 2), row(1, 0, 1)]).map_err(|e| e.to_string())?;
     sales.trim(&hm).map_err(|e| e.to_string())?;
     let open: Vec<u64> = (0..4).map(|d| row(0, d, 0)).chain((0..3).map(|d| row(1, d, 0))).collect();
-    let mut open = Tdd::from_models(&crate::vtree::Home::unchecked(&vtree), &vars[..3], &open).map_err(|e| e.to_string())?;
+    let mut open = Tdd::from_models(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)), &vars[..3], &open).map_err(|e| e.to_string())?;
     open.trim(&hm).map_err(|e| e.to_string())?;
     let coding = |totals: &[u64]| FoldCodes { into: into.clone(), code_vars: vec![VarId(4), VarId(5), VarId(6)], codes: totals.to_vec() };
     Engine::new()
@@ -595,9 +595,9 @@ fn prefix_fold_case() -> Result<Tdd, String> {
 #[test]
 fn audit_i1_constant_operands_do_not_panic() {
     let eng = Engine::new();
-    let home = Arc::clone(&Home::new(Vtree::balanced(3)));
+    let home = Home::new(Vtree::balanced(3));
     let hm = Home::new(Arc::clone(&home));
-    for mut c in [Tdd::one(&crate::vtree::Home::unchecked(&home)), Tdd::zero(&crate::vtree::Home::unchecked(&home))] {
+    for mut c in [Tdd::one(&home), Tdd::zero(&home)] {
         c.trim(&hm).unwrap();
         assert_eq!(c.vtree().num_nodes(), 0);
         let none: [Literal; 0] = [];
@@ -620,7 +620,7 @@ fn audit_i1_every_producer() {
         let mut rng = Lcg::new(seed ^ 0x11a7);
         let scattered = seed % 2 == 1;
         let n = if scattered { 8 + rng.below(17) as u32 } else { 3 + rng.below(6) as u32 };
-        let home = Arc::clone(&Home::new(Vtree::random(n, seed)));
+        let home = Home::new(Vtree::random(n, seed));
         let mut used: Vec<u32> = (1..=n).collect();
         if scattered {
             for i in (1..used.len()).rev() {
@@ -645,7 +645,7 @@ fn audit_i1_minimize_stopped_after_a_contraction() {
     use crate::limits::{LimitConfig, StopCallback, StopDecision};
     use std::sync::atomic::{AtomicUsize, Ordering};
     let eng = Engine::new();
-    let xyz = Arc::clone(&Home::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap()));
+    let xyz = Home::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap());
     let (root, xy) = (xyz.root(), xyz.children(xyz.root()).0);
     let f = built(&eng, &xyz, &[(xy, vec![(POS, POS), (POS, NEG)]), (root, vec![(0, POS)])]);
     let polls = Arc::new(AtomicUsize::new(0));
@@ -684,7 +684,7 @@ fn c_over_true(eng: &Engine) -> (Arc<Vtree>, Tdd) {
     let abc = Arc::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap());
     let (root, ab) = (abc.root(), abc.children(abc.root()).0);
     let one = LeafLabel::One as u32;
-    let f = built(eng, &abc, &[(ab, vec![(one, one)]), (root, vec![(0, POS)])]);
+    let f = built(eng, &crate::vtree::Home::unchecked(&abc), &[(ab, vec![(one, one)]), (root, vec![(0, POS)])]);
     (abc, f)
 }
 
@@ -728,12 +728,12 @@ fn audit_i1_and_of_a_summed_leaf_beside_a_true_leaf() {
         if weighted {
             xyz = xyz.with_weights(weights(3, &mut Lcg::new(3))).unwrap();
         }
-        let xyz = Arc::new(xyz);
+        let xyz = crate::vtree::Home::new(xyz);
         let (root, xy) = (xyz.root(), xyz.children(xyz.root()).0);
         let x = xyz.children(xy).0;
         let f = built(&eng, &xyz, &[(xy, vec![(one, POS)]), (root, vec![(0, POS)])]);
-        let mut g = eng.and(eng.clause(&crate::vtree::Home::unchecked(&xyz), [1, 2]).unwrap(), eng.literal(&crate::vtree::Home::unchecked(&xyz), 3).unwrap()).unwrap();
-        let want = eng.and(eng.cube(&crate::vtree::Home::unchecked(&xyz), [2, 3]).unwrap(), &g).unwrap();
+        let mut g = eng.and(eng.clause(&xyz, [1, 2]).unwrap(), eng.literal(&xyz, 3).unwrap()).unwrap();
+        let want = eng.and(eng.cube(&xyz, [2, 3]).unwrap(), &g).unwrap();
         g.marginalize(crate::test_helpers::summing(g.vtree(), &[x])).unwrap();
         let value = |t: &Tdd| if weighted { format!("{:?}", t.weighted_value().map(|v| v.map(|v| crate::test_helpers::exact_weight(&v)))) } else { format!("{:?}", t.model_count()) };
         let got = catch_unwind(AssertUnwindSafe(|| eng.and(&f, &g).map(|t| value(&t)))).map_err(|_| "a panic");
@@ -805,8 +805,8 @@ fn audit_i1_exists_with_pruning_names_exactly_the_targets() {
 
 /// ((x y) z) with x, y, z = 1, 2, 3 on a home weighted by `ws`, x ∧ z with
 /// the level (x y) {(Pos, Pos), (Pos, Neg)}: y a full twin side.
-fn x_and_z_over_a_twin(eng: &Engine, ws: Weights) -> (Arc<Vtree>, Tdd) {
-    let xyz = Arc::clone(&Home::weighted(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap(), ws).unwrap());
+fn x_and_z_over_a_twin(eng: &Engine, ws: Weights) -> (Home, Tdd) {
+    let xyz = Home::weighted(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap(), ws).unwrap();
     let (root, xy) = (xyz.root(), xyz.children(xyz.root()).0);
     let f = built(eng, &xyz, &[(xy, vec![(POS, POS), (POS, NEG)]), (root, vec![(0, POS)])]);
     (xyz, f)
@@ -829,7 +829,7 @@ fn audit_i1_weighted_and_across_projections_is_on_the_variables_used() {
     let home = Home::weighted(Vtree::balanced(4), weights(4, &mut Lcg::new(5))).unwrap();
     let on = |vars: &[u32], clause: &[i32]| {
         let own = Vtree::projection(&home, vars.iter().map(|&v| VarId(v))).unwrap();
-        eng.clause(&crate::vtree::Home::unchecked(&own), clause.iter().copied()).unwrap()
+        eng.clause(&crate::vtree::Home::new(std::sync::Arc::clone(&own)), clause.iter().copied()).unwrap()
     };
     let (f, g) = (on(&[1, 2], &[1, 2]), on(&[1, 2, 3], &[1, -2]));
     let mut h = eng.and(&f, &g).unwrap();

@@ -49,11 +49,11 @@ fn a_diagram_on_a_weighted_home_reads_the_home_weights() {
     let eng = Engine::new();
     let home = Home::weighted(Vtree::balanced(4), table(4)).unwrap();
     let own = Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)]).unwrap();
-    let mut f = eng.and_clause(eng.clause(&crate::vtree::Home::unchecked(&own), [1, -2]).unwrap(), &[2, 3]).unwrap();
+    let mut f = eng.and_clause(eng.clause(&crate::vtree::Home::new(std::sync::Arc::clone(&own)), [1, -2]).unwrap(), &[2, 3]).unwrap();
     assert_eq!(f.weights(), home.weights());
 
-    let root = Arc::new(Vtree::balanced(4).with_weights(table(4)).unwrap());
-    let g = eng.and_clause(eng.clause(&crate::vtree::Home::unchecked(&root), [1, -2]).unwrap(), &[2, 3]).unwrap();
+    let root = crate::vtree::Home::new(Vtree::balanced(4).with_weights(table(4)).unwrap());
+    let g = eng.and_clause(eng.clause(&root, [1, -2]).unwrap(), &[2, 3]).unwrap();
     assert_eq!(value_of(&f), value_of(&g));
     eng.marginalize(&mut f, |v| v.0 <= 2).unwrap();
     assert!(f.has_marginal_level());
@@ -67,14 +67,14 @@ fn a_diagram_on_a_weighted_home_reads_the_home_weights() {
 fn a_borrowed_weighted_operand_on_a_home_is_not_cloned() {
     let eng = Engine::new();
     let home = Home::weighted(Vtree::balanced(8), table(8)).unwrap();
-    let mut f = eng.clause(&crate::vtree::Home::unchecked(&Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)]).unwrap()), [1, -2, 3]).unwrap();
-    let mut g = eng.clause(&crate::vtree::Home::unchecked(&Vtree::projection(&home, [VarId(5), VarId(6), VarId(7)]).unwrap()), [-5, 6, 7]).unwrap();
+    let mut f = eng.clause(&crate::vtree::Home::new(std::sync::Arc::clone(&Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)]).unwrap())), [1, -2, 3]).unwrap();
+    let mut g = eng.clause(&crate::vtree::Home::new(std::sync::Arc::clone(&Vtree::projection(&home, [VarId(5), VarId(6), VarId(7)]).unwrap())), [-5, 6, 7]).unwrap();
     eng.marginalize(&mut f, |v| v.0 <= 2).unwrap();
     eng.marginalize(&mut g, |v| v.0 >= 6).unwrap();
     let holders = Arc::strong_count(&home.weights().unwrap().table);
     let h = eng.and(&f, &g).unwrap();
     assert_eq!(Arc::strong_count(&home.weights().unwrap().table), holders);
-    assert_eq!(value_of(&h), value_of(&f) * value_of(&g) / value_of(&Tdd::one(&crate::vtree::Home::unchecked(&Vtree::empty_projection(&home)))));
+    assert_eq!(value_of(&h), value_of(&f) * value_of(&g) / value_of(&Tdd::one(&crate::vtree::Home::new(std::sync::Arc::clone(&Vtree::empty_projection(&home))))));
 }
 
 /// A search that keeps moves on a weighted home's root ends on a home with
@@ -110,12 +110,12 @@ fn a_weighted_root_computes_what_a_weighted_home_computes() {
     let eng = Engine::new();
     let weighted = Arc::new(Vtree::balanced(6).with_weights(table(6)).unwrap());
     let home = Home::weighted(Vtree::balanced(6), table(6)).unwrap();
-    let build = |vtree: &Arc<Vtree>| {
-        let f = eng.and_clause(eng.clause(&crate::vtree::Home::unchecked(vtree), [1, -2, 4]).unwrap(), &[2, 3, -6]).unwrap();
-        let g = eng.and_clause(eng.clause(&crate::vtree::Home::unchecked(vtree), [-1, 5]).unwrap(), &[3, -4, 6]).unwrap();
+    let build = |vtree: &crate::vtree::Home| {
+        let f = eng.and_clause(eng.clause(vtree, [1, -2, 4]).unwrap(), &[2, 3, -6]).unwrap();
+        let g = eng.and_clause(eng.clause(vtree, [-1, 5]).unwrap(), &[3, -4, 6]).unwrap();
         (f, g)
     };
-    let (f, g) = build(&weighted);
+    let (f, g) = build(&crate::vtree::Home::unchecked(&weighted));
     let (fh, gh) = build(&home);
     assert_eq!(f.weights(), Some(&table(6)));
     assert_eq!(value_of(&f), value_of(&fh));

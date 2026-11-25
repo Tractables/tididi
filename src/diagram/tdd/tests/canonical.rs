@@ -64,9 +64,9 @@ fn certified_leaf_queries_borrow_and_still_honor_cancellation() {
 
 #[test]
 fn refused_minimization_does_not_certify_partial_work() {
-    let vtree = Arc::new(Vtree::balanced(4));
-    let source = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 2, 3]).unwrap();
-    let mut f = Tdd::from_levels_unchecked(vtree, source.levels.clone().into_vec(), source.output);
+    let vtree = crate::vtree::Home::new(Vtree::balanced(4));
+    let source = Tdd::clause(&vtree, [1, 2, 3]).unwrap();
+    let mut f = Tdd::from_levels_unchecked(Arc::clone(source.vtree()), source.levels.clone().into_vec(), source.output);
     let eng = Engine::new();
     eng.refuse_nth_reserve(0);
     assert_eq!(eng.minimize(&mut f), Err(crate::OperationError::OverBudget));
@@ -204,8 +204,8 @@ mod producers {
     fn constants_without_a_node_are_certified() {
         let home = crate::vtree::Home::new(Vtree::random(3, 1));
         let empty = Vtree::empty_projection(&home);
-        assert!(Tdd::one(&crate::vtree::Home::unchecked(&empty)).is_canonical());
-        assert!(Tdd::zero(&crate::vtree::Home::unchecked(&empty)).is_canonical());
+        assert!(Tdd::one(&crate::vtree::Home::new(std::sync::Arc::clone(&empty))).is_canonical());
+        assert!(Tdd::zero(&crate::vtree::Home::new(std::sync::Arc::clone(&empty))).is_canonical());
     }
 
     /// Prune and contraction keep a certificate with nothing owed; a

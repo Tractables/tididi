@@ -219,10 +219,10 @@ fn weights(n: u32, rng: &mut Lcg) -> Weights {
 
 /// A diagram on `home` after random conditioning, forgetting, conjunction
 /// and minimization; one in six is a constant.
-fn diagram(home: &Arc<Vtree>, n: u32, rng: &mut Lcg) -> Tdd {
+fn diagram(home: &crate::vtree::Home, n: u32, rng: &mut Lcg) -> Tdd {
     match rng.below(12) {
-        0 => return crate::test_helpers::padded(Tdd::one(&crate::vtree::Home::unchecked(home)), home),
-        1 => return crate::test_helpers::padded(Tdd::zero(&crate::vtree::Home::unchecked(home)), home),
+        0 => return crate::test_helpers::padded(Tdd::one(home), home),
+        1 => return crate::test_helpers::padded(Tdd::zero(home), home),
         _ => {}
     }
     let mut f = rand_conj(home, n, 4, 3, false, rng);
@@ -258,9 +258,9 @@ fn reseated(t: &Tdd, onto: &Home) -> Tdd {
     t
 }
 
-fn on_home(g: &Tdd, home: &Arc<Vtree>) -> Tdd {
+fn on_home(g: &Tdd, home: &crate::vtree::Home) -> Tdd {
     if g.vtree().num_nodes() == 0 {
-        return if g.is_one() { Tdd::one(&crate::vtree::Home::unchecked(home)) } else { Tdd::zero(&crate::vtree::Home::unchecked(home)) };
+        return if g.is_one() { Tdd::one(home) } else { Tdd::zero(home) };
     }
     if Arc::ptr_eq(g.vtree(), home) {
         return g.clone();
@@ -269,7 +269,7 @@ fn on_home(g: &Tdd, home: &Arc<Vtree>) -> Tdd {
 }
 
 /// `g` on `home` when it is on a projection of it or on it.
-fn placed(g: &Tdd, home: &Arc<Vtree>) -> Option<Tdd> {
+fn placed(g: &Tdd, home: &crate::vtree::Home) -> Option<Tdd> {
     let on = |v: &Arc<Vtree>| Arc::ptr_eq(v.link_home().map(|home| &**home).unwrap_or(v), home);
     on(g.vtree()).then(|| on_home(g, home))
 }
@@ -300,7 +300,7 @@ fn sorted<T: Ord + Clone>(v: &[T]) -> Vec<T> {
 }
 
 #[allow(clippy::too_many_lines)]
-fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, n: u32, rng: &mut Lcg) {
+fn audit_case(a: &mut Audit, eng: &Engine, home: &crate::vtree::Home, f: &Tdd, g: &Tdd, n: u32, rng: &mut Lcg) {
     let hm = Home::new(Arc::clone(home));
     let var = |rng: &mut Lcg| VarId(1 + rng.below(u64::from(n)) as u32);
     let vars = |rng: &mut Lcg| -> Vec<VarId> { (1..=n).filter(|_| rng.coin()).map(VarId).collect() };
@@ -480,7 +480,7 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
         _ => Vec::new(),
     };
     a.check("rename_vars", || g.clone().rename_vars(&rename), || f.clone().rename_vars(&rename), closed);
-    let literal_x = crate::literal(&crate::vtree::Home::unchecked(home), i32::try_from(x.0).unwrap()).unwrap();
+    let literal_x = crate::literal(home, i32::try_from(x.0).unwrap()).unwrap();
     let y = var(rng);
     a.check("substitute", || g.clone().substitute(&[(y, &literal_x)]), || f.clone().substitute(&[(y, &literal_x)]), closed);
 
@@ -501,7 +501,7 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
         "write_tdd and read_tdd",
         || {
             crate::io::write_tdd(&mut text, g)?;
-            crate::io::read_tdd(&mut text.as_slice(), &crate::vtree::Home::unchecked(g.vtree()))
+            crate::io::read_tdd(&mut text.as_slice(), &crate::vtree::Home::new(std::sync::Arc::clone(g.vtree())))
         },
         || Ok::<_, crate::io::IoError>(f.clone()),
         same_tdd,
@@ -511,7 +511,7 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
         "binary",
         || {
             crate::io::write_tdd_binary(&mut bytes, g)?;
-            crate::io::read_tdd_binary(&mut bytes.as_slice(), &crate::vtree::Home::unchecked(g.vtree()))
+            crate::io::read_tdd_binary(&mut bytes.as_slice(), &crate::vtree::Home::new(std::sync::Arc::clone(g.vtree())))
         },
         || Ok::<_, crate::io::IoError>(f.clone()),
         same_tdd,
@@ -522,7 +522,7 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
 fn audit_seed(audit: &mut Audit, eng: &Engine, seed: u64) -> (Tdd, Tdd) {
     let mut rng = Lcg::new(seed ^ 0xa0d1);
     let n = 2 + rng.below(8) as u32;
-    let home = Arc::clone(&Home::new(Vtree::random(n, seed)));
+    let home = Home::new(Vtree::random(n, seed));
     let f = diagram(&home, n, &mut rng);
     let mut g = f.clone();
     g.trim(&Home::new(Arc::clone(&home))).unwrap();
@@ -571,10 +571,10 @@ fn every_result_of_the_audit_at_seed_108_reaches_all_its_nodes() {
 
 /// `x1 ∧ ¬x3` over `Vtree::balanced(4)`, on the home and trimmed to the
 /// projection on x1 and x3.
-fn x1_not_x3(eng: &Engine) -> (Arc<Vtree>, Tdd, Tdd) {
-    let home = Arc::clone(&Home::new(Vtree::balanced(4)));
+fn x1_not_x3(eng: &Engine) -> (Home, Tdd, Tdd) {
+    let home = Home::new(Vtree::balanced(4));
     let lit = |v: u32, sign: bool| Literal { var: VarId(v), sign };
-    let f = crate::test_helpers::padded(eng.cube(&crate::vtree::Home::unchecked(&home), [lit(1, true), lit(3, false)]).unwrap(), &home);
+    let f = crate::test_helpers::padded(eng.cube(&home, [lit(1, true), lit(3, false)]).unwrap(), &home);
     let mut g = f.clone();
     assert!(g.trim(&Home::new(Arc::clone(&home))).unwrap());
     assert_eq!(g.vtree().free_set().unwrap().vars().collect::<Vec<_>>(), [VarId(2), VarId(4)]);
@@ -598,12 +598,12 @@ fn column_evaluation_values_the_free_variables_or_refuses() {
     assert_eq!(eng.sum_indexed(&g, &g, &PairIndex::new(&g).unwrap(), root, &Counts { free: false }), Err(OperationError::VariableNotInVtree(VarId(2))));
 
     let hm = &g.home();
-    let mut one = Tdd::one(&crate::vtree::Home::unchecked(&home));
+    let mut one = Tdd::one(&home);
     one.trim(hm).unwrap();
     assert_eq!(one.vtree().num_nodes(), 0);
     assert_eq!(one.evaluate_columns(&counts).unwrap(), BigUint::from(16u32));
     assert_eq!(one.evaluate_columns(&Counts { free: false }), Err(OperationError::VariableNotInVtree(VarId(2))));
-    let mut zero = Tdd::zero(&crate::vtree::Home::unchecked(&home));
+    let mut zero = Tdd::zero(&home);
     zero.trim(hm).unwrap();
     assert_eq!(zero.evaluate_columns(&Counts { free: false }).unwrap(), BigUint::ZERO);
 }
@@ -632,20 +632,20 @@ fn pins_on_free_variables_count_as_on_the_home() {
 fn diagrams_on_projections_are_written_and_read() {
     let eng = Engine::new();
     let (home, f, g) = x1_not_x3(&eng);
-    let mut one = Tdd::one(&crate::vtree::Home::unchecked(&home));
-    let mut zero = Tdd::zero(&crate::vtree::Home::unchecked(&home));
+    let mut one = Tdd::one(&home);
+    let mut zero = Tdd::zero(&home);
     let hm = &g.home();
     one.trim(hm).unwrap();
     zero.trim(hm).unwrap();
     let same_leaves = Vtree::projection(hm, [VarId(3), VarId(1)]).unwrap();
-    let cases = [(&f, home.clone()), (&g, g.vtree().clone()), (&g, same_leaves), (&one, one.vtree().clone()), (&zero, zero.vtree().clone())];
+    let cases = [(&f, Arc::clone(&home)), (&g, g.vtree().clone()), (&g, same_leaves), (&one, one.vtree().clone()), (&zero, zero.vtree().clone())];
     for (t, vtree) in cases {
         let mut text = Vec::new();
         crate::io::write_tdd(&mut text, t).unwrap();
-        let read = crate::io::read_tdd(&mut text.as_slice(), &crate::vtree::Home::unchecked(&vtree)).unwrap();
+        let read = crate::io::read_tdd(&mut text.as_slice(), &Home::new(Arc::clone(&vtree))).unwrap();
         let mut bytes = Vec::new();
         crate::io::write_tdd_binary(&mut bytes, t).unwrap();
-        let binary = crate::io::read_tdd_binary(&mut bytes.as_slice(), &crate::vtree::Home::unchecked(&vtree)).unwrap();
+        let binary = crate::io::read_tdd_binary(&mut bytes.as_slice(), &Home::new(Arc::clone(&vtree))).unwrap();
         for back in [read, binary] {
             assert!(back.vtree().is_on(hm));
             // f pads x2 and x4 with `One`; read onto the home it is on g's leaves.
@@ -659,7 +659,7 @@ fn diagrams_on_projections_are_written_and_read() {
     }
     let mut text = Vec::new();
     crate::io::write_tdd(&mut text, &one).unwrap();
-    let back = crate::io::read_tdd(&mut text.as_slice(), &crate::vtree::Home::unchecked(g.vtree())).unwrap();
+    let back = crate::io::read_tdd(&mut text.as_slice(), &Home::new(Arc::clone(g.vtree()))).unwrap();
     assert!(back.is_one() && back.vtree().num_nodes() == 0 && back.vtree().is_on(hm));
 }
 
@@ -670,7 +670,7 @@ fn the_vtree_check_agrees_with_transport() {
     for seed in 0..60u64 {
         let mut rng = Lcg::new(seed);
         let n = 2 + rng.below(5) as u32;
-        let home = Arc::clone(&Home::new(Vtree::random(n, seed)));
+        let home = Home::new(Vtree::random(n, seed));
         let source = if rng.coin() {
             let mut g = diagram(&home, n, &mut rng);
             g.trim(&Home::new(Arc::clone(&home))).unwrap();
@@ -679,7 +679,7 @@ fn the_vtree_check_agrees_with_transport() {
             rand_conj(&Arc::new(Vtree::random(n, seed + 1000)), n, 3, 2, false, &mut rng)
         };
         let shift = rng.below(2) as u32;
-        let wide = Arc::clone(&Home::new(Vtree::random(n + shift, seed + 2000)));
+        let wide = Home::new(Vtree::random(n + shift, seed + 2000));
         let target = if rng.coin() { &home } else { &wide };
         let map = |v: VarId| VarId(v.0 + shift * u32::from(Arc::ptr_eq(target, &wide)));
         let target_home = Home::new(Arc::clone(target));
