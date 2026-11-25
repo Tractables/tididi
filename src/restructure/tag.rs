@@ -84,7 +84,8 @@ impl Engine {
     /// `code_vars` are not exactly the right subtree's leaves;
     /// [`TagError::Tags`] when `tags` does not have one entry per slot or
     /// names a code past the end of `codes`, whose length is not a multiple
-    /// of the words per code, or tags both a leaf's true node and one of its
+    /// of the words per code, when a code sets a bit past the code
+    /// variables, or tags both a leaf's true node and one of its
     /// literals, which overlap; [`TagError::Operation`] with
     /// [`OperationError::LevelNotInVtree`] for an `at` that is not a node of
     /// `tdd`'s vtree, [`OperationError::MarginalLevel`] for a diagram that has
@@ -148,6 +149,17 @@ impl Engine {
             )));
         }
         let num_codes = codes.len() / words;
+        // A bit past the code variables would be dropped, and two codes that
+        // differ only there would collide.
+        let spare = 64 * words - code_vars.len();
+        if spare > 0
+            && let Some(k) = (0..num_codes).find(|&k| codes[(k + 1) * words - 1] >> (64 - spare) != 0)
+        {
+            return Err(TagError::Tags(format!(
+                "code {k} sets a bit past the {} code variables",
+                code_vars.len()
+            )));
+        }
         let width = match source.node(at).is_leaf() {
             true => LEAF_WIDTH,
             false => tdd.level(at).nodes().len(),

@@ -180,6 +180,12 @@ fn shapes_codes_and_tags_are_checked() {
     let past: Vec<Option<u32>> = tags.iter().map(|t| t.map(|_| 9)).collect();
     assert!(matches!(eng.tag_level(&f, left, &into, map, &past, &code, &CODES), Err(TagError::Tags(_))));
     assert!(matches!(eng.tag_level(&f, left, &into, map, &tags, &code, &[]), Err(TagError::Tags(_))));
+    // Code variables narrower than the codes: 0b01 and 0b11 would collide
+    // on the one variable left.
+    match eng.tag_level(&f, left, &into, map, &tags, &code[..1], &[0b01, 0b11]) {
+        Err(TagError::Tags(message)) => assert!(message.contains("code 1 sets a bit past the 1 code variables"), "{message}"),
+        other => panic!("narrow code variables were not refused: {other:?}"),
+    }
     // A level the vtree does not have.
     assert!(matches!(
         eng.tag_level(&f, VtreeIdx(99), &into, map, &tags, &code, &CODES),
