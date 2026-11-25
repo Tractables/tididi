@@ -182,6 +182,24 @@ mod producers {
         }
     }
 
+    /// The same on homes, including a key whose subtree holds every leaf of
+    /// the operand's projection (seed 6, key 2: a literal).
+    #[test]
+    fn projections_to_a_subtree_on_a_home_are_certified() {
+        let eng = Engine::new();
+        for seed in 0..100u64 {
+            let mut rng = Lcg::new(seed ^ 0x51b);
+            let n = 2 + rng.below(6) as u32;
+            let home = crate::vtree::Home::new(Vtree::random(n, seed));
+            let vtree = home.vtree();
+            let f = rand_conj(vtree, n, 4, 3, false, &mut rng);
+            for key in vtree.bottomup().filter(|&t| t != vtree.root()) {
+                let g = eng.project_to_subtree(&f, key).unwrap();
+                certified(&g, &format!("seed {seed}: project_to_subtree at {}", key.0));
+            }
+        }
+    }
+
     #[test]
     fn constants_without_a_node_are_certified() {
         let home = crate::vtree::Home::new(Vtree::random(3, 1));
