@@ -67,7 +67,10 @@ pub(super) fn assert_truth(engine: &Engine, diagram: &Tdd, expected: &[bool], co
             "{context}, missing witness"
         ),
         Some(witness) => {
-            let mut covered: Vec<_> = diagram.vtree().leaf_bottomup().map(|(_, var)| var).collect();
+            let mut covered: Vec<_> = match diagram.vtree().home() {
+                Some(home) => home.leaf_bottomup().map(|(_, var)| var).collect(),
+                None => diagram.vtree().leaf_bottomup().map(|(_, var)| var).collect(),
+            };
             covered.sort_unstable();
             assert_eq!(witness.len(), covered.len(), "{context}, complete witness");
             let mut row = 0;
