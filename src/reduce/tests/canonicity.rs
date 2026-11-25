@@ -27,9 +27,10 @@ use crate::restructure::relevel::{RotationStep, rebuild_levels};
 use crate::restructure::scratch::RestructureScratch;
 use crate::test_helpers::{
     CnfShape, Lcg, assert_canonical, assert_same_shape, compile_clauses_pairwise, exact_weight,
-    rand_cnf, rotate_left, rotate_right,
+    rand_cnf,
 };
-use crate::vtree::{RotationKind, VarId, Vtree};
+use crate::vtree::rotate::{RotationInfo, rotate_pointers};
+use crate::vtree::{Home, RotationKind, VarId, Vtree, VtreeIdx};
 
 /// Route 1: fold `clauses` into one accumulator.
 fn build_by_folding<'a>(
@@ -45,39 +46,48 @@ fn build_by_folding<'a>(
     acc
 }
 
-/// Route 3: fold the clauses in reverse, then left-rotate the root, rebuild the
-/// levels the rotation moved, rotate back, and rebuild again.
+/// Route 3: fold the clauses in reverse, then left-rotate the root of the
+/// diagram's vtree, rebuild the levels the rotation moved, rotate back, and
+/// rebuild again.
 fn build_by_rotation_round_trip(
     eng: &Engine,
     vtree: &Arc<Vtree>,
     clauses: &[Vec<i32>],
 ) -> Option<Tdd> {
     let mut acc = build_by_folding(eng, vtree, clauses.iter().rev());
-    let mut vt = (**vtree).clone();
-    let root = vt.root();
+    let own = Arc::clone(&acc.vtree);
     // A left rotation needs a right child that is internal; a linear-enough
     // vtree at the root has none, and there is nothing to round-trip.
-    let left = rotate_left(&mut vt, root)?;
-    acc.vtree = Arc::new(vt.clone());
+    if own.num_nodes() == 0 {
+        return None;
+    }
+    let root = own.root();
+    let left = rotate_own(&mut acc, root, RotationKind::Left)?;
     let mut scratch = RestructureScratch::default();
     let marginal = acc.has_marginal_level();
     let step = RotationStep { info: &left, dir: RotationKind::Left, crossed: false, max_pairs: usize::MAX };
     rebuild_levels(eng.limits(), &mut acc, step, marginal, &mut scratch).unwrap()?;
     acc.minimize().unwrap();
 
-    let right =
-        rotate_right(&mut vt, root).expect("a left rotation leaves the root right-rotatable");
-    acc.vtree = Arc::new(vt);
+    let right = rotate_own(&mut acc, root, RotationKind::Right)
+        .expect("a left rotation leaves the root right-rotatable");
     let marginal = acc.has_marginal_level();
     let step = RotationStep { info: &right, dir: RotationKind::Right, crossed: false, max_pairs: usize::MAX };
     rebuild_levels(eng.limits(), &mut acc, step, marginal, &mut scratch).unwrap()?;
     acc.minimize().unwrap();
     assert!(
-        acc.vtree.same_tree(vtree),
+        acc.vtree.same_tree(&own),
         "the round trip must land back on the vtree it started from"
     );
-    acc.vtree = Arc::clone(vtree);
+    acc.vtree = own;
     Some(acc)
+}
+
+/// Rotate `acc`'s own vtree, a projection of its home, in place, as the
+/// rotation search does.
+fn rotate_own(acc: &mut Tdd, v: VtreeIdx, kind: RotationKind) -> Option<RotationInfo> {
+    let pending = rotate_pointers(Vtree::make_mut(&mut acc.vtree), v, kind)?;
+    Some(pending.commit_in_probe(Vtree::make_mut(&mut acc.vtree)))
 }
 
 /// The weighted mirror: unit weights make every model worth one, so the
@@ -122,7 +132,7 @@ fn every_route_to_one_function() -> Vec<Tdd> {
     ] {
         let mut rng = Lcg::new(seed);
         for &nvars in &[3u32, 4, 5, 6] {
-            let vtree = Arc::new(Vtree::balanced(nvars));
+            let vtree = Home::new(Vtree::balanced(nvars));
             for _ in 0..12 {
                 let clauses = rand_cnf(
                     &mut rng,
@@ -187,7 +197,7 @@ fn listed_twin_searches_reach_the_canonical_diagram() {
     let mut rng = Lcg::new(0x5eed_1157_ed00_0001);
     let before = crate::reduce::contract::tests::listed_searches();
     for &nvars in &[6u32, 8, 10] {
-        let vtree = Arc::new(Vtree::balanced(nvars));
+        let vtree = Home::new(Vtree::balanced(nvars));
         for _ in 0..16 {
             let clauses = rand_cnf(
                 &mut rng,
