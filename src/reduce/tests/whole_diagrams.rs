@@ -260,44 +260,20 @@ fn test_minimize_sat_2vars_reduces_width() {
 // (X, Inline(2)), leaving the model count unchanged.
 
 
-/// `(a ∨ b) ∧ (a ∨ ¬b)` is `a`: `b` is irrelevant, and minimize has to say so
-/// at the diagram level. After the pass, no pair list anywhere may still name
-/// the positive or negative label of the `b` leaf — every reference into that
-/// leaf must be the don't-care one.
+/// `(a ∨ b) ∧ (a ∨ ¬b)` is `a`: `b` is irrelevant, and minimize on a home
+/// drops its leaf.
 #[test]
 fn a_variable_the_function_ignores_leaves_no_literal_references_behind() {
-    use crate::diagram::LeafLabel;
     use crate::test_helpers::check::check_determinism;
-    use crate::vtree::{VtreeIdx, VtreeNode};
 
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = Arc::clone(&Home::new(Vtree::balanced(2)));
     let mut tdd = compile_clauses(&vtree, &[vec![1, 2], vec![1, -2]]);
     tdd.minimize().unwrap();
     assert_canonical(&tdd);
 
     // `a` over two variables: `a` true, `b` free.
     assert_eq!(tdd.model_count().unwrap(), 2u64.into());
-
-    let b_leaf = vtree.leaf_of(VarId(2)).expect("the vtree carries this variable");
-    for level_idx in 0..vtree.num_nodes() {
-        let (left, right) = match *vtree.node(VtreeIdx(level_idx as u32)) {
-            VtreeNode::Internal { left, right, .. } => (left, right),
-            VtreeNode::Leaf { .. } => continue,
-        };
-        for (_, pairs) in tdd.levels()[level_idx].internal_inputs_iter() {
-            for pair in pairs {
-                if left == b_leaf {
-                    assert_ne!(pair.left.raw() as usize, LeafLabel::Pos as usize, "level {level_idx}");
-                    assert_ne!(pair.left.raw() as usize, LeafLabel::Neg as usize, "level {level_idx}");
-                }
-                if right == b_leaf {
-                    assert_ne!(pair.right.raw() as usize, LeafLabel::Pos as usize, "level {level_idx}");
-                    assert_ne!(pair.right.raw() as usize, LeafLabel::Neg as usize, "level {level_idx}");
-                }
-            }
-        }
-    }
-
+    assert_eq!(tdd.vtree().leaf_of(VarId(2)), None, "minimize kept the leaf of an ignored variable");
     check_determinism(&tdd).expect("leaf-mode determinism holds after minimize");
 }
 

@@ -187,7 +187,7 @@ fn content_twins_under_a_marginal_sibling_fold_their_pairs() {
 fn test_content_merge_stands_down_without_a_marginal_level() {
     let eng = &crate::Engine::new();
 
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Arc::clone(&crate::vtree::Home::new(Vtree::balanced(4)));
     let root_idx = vtree.root();
     let (v_left, v_right) = vtree.children(root_idx);
 

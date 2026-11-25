@@ -25,7 +25,7 @@ use std::sync::Arc;
 #[test]
 fn a_contraction_below_the_worklist_is_found_by_listing() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(8));
+    let vtree = Arc::clone(&crate::vtree::Home::new(Vtree::balanced(8)));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (l, r) = vtree.children(root);
     let (ll, lr) = vtree.children(l);
