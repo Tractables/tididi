@@ -55,9 +55,23 @@ pub(crate) fn on_one<'a, O>(eng: &Engine, operands: O) -> Result<O, OperationErr
 where
     O: AsRef<[Cow<'a, Tdd>]> + IntoIterator<Item = Cow<'a, Tdd>> + TryFrom<Vec<Cow<'a, Tdd>>>,
 {
+    on_one_reading(eng, operands, false)
+}
+
+/// [`on_one`] where operands with a region of one anchor and extent share
+/// it ([`Vtree::leaf_sets_sharing`]).
+pub(crate) fn on_one_sharing<'a>(eng: &Engine, operands: [Cow<'a, Tdd>; 2]) -> Result<[Cow<'a, Tdd>; 2], OperationError> {
+    on_one_reading(eng, operands, true)
+}
+
+#[inline]
+fn on_one_reading<'a, O>(eng: &Engine, operands: O, shared: bool) -> Result<O, OperationError>
+where
+    O: AsRef<[Cow<'a, Tdd>]> + IntoIterator<Item = Cow<'a, Tdd>> + TryFrom<Vec<Cow<'a, Tdd>>>,
+{
     match operands.as_ref().split_first() {
         Some((first, rest)) if !on_one_vtree(first, rest.iter().map(|g| &**g)) => {
-            let extended = extend(eng, operands.into_iter().collect())?;
+            let extended = extend(eng, operands.into_iter().collect(), shared)?;
             Ok(O::try_from(extended).unwrap_or_else(|_| unreachable!("one item per operand")))
         }
         _ => Ok(operands),
@@ -82,7 +96,7 @@ pub(crate) fn onto<'a>(eng: &Engine, f: &'a Tdd, into: &Arc<Vtree>) -> Result<Co
         LeafSets::Equal(_) | LeafSets::AInB if into.num_nodes() != 0 => {}
         _ => return Err(OperationError::VtreeMismatch),
     }
-    extend_one(eng, Cow::Borrowed(f), into)
+    extend_one(eng, Cow::Borrowed(f), into, false)
 }
 
 /// `result` of an operation on projections, trimmed to the leaves it names;
@@ -123,11 +137,12 @@ pub(crate) fn nodes_on(eng: &Engine, from: &Arc<Vtree>, into: &Arc<Vtree>, targe
 /// are all constants go to the projection on one leaf of the home, which
 /// the closing trim drops.
 #[cold]
-fn extend<'a>(eng: &Engine, operands: Vec<Cow<'a, Tdd>>) -> Result<Vec<Cow<'a, Tdd>>, OperationError> {
+fn extend<'a>(eng: &Engine, operands: Vec<Cow<'a, Tdd>>, shared: bool) -> Result<Vec<Cow<'a, Tdd>>, OperationError> {
+    let leaf_sets = if shared { Vtree::leaf_sets_sharing } else { Vtree::leaf_sets };
     let Some((first, rest)) = operands.split_first() else { return Ok(operands) };
     let mut into = Arc::clone(&first.vtree);
     for g in rest {
-        match Vtree::leaf_sets(&into, &g.vtree)? {
+        match leaf_sets(&into, &g.vtree)? {
             LeafSets::Equal(_) | LeafSets::BInA => {}
             LeafSets::AInB => into = Arc::clone(&g.vtree),
             LeafSets::Union(union) => into = union,
@@ -138,7 +153,7 @@ fn extend<'a>(eng: &Engine, operands: Vec<Cow<'a, Tdd>>) -> Result<Vec<Cow<'a, T
         let (_, var) = home.leaf_bottomup().next().expect("a home has a leaf");
         into = Vtree::projection(home, [var]).expect("a variable of the home");
     }
-    operands.into_iter().map(|f| extend_one(eng, f, &into)).collect()
+    operands.into_iter().map(|f| extend_one(eng, f, &into, shared)).collect()
 }
 
 /// Whether `f` is on a projection with fewer leaves than `into`, which
@@ -149,12 +164,13 @@ fn moves(f: &Tdd, into: &Vtree) -> bool {
 
 /// `f` on `into`, which holds its leaf set: reseated when the leaf sets are
 /// equal, placed otherwise.
-fn extend_one<'a>(eng: &Engine, f: Cow<'a, Tdd>, into: &Arc<Vtree>) -> Result<Cow<'a, Tdd>, OperationError> {
+fn extend_one<'a>(eng: &Engine, f: Cow<'a, Tdd>, into: &Arc<Vtree>, shared: bool) -> Result<Cow<'a, Tdd>, OperationError> {
     if Arc::ptr_eq(&f.vtree, into) {
         return Ok(f);
     }
     if !moves(&f, into) {
-        let Ok(LeafSets::Equal(same)) = Vtree::leaf_sets(&f.vtree, into) else {
+        let leaf_sets = if shared { Vtree::leaf_sets_sharing } else { Vtree::leaf_sets };
+        let Ok(LeafSets::Equal(same)) = leaf_sets(&f.vtree, into) else {
             unreachable!("a projection holding the leaf set of another with as many nodes has that leaf set")
         };
         let mut f = into_owned(eng, f)?;

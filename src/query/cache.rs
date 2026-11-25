@@ -101,7 +101,7 @@ impl Observations {
     /// state; `None` for a home variable a projection does not have.
     pub(crate) fn validate_pin(&self, tdd: &Tdd, var: VarId) -> Result<Option<VtreeIdx>, OperationError> {
         let Some(leaf) = tdd.vtree.leaf_of(var) else {
-            return if tdd.vtree.home_has(var) { Ok(None) } else { Err(OperationError::VariableNotInVtree(var)) };
+            return if tdd.vtree.home_has(var) { Ok(None) } else { Err(tdd.vtree.no_leaf_for(var)) };
         };
         // An implicit integer leaf can remain below a marginal parent.
         for level in std::iter::once(leaf).chain(tdd.vtree.node(leaf).parent()) {

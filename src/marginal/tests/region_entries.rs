@@ -423,7 +423,6 @@ fn binary_audit_case(a: &mut Audit, eng: &Engine, f: &Tdd, g: &Tdd, b: &Tdd) {
         both!("and", |x: Tdd, y: Tdd, c: bool| formed(eng.and(&x, &y), c), same_value);
         both!("and_marginalizing_where", |x: Tdd, y: Tdd, c: bool| formed(eng.and_marginalizing_where(&x, &y, |_| false), c), same_value);
         both!("and_model_count", |x: Tdd, y: Tdd, _: bool| eng.and_model_count(x, y, |_| false), PartialEq::eq);
-        both!("marginal_product_count", |x: Tdd, y: Tdd, _: bool| eng.marginal_product_count(&x, &y), PartialEq::eq);
         both!("and_in_place", |x: Tdd, y: Tdd, c: bool| formed(eng.and_in_place(x, &y), c), same_value);
         both!("and_exists", |x: Tdd, y: Tdd, c: bool| formed(eng.and_exists(x, y, &[]), c), same_value);
         both!("add", |x: Tdd, y: Tdd, c: bool| formed(eng.add(x, y), c), same_value);

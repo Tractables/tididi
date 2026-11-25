@@ -551,7 +551,7 @@ fn eval_node(t: &Tdd, v: VtreeIdx, local: NodeIdx, asn: &[bool]) -> bool {
 /// forcing it over every assignment is a soundness oracle independent of the
 /// operator under test.
 pub fn eval(t: &Tdd, asn: &[bool]) -> bool {
-    if t.is_zero() || t.vtree.num_nodes() == 0 {
+    if t.is_zero() || t.is_one() || t.vtree.num_nodes() == 0 {
         return !t.is_zero();
     }
     eval_node(t, t.output.vtree, t.output.local, asn)

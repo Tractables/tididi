@@ -89,7 +89,7 @@ use tididi::test_helpers::{
     assert_canonical, assert_restrict_ok, assert_same_shape, brute_force_count,
     compile_clauses_pairwise, eval, rand_cnf, truth_table, weighted_sum, CnfShape, Lcg,
 };
-use tididi::vtree::{Home, VarId, Vtree, VtreeIdx, VtreeNode};
+use tididi::vtree::{FreeVars, Home, VarId, Vtree, VtreeIdx, VtreeNode};
 use tididi::{and, Engine, OperationError, Tdd};
 
 // ── The case ────────────────────────────────────────────────────────────────
@@ -275,7 +275,7 @@ fn step(name: &'static str) {
 fn check_case(case: &Case) {
     /// One claim of the battery, by the name a failure report gives it.
     type Claim = (&'static str, fn(&Case));
-    let claims: [Claim; 18] = [
+    let claims: [Claim; 17] = [
         ("count against enumeration", count_matches_enumeration),
         ("operation orders agree", orders_agree),
         ("operations against enumeration", operations_match_enumeration),
@@ -287,7 +287,6 @@ fn check_case(case: &Case) {
         ("streaming marginalization against enumeration", streaming_marginalization_matches_enumeration),
         ("weighted composition against enumeration", weighted_composition_matches_enumeration),
         ("a tight budget refuses", a_tight_budget_refuses_rather_than_panics),
-        ("marginal products against enumeration", marginal_products_match_enumeration),
         ("a marginalized child against the two-step diagram", a_marginalized_child_is_the_two_step_diagram),
         ("projections against enumeration", projections_match_enumeration),
         ("marginal evaluations against enumeration", marginal_evaluations_match_enumeration),
@@ -519,12 +518,13 @@ fn sums_match_enumeration(case: &Case) {
     for d in [&mut f, &mut g] {
         eng.marginalize(d, under(&case.vtree, &targets)).expect("an unarmed engine refuses nothing");
     }
+    // On two projections of a home a region is refused, and operands that
+    // record no summed-out variable add as a disjunction.
+    let apart = !Arc::ptr_eq(f.vtree(), g.vtree());
     let sum = match eng.add(f, g) {
         Ok(sum) => sum,
-        // A summed-out level inside an operand that would move to a larger
-        // projection of the home is refused.
-        Err(OperationError::MarginalLevel(_)) => return,
-        Err(e) => panic!("an unarmed engine refuses nothing: {e}"),
+        Err(OperationError::MarginalLevel(_) | OperationError::SharedModel) if apart => return,
+        Err(e) => panic!("a sum with levels summed out: {e}"),
     };
     assert_canonical(&sum);
     let hidden = targets.iter().fold(0u32, |m, &t| m | vars_under(&case.vtree, t));
@@ -1101,6 +1101,10 @@ impl ColumnAlgebra for Counts {
     fn count(&self, _: VtreeIdx, slot: usize, n: &BigUint, col: &mut Vec<u128>) -> bool {
         u128::try_from(n).map(|n| col[slot] = n).is_ok()
     }
+    fn free(&self, _: VtreeIdx, free: &FreeVars<'_>, col: &mut Vec<u128>) -> bool {
+        col.iter_mut().for_each(|c| *c <<= free.len());
+        true
+    }
 }
 
 /// Evaluate by values and by columns: the compiled diagram, the values at the
@@ -1110,7 +1114,6 @@ impl ColumnAlgebra for Counts {
 /// every level takes.
 fn marginal_evaluations_match_enumeration(case: &Case) {
     let count = u128::from(brute_force_count(case.num_vars, &case.clauses));
-    let vtree = &case.vtree;
     let eng = Engine::new();
     let f = compile(case);
     step("evaluation of the compiled diagram");
@@ -1118,16 +1121,22 @@ fn marginal_evaluations_match_enumeration(case: &Case) {
     assert_eq!(f.evaluate_columns(&Counts).unwrap(), count, "evaluation by columns");
 
     let out = f.output();
-    if !f.is_zero() && !vtree.node(out.vtree).is_leaf() {
+    let own = f.vtree();
+    if !f.is_zero() && !f.is_one() && !own.node(out.vtree).is_leaf() {
         step("evaluation at the output's children");
-        let (left, right) = vtree.children(out.vtree);
+        let (left, right) = own.children(out.vtree);
+        // The children's values cover the home variables under their home
+        // nodes; the others are free.
+        let home = f.home();
+        let covered = [left, right].map(|c| home.rank_range(own.home_node(c)).len()).iter().sum::<usize>();
+        let free = 1u128 << (case.num_vars as usize - covered);
         let (lv, rv) = (f.evaluate_at(left, &Count).unwrap(), f.evaluate_at(right, &Count).unwrap());
         let (lc, rc) = (f.evaluate_columns_at(left, &Counts).unwrap(), f.evaluate_columns_at(right, &Counts).unwrap());
         let pairs = || f.level(out.vtree).pairs_iter_of_idx(out.local.idx());
         let by_values: u128 = pairs().map(|p| lv[p.left.raw() as usize] * rv[p.right.raw() as usize]).sum();
         let by_columns: u128 = pairs().map(|p| lc[p.left.raw() as usize] * rc[p.right.raw() as usize]).sum();
-        assert_eq!(by_values, count, "values at the output's children");
-        assert_eq!(by_columns, count, "columns at the output's children");
+        assert_eq!(by_values * free, count, "values at the output's children");
+        assert_eq!(by_columns * free, count, "columns at the output's children");
     }
 
     let targets = draw_marginal_targets(case);
@@ -1186,7 +1195,7 @@ fn level_counts_match_enumeration(case: &Case) {
     assert_canonical(&back);
     // The false diagram and one without an internal level have no counts to
     // write, and these counts all fit the format's 128 bits.
-    if !f.is_zero() && !case.vtree.node(case.vtree.root()).is_leaf() {
+    if !f.is_zero() && f.vtree().num_nodes() > 1 {
         assert!(back.has_level_counts(), "the counts were carried");
     }
     assert_eq!(back.model_count().unwrap(), head_count, "a count read back");
@@ -1219,7 +1228,7 @@ fn mirrored(vtree: &Vtree, t: VtreeIdx, rng: &mut Lcg) -> Vtree {
 fn mirrored_placements_match_enumeration(case: &Case) {
     let n = case.num_vars;
     let mut rng = Lcg::new(case.seed ^ 0x3177_0e5d);
-    let mirror = Arc::new(mirrored(&case.vtree, case.vtree.root(), &mut rng));
+    let mirror = Arc::clone(&Home::new(mirrored(&case.vtree, case.vtree.root(), &mut rng)));
     let mut moved = compile(case);
     let tf = diagram_truth(&moved, n);
 
@@ -1306,7 +1315,6 @@ fn conditioning_leaves_no_node_computing_false() {
 /// builder panics on the same input shape. Conjoining such a clause into an
 /// accumulator therefore loses models silently.
 #[test]
-#[ignore = "on a home: evaluate refuses a home variable outside the projection, restructure_to a plain mirror refuses a projection"]
 fn a_clause_naming_one_variable_twice_is_the_clause_it_spells() {
     let vtree = Home::new(Vtree::balanced(3));
     let count = |clause: &[i32]| Tdd::clause(&vtree, clause).unwrap().model_count().unwrap();
@@ -1321,58 +1329,6 @@ fn a_clause_naming_one_variable_twice_is_the_clause_it_spells() {
         vec![vec![3, -4], vec![4, -3], vec![-4], vec![3, 2, 1], vec![-4, -3], vec![4, -4]],
         "vtree 7\nL 0 2\nL 1 1\nL 2 3\nL 3 4\nI 4 0 1\nI 5 2 4\nI 6 3 5\n",
     ));
-}
-
-/// Two halves of the clauses, each with one drawn scope summed out: their
-/// product over the variables left, each half's count taken over the scope on
-/// its own, is what enumeration gives, and so is either half's square.
-fn marginal_products_match_enumeration(case: &Case) {
-    let split = case.clauses.len() / 2;
-    let targets = draw_marginal_targets(case);
-    let eng = Engine::new();
-    let vtree = &case.vtree;
-    let summed_out = |var: u32| {
-        let mut t = vtree.leaf_of(VarId(var)).expect("a variable of the case");
-        loop {
-            if targets.contains(&t) {
-                return true;
-            }
-            match vtree.node(t).parent() {
-                Some(p) => t = p,
-                None => return false,
-            }
-        }
-    };
-    let kept: u64 = (1..=case.num_vars).filter(|&v| !summed_out(v)).map(|v| 1u64 << (v - 1)).sum();
-    let mut halves = Vec::new();
-    for clauses in [&case.clauses[..split], &case.clauses[split..]] {
-        let mut f = compile_clauses(&case.vtree, clauses);
-        if !f.is_zero() && !targets.is_empty() {
-            eng.marginalize(&mut f, under(&case.vtree, &targets)).unwrap();
-            assert_canonical_after_minimize(&f);
-        }
-        let mut m = vec![0u64; 1 << case.num_vars];
-        for (a, sat) in truth_table(case.num_vars, clauses).into_iter().enumerate() {
-            m[a & kept as usize] += u64::from(sat);
-        }
-        halves.push((f, m));
-    }
-    let want = |a: &[u64], b: &[u64]| -> BigUint {
-        (0..1u64 << case.num_vars).filter(|x| x & !kept == 0).map(|x| BigUint::from(a[x as usize]) * b[x as usize]).sum()
-    };
-    let ((f, mf), (g, mg)) = (&halves[0], &halves[1]);
-    // On a home a summed-out variable outside both projections reads as
-    // free, and a summed-out level of one operand where the other depends
-    // on its variables is refused.
-    let free = (1..=case.num_vars).any(|v| summed_out(v) && [f, g].iter().all(|d| d.vtree().leaf_of(VarId(v)).is_none()));
-    let product = match eng.marginal_product_count(f, g) {
-        Err(OperationError::MarginalLevel(_)) => return,
-        _ if free => return,
-        product => product.unwrap(),
-    };
-    assert_eq!(product, want(mf, mg), "the product of the halves");
-    assert_eq!(eng.marginal_product_count(f, f).unwrap(), want(mf, mf), "the first half squared");
-    assert_eq!(eng.marginal_product_count(g, &g.clone()).unwrap(), want(mg, mg), "the second half squared");
 }
 
 /// A pair side named without the numbering of nodes and value slots: a leaf
@@ -1458,15 +1414,10 @@ fn named_levels(f: &Tdd) -> (Option<(VtreeIdx, Named)>, Vec<NamedLevel>) {
 fn a_marginalized_child_is_the_two_step_diagram(case: &Case) {
     let split = case.clauses.len() / 2;
     let (f, g) = compile_split(case, split);
-    // The walk names levels of one vtree, so operands on two projections of
-    // the home are left out.
-    if !Arc::ptr_eq(f.vtree(), g.vtree()) {
-        return;
-    }
-    let vtree = &Arc::clone(f.vtree());
+    let vtree = &case.vtree;
     let count = BigUint::from(brute_force_count(case.num_vars, &case.clauses));
     let routes = [SparseRoute::DEFAULT, SparseRoute::new(1, 1)];
-    let one = |d: &Tdd, t: VtreeIdx| !d.is_zero() && d.level(t).nodes().len() == 1;
+    let one = |d: &Tdd, t: VtreeIdx| !d.is_zero() && d.vtree().node_at_home(t).is_some_and(|own| d.level(own).nodes().len() == 1);
     let below = vtree.bottomup().rfind(|&t| t != vtree.root() && !vtree.node(t).is_leaf() && one(&f, t) && one(&g, t));
     let children = [Some(vtree.root()), below].into_iter().flatten().filter_map(|t| match *vtree.node(t) {
         VtreeNode::Internal { left, right, .. } => Some([left, right]),
@@ -1560,7 +1511,6 @@ fn streaming_and_standalone_marginalization_preserve_overflow_values() {
 }
 
 #[test]
-#[ignore = "on a home: evaluate refuses a home variable outside the projection, restructure_to a plain mirror refuses a projection"]
 fn streaming_weighted_leaf_fusion_respects_arithmetic_and_pinned_columns() {
     check_case(&Case::literal(
         20260917,
@@ -1571,7 +1521,6 @@ fn streaming_weighted_leaf_fusion_respects_arithmetic_and_pinned_columns() {
 }
 
 #[test]
-#[ignore = "on a home: evaluate refuses a home variable outside the projection, restructure_to a plain mirror refuses a projection"]
 fn streaming_marginal_values_sign_identically_over_summed_out_storage() {
     check_case(&Case::literal(
         20260955,

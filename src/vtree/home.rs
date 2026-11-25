@@ -1002,7 +1002,7 @@ impl Vtree {
             (Some(la), Some(lb)) => (la, lb),
         };
         if !la.regions.is_empty() || !lb.regions.is_empty() {
-            return Self::region_leaf_sets(la, lb);
+            return Self::region_leaf_sets((a, la), (b, lb), false);
         }
         if Arc::ptr_eq(a, b) {
             return Ok(LeafSets::Equal(SameLayout::new(a, b)));
@@ -1331,14 +1331,42 @@ impl Vtree {
         })
     }
 
+    /// [`Vtree::leaf_sets`], except that a region of `a` with the anchor and
+    /// extent of a region of `b` is one region of both: operands that summed
+    /// out the same variables there.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Vtree::leaf_sets`], but for the regions both have.
+    pub(crate) fn leaf_sets_sharing(a: &Arc<Vtree>, b: &Arc<Vtree>) -> Result<LeafSets, OperationError> {
+        match (a.home.as_ref(), b.home.as_ref()) {
+            (Some(la), Some(lb)) if !la.regions.is_empty() && !lb.regions.is_empty() => {
+                Self::refuse_other_home(a, b)?;
+                Self::region_leaf_sets((a, la), (b, lb), true)
+            }
+            _ => Self::leaf_sets(a, b),
+        }
+    }
+
     /// [`Vtree::leaf_sets`] of two projections of one home, one with a
-    /// region. With no overlap, the operands share only variable leaves.
+    /// region; with `shared`, [`Vtree::leaf_sets_sharing`]. With no overlap
+    /// but the shared regions, the operands share only variable leaves.
     #[cold]
-    fn region_leaf_sets(la: &HomeLink, lb: &HomeLink) -> Result<LeafSets, OperationError> {
+    fn region_leaf_sets((a, la): (&Arc<Vtree>, &HomeLink), (b, lb): (&Arc<Vtree>, &HomeLink), shared: bool) -> Result<LeafSets, OperationError> {
+        let anchor = |link: &HomeLink, region: &Region| link.ranks()[region.at as usize];
+        let in_other = |link: &HomeLink, other: &HomeLink, region: &Region| {
+            shared && other.regions.iter().any(|r| r.extent == region.extent && anchor(other, r) == anchor(link, region))
+        };
         let mut intervals = Vec::new();
-        for (link, other) in [(la, lb), (lb, la)] {
+        for (link, other, first) in [(la, lb, true), (lb, la, false)] {
             for region in &link.regions {
                 let node = link.region_node(region);
+                if in_other(link, other, region) {
+                    if first {
+                        intervals.extend(region.extent.iter().map(|&(lo, hi)| (lo, hi, node)));
+                    }
+                    continue;
+                }
                 for &(lo, hi) in &region.extent {
                     let j = other.ranks().partition_point(|&r| r < lo);
                     if other.ranks().get(j).is_some_and(|&r| r < hi) {
@@ -1362,16 +1390,17 @@ impl Vtree {
         union.sort_unstable();
         union.dedup();
         match (union.len() > lb.k(), union.len() > la.k()) {
-            (false, false) => unreachable!("an operand with a region has a position the other lacks"),
+            (false, false) => return Ok(LeafSets::Equal(SameLayout::new(a, b))),
             (false, true) => return Ok(LeafSets::AInB),
             (true, false) => return Ok(LeafSets::BInA),
             (true, true) => {}
         }
-        let mut regions: Vec<Region> = [la, lb]
+        let mut regions: Vec<Region> = [(la, lb), (lb, la)]
             .iter()
-            .flat_map(|link| {
-                link.regions.iter().map(|region| {
-                    let at = union.binary_search(&link.ranks()[region.at as usize]).expect("a position of an operand") as u32;
+            .enumerate()
+            .flat_map(|(i, &(link, other))| {
+                link.regions.iter().filter(move |region| i == 0 || !in_other(link, other, region)).map(|region| {
+                    let at = union.binary_search(&anchor(link, region)).expect("a position of an operand") as u32;
                     Region { at, ..region.clone() }
                 })
             })

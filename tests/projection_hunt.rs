@@ -207,7 +207,6 @@ fn binary(log: &mut Log, eng: &Engine, n: u32, f: &Tdd, g: &Tdd, h: &Tdd, rng: &
     log.tdd(n, "and_in_place_loose", || eng.and_in_place_loose(f.clone(), g), &and);
     log.tdd(n, "and_indexed", || eng.and_indexed(f, g, &eng.pair_index(g)?), &and);
     log.value("and_model_count", || eng.and_model_count(f.clone(), g.clone(), |_| false), popcount(&and));
-    log.value("marginal_product_count", || eng.marginal_product_count(f, g), popcount(&and));
     log.tdd(n, "and_marginalizing_where", || eng.and_marginalizing_where(f, g, |_| false), &and);
     let home = HOME.with_borrow(Clone::clone).expect("the case names its home");
     let targets: Vec<VtreeIdx> = f.vtree().bottomup().filter(|_| rng.coin()).collect();

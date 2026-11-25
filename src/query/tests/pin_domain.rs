@@ -154,6 +154,37 @@ fn summed_out_pin_variables_are_refused_without_losing_pending_pins() {
     for_both_retentions(marginal_pins);
 }
 
+/// [`marginal_pins`] on a home: a variable of a summed-out region is refused
+/// naming the region, as a summed-out level is on a root.
+fn region_pins(retention: Retention) {
+    let eng = Engine::new();
+    let home = crate::vtree::Home::new(Vtree::balanced(4));
+    let mut f = Tdd::clause(&home, [1, 2, 3]).unwrap();
+    eng.marginalize(&mut f, |v| v.0 <= 2).unwrap();
+    f.minimize().unwrap();
+    let region = f.vtree().own_at(home.children(home.root()).0).unwrap();
+    assert!(f.vtree().node(region).is_region());
+    for semantics in [PinSemantics::Evidence, PinSemantics::Cofactor] {
+        let mut counter = eng.counter_with(&f, retention, semantics).unwrap();
+        assert_eq!(counter.model_count().unwrap(), 14u32.into());
+        counter.set_pin(VarId(3), Some(false)).unwrap();
+        for pin in [None, Some(false), Some(true)] {
+            assert_eq!(counter.set_pin(VarId(1), pin), Err(OperationError::MarginalLevel(region)));
+            assert_eq!(counter.set_pins(&[(VarId(3), Some(true)), (VarId(2), pin)]), Err(OperationError::MarginalLevel(region)));
+        }
+        assert_eq!(counter.observe([3, 1]), Err(OperationError::MarginalLevel(region)));
+        let expected = if semantics == PinSemantics::Evidence { 6u32 } else { 12u32 };
+        assert_eq!(counter.model_count().unwrap(), expected.into());
+        counter.clear_pins();
+        assert_eq!(counter.model_count().unwrap(), 14u32.into());
+    }
+}
+
+#[test]
+fn region_pin_variables_are_refused_naming_the_region() {
+    for_both_retentions(region_pins);
+}
+
 #[test]
 fn sparse_pin_storage_fits_a_budget_independent_of_variable_ids() {
     let eng = Engine::new();

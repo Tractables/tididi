@@ -45,7 +45,6 @@ place; [`Tdd`](crate::Tdd) explains when to clone.
 | What is one complete solution? | [`Tdd::satisfying_assignment`](crate::Tdd::satisfying_assignment) |
 | How many assignments satisfy the function? | [`Tdd::model_count`](crate::Tdd::model_count) |
 | How many satisfy a conjunction, without building it? | [`Engine::and_model_count`](crate::Engine::and_model_count) |
-| What is the sum of two marginalized diagrams' products of counts? | [`Engine::marginal_product_count`](crate::Engine::marginal_product_count) |
 | How many distinct choices are possible for selected variables? | [`Tdd::projected_model_count`](crate::Tdd::projected_model_count) |
 | Which assignments of one subtree have at least `m` distinct extensions in its sibling? | [`Engine::at_least_distinct`](crate::Engine::at_least_distinct) |
 | Which choices are forced? | [`Tdd::implied_literals`](crate::Tdd::implied_literals) |
