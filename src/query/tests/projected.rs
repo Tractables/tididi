@@ -7,12 +7,12 @@ use crate::test_helpers::{assert_canonical, stopping_engine};
 fn projected_counts_match_all_three_variable_truth_tables() {
     let vars = [VarId(20), VarId(3), VarId(9)];
     for vtree in [Vtree::balanced_over(&vars).unwrap(), Vtree::linear_from_order(&vars).unwrap()] {
-        let vtree = Arc::new(vtree);
+        let vtree = crate::vtree::Home::new(vtree);
         for bits in 0..256u16 {
-            let mut f = Tdd::zero(&crate::vtree::Home::unchecked(&vtree));
+            let mut f = Tdd::zero(&vtree);
             for row in 0..8 {
                 if bits & (1 << row) != 0 {
-                    let cube = Tdd::cube(&crate::vtree::Home::unchecked(&vtree), vars.iter().enumerate().map(|(i, &var)| {
+                    let cube = Tdd::cube(&vtree, vars.iter().enumerate().map(|(i, &var)| {
                         Literal::new(var, row & (1 << i) != 0)
                     })).unwrap();
                     assert_canonical(&cube);

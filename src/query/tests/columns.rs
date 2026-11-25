@@ -1,6 +1,5 @@
 //! `Tdd::model_columns` against the models read off a truth table.
 
-use crate::test_helpers::bare_roots;
 use std::collections::BTreeSet;
 
 use super::*;
@@ -96,7 +95,7 @@ fn read_in_random_batches(
 fn columns_match_projected_truth_tables_on_every_shape() {
     let mut rng = Lcg::new(7);
     for num_vars in [1u32, 2, 3, 5, 7, 9] {
-        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
+        for (shape, vtree) in vtree_shapes(num_vars) {
             for round in 0..12 {
                 let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 5, width: 3 });
                 let f = compile_clauses(&vtree, &clauses);
@@ -167,18 +166,18 @@ fn a_listed_block_left_free_yields_every_code() {
 
 #[test]
 fn constants_and_degenerate_tables() {
-    let vtree = Arc::new(Vtree::balanced(3));
-    let mut zero = Tdd::zero(&crate::vtree::Home::unchecked(&vtree)).model_columns(&[&[VarId(1)]]).unwrap();
+    let vtree = crate::vtree::Home::new(Vtree::balanced(3));
+    let mut zero = Tdd::zero(&vtree).model_columns(&[&[VarId(1)]]).unwrap();
     assert_eq!(zero.rows(), 0);
     assert_eq!(zero.to_columns(), vec![Vec::<u32>::new()]);
-    let mut one = Tdd::one(&crate::vtree::Home::unchecked(&vtree)).model_columns(&[]).unwrap();
+    let mut one = Tdd::one(&vtree).model_columns(&[]).unwrap();
     assert_eq!((one.rows(), one.width()), (1, 0));
     assert!(one.to_columns().is_empty());
-    let mut one = Tdd::one(&crate::vtree::Home::unchecked(&vtree)).model_columns(&[&[], &[VarId(2)]]).unwrap();
+    let mut one = Tdd::one(&vtree).model_columns(&[&[], &[VarId(2)]]).unwrap();
     assert_eq!(one.to_columns(), vec![vec![0, 0], vec![0, 1]]);
     // A one-variable vtree: the output is a leaf node.
-    let leaf = Arc::new(Vtree::leaf(VarId(5)));
-    for (f, want) in [(Tdd::one(&crate::vtree::Home::unchecked(&leaf)), vec![0, 1]), (crate::literal(&crate::vtree::Home::unchecked(&leaf), -5).unwrap(), vec![0])] {
+    let leaf = crate::vtree::Home::new(Vtree::leaf(VarId(5)));
+    for (f, want) in [(Tdd::one(&leaf), vec![0, 1]), (crate::literal(&leaf, -5).unwrap(), vec![0])] {
         assert_eq!(f.model_columns(&[&[VarId(5)]]).unwrap().to_columns(), vec![want]);
     }
 }
@@ -394,7 +393,7 @@ fn ranges_in_any_order_match_the_whole_table() {
     // falls back to a search when it starts before that point.
     let mut rng = Lcg::new(53);
     for num_vars in [5u32, 7, 9] {
-        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
+        for (shape, vtree) in vtree_shapes(num_vars) {
             for round in 0..6 {
                 let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 4, width: 3 });
                 let f = compile_clauses(&vtree, &clauses);

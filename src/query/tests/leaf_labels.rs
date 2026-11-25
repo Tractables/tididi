@@ -7,13 +7,13 @@ use crate::OperationError;
 
 fn random_cnf_diagram(
     eng: &Engine,
-    tree: &Arc<Vtree>,
+    tree: &crate::vtree::Home,
     vars: &[VarId],
     seed: &mut u64,
     num_clauses: usize,
     modulus: u64,
 ) -> Tdd {
-    let mut f = Tdd::one(&crate::vtree::Home::unchecked(tree));
+    let mut f = Tdd::one(tree);
     for _ in 0..num_clauses {
         let clause: Vec<Literal> = vars
             .iter()
@@ -29,7 +29,7 @@ fn random_cnf_diagram(
             })
             .collect();
         if !clause.is_empty() {
-            f = eng.and(f, eng.clause(&crate::vtree::Home::unchecked(tree), clause).unwrap()).unwrap();
+            f = eng.and(f, eng.clause(tree, clause).unwrap()).unwrap();
         }
     }
     f.minimize().unwrap();
@@ -41,12 +41,12 @@ fn support_and_backbone_match_sparse_id_truth_tables() {
     let eng = Engine::new();
     let vars = [VarId(20), VarId(3), VarId(9)];
     for tree in [Vtree::balanced_over(&vars).unwrap(), Vtree::linear_from_order(&vars).unwrap()] {
-        let tree = Arc::new(tree);
+        let tree = crate::vtree::Home::new(tree);
         for bits in 0..256u16 {
-            let mut f = Tdd::one(&crate::vtree::Home::unchecked(&tree));
+            let mut f = Tdd::one(&tree);
             for row in 0..8 {
                 if bits & (1 << row) == 0 {
-                    let clause = eng.clause(&crate::vtree::Home::unchecked(&tree), vars.iter().enumerate().map(|(i, &var)| {
+                    let clause = eng.clause(&tree, vars.iter().enumerate().map(|(i, &var)| {
                         Literal::new(var, row & (1 << i) == 0)
                     })).unwrap();
                     f = eng.and(f, clause).unwrap();
