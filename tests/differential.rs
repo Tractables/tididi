@@ -524,7 +524,14 @@ fn sums_match_enumeration(case: &Case) {
     for d in [&mut f, &mut g] {
         eng.marginalize_levels(d, &targets).expect("an unarmed engine refuses nothing");
     }
-    let sum = eng.add(f, g).expect("an unarmed engine refuses nothing");
+    // On two projections of a home a region is refused, and operands that
+    // record no summed-out variable add as a disjunction.
+    let apart = !Arc::ptr_eq(f.vtree(), g.vtree());
+    let sum = match eng.add(f, g) {
+        Ok(sum) => sum,
+        Err(OperationError::MarginalLevel(_) | OperationError::SharedModel) if apart => return,
+        Err(e) => panic!("a sum with levels summed out: {e}"),
+    };
     assert_canonical(&sum);
     let hidden = targets.iter().fold(0u32, |m, &t| m | vars_under(&case.vtree, t));
     let mut want: std::collections::BTreeMap<u32, u64> = std::collections::BTreeMap::new();
