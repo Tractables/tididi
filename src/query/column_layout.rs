@@ -1,7 +1,11 @@
 //! Validation and bit positions shared by column queries.
 
+use std::borrow::Cow;
+
+use crate::diagram::Tdd;
 use crate::limits::OperationError;
 use crate::vtree::{VarId, Vtree};
+use crate::Engine;
 
 use super::columns::MAX_COLUMN_BITS;
 
@@ -25,4 +29,23 @@ pub(super) fn roles(vtree: &Vtree, columns: &[&[VarId]]) -> Result<Vec<Option<(u
         }
     }
     Ok(role)
+}
+
+/// `tdd` on a vtree holding every variable `columns` lists that its home
+/// has: as it is when its own vtree holds them, otherwise placed on the
+/// union of its projection with those variables. The function depends on no
+/// variable its projection dropped, so each comes out free.
+pub(super) fn with_listed<'a>(eng: &Engine, tdd: &'a Tdd, columns: &[&[VarId]]) -> Result<Cow<'a, Tdd>, OperationError> {
+    let vtree = tdd.vtree();
+    let Some(home) = vtree.link_home() else { return Ok(Cow::Borrowed(tdd)) };
+    let dropped: Vec<VarId> = columns
+        .iter()
+        .flat_map(|vars| vars.iter().copied())
+        .filter(|&v| vtree.leaf_of(v).is_none() && home.rank(v).is_some())
+        .collect();
+    if dropped.is_empty() {
+        return Ok(Cow::Borrowed(tdd));
+    }
+    let listed = Vtree::projection(home, dropped).expect("variables of the home");
+    crate::apply::extend::onto(eng, tdd, &Vtree::union(vtree, &listed)?)
 }
