@@ -1,5 +1,4 @@
 use crate::vtree::Home;
-use std::sync::Arc;
 
 /// A bottom-up construction of the same diagrams, which the root-down one is
 /// checked against.
@@ -37,7 +36,7 @@ fn shuffled_vars(rng: &mut Lcg, n: u32) -> Vec<VarId> {
 /// Sweep `0..cuts` reservation refusal points and verify that every refused
 /// call returns `OverBudget` and returns its level buffer to the pool.
 fn assert_refusal_sweep_returns_buffers(
-    vtree: &Arc<Vtree>,
+    vtree: &crate::vtree::Home,
     build: impl Fn(&Engine) -> Result<Tdd, OperationError>,
     check_ok: impl Fn(&Tdd, u32),
 ) {
@@ -91,15 +90,15 @@ fn blocking_clauses(table: &[Vec<bool>], width: u32) -> Vec<Vec<i32>> {
 /// The rows of `table` as a function of `constrained`, built as a disjunction
 /// of one cube per row. Row-driven rather than truth-table driven, so a
 /// relation over seventy variables is as cheap as its row count.
-fn table_function(vtree: &Arc<Vtree>, constrained: &[VarId], table: &[Vec<bool>]) -> Tdd {
-    let mut f = Tdd::zero(&crate::vtree::Home::unchecked(vtree));
+fn table_function(vtree: &crate::vtree::Home, constrained: &[VarId], table: &[Vec<bool>]) -> Tdd {
+    let mut f = Tdd::zero(vtree);
     for bits in table {
         let cube: Vec<i32> = bits
             .iter()
             .zip(constrained)
             .map(|(&b, v)| if b { v.0 as i32 } else { -(v.0 as i32) })
             .collect();
-        f = crate::or(f, Tdd::cube(&crate::vtree::Home::unchecked(vtree), cube).unwrap()).unwrap();
+        f = crate::or(f, Tdd::cube(vtree, cube).unwrap()).unwrap();
     }
     f.minimize().unwrap();
     f

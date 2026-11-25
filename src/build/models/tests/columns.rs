@@ -1,5 +1,4 @@
 use crate::vtree::Home;
-use std::sync::Arc;
 
 use super::*;
 use crate::test_helpers::{Lcg, assert_canonical, assert_same_shape, vtree_shapes};
@@ -38,17 +37,17 @@ fn chosen(rows: RowSelection<'_>, len: usize) -> Vec<usize> {
 
 /// `from_columns` against `from_models` on the same rows packed by hand.
 fn check(
-    vtree: &Arc<Vtree>,
+    vtree: &crate::vtree::Home,
     columns: &[&[VarId]],
     codes: &[&[u32]],
     rows: RowSelection<'_>,
     what: &str,
 ) {
-    let got = Tdd::from_columns(&crate::vtree::Home::unchecked(vtree), columns, codes, rows).unwrap();
+    let got = Tdd::from_columns(vtree, columns, codes, rows).unwrap();
     assert_canonical(&got);
     let vars: Vec<VarId> = columns.iter().flat_map(|c| c.iter().copied()).collect();
     let len = codes.first().map_or(0, |c| c.len());
-    let want = Tdd::from_models(&crate::vtree::Home::unchecked(vtree), &vars, &packed(columns, codes, &chosen(rows, len))).unwrap();
+    let want = Tdd::from_models(vtree, &vars, &packed(columns, codes, &chosen(rows, len))).unwrap();
     assert!(got.equivalent(&want).unwrap(), "{what}");
     assert_same_shape(&got, &want, what);
 }
@@ -129,7 +128,7 @@ fn columns_in_leaf_order_shift_into_place_and_sorted_rows_are_only_checked() {
         Vtree::balanced_over(&order).unwrap(),
         Vtree::linear_from_order(&order).unwrap(),
     ] {
-        let vtree = Arc::new(vtree);
+        let vtree = crate::vtree::Home::new(vtree);
         let mut columns = Vec::new();
         let mut at = 0;
         for &w in &widths {

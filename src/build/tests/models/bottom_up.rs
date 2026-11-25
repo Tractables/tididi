@@ -4,7 +4,6 @@
 
 use crate::vtree::Home;
 use std::hash::Hasher;
-use std::sync::Arc;
 
 use rustc_hash::{FxHashMap, FxHasher};
 
@@ -22,7 +21,7 @@ use super::super::rows::{distinct_rows, row_at, words_per_row};
 /// The diagram [`Tdd::from_models`] returns, built bottom-up.
 pub(super) fn from_models_bottom_up(
     eng: &Engine,
-    vtree: &Arc<Vtree>,
+    vtree: &crate::vtree::Home,
     vars: &[VarId],
     rows: &[u64],
 ) -> Result<Tdd, OperationError> {
@@ -217,7 +216,7 @@ fn subtree_lo(vtree: &Vtree, layout: &Layout) -> Vec<u32> {
 fn fill(
     eng: &Engine,
     assembly: &mut Assembly<'_>,
-    vtree: &Arc<Vtree>,
+    vtree: &crate::vtree::Home,
     layout: &Layout,
     sorted: &[u64],
     w: usize,
@@ -446,7 +445,7 @@ fn one_sided_child(vtree: &Vtree, layout: &Layout, t: VtreeIdx) -> Option<VtreeI
 fn free_subtree(
     eng: &Engine,
     assembly: &mut Assembly<'_>,
-    vtree: &Arc<Vtree>,
+    vtree: &crate::vtree::Home,
     state: &[Option<Finished>],
     t: VtreeIdx,
     leaf: bool,
@@ -484,7 +483,7 @@ fn below(state: &[Option<Finished>], t: VtreeIdx) -> &Finished {
 fn carry_child(
     eng: &Engine,
     assembly: &mut Assembly<'_>,
-    vtree: &Arc<Vtree>,
+    vtree: &crate::vtree::Home,
     state: &mut [Option<Finished>],
     t: VtreeIdx,
     constrained: VtreeIdx,
@@ -723,7 +722,7 @@ fn same_completions(
 fn store_level(
     eng: &Engine,
     assembly: &mut Assembly<'_>,
-    vtree: &Arc<Vtree>,
+    vtree: &crate::vtree::Home,
     state: &[Option<Finished>],
     scratch: &mut Scratch,
     (t, atoms): (VtreeIdx, Atoms),
@@ -897,9 +896,9 @@ fn rows_for(k: usize, m: usize, style: u64, rng: &mut Lcg) -> Vec<u64> {
 }
 
 /// Build `rows` both ways and compare the storage.
-fn check(vtree: &Arc<Vtree>, vars: &[VarId], rows: &[u64], what: &str) {
+fn check(vtree: &crate::vtree::Home, vars: &[VarId], rows: &[u64], what: &str) {
     let eng = Engine::new();
-    let root_down = eng.from_models(&crate::vtree::Home::unchecked(vtree), vars, rows).unwrap();
+    let root_down = eng.from_models(vtree, vars, rows).unwrap();
     let bottom_up = from_models_bottom_up(&eng, vtree, vars, rows).unwrap();
     assert_canonical(&root_down);
     super::assert_same_levels(&root_down, &bottom_up, what);
