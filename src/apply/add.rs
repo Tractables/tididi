@@ -64,6 +64,15 @@ use super::overlay::{ABSENT, LevelOverlay, Overlay, Pieces, Scratch, leaf_index,
 /// and the sum is their disjunction, [`or`](crate::or). A false operand
 /// returns the other, whatever its levels.
 ///
+/// On projections of one home ([`Vtree::home`](crate::Vtree::home)) an
+/// operand records only the variables [`Tdd::marginalize`] summed out on its
+/// own projection, as regions; a summed-out variable its projection lacks
+/// stays free. Operands with a region are added only on one vtree: on two
+/// projections a region is refused, even where both operands summed out the
+/// same variables, and operands of which neither records a summed-out
+/// variable are added as a disjunction. Operands with no common model can
+/// be added before the sum-out, and the sum summed out.
+///
 /// Uses the shared vtree's execution context automatically.
 ///
 /// Both operands are consumed on success and on error. The result has the
@@ -109,8 +118,9 @@ use super::overlay::{ABSENT, LevelOverlay, Overlay, Pieces, Scratch, leaf_index,
 ///
 /// [`OperationError::VtreeMismatch`] for operands neither on one vtree nor on
 /// projections of one home; [`OperationError::MarginalLevel`] naming the lowest level that one
-/// operand has summed out and the other has not, or an internal summed-out
-/// level of an operand that would move to a larger projection;
+/// operand has summed out and the other has not, an internal summed-out
+/// level of an operand that would move to a larger projection, or a region
+/// of either operand on two projections;
 /// [`OperationError::SharedModel`] when neither operand has a summed-out
 /// level and they share a model, whose count of two only a summed-out level
 /// could hold; [`OperationError::IncompatibleWeights`] for a summed-out
