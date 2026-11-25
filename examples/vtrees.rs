@@ -5,14 +5,15 @@
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use std::sync::Arc;
+    use tididi::vtree::Home;
 
     use tididi::{literal, xor, OperationError, Tdd, Vtree};
     use tididi::vtree::VarId;
 
-    let grouped_vtree = Arc::new(Vtree::balanced_over(&[
+    let grouped_vtree = Home::new(Vtree::balanced_over(&[
         VarId(1), VarId(3), VarId(2), VarId(4),
     ])?);
-    let split_vtree = Arc::new(Vtree::balanced(4));
+    let split_vtree = Home::new(Vtree::balanced(4));
 
     fn equal_pairs(vtree: &Arc<Vtree>) -> Result<Tdd, OperationError> {
         let x1 = literal(vtree, 1)?;

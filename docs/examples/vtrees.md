@@ -21,14 +21,15 @@ does not rename them: `VarId(3)` still means `x3`.
 
 ```rust,ignore,{class=tested-example}
 use std::sync::Arc;
+use tididi::vtree::Home;
 
 use tididi::{literal, xor, OperationError, Tdd, Vtree};
 use tididi::vtree::VarId;
 
-let grouped_vtree = Arc::new(Vtree::balanced_over(&[
+let grouped_vtree = Home::new(Vtree::balanced_over(&[
     VarId(1), VarId(3), VarId(2), VarId(4),
 ])?);
-let split_vtree = Arc::new(Vtree::balanced(4));
+let split_vtree = Home::new(Vtree::balanced(4));
 ```
 
 ## Build the same formula on each vtree

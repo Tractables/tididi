@@ -19,14 +19,14 @@ alongside `tididi` in your own application.
 Variables 1 and 2 represent rain and the sprinkler; variable 3 represents wind.
 
 ```rust,ignore,{class=tested-example}
-use std::sync::Arc;
+use tididi::vtree::Home;
 
 use num_rational::BigRational;
 use num_traits::One;
 use tididi::diagram::{LiteralWeights, RationalWeights};
 use tididi::{literal, Vtree};
 
-let vtree = Arc::new(Vtree::balanced(3));
+let vtree = Home::new(Vtree::balanced(3));
 let rain = literal(&vtree, 1)?;
 let sprinkler = literal(&vtree, 2)?;
 let wet = rain.clone() | sprinkler;

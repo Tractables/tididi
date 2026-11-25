@@ -28,11 +28,12 @@ group for the next state:
 
 ```rust,ignore,{class=tested-example}
 use std::sync::Arc;
+use tididi::vtree::Home;
 
 use tididi::vtree::VarId;
 use tididi::{and_exists, Literal, OperationError, Tdd, Vtree};
 
-let vtree = Arc::new(Vtree::balanced(2 * NODES as u32));
+let vtree = Home::new(Vtree::balanced(2 * NODES as u32));
 let current_vars: Vec<_> = (1..=NODES as u32).map(VarId).collect();
 let next_vars: Vec<_> = (NODES as u32 + 1..=2 * NODES as u32).map(VarId).collect();
 ```
@@ -177,12 +178,12 @@ loop {
 Output:
 
 ```text
-Iteration 1: 3 states, 35 circuit nodes, 37 pairs
-Iteration 2: 6 states, 40 circuit nodes, 45 pairs
-Iteration 3: 8 states, 41 circuit nodes, 48 pairs
-Iteration 4: 10 states, 42 circuit nodes, 51 pairs
-Iteration 5: 11 states, 42 circuit nodes, 52 pairs
-Iteration 6: 11 states, 42 circuit nodes, 52 pairs
+Iteration 1: 3 states, 19 circuit nodes, 21 pairs
+Iteration 2: 6 states, 24 circuit nodes, 29 pairs
+Iteration 3: 8 states, 25 circuit nodes, 32 pairs
+Iteration 4: 10 states, 26 circuit nodes, 35 pairs
+Iteration 5: 11 states, 26 circuit nodes, 36 pairs
+Iteration 6: 11 states, 26 circuit nodes, 36 pairs
 Fixed point reached
 ```
 
@@ -194,8 +195,8 @@ next-state indicators.
 [`pair_count`](crate::Tdd::pair_count) counts their child pairs. These describe
 the circuit representing the reachable set, rather than the graph's nodes and edges.
 
-Iterations 5 and 6 have the same reachable set and circuit size: 42 nodes and
-52 pairs. The stopping condition remains equivalence; matching sizes alone
+Iterations 5 and 6 have the same reachable set and circuit size: 26 nodes and
+36 pairs. The stopping condition remains equivalence; matching sizes alone
 would not prove stability. `equivalent` compares functions, so its answer
 does not depend on whether its operands are minimized.
 

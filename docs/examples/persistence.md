@@ -16,12 +16,12 @@ Variables 1, 2, and 3 mean local backups, remote backups, and encryption.
 The rules are **local ∨ remote** and **¬remote ∨ encrypted**:
 
 ```rust,ignore,{class=tested-example}
-use std::sync::Arc;
+use tididi::vtree::Home;
 
 use tididi::{literal, Vtree};
 use tididi::io::{read_tdd, write_tdd};
 
-let vtree = Arc::new(Vtree::balanced(3));
+let vtree = Home::new(Vtree::balanced(3));
 let local = literal(&vtree, 1)?;
 let remote = literal(&vtree, 2)?;
 let encrypted = literal(&vtree, 3)?;
@@ -57,16 +57,16 @@ Save before marginalizing, and store any weights separately;
 
 ## Restore the vtree once
 
-Read the saved vtree into one `Arc`, then pass that same allocation to both
+Read the saved vtree into one `Home`, then pass that same home to both
 readers:
 
 ```rust,ignore,{class=tested-example}
-let restored_vtree = Arc::new(Vtree::from_text(&vtree_text)?);
+let restored_vtree = Home::new(Vtree::from_text(&vtree_text)?);
 let destination = read_tdd(&mut destination_bytes.as_slice(), &restored_vtree)?;
 let encryption_rule = read_tdd(&mut encryption_bytes.as_slice(), &restored_vtree)?;
 ```
 
-Both readers receive the same `Arc<Vtree>`, so their results can be combined.
+Both readers receive the same `Home`, so their results can be combined.
 Reading the vtree separately for each diagram would create incompatible allocations.
 
 ## Combine and check the result

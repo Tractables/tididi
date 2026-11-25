@@ -5,14 +5,14 @@
 //! Run with `cargo run --example probability`.
 
 fn main() -> Result<(), tididi::OperationError> {
-    use std::sync::Arc;
+    use tididi::vtree::Home;
 
     use num_rational::BigRational;
     use num_traits::One;
     use tididi::diagram::{LiteralWeights, RationalWeights};
     use tididi::{literal, Vtree};
 
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let rain = literal(&vtree, 1)?;
     let sprinkler = literal(&vtree, 2)?;
     let wet = rain.clone() | sprinkler;

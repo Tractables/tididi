@@ -24,12 +24,12 @@ Each column becomes a variable. Pack a row into a word with read in bit 0,
 write in bit 1 and share in bit 2; for example, `0b101` enables read and share.
 
 ```rust,ignore,{class=tested-example}
-use std::sync::Arc;
+use tididi::vtree::Home;
 
 use tididi::vtree::VarId;
 use tididi::{literal, Tdd, Vtree};
 
-let vtree = Arc::new(Vtree::balanced(3));
+let vtree = Home::new(Vtree::balanced(3));
 let vars = [VarId(1), VarId(2), VarId(3)];
 // Low to high bits: read, write, share.
 let rows = [0b001, 0b011, 0b101, 0b011];

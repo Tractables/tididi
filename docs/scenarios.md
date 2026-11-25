@@ -47,8 +47,8 @@ and freeing without changing their ownership rules.
 
 ### Instances
 
-- [Rust README](../README.md) <!-- reviewed: 5036c4ed6313b69e64ef44f22ab946744f3651c601952c2af08a26e3e437aebd -->
-- [Rust crate introduction](../src/lib.rs) <!-- reviewed: 9416cc0a2fb54414faa57205db1c7f16e2a210a770b46567322e4b9028c2d625 -->
+- [Rust README](../README.md) <!-- reviewed: dda5051d59abfa455418842b1976b5770169d70669bc15bdf82fec29b193348b -->
+- [Rust crate introduction](../src/lib.rs) <!-- reviewed: c8e476bc5fc7f127b3cecc5f99e728dcfea55debd2a63cf8c765d139f3185b73 -->
 - [Python README](../bindings/python/README.rst) <!-- reviewed: 3ea8cce1c65aac9e011830f0a1e51a780009f26d04c563b9ae32c4d4300a68e9 -->
 - [Python getting started](../bindings/python/docs/getting_started.rst) <!-- reviewed: ddd5e7b2357bf35a2ede868b429fd409ef8541bc9da20883e14ab8b3f99e11a7 -->
 - [C getting started](../bindings/c/docs/getting_started.rst) <!-- reviewed: bb58b033976cfacb2ff6a6eb7b0d6c036b10eccd99b02ba5a7dc5f54bb40b4c9 -->
@@ -132,8 +132,8 @@ explicit copy in Python/C. All queries have identical counts across languages.
 
 ### Instances
 
-- [Rust walkthrough](examples/counting.md) <!-- reviewed: 999394b92ee16c21e32bf257dc8acf745a10af41b36ba1fe6eb9f61aae9b3191 -->
-- [Rust program](../examples/counting.rs) <!-- reviewed: bb1cf3ae7ed7e7982e1cb32090d196796737e81b378da3c1e6e53d086726687f -->
+- [Rust walkthrough](examples/counting.md) <!-- reviewed: e3e3f6723593099768f89df90b4e0590c730892732eb2270f2d6744479af0cb4 -->
+- [Rust program](../examples/counting.rs) <!-- reviewed: 86dcdfb29fcec9d6e25b983bbff2c3de8c0d7dd31c98b6073f3de637bf1c3968 -->
 - [Python lesson](../bindings/python/docs/counting.rst) <!-- reviewed: 240a243498376cfae2200bd33b3900fbba718b34db9917317dfee8f8d1b1ca0b -->
 - [C walkthrough](../bindings/c/docs/counting.rst) <!-- reviewed: 7c8e8e8daff3c97e986125d470a0efed7dd42464b01e5f21293555639ce1d0ac -->
 - [C program](../bindings/c/examples/counting.c) <!-- reviewed: 4f2d04d3f0373f4b26b264100f83ab71f183d579d5027b1ee81d9bff738038af -->
@@ -161,8 +161,8 @@ comparison to keep arithmetic and allocation details out of the narrative.
 
 ### Instances
 
-- [Rust walkthrough](examples/probability.md) <!-- reviewed: 1f7129f179cdfb395c3c7e06c422b6aedb495c6f8867b59ad31f2763a6a45fa8 -->
-- [Rust program](../examples/probability.rs) <!-- reviewed: d8e5ecbbb0908c05c2de3229b1bcf6c352346d7eee9089bd51826ae0127a8132 -->
+- [Rust walkthrough](examples/probability.md) <!-- reviewed: d4784b6b0ab8006614619f74fd4e32e57c48bd07c6fe9c61e90351116297220f -->
+- [Rust program](../examples/probability.rs) <!-- reviewed: bbdfeadd39c192e3adde6d2f555e36ff0834f2def5fbf9b3338a2f9c5abf6b8b -->
 - [Python walkthrough and program](../bindings/python/examples/02_probability.py) <!-- reviewed: 2cb09a4d22d3c587ca0055ee88a9b3d6b72bb5c5a8f049485a9c77d0a47e26a0 -->
 - [C probability](../bindings/c/docs/probability.rst) <!-- reviewed: 70407f3617cf030796406fe1a00da39d51e104f851b1401f59c6106075ab888c -->
 - [C program probability](../bindings/c/examples/probability.c) <!-- reviewed: b0fbc98b3e3f91980df886ed3e078f16ce313ac8d70c387c330ea3420adac282 -->
@@ -203,8 +203,8 @@ witness; the reachable-set semantics are unchanged.
 
 ### Instances
 
-- [Rust walkthrough](examples/reachability.md) <!-- reviewed: 35aace0f59ccc0f2c7de356f8fc98162097a4585abecc83e7bd6c5406c70cda7 -->
-- [Rust program](../examples/reachability.rs) <!-- reviewed: 907a0302cbadc794d8d9fe6743dfb4b824588552bd734da75cf39d3079f250ae -->
+- [Rust walkthrough](examples/reachability.md) <!-- reviewed: 2fd33324297606f656649274338b40c7cd0a31287e88c4ca137310d89ec5b58b -->
+- [Rust program](../examples/reachability.rs) <!-- reviewed: ca00b29c9b6f458c6d9090f9bc960790dcf3edb5a7b3018efa9324781172dbd6 -->
 - [Python walkthrough and program](../bindings/python/examples/03_reachability.py) <!-- reviewed: b2629b1916204112a4814714a701974b0969c5d75faa5a5bf9413fe9fc9daa2d -->
 - [Shared directed graph](reachability.svg) <!-- reviewed: 1ca4b73d89b0d1a06015d9bc9922b5dec95429ba70d2b3f64f246008741ac159 -->
 - [C reachability](../bindings/c/docs/reachability.rst) <!-- reviewed: 87064390b5ee82227931a0eb4a1df51d331d5ed32c011d8079f2ca8eda400775 -->
@@ -232,8 +232,8 @@ its update consumes the old circuit and returns a replacement.
 
 ### Instances
 
-- [Rust walkthrough](examples/tables.md) <!-- reviewed: d0597f1e3e07e618c4c1781ac70daab24b53d8b90098f7efbc19fe2f19f636ad -->
-- [Rust program](../examples/tables.rs) <!-- reviewed: 662a8c84723a5619bfe42102eeca0200204e591cdb9bca8db3ee7194add7e5ed -->
+- [Rust walkthrough](examples/tables.md) <!-- reviewed: a3390b9a59bb6a5348e1c4d2210ec83f0e4c622eb20b86bf8fdca167c11ed54e -->
+- [Rust program](../examples/tables.rs) <!-- reviewed: 99f20bf64524b51f2e7fc4fd8f9fbe4721031420a022b8c78be21e2d932c6f09 -->
 - [Python walkthrough and program](../bindings/python/examples/04_tables.py) <!-- reviewed: 3a358eef789da12a8173714649e12263c3d8a071704ff18ab4fbf065bb0ba9fb -->
 - [C tables](../bindings/c/docs/tables.rst) <!-- reviewed: 02649c6a1dc387ef940247df81b252c0d4d42cdb3ea006426fc6992ae0d21c68 -->
 - [C program tables](../bindings/c/examples/tables.c) <!-- reviewed: ad3db11e7216fe796f90ccdce18b3ca147fa5886e09297f572368918901d60f9 -->
@@ -258,8 +258,8 @@ equivalence and malformed input are checked separately by the C consumer tests.
 
 ### Instances
 
-- [Rust walkthrough](examples/persistence.md) <!-- reviewed: afbbd0f5ec692375a956a1d6e156781d2bd3453d154cfafcb5c43c3a70d049cf -->
-- [Rust program](../examples/persistence.rs) <!-- reviewed: 9e537db00bb3d80be8cb57b3d04f2e94012b4af5e6fcf19645cb75d94f772262 -->
+- [Rust walkthrough](examples/persistence.md) <!-- reviewed: 4b05fd512b7c06b272e18c96870965e6adf7f5b7a987a7f9d8b0dfc1a239fbf5 -->
+- [Rust program](../examples/persistence.rs) <!-- reviewed: 85ae38a2976381de6da135e291e23a0d0cfab24d03e6658ccadcb7bac73762e7 -->
 - [Python walkthrough and program](../bindings/python/examples/05_persistence.py) <!-- reviewed: fdfc429df95bf755e261e8e64ea77c1c8b1f33aff50b6c5f90565b88b15f49bc -->
 - [C persistence](../bindings/c/docs/persistence.rst) <!-- reviewed: 8e370a6820cbd48a418cb57a186c7bb4f37c2ae2587b1144c8c71c6e691ade28 -->
 - [C program persistence](../bindings/c/examples/persistence.c) <!-- reviewed: 1295f0d5d374a4b2b33742847c648ba5f7ba40d79f24ed694ddc05e6201d6eb1 -->
@@ -280,8 +280,8 @@ constructors without adding another construction to the introductory comparison.
 
 ### Instances
 
-- [Rust walkthrough](examples/vtrees.md) <!-- reviewed: 7ba9f6e0d6d4ae97fffd767619caa2cc10b0b9cb8baea88277ee6495b4bbb898 -->
-- [Rust program](../examples/vtrees.rs) <!-- reviewed: e229b28ec67bd124ddd7c544edf8ceb043b013db3b89eee73580f016e6c19531 -->
+- [Rust walkthrough](examples/vtrees.md) <!-- reviewed: 45a364b9253022b0c67bef041761d6a6dcb2b3dcaf778ce4c184b89321d4c8ef -->
+- [Rust program](../examples/vtrees.rs) <!-- reviewed: 65fdbeb03bdd084d9a560dca50520c83dbccf4b91bf7734ded878ea44d171a48 -->
 - [Python walkthrough and program](../bindings/python/examples/06_vtrees.py) <!-- reviewed: eb7e3d5cdcd211eee86994d058fa5e1ea745bc8dc15ade88141a5c963eb02113 -->
 - [Shared grouping figure](vtree-grouping.svg) <!-- reviewed: e9c0efa139f3728e27c1073aeef91573670de9ded84b519b2a2264f4d1a87e9c -->
 - [C vtrees](../bindings/c/docs/vtrees.rst) <!-- reviewed: ca64314bd76037516607c6dfdb4afae61e993b23963d52bb4ce77771431541f7 -->
@@ -308,8 +308,8 @@ operation failure rather than repeating the constructor-budget demonstration.
 
 ### Instances
 
-- [Rust walkthrough](examples/execution.md) <!-- reviewed: 85d3ba2701b9bb3aa7518c91b4e5d53254c21af5412f4457149a9ab9b838a503 -->
-- [Rust program](../examples/execution.rs) <!-- reviewed: fa7d43d4cd84aa0f0a1e797dc501dccbb52d20e8d3465af9cef52e26ef4b630f -->
+- [Rust walkthrough](examples/execution.md) <!-- reviewed: 67e8d66549be62bf9604652a28e38a279b5c5a883ec8677b95ad5b10314343f3 -->
+- [Rust program](../examples/execution.rs) <!-- reviewed: e76084bd095ac0e608deb901711bc321718e453dd8cd787ac49277bc1bcc8dbf -->
 - [Python walkthrough and program](../bindings/python/examples/07_execution.py) <!-- reviewed: b49d78efdd305db3f28a88755b9796ffc53f3d2765436b9e269f6e9ce58d6625 -->
 - [C execution](../bindings/c/docs/execution.rst) <!-- reviewed: fcbcae5fd17cc60cdedbcca19811e88043792a963803773f5b29f1bd30df430a -->
 - [C program execution](../bindings/c/examples/execution.c) <!-- reviewed: 16932faf09936f0e2a42cc7bdf15f7294b5e0447dfdca84ed256f6fb35c8f5a1 -->
@@ -339,8 +339,8 @@ comparison remains in the Rust and Python lessons.
 
 ### Instances
 
-- [Rust walkthrough](examples/optimization.md) <!-- reviewed: aadeab394dbf5902daccf1e5cfe44db5d039f0bdf42e8705ddfbd4585a8c6acd -->
-- [Rust program](../examples/optimization.rs) <!-- reviewed: 11e3f5c6029fb54cfa1fd0fdf397a2c1df1e6589fbb9d18de7ff39f8d43929f0 -->
+- [Rust walkthrough](examples/optimization.md) <!-- reviewed: 9e3189ce53e143cce7d74415446cdbc525e06928c329845823e676d80b69af53 -->
+- [Rust program](../examples/optimization.rs) <!-- reviewed: c28b9b461cd1f55e9c0d49d601607164f25e5e703527faee5473b229b46bc72f -->
 - [Python walkthrough and program](../bindings/python/examples/08_minimum_cost.py) <!-- reviewed: 79dce3065ddab786f40085239b1e037fa83dbb734744bb7f262e6184f5e49638 -->
 - [C minimum cost](../bindings/c/docs/minimum_cost.rst) <!-- reviewed: 31066073b902872f8b5ee0ed058b91001fe74c245575b5ce7462e0ebf4d99a05 -->
 - [C program minimum_cost](../bindings/c/examples/minimum_cost.c) <!-- reviewed: d376304fe91f8dfee13b0efe4d45afcc69743b2d0082fdccafae3ef828303b8b -->
