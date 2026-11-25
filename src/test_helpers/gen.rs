@@ -159,6 +159,14 @@ pub fn bare_roots(shapes: Vec<(&'static str, Home)>) -> Vec<(&'static str, std::
     shapes.into_iter().map(|(shape, home)| (shape, std::sync::Arc::new(Vtree::clone(&home)))).collect()
 }
 
+/// `f` and `g` on one vtree, the one a binary operation's sweep reads them
+/// on: the union of their projections of one home.
+pub fn on_one(eng: &crate::Engine, f: crate::diagram::Tdd, g: crate::diagram::Tdd) -> (crate::diagram::Tdd, crate::diagram::Tdd) {
+    use std::borrow::Cow;
+    let [f, g] = crate::apply::extend::on_one(eng, [Cow::Owned(f), Cow::Owned(g)]).expect("operands of one home").map(Cow::into_owned);
+    (f, g)
+}
+
 /// The three of [`vtree_shapes`] an exhaustive sweep over assignments takes:
 /// each cell compiles a second diagram per assignment, so the full list is
 /// more than the coverage is worth.

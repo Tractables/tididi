@@ -15,9 +15,10 @@ use crate::{Engine, Tdd, Vtree};
 #[test]
 fn operands_under_the_two_children_owe_only_the_root() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(8));
+    let vtree = Home::new(Vtree::balanced(8));
     let f = compile_clauses(&vtree, &[vec![1, 2], vec![-3, 4]]);
     let g = compile_clauses(&vtree, &[vec![5, -6], vec![7, 8]]);
+    let (f, g) = crate::test_helpers::on_one(&crate::Engine::new(), f, g);
     let mut out = eng.and(f, g).unwrap();
     assert!(out.dirty.take(Pass::Contract).is_empty());
     let mut owed = out.dirty.take(Pass::LeafContract);

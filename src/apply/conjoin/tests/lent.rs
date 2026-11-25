@@ -3,8 +3,6 @@
 //! work, and both operands given back as they were on a refusal after such
 //! a level; and the levels a conjunction builds as an operand holds them,
 //! moved, copied or found once built, owed no twin search.
-
-use crate::test_helpers::bare_roots;
 use std::sync::Arc;
 
 use super::*;
@@ -24,14 +22,15 @@ const SPARSE: SparseRoute = SparseRoute { sparsity: 1, min_grid: 0 };
 fn cases(nvars: u32, seed: u64) -> Vec<(String, Arc<Vtree>, Tdd, Tdd)> {
     let mut rng = Lcg::new(seed);
     let mut out = Vec::new();
-    for (name, vtree) in bare_roots(vtree_shapes(nvars)) {
+    for (name, vtree) in vtree_shapes(nvars) {
         for case in 0..6 {
             let eng = Engine::new();
             let base = rand_cnf(&mut rng, nvars, CnfShape { clauses: 2 * nvars as usize, width: 3 });
             let more = rand_cnf(&mut rng, nvars, CnfShape { clauses: 1 + case % 3, width: 2 });
             let g = compile_clauses_on(&eng, &vtree, &base);
             let f = compile_clauses_on(&eng, &vtree, &[base, more].concat());
-            out.push((format!("{name}, {nvars} variables, case {case}"), Arc::clone(&vtree), f, g));
+            let (f, g) = crate::test_helpers::on_one(&eng, f, g);
+            out.push((format!("{name}, {nvars} variables, case {case}"), Arc::clone(f.vtree()), f, g));
         }
     }
     out

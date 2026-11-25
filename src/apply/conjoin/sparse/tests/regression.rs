@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use num_bigint::BigUint;
 
-use crate::apply::conjoin::{conjoin_checked, VtreeMask};
+use crate::apply::conjoin::{conjoin_checked, conjoin_either, VtreeMask};
 
 use super::{ForcedThresholds, SparseThresholds};
 use crate::test_helpers::clause_to_tdd;
@@ -21,6 +21,7 @@ use crate::diagram::{NodeIdx, Tdd, TddNodeId};
 use crate::test_helpers::check::check_all_fast;
 use crate::test_helpers::check_minimize_soundness;
 use crate::vtree::Vtree;
+use crate::vtree::Home;
 
 /// The sparse-route thresholds a test's applies decide by, and the engine
 /// they run on.
@@ -59,8 +60,11 @@ impl Sparse {
     /// `targets`.
     fn and(&self, f: Tdd, g: Tdd, targets: Option<&[bool]>) -> Tdd {
         let _forced = ForcedThresholds::install(self.thresholds);
-        conjoin_checked(&self.eng, f, g, VtreeMask::new(targets))
-            .expect("an unarmed engine refuses nothing")
+        match targets {
+            None => conjoin_either(&self.eng, f.into(), g.into()),
+            Some(_) => conjoin_checked(&self.eng, f, g, VtreeMask::new(targets)),
+        }
+        .expect("an unarmed engine refuses nothing")
     }
 
     /// Clause-by-clause fold with a minimize after each clause, as
@@ -118,7 +122,7 @@ fn leaf_alive_stick_vtree() {
         vec![1, 2], vec![-2, 3], vec![3, 4], vec![-4, 5],
         vec![-1, -5], vec![2, -3, 4],
     ];
-    let vtree = Arc::new(Vtree::linear(5));
+    let vtree = Home::new(Vtree::linear(5));
     let tdd = sparse.compile(&vtree, &clauses);
     assert_eq!(tdd.model_count().unwrap(), BigUint::from(brute_force_count(5, &clauses)));
 }
@@ -126,7 +130,7 @@ fn leaf_alive_stick_vtree() {
 #[test]
 fn leaf_alive_two_operand_apply_stick() {
     let sparse = Sparse::always();
-    let vtree = Arc::new(Vtree::linear(8));
+    let vtree = Home::new(Vtree::linear(8));
     let mut result = two_operand_apply(&sparse, &vtree, &stick());
     assert_eq!(result.model_count().unwrap(), BigUint::from(brute_force_count(8, &stick())));
     check_minimize_soundness(&mut result, 3).expect("minimize soundness");
@@ -143,7 +147,7 @@ fn dedup_balanced_vtree() {
         vec![2, -5, 6], vec![-3, 4, -6], vec![1, -2, -6],
         vec![-1, 5, 6], vec![3, -4, -5, 6],
     ];
-    let vtree = Arc::new(Vtree::balanced(6));
+    let vtree = Home::new(Vtree::balanced(6));
     let mut tdd = sparse.compile(&vtree, &clauses);
     assert_eq!(tdd.model_count().unwrap(), BigUint::from(brute_force_count(6, &clauses)));
     check_all_fast(&tdd, "dedup_balanced_vtree");
@@ -158,7 +162,7 @@ fn dedup_dense_formula() {
         vec![2, 4], vec![3, 4], vec![-1, -2], vec![-1, -3],
         vec![-2, -4], vec![-3, -4], vec![1, -4], vec![-1, 4],
     ];
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let mut tdd = sparse.compile(&vtree, &clauses);
     assert_eq!(tdd.model_count().unwrap(), BigUint::from(brute_force_count(4, &clauses)));
     check_all_fast(&tdd, "dedup_dense_formula");
@@ -205,7 +209,7 @@ fn pipelined_wide_formula() {
     let sparse = Sparse::always();
     let clauses = wide();
     let expected = BigUint::from(brute_force_count(14, &clauses));
-    let vtree = Arc::new(Vtree::balanced(14));
+    let vtree = Home::new(Vtree::balanced(14));
     let written = sparse.compile(&vtree, &clauses);
     let walked = sparse.pipelined().compile(&vtree, &clauses);
     assert_eq!(written.model_count().unwrap(), expected);
@@ -220,9 +224,9 @@ fn workspace_has_no_stale_residue() {
     let sparse = Sparse::always();
     let wide_clauses = wide();
     let wide_expected = BigUint::from(brute_force_count(14, &wide_clauses));
-    let wide_vtree = Arc::new(Vtree::balanced(14));
+    let wide_vtree = Home::new(Vtree::balanced(14));
     for (num_vars, clauses) in test_cases() {
-        let vtree = Arc::new(Vtree::balanced(num_vars));
+        let vtree = Home::new(Vtree::balanced(num_vars));
         assert_eq!(
             (sparse.compile(&vtree, &clauses)).model_count().unwrap(),
             BigUint::from(brute_force_count(num_vars, &clauses)),
@@ -264,7 +268,7 @@ fn streaming_implicit_equivalence_all_cases() {
 fn mixed_sparse_dense_min_grid_sweep() {
     let clauses = wide();
     let expected = BigUint::from(brute_force_count(14, &clauses));
-    let vtree = Arc::new(Vtree::balanced(14));
+    let vtree = Home::new(Vtree::balanced(14));
     let reference = Sparse::always().compile(&vtree, &clauses);
     assert_eq!(reference.model_count().unwrap(), expected);
     for min_grid in [2usize, 4, 8, 16] {

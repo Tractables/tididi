@@ -107,7 +107,7 @@ fn equalities(vtree: &Arc<Vtree>, pairs: &[(i32, i32)]) -> Tdd {
 /// and a cap between the levels' sizes refuses the level that passes it.
 #[test]
 fn disjoint_supports_refuse_the_level_past_the_cap() {
-    let vtree = Arc::new(Vtree::balanced(16));
+    let vtree = Home::new(Vtree::balanced(16));
     let odd: Vec<u32> = (1..=16).filter(|v| v % 2 == 1).collect();
     let even: Vec<u32> = (1..=16).filter(|v| v % 2 == 0).collect();
     let mut rng = Lcg::new(0x5eed_ca91);
@@ -115,6 +115,7 @@ fn disjoint_supports_refuse_the_level_past_the_cap() {
     for i in 0..6 {
         let f = function_of(&vtree, &odd, &mut rng);
         let g = function_of(&vtree, &even, &mut rng);
+        let (f, g) = crate::test_helpers::on_one(&crate::Engine::new(), f, g);
         refusing += check_and(&f, &g, &format!("disjoint supports {i}"));
     }
     assert!(refusing > 0, "no cap refused a level before it was built");

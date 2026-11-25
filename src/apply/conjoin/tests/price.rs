@@ -2,13 +2,13 @@
 //! refused there and named, and the count a level is priced by is the
 //! pairs the level holds (a debug build checks every level it can count).
 
-use std::sync::Arc;
 
 use super::*;
 use crate::limits::{LevelRefusal, LimitConfig, SparseRoute};
 use crate::test_helpers::{assert_canonical, rand_conj_over, vtree_shapes, Lcg};
 use crate::vtree::{VarId, Vtree};
 use crate::{Engine, OperationError, Tdd};
+use crate::vtree::Home;
 
 /// The sparse route on every level it can take.
 const SPARSE: SparseRoute = SparseRoute { sparsity: 1, min_grid: 0 };
@@ -26,11 +26,10 @@ fn block(first: u32, bits: u32) -> Vec<VarId> {
 /// and the level is counted through its children's live products. Returns
 /// the vtree, the node joining `x` and `y`, the two operands, and the pairs
 /// that node's level holds.
-fn every_product(bits: u32, halved: bool) -> (Arc<Vtree>, VtreeIdx, Tdd, Tdd, u128) {
+fn every_product(bits: u32, halved: bool) -> (Home, VtreeIdx, Tdd, Tdd, u128) {
     let (x, y, z) = (block(1, bits), block(1 + bits, bits), block(1 + 2 * bits, bits));
     let xy = Vtree::join(&Vtree::balanced_over(&x).unwrap(), &Vtree::balanced_over(&y).unwrap()).unwrap();
-    let vtree = Arc::new(Vtree::join(&xy, &Vtree::balanced_over(&z).unwrap()).unwrap());
-    let joined = vtree.children(vtree.root()).0;
+    let vtree = Home::new(Vtree::join(&xy, &Vtree::balanced_over(&z).unwrap()).unwrap());
     let codes = 1u64 << bits;
     // Rows over `z`, the block `z` selects, and the other block.
     let equal = |selected: &[VarId], other: &[VarId]| {
@@ -43,7 +42,8 @@ fn every_product(bits: u32, halved: bool) -> (Arc<Vtree>, VtreeIdx, Tdd, Tdd, u1
         tdd.minimize().unwrap();
         tdd
     };
-    let (f, g) = (equal(&x, &y), equal(&y, &x));
+    let (f, g) = crate::test_helpers::on_one(&crate::Engine::new(), equal(&x, &y), equal(&y, &x));
+    let joined = f.vtree().children(f.vtree().root()).0;
     let live = if halved { codes / 2 } else { codes } as u128;
     (vtree, joined, f, g, live * live)
 }

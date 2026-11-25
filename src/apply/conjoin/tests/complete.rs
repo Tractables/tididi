@@ -97,20 +97,24 @@ fn equalities(vtree: &Arc<Vtree>, pairs: &[(i32, i32)]) -> Tdd {
     f
 }
 
+/// The live pairs at the root of `t`'s vtree.
+fn root_pairs(t: &Tdd) -> usize {
+    t.level(t.vtree().root()).live_pairs()
+}
+
 /// Two roots of 128 pairs each, over disjoint supports, make a root of
 /// 16,384 pairs, past the cap on a level's seeded arena: the arithmetic
 /// route's arena, reserved whole, charges the meter on the schedule the
 /// grid route's arena grows by.
 #[test]
 fn an_arena_past_the_seed_cap_charges_on_the_schedule() {
-    let vtree = Arc::new(Vtree::balanced(64));
+    let vtree = Home::new(Vtree::balanced(64));
     let f = equalities(&vtree, &[(1, 33), (3, 35), (5, 37), (7, 39), (9, 41), (11, 43), (13, 45)]);
     let g = equalities(&vtree, &[(2, 34), (4, 36), (6, 38), (8, 40), (10, 42), (12, 44), (14, 46)]);
-    let root = vtree.root().idx();
-    assert_eq!((f.levels[root].live_pairs(), g.levels[root].live_pairs()), (128, 128));
+    assert_eq!((root_pairs(&f), root_pairs(&g)), (128, 128));
     let before = complete_census();
     let fg = same_both_ways(&f, &g);
-    assert_eq!(fg.levels[root].live_pairs(), 128 * 128);
+    assert_eq!(root_pairs(&fg), 128 * 128);
     let census = complete_census();
     assert!(census[3] > before[3], "no reserved arena outgrew its seed, so the meter's schedule went unchecked");
 }
@@ -123,14 +127,13 @@ fn an_arena_past_the_seed_cap_charges_on_the_schedule() {
 /// from the grid and its left by arithmetic.
 #[test]
 fn a_level_with_one_complete_side_past_the_seed_cap_never_grows() {
-    let vtree = Arc::new(Vtree::balanced(64));
+    let vtree = Home::new(Vtree::balanced(64));
     let f = equalities(&vtree, &[(1, 33), (3, 35), (5, 37), (7, 39), (9, 41), (11, 43), (13, 45)]);
     let g = equalities(&vtree, &[(2, 34), (4, 36), (6, 38), (8, 40), (10, 42), (12, 44), (14, 46), (16, 45)]);
-    let root = vtree.root().idx();
-    assert_eq!((f.levels[root].live_pairs(), g.levels[root].live_pairs()), (128, 256));
+    assert_eq!((root_pairs(&f), root_pairs(&g)), (128, 256));
     let before = complete_census();
     let fg = same_both_ways(&f, &g);
-    assert_eq!(fg.levels[root].live_pairs(), 128 * 128);
+    assert_eq!(root_pairs(&fg), 128 * 128);
     let census = complete_census();
     assert!(census[1] > before[1], "no level read its left side alone by arithmetic");
     assert!(census[3] > before[3], "no reserved arena outgrew its seed, so the meter's schedule went unchecked");
@@ -268,12 +271,13 @@ fn one_pair_columns_give_back_their_table() {
         eng.and(f.clone(), g.clone()).unwrap();
         eng.limits().meters().in_flight_bytes
     };
-    for (shape, vtree) in [("balanced", Arc::new(Vtree::balanced(16))), ("random", Arc::new(Vtree::random(16, 0x5eed_a907)))] {
+    for (shape, vtree) in [("balanced", Home::new(Vtree::balanced(16))), ("random", Home::new(Vtree::random(16, 0x5eed_a907)))] {
         let mut rng = Lcg::new(0x5eed_a908);
         let before = complete_census();
         for round in 0..4 {
             let f = function_of(&vtree, &fv, &mut rng);
             let g = function_of(&vtree, &gv, &mut rng);
+            let (f, g) = crate::test_helpers::on_one(&crate::Engine::new(), f, g);
             let lone = meter(&f, &g);
             let read = column_reads(|| meter(&f, &g));
             assert_eq!(lone, read, "{shape}, round {round}: the meter after the conjunction moved with the column reads");

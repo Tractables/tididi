@@ -5,8 +5,6 @@
 //! leaves a borrowed operand as it was. A refused conjunction hands an owned
 //! operand back as it was given, certificate and closed form included, and
 //! a borrowed one as the borrow, refused at the same work as the owned one.
-
-use crate::test_helpers::bare_roots;
 use std::borrow::Cow;
 use std::sync::Arc;
 
@@ -14,7 +12,7 @@ use super::*;
 use crate::Engine;
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
 use crate::limits::{LimitConfig, SparseRoute, StopAt, StopRules};
-use crate::test_helpers::{compile_clauses_on, rand_cnf, rat, same_storage, vtree_shapes, CnfShape, Lcg};
+use crate::test_helpers::{bare_roots, compile_clauses_on, rand_cnf, rat, same_storage, vtree_shapes, CnfShape, Lcg};
 use crate::vtree::{Home, VarId, Vtree};
 
 /// Every level the sparse route can take, takes it.
@@ -49,7 +47,7 @@ fn handed_back(back: &Cow<'_, Tdd>, t: &Tdd, borrowed: bool) -> bool {
 /// variables, whose levels the identity fast paths carry; a cube against a
 /// formula, for the relabelling route; a formula and itself; and a formula
 /// and the false diagram.
-fn cases(nvars: u32, seed: u64) -> Vec<(String, Tdd, Tdd)> {
+fn cases(nvars: u32, seed: u64, homes: bool) -> Vec<(String, Tdd, Tdd)> {
     let mut rng = Lcg::new(seed);
     let mut out = Vec::new();
     let half = (nvars / 2) as i32;
@@ -57,7 +55,11 @@ fn cases(nvars: u32, seed: u64) -> Vec<(String, Tdd, Tdd)> {
     let shift = |clauses: &[Vec<i32>], by: i32| -> Vec<Vec<i32>> {
         clauses.iter().map(|c| c.iter().map(|l| l.signum() * ((l.abs() - 1) % half + 1 + by)).collect()).collect()
     };
-    for (name, vtree) in bare_roots(vtree_shapes(nvars)) {
+    let shapes = match homes {
+        true => vtree_shapes(nvars).into_iter().map(|(name, home)| (name, Arc::clone(&home))).collect(),
+        false => bare_roots(vtree_shapes(nvars)),
+    };
+    for (name, vtree) in shapes {
         let eng = Engine::new();
         let minimized = |clauses: &[Vec<i32>]| {
             let mut f = compile_clauses_on(&eng, &vtree, clauses);
@@ -158,15 +160,23 @@ fn a_borrowed_operand_conjoins_as_an_owned_one() {
     let before = lent_levels();
     let mut checked = 0;
     for nvars in [6, 10, 14] {
-        checked += check_against_owned(&cases(nvars, 0xb0_77ed + u64::from(nvars)), false);
+        checked += check_against_owned(&cases(nvars, 0xb0_77ed + u64::from(nvars), false), false);
     }
     assert!(checked > 1000, "only {checked} conjunctions");
     assert!(lent_levels() > before, "no level the leaf arm made f's: the copy of a borrowed f went untested");
 }
 
+/// As [`a_borrowed_operand_conjoins_as_an_owned_one`], on operands on
+/// projections of a home, most of them on two different ones.
+#[test]
+#[ignore = "an owned operand on a projection is conjoined by the nested route and a borrowed one is not: the diagram and the work differ"]
+fn a_borrowed_operand_on_a_projection_conjoins_as_an_owned_one() {
+    assert!(check_against_owned(&cases(6, 0xb0_77ed, true), false) > 0);
+}
+
 #[test]
 fn a_borrowed_operand_conjoins_as_an_owned_one_keeping_counts() {
-    assert!(check_against_owned(&cases(10, 0xc0_0475), true) > 100);
+    assert!(check_against_owned(&cases(10, 0xc0_0475, false), true) > 100);
 }
 
 /// A weighted operand, or one with a marginal level, is read in place: the
@@ -204,7 +214,7 @@ fn a_weighted_or_marginal_borrowed_operand_conjoins_as_an_owned_one() {
 #[test]
 fn a_refused_conjunction_hands_back_what_it_was_given() {
     let mut refusals = 0;
-    for (what, f, g) in cases(10, 0x7ef_05ed).into_iter().step_by(4) {
+    for (what, f, g) in cases(10, 0x7ef_05ed, false).into_iter().step_by(4) {
         for (a, b) in [(&f, &g), (&g, &f)] {
             for (borrow_a, borrow_b) in BORROWS {
                 for arm in ["work", "reserve"] {

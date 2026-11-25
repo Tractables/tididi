@@ -4,12 +4,10 @@
 //! (its walks asking the cache ahead or not, and its routed lookups
 //! pipelined or not) and with none. All give the same levels, the same
 //! minimized diagram and the same count.
-
-use crate::test_helpers::bare_roots;
 use std::sync::Arc;
 
 use super::{ForcedPrefetch, ForcedThresholds, SparseThresholds};
-use crate::apply::conjoin::{conjoin_checked, VtreeMask};
+use crate::apply::conjoin::conjoin_either;
 use crate::diagram::Tdd;
 use crate::test_helpers::{assert_canonical, normalized_levels, rand_conj_over, vtree_shapes, Lcg};
 use crate::vtree::Vtree;
@@ -26,7 +24,7 @@ const NEVER: SparseThresholds = SparseThresholds { min_grid: usize::MAX, ..Spars
 
 fn and_under(eng: &Engine, thresholds: SparseThresholds, f: &Tdd, g: &Tdd) -> Tdd {
     let _forced = ForcedThresholds::install(thresholds);
-    conjoin_checked(eng, f.clone(), g.clone(), VtreeMask::new(None))
+    conjoin_either(eng, f.into(), g.into())
         .expect("an unarmed engine refuses nothing")
 }
 
@@ -86,7 +84,7 @@ fn sparse_walks_build_the_grids_levels() {
     let mut rng = Lcg::new(0x1eaf_1abe);
     let eng = Engine::new();
     for n in [6, 9] {
-        for (shape, vtree) in bare_roots(vtree_shapes(n)) {
+        for (shape, vtree) in vtree_shapes(n) {
             for round in 0..10 {
                 let f = operand(&vtree, n, &mut rng);
                 let g = operand(&vtree, n, &mut rng);
