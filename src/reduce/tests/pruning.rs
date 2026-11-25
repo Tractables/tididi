@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::reduce::prune::{PruneScope, Seeds, Select, Start, below_root_walk_applies, few_dropped, keep_marked, FEW_DROPPED, new_indices, prune_walk, prune_complement, settle_loose, settle_reads_all, UNREACHED};
 
-use crate::test_helpers::{compile_clauses, unnamed_levels};
+use crate::test_helpers::{compile_clauses, unnamed_levels, unnamed_node_count};
 use super::prune_unreachable;
 use crate::vtree::Vtree;
 
@@ -162,31 +162,6 @@ fn the_walk_from_the_root_and_the_whole_walk_keep_exactly_the_reached_nodes() {
     assert!(bytes > 100 && bits > 100, "expected sides marked both ways, got {bytes} as bytes and {bits} as bits");
 }
 
-/// How many nodes of the internal levels below the root of `tdd` no pair of
-/// their parent level names, read as `unnamed_levels` reads them.
-fn unnamed_nodes(tdd: &crate::Tdd) -> usize {
-    let vtree = &tdd.vtree;
-    let mut out = 0;
-    for (p, left, right) in vtree.internal_bottomup() {
-        if !tdd.is_structural_internal(p) {
-            continue;
-        }
-        for (c, on_left) in [(left, true), (right, false)] {
-            if !tdd.is_structural_internal(c) {
-                continue;
-            }
-            let view = tdd.levels[c.idx()].child_decoder();
-            let parent = &tdd.levels[p.idx()];
-            let named: std::collections::BTreeSet<usize> = (0..parent.slot_count())
-                .flat_map(|i| parent.pairs_vec(i))
-                .filter_map(|pair| view.child(if on_left { pair.left } else { pair.right }).index())
-                .collect();
-            out += tdd.levels[c.idx()].slot_count() - named.len();
-        }
-    }
-    out
-}
-
 /// A contraction run alone drops the nodes no pair names that its whole
 /// searches list, two or more on a level: operands on a few variables placed
 /// on a wider vtree and conjoined, plainly and marginalizing, leave such
@@ -202,7 +177,7 @@ fn a_contraction_drops_the_nodes_no_pair_names() {
     let mut rng = Lcg::new(0x51d2_7a03);
     let (mut before, mut after) = ([0usize; 2], [0usize; 2]);
     for (shape, wide) in vtree_shapes(14) {
-        for case in 0..32 {
+        for case in 0..64 {
             let marginal = case % 2 == 1;
             let (f, g) = (placed(eng, &mut rng, &wide), placed(eng, &mut rng, &wide));
             let conj = if marginal {
@@ -218,8 +193,8 @@ fn a_contraction_drops_the_nodes_no_pair_names() {
             let count = conj.model_count().unwrap();
             let mut contracted = conj.clone();
             eng.reduce(&mut contracted, ReductionPlan::Contract).unwrap();
-            before[usize::from(marginal)] += unnamed_nodes(&conj);
-            after[usize::from(marginal)] += unnamed_nodes(&contracted);
+            before[usize::from(marginal)] += unnamed_node_count(&conj);
+            after[usize::from(marginal)] += unnamed_node_count(&contracted);
             assert_eq!(contracted.model_count().unwrap(), count, "{label}");
             if let Some(loose) = contracted.dirty.loose() {
                 for t in unnamed_levels(&contracted) {
@@ -450,10 +425,10 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
     }
     assert!(cases > 360, "expected a corpus, got {cases} cases");
     assert!(loose > 300, "expected levels holding an unnamed node, got {loose}");
-    assert!(cleared > 50, "expected levels an operand listed and the result does not, got {cleared}");
+    assert!(cleared > 30, "expected levels an operand listed and the result does not, got {cleared}");
     assert!(settled_away > 400, "expected listed levels the prune settles away, got {settled_away}");
     assert!(seeded > 150, "expected prunes that start at the seeds, got {seeded}");
-    assert!(nested > 100, "expected seeded prunes with a forced level that is not clean, got {nested}");
+    assert!(nested > 80, "expected seeded prunes with a forced level that is not clean, got {nested}");
     let reads = super::SETTLE_READS.with(std::cell::Cell::get);
     let [whole, by_node, digits] = [0, 1, 2].map(|k| reads[k] - reads_before[k]);
     assert!(

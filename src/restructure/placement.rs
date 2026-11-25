@@ -30,12 +30,27 @@ pub(crate) fn push_free_level(level: &mut TddLevel, vtree: &Vtree, at: VtreeIdx)
     level.push_internal_node(&[ChildPair::new(true_node(vtree, left), true_node(vtree, right))]);
 }
 
-/// The first reference a structural `level` holds on `side`, if it holds any.
-pub(crate) fn first_ref(level: &TddLevel, side: ChildSide) -> Option<NodeIdx> {
-    let (_, mut pairs) = level.internal_inputs_iter().next()?;
-    let pair = pairs.next()?;
+/// The labels of a leaf that `level`, its parent, names on `side`, one bit
+/// each: the One label alone, which the first pair shows (determinism), or
+/// the literals the pairs name, read until both are found; none on a level
+/// with no pair.
+pub(crate) fn named_labels(level: &TddLevel, side: ChildSide) -> u8 {
+    use crate::diagram::{NEG_LEAF_IDX, POS_LEAF_IDX};
+    let (one, both) = (1 << ONE_LEAF_IDX.0, 1 << POS_LEAF_IDX.0 | 1 << NEG_LEAF_IDX.0);
     let decoder = crate::diagram::ChildDecoder::structural();
-    Some(decoder.node(side.pick(pair.left, pair.right)))
+    let mut named = 0u8;
+    for (_, pairs) in level.internal_inputs_iter() {
+        for pair in pairs {
+            named |= 1 << decoder.node(side.pick(pair.left, pair.right)).0;
+            if named & one != 0 {
+                return one;
+            }
+            if named == both {
+                return both;
+            }
+        }
+    }
+    named
 }
 
 /// The joins that lift every reference of one child of `at` through a free

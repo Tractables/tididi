@@ -528,7 +528,9 @@ impl PassRows<'_> {
     /// node's pairs are carried to their products with every passing node at
     /// once and grouped by passing node, so a cell where all die costs no
     /// pass over the node's pairs. The live cells go to `list` in cell order,
-    /// and a dead one is written nowhere.
+    /// and a dead one is written nowhere. A listed child is internal: on a
+    /// chain over a leaf it lists no product of a label the chain leaves out
+    /// ([`Held::literals`]), so the cells of that label die here.
     fn emit_sparse<const LEFT: bool>(
         &mut self,
         lim: &crate::limits::Limits,
@@ -537,7 +539,7 @@ impl PassRows<'_> {
         offsets: &[u32],
         inverse: &[u32],
     ) -> Result<(), OperationError> {
-        debug_assert!(!self.f_major && self.literals.is_none());
+        debug_assert!(!self.f_major);
         let carrier = self.carrier;
         // A product's pair keyed by its passing node, then by its place in
         // the carrier node, so that a sort groups the cells and keeps the

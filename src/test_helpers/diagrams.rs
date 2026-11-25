@@ -203,29 +203,31 @@ pub fn marginal_diagrams(seed: u64, count: usize, vars: Range<u32>) -> Vec<(Tdd,
 /// their parent level names, in order, by a read of every level that shares
 /// nothing with the conjunction.
 pub fn unnamed_levels(tdd: &Tdd) -> Vec<u32> {
-    let vtree = &tdd.vtree;
-    let mut out = Vec::new();
-    for (p, left, right) in vtree.internal_bottomup() {
-        if !tdd.is_structural_internal(p) {
-            continue;
-        }
-        for (c, on_left) in [(left, true), (right, false)] {
-            if !tdd.is_structural_internal(c) {
-                continue;
-            }
+    let mut out: Vec<u32> = unnamed_by_level(tdd).filter(|&(_, n)| n > 0).map(|(c, _)| c).collect();
+    out.sort_unstable();
+    out
+}
+
+/// How many nodes of the internal levels below the root of `tdd` no pair of
+/// their parent level names, read as [`unnamed_levels`] reads them.
+pub fn unnamed_node_count(tdd: &Tdd) -> usize {
+    unnamed_by_level(tdd).map(|(_, n)| n).sum()
+}
+
+/// Each internal level below the root of `tdd` with how many of its nodes
+/// no pair of its parent level names.
+fn unnamed_by_level(tdd: &Tdd) -> impl Iterator<Item = (u32, usize)> + '_ {
+    tdd.vtree.internal_bottomup().filter(|&(p, _, _)| tdd.is_structural_internal(p)).flat_map(move |(p, left, right)| {
+        [(left, true), (right, false)].into_iter().filter(|&(c, _)| tdd.is_structural_internal(c)).map(move |(c, on_left)| {
             let view = tdd.levels[c.idx()].child_decoder();
             let parent = &tdd.levels[p.idx()];
             let named: std::collections::BTreeSet<usize> = (0..parent.slot_count())
                 .flat_map(|i| parent.pairs_vec(i))
                 .filter_map(|pair| view.child(if on_left { pair.left } else { pair.right }).index())
                 .collect();
-            if named.len() < tdd.levels[c.idx()].slot_count() {
-                out.push(c.0);
-            }
-        }
-    }
-    out.sort_unstable();
-    out
+            (c.0, tdd.levels[c.idx()].slot_count() - named.len())
+        })
+    })
 }
 
 /// Whether `t` lies in the subtree rooted at `root`.
