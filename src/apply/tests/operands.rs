@@ -33,12 +33,12 @@ fn operators_accept_diagrams_from_dropped_independent_engines() {
 #[test]
 fn mismatched_vtrees_are_rejected_before_shortcuts_or_allocation() {
     let engine = Engine::new();
-    let a = Arc::new(Vtree::balanced(2));
-    let b = Arc::new(Vtree::balanced(2));
+    let a = crate::vtree::Home::new(Vtree::balanced(2));
+    let b = crate::vtree::Home::new(Vtree::balanced(2));
     let _limits = engine.limits().scope(crate::limits::LimitConfig::none().with_memory_budget_bytes(Some(0)));
     for zero in [false, true] {
-        let f = if zero { Tdd::zero(&crate::vtree::Home::unchecked(&a)) } else { Tdd::one(&crate::vtree::Home::unchecked(&a)) };
-        let g = Tdd::one(&crate::vtree::Home::unchecked(&b));
+        let f = if zero { Tdd::zero(&a) } else { Tdd::one(&a) };
+        let g = Tdd::one(&b);
         assert_canonical(&f);
         assert_canonical(&g);
         assert_eq!(engine.and(f.clone(), g.clone()).unwrap_err(), OperationError::VtreeMismatch);

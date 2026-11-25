@@ -359,13 +359,14 @@ fn sum_indexed_takes_operands_on_two_projections_of_a_home() {
 #[test]
 fn errors_name_the_operand_the_index_does_not_fit() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
-    let f = eng.clause(&crate::vtree::Home::unchecked(&vtree), [1, -3]).unwrap();
-    let g = eng.clause(&crate::vtree::Home::unchecked(&vtree), [2, 4]).unwrap();
+    let vtree = crate::vtree::Home::new(Vtree::balanced(4));
+    let f = eng.clause(&vtree, [1, -3]).unwrap();
+    let g = eng.clause(&vtree, [2, 4]).unwrap();
     let index = PairIndex::new(&g).unwrap();
     // Another diagram on the same vtree.
-    let other = eng.clause(&crate::vtree::Home::unchecked(&vtree), [-2, 3]).unwrap();
-    assert!(matches!(eng.and_indexed(&f, &other, &index), Err(crate::OperationError::IndexMismatch)));
+    let other = eng.negate(g.clone()).unwrap();
+    let other_err = eng.and_indexed(&f, &other, &index).err();
+    assert!(matches!(other_err, Some(crate::OperationError::IndexMismatch)), "{other_err:?}");
     // `g` changed after the index was built: an apply's result minimized.
     let mut rng = Lcg::new(0xe2_2026_1011);
     let mut raw = loop {
@@ -383,19 +384,18 @@ fn errors_name_the_operand_the_index_does_not_fit() {
     assert_ne!(raw.pair_count(), pairs, "the minimization changes the diagram");
     assert!(matches!(eng.and_indexed(&f, &raw, &before), Err(crate::OperationError::IndexMismatch)));
     // Another vtree, for the operands or for the index.
-    let elsewhere = Arc::new(Vtree::balanced(4));
-    let g2 = eng.clause(&crate::vtree::Home::unchecked(&elsewhere), [2, 4]).unwrap();
+    let elsewhere = crate::vtree::Home::new(Vtree::balanced(4));
+    let g2 = eng.clause(&elsewhere, [2, 4]).unwrap();
     assert!(matches!(eng.and_indexed(&f, &g2, &index), Err(crate::OperationError::VtreeMismatch)));
     let index2 = PairIndex::new(&g2).unwrap();
     assert!(matches!(eng.and_indexed(&f, &g, &index2), Err(crate::OperationError::VtreeMismatch)));
     // A marginal level, a leaf or a missing `at`.
-    let (left, _) = vtree.children(vtree.root());
     let mut summed = g.clone();
-    crate::test_helpers::marginalize_under(&eng, &mut summed, &[left]).unwrap();
+    eng.marginalize(&mut summed, |v| v == VarId(2)).unwrap();
     assert!(matches!(PairIndex::new(&summed), Err(crate::OperationError::MarginalLevel(_))));
     assert!(matches!(eng.and_indexed(&summed, &g, &index), Err(crate::OperationError::MarginalLevel(_))));
     let count = Moments { weight: vec![0; 5] };
-    let leaf = vtree.leaf_of(VarId(1)).unwrap();
+    let leaf = f.vtree().leaf_of(VarId(1)).unwrap();
     assert!(matches!(eng.sum_indexed(&f, &g, &index, leaf, &count), Err(crate::OperationError::InertOption { .. })));
     assert!(matches!(eng.sum_indexed(&f, &g, &index, VtreeIdx(99), &count), Err(crate::OperationError::LevelNotInVtree(_))));
 }
@@ -434,7 +434,7 @@ fn the_index_finds_each_pair_by_its_sides() {
 /// A keyed table: `vtree` with `value` bits on a spine above the key's
 /// subtree, the key's bits from `key_bits`, and each key's value.
 struct Keyed {
-    vtree: Arc<Vtree>,
+    vtree: crate::vtree::Home,
     /// The variables of a row: the value's bits, then the key's.
     vars: Vec<VarId>,
     value_bits: u32,
@@ -459,7 +459,7 @@ impl Keyed {
         for &v in vars[..value_bits as usize].iter().rev() {
             tree = Vtree::join(&Vtree::leaf(v), &tree).unwrap();
         }
-        Keyed { vtree: Arc::new(tree), vars, value_bits, key_bits }
+        Keyed { vtree: crate::vtree::Home::new(tree), vars, value_bits, key_bits }
     }
 
     /// The value of key `k`.
@@ -470,13 +470,13 @@ impl Keyed {
     /// The table of `keys` with their values.
     fn table(&self, keys: &[u64]) -> Tdd {
         let rows: Vec<u64> = keys.iter().map(|&k| self.value(k) | (k << self.value_bits)).collect();
-        Tdd::from_models(&crate::vtree::Home::unchecked(&self.vtree), &self.vars, &rows).unwrap()
+        Tdd::from_models(&self.vtree, &self.vars, &rows).unwrap()
     }
 
     /// The set of `keys`, any value.
     fn keys(&self, keys: &[u64]) -> Tdd {
         let rows: Vec<u64> = keys.to_vec();
-        Tdd::from_models(&crate::vtree::Home::unchecked(&self.vtree), &self.vars[self.value_bits as usize..], &rows).unwrap()
+        Tdd::from_models(&self.vtree, &self.vars[self.value_bits as usize..], &rows).unwrap()
     }
 }
 
@@ -562,17 +562,12 @@ fn a_grouped_sum_reads_only_the_keys_of_f() {
     // Group bits are vars 1..=3 (top of the spine), value bits vars 4..=8.
     let frows: Vec<u64> = fkeys.iter().map(|&k| group(k) | (k << 3)).collect();
     let fvars: Vec<VarId> = vars[..3].iter().chain(&vars[8..]).copied().collect();
-    let f = Tdd::from_models(&crate::vtree::Home::unchecked(&table.vtree), &fvars, &frows).unwrap();
+    let f = Tdd::from_models(&table.vtree, &fvars, &frows).unwrap();
     let mut weight = vec![0u128; vars.len() + 1];
     for i in 0..5 {
         weight[4 + i] = 1 << i;
     }
     let sum = Moments { weight };
-    // The level under the group bits.
-    let mut at = table.vtree.root();
-    for _ in 0..3 {
-        at = table.vtree.children(at).1;
-    }
     let mut seen = Vec::new();
     for scale in [160usize, 1_600, 16_000] {
         let mut gkeys = fkeys.clone();
@@ -581,9 +576,9 @@ fn a_grouped_sum_reads_only_the_keys_of_f() {
         gkeys.dedup();
         let gvars: Vec<VarId> = vars[3..].to_vec();
         let grows: Vec<u64> = gkeys.iter().map(|&k| value(k) | (k << 5)).collect();
-        let g = Tdd::from_models(&crate::vtree::Home::unchecked(&table.vtree), &gvars, &grows).unwrap();
+        let g = Tdd::from_models(&table.vtree, &gvars, &grows).unwrap();
         let index = PairIndex::new(&g).unwrap();
-        let (col, work) = sum_indexed_counted(&eng, &f, &g, &index, at, &sum).unwrap();
+        let (col, work) = sum_indexed_counted(&eng, &f, &g, &index, g.vtree().root(), &sum).unwrap();
         let mut got: Vec<Moment> = col.into_iter().filter(|m| m.0 > 0).collect();
         got.sort_unstable();
         let mut want: Vec<Moment> = (0..8u64)

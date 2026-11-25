@@ -32,10 +32,10 @@ fn random_clauses(rng: &mut Lcg) -> Vec<Vec<i32>> {
     clauses
 }
 
-fn conjunction(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
-    let mut f = eng.cube(&crate::vtree::Home::unchecked(vtree), std::iter::empty::<i32>()).unwrap();
+fn conjunction(eng: &Engine, vtree: &Home, clauses: &[Vec<i32>]) -> Tdd {
+    let mut f = eng.cube(vtree, std::iter::empty::<i32>()).unwrap();
     for clause in clauses {
-        f = eng.and(f, eng.clause(&crate::vtree::Home::unchecked(vtree), clause.as_slice()).unwrap()).unwrap();
+        f = eng.and(f, eng.clause(vtree, clause.as_slice()).unwrap()).unwrap();
     }
     f
 }
@@ -54,10 +54,8 @@ fn false_conjunctions_hold_no_node() {
     for seed in 0..400u64 {
         let mut rng = Lcg(seed);
         let eng = Engine::new();
-        let on_home = seed % 2 == 1;
-        let vtree = if on_home { Arc::clone(&home) } else { Arc::new(Vtree::balanced(N)) };
         let (fc, gc) = (random_clauses(&mut rng), random_clauses(&mut rng));
-        let (f, g) = (conjunction(&eng, &vtree, &fc), conjunction(&eng, &vtree, &gc));
+        let (f, g) = (conjunction(&eng, &home, &fc), conjunction(&eng, &home, &gc));
         if f.is_zero() || g.is_zero() {
             continue;
         }
@@ -74,13 +72,9 @@ fn false_conjunctions_hold_no_node() {
             clausal = eng.and_clause(clausal, clause.as_slice()).unwrap();
         }
         check(&label("and_clause"), &clausal, &mut falses);
-        if on_home {
-            continue;
-        }
         let index = crate::diagram::PairIndex::new(&g).unwrap();
         check(&label("indexed"), &eng.and_indexed(&f, &g, &index).unwrap(), &mut falses);
-        let (left, _) = vtree.children(vtree.root());
-        check(&label("marginalizing"), &crate::test_helpers::and_marginalizing_under(&eng, &f, &g, &[left]).unwrap(), &mut falses);
+        check(&label("marginalizing"), &eng.and_marginalizing_where(&f, &g, |v| v.0 <= N / 2).unwrap(), &mut falses);
     }
     assert!(falses > 200, "the seeds give false conjunctions ({falses})");
 }

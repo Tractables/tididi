@@ -4,16 +4,16 @@ use crate::limits::{LimitConfig, StopAt, StopRules};
 use crate::{Literal, OperationError};
 use crate::vtree::Home;
 
-fn function(tree: &Arc<Vtree>, bits: u16, reverse: bool) -> Tdd {
+fn function(tree: &Home, bits: u16, reverse: bool) -> Tdd {
     let eng = Engine::new();
     let n = tree.num_leaves() as usize;
-    let mut result = Tdd::zero(&crate::vtree::Home::unchecked(tree));
+    let mut result = Tdd::zero(tree);
     for i in 0..1usize << n {
         let row = if reverse { (1 << n) - 1 - i } else { i };
         if bits & (1 << row) != 0 {
             let cube = eng
                 .cube(
-                    &crate::vtree::Home::unchecked(tree),
+                    tree,
                     (0..n).map(|v| Literal::new(VarId(v as u32 + 1), row & (1 << v) != 0)),
                 )
                 .unwrap();
@@ -90,15 +90,15 @@ fn equivalence_handles_different_construction_and_unminimized_operands() {
         Vtree::linear(3),
         Vtree::reverse_linear(3),
     ] {
-        let tree = Arc::new(tree);
+        let tree = Home::new(tree);
         for bits in 0..256u16 {
             let dnf = function(&tree, bits, false);
-            let mut cnf = Tdd::one(&crate::vtree::Home::unchecked(&tree));
+            let mut cnf = Tdd::one(&tree);
             for row in 0..8 {
                 if bits & (1 << row) == 0 {
                     let clause = eng
                         .clause(
-                            &crate::vtree::Home::unchecked(&tree),
+                            &tree,
                             (0..3).map(|v| Literal::new(VarId(v + 1), row & (1 << v) == 0)),
                         )
                         .unwrap();
@@ -115,10 +115,10 @@ fn equivalence_handles_different_construction_and_unminimized_operands() {
 fn substitution_is_simultaneous_for_cycles_identification_and_functions() {
     let eng = Engine::new();
     for tree in [Vtree::balanced(3), Vtree::linear(3)] {
-        let tree = Arc::new(tree);
+        let tree = Home::new(tree);
         let replacements = [
-            eng.clause(&crate::vtree::Home::unchecked(&tree), [2, 3]).unwrap(),
-            eng.literal(&crate::vtree::Home::unchecked(&tree), -1).unwrap(),
+            eng.clause(&tree, [2, 3]).unwrap(),
+            eng.literal(&tree, -1).unwrap(),
         ];
         for bits in [0, 1, 42, 85, 150, 254, 255] {
             let f = function(&tree, bits, false);
@@ -151,7 +151,7 @@ fn substitution_is_simultaneous_for_cycles_identification_and_functions() {
             assert_truth_table_3(&g, |_, dest| {
                 eval(&f, &[dest[1] || dest[2], !dest[0], dest[2]])
             });
-            for constant in [Tdd::one(&crate::vtree::Home::unchecked(&tree)), Tdd::zero(&crate::vtree::Home::unchecked(&tree))] {
+            for constant in [Tdd::one(&tree), Tdd::zero(&tree)] {
                 let g = eng.substitute(f.clone(), &[(VarId(1), &constant)]).unwrap();
                 assert_truth_table_3(&g, |_, dest| {
                     eval(&f, &[!constant.is_zero(), dest[1], dest[2]])
@@ -194,10 +194,10 @@ fn ite_and_existential_conjunction_match_enumeration() {
 fn every_quantification_entry_point_matches_enumeration() {
     let eng = Engine::new();
     for tree in [Vtree::balanced(3), Vtree::linear(3), Vtree::reverse_linear(3)] {
-        let tree = Arc::new(tree);
+        let tree = Home::new(tree);
         for bits in [0u16, 255, 42, 150] {
             let f = function(&tree, bits, false);
-            let one = Tdd::one(&crate::vtree::Home::unchecked(&tree));
+            let one = Tdd::one(&tree);
             assert_canonical(&f);
             assert_canonical(&one);
             for vars in [vec![], vec![VarId(1)], vec![VarId(1), VarId(3), VarId(1)]] {
@@ -212,7 +212,7 @@ fn every_quantification_entry_point_matches_enumeration() {
                 }
                 for result in results {
                     assert_canonical(&result);
-                    assert!(Arc::ptr_eq(result.vtree(), &tree));
+                    assert!(result.vtree().is_on(&tree));
                     assert_truth_table_3(&result, |row, _| exists_truth_table_3(bits, &vars, row));
                 }
             }
@@ -227,14 +227,14 @@ fn sparse_ids_and_single_leaf_diagrams_work() {
         Vtree::leaf(VarId(20)),
         Vtree::balanced_over(&[VarId(20), VarId(3)]).unwrap(),
     ] {
-        let tree = Arc::new(tree);
-        let x = eng.literal(&crate::vtree::Home::unchecked(&tree), Literal::pos(VarId(20))).unwrap();
+        let tree = Home::new(tree);
+        let x = eng.literal(&tree, Literal::pos(VarId(20))).unwrap();
         assert_eq!(eng.support(&x).unwrap(), vec![VarId(20)]);
         assert!(
-            eng.equivalent(&x, &eng.literal(&crate::vtree::Home::unchecked(&tree), 20).unwrap())
+            eng.equivalent(&x, &eng.literal(&tree, 20).unwrap())
                 .unwrap()
         );
-        let neg = eng.literal(&crate::vtree::Home::unchecked(&tree), -20).unwrap();
+        let neg = eng.literal(&tree, -20).unwrap();
         let g = eng.substitute(x.clone(), &[(VarId(20), &neg)]).unwrap();
         assert!(eng.equivalent(&g, &neg).unwrap());
         let model = eng.satisfying_assignment(&x).unwrap().unwrap();
@@ -290,11 +290,10 @@ fn boolean_queries_ignore_weights_and_substitution_keeps_destination_weights() {
 #[test]
 fn invalid_maps_and_marginal_inputs_are_rejected_even_for_constants() {
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(4));
-    let x = eng.literal(&crate::vtree::Home::unchecked(&tree), 1).unwrap();
-    let home = Home::new(Vtree::balanced(4));
-    let home_x = eng.literal(&home, 1).unwrap();
-    for (f, x) in [(Tdd::zero(&crate::vtree::Home::unchecked(&tree)), &x), (Tdd::one(&crate::vtree::Home::unchecked(&tree)), &x), (eng.zero(&home), &home_x), (eng.one(&home), &home_x)] {
+    let tree = Home::new(Vtree::balanced(4));
+    let x = eng.literal(&tree, 1).unwrap();
+    for f in [Tdd::zero(&tree), Tdd::one(&tree), eng.zero(&tree), eng.one(&tree)] {
+        let x = &x;
         assert_eq!(
             eng.rename_vars(f.clone(), &[(VarId(1), VarId(5))])
                 .unwrap_err(),
@@ -316,10 +315,9 @@ fn invalid_maps_and_marginal_inputs_are_rejected_even_for_constants() {
             OperationError::VariableNotInVtree(VarId(10))
         );
     }
-    let mut marginal = x.clone();
-    let leaf = tree.leaf_of(VarId(1)).unwrap();
-    crate::test_helpers::marginalize_under(&eng, &mut marginal, &[leaf]).unwrap();
-    let error = OperationError::MarginalLevel(leaf);
+    let mut marginal = eng.clause(&tree, [1, 2]).unwrap();
+    eng.marginalize(&mut marginal, |v| v == VarId(1)).unwrap();
+    let error = OperationError::MarginalLevel(marginal.vtree().region_of(VarId(1)).unwrap());
     assert_eq!(eng.equivalent(&marginal, &marginal).unwrap_err(), error);
     assert_eq!(eng.implies(&marginal, &x).unwrap_err(), error);
     assert_eq!(eng.support(&marginal).unwrap_err(), error);
@@ -331,24 +329,24 @@ fn invalid_maps_and_marginal_inputs_are_rejected_even_for_constants() {
         error
     );
     assert_eq!(
-        eng.ite(Tdd::zero(&crate::vtree::Home::unchecked(&tree)), x.clone(), marginal.clone())
+        eng.ite(Tdd::zero(&tree), x.clone(), marginal.clone())
             .unwrap_err(),
         error
     );
     assert_eq!(
-        eng.xor(Tdd::zero(&crate::vtree::Home::unchecked(&tree)), marginal.clone()).unwrap_err(),
+        eng.xor(Tdd::zero(&tree), marginal.clone()).unwrap_err(),
         error
     );
     assert_eq!(
         eng.and_exists(
-            Tdd::zero(&crate::vtree::Home::unchecked(&tree)),
+            Tdd::zero(&tree),
             marginal,
             &[],
         )
         .unwrap_err(),
         error
     );
-    let other = Tdd::one(&crate::vtree::Home::unchecked(&Arc::new(Vtree::balanced(4))));
+    let other = Tdd::one(&Home::new(Vtree::balanced(4)));
     assert_eq!(
         eng.equivalent(&x, &other).unwrap_err(),
         OperationError::VtreeMismatch
@@ -362,7 +360,7 @@ fn invalid_maps_and_marginal_inputs_are_rejected_even_for_constants() {
 fn exercise(eng: &Engine, op: usize, f: &Tdd, g: &Tdd) -> Result<(), OperationError> {
     match op {
         0 => {
-            eng.literal(&crate::vtree::Home::unchecked(f.vtree()), 1)?;
+            eng.clause(&f.home(), [1, 2])?;
         }
         1 => {
             eng.equivalent(f, g)?;
@@ -402,9 +400,9 @@ fn exercise(eng: &Engine, op: usize, f: &Tdd, g: &Tdd) -> Result<(), OperationEr
 
 #[test]
 fn every_new_operation_recovers_from_reservation_refusals_and_work_stops() {
-    let tree = Arc::new(Vtree::balanced(2));
-    let f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 2]).unwrap();
-    let g = crate::literal(&crate::vtree::Home::unchecked(&tree), 2).unwrap();
+    let tree = Home::new(Vtree::balanced(2));
+    let f = Tdd::clause(&tree, [1, 2]).unwrap();
+    let g = crate::literal(&tree, 2).unwrap();
     for op in 0..10 {
         let eng = Engine::new();
         {
@@ -461,9 +459,9 @@ fn every_new_operation_recovers_from_reservation_refusals_and_work_stops() {
 
 #[test]
 fn composed_operations_propagate_output_caps() {
-    let tree = Arc::new(Vtree::balanced(4));
-    let f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 3]).unwrap();
-    let g = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [2, 4]).unwrap();
+    let tree = Home::new(Vtree::balanced(4));
+    let f = Tdd::clause(&tree, [1, 3]).unwrap();
+    let g = Tdd::clause(&tree, [2, 4]).unwrap();
     for op in [0, 5, 6, 7, 8, 9] {
         let eng = Engine::new();
         let _scope = eng
@@ -544,14 +542,14 @@ fn renaming_and_literal_substitution_agree_for_all_three_variable_maps() {
 #[test]
 fn rename_validates_each_entry_before_shortcuts_or_literal_construction() {
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(2));
+    let tree = Home::new(Vtree::balanced(2));
     let home = Home::new(Vtree::balanced(2));
     let maps = [
         (vec![(VarId(1), VarId(1)), (VarId(1), VarId(10))], OperationError::DuplicateVariable(VarId(1))),
         (vec![(VarId(1), VarId(10)), (VarId(1), VarId(1))], OperationError::VariableNotInVtree(VarId(10))),
         (vec![(VarId(9), VarId(10))], OperationError::VariableNotInVtree(VarId(9))),
     ];
-    for f in [eng.one(&crate::vtree::Home::unchecked(&tree)), eng.zero(&crate::vtree::Home::unchecked(&tree)), eng.one(&home), eng.zero(&home)] {
+    for f in [eng.one(&tree), eng.zero(&tree), eng.one(&home), eng.zero(&home)] {
         assert_canonical(&f);
         let _limits = eng.limits().scope(LimitConfig::none().with_output_node_cap(Some(0)));
         for (map, error) in &maps {

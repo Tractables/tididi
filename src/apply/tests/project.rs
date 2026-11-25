@@ -7,19 +7,18 @@ use super::*;
 
 #[test]
 fn batch_projection_accumulates_charges_across_variables() {
-    let vtree = Arc::new(Vtree::balanced(16));
-    let f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap() & Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [-1, 3]).unwrap()
-        & Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [4, 5]).unwrap() & Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [-4, 6]).unwrap();
+    let vtree = crate::vtree::Home::new(Vtree::balanced(16));
+    let f = Tdd::clause(&vtree, [1, 2]).unwrap() & Tdd::clause(&vtree, [-1, 3]).unwrap()
+        & Tdd::clause(&vtree, [4, 5]).unwrap() & Tdd::clause(&vtree, [-4, 6]).unwrap();
     crate::test_helpers::assert_canonical(&f);
     let eng = crate::Engine::new();
     let first = eng.exists_var(f.clone(), VarId(1)).unwrap();
     crate::test_helpers::assert_canonical(&first);
-    let first_charge = eng.limits().meters().in_flight_bytes;
     let second = eng.exists_var(first, VarId(4)).unwrap();
     crate::test_helpers::assert_canonical(&second);
     let second_charge = eng.limits().meters().in_flight_bytes;
     let bounded = crate::Engine::new();
-    let _prior = bounded.limits().install(crate::limits::LimitConfig::none().with_memory_budget_bytes(Some(first_charge.max(second_charge))));
+    let _prior = bounded.limits().install(crate::limits::LimitConfig::none().with_memory_budget_bytes(Some(second_charge)));
     assert!(matches!(bounded.exists_vars(f, &[VarId(1), VarId(4)]), Err(crate::OperationError::OverBudget)));
     let empty_batch = bounded.exists_vars(second, &[]).unwrap();
     assert_eq!(bounded.limits().meters().in_flight_bytes, 0);
@@ -466,11 +465,10 @@ fn projection_matches_brute_force_on_random_conjunctions() {
 /// A marginal leaf far from the quantified variable's path still refuses.
 #[test]
 fn projection_across_a_marginalized_level_is_refused() {
-    let vtree = Arc::new(Vtree::balanced(8));
-    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap() & Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [-1, 3]).unwrap();
+    let vtree = crate::vtree::Home::new(Vtree::balanced(8));
+    let mut f = Tdd::clause(&vtree, [1, 2]).unwrap() & Tdd::clause(&vtree, [-1, 3]).unwrap();
     f.minimize().unwrap();
-    let leaf = vtree.leaf_of(VarId(8)).unwrap();
-    f.marginalize(crate::test_helpers::summing(f.vtree(), &[leaf])).unwrap();
+    f.marginalize(|v| v == VarId(3)).unwrap();
     assert!(matches!(f.exists_var(VarId(1)), Err(crate::OperationError::MarginalLevel(_))));
 }
 
@@ -506,16 +504,16 @@ fn universal_quantification_matches_the_truth_table_on_every_vtree_shape() {
 fn universal_quantification_validates_before_it_rewrites() {
     use crate::OperationError;
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(3));
-    let f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap();
+    let vtree = crate::vtree::Home::new(Vtree::balanced(3));
+    let f = Tdd::clause(&vtree, [1, 2]).unwrap();
     assert_eq!(eng.forall_vars(f.clone(), &[VarId(1), VarId(8)]).unwrap_err(), OperationError::VariableNotInVtree(VarId(8)));
-    assert_eq!(eng.forall_vars(Tdd::zero(&crate::vtree::Home::unchecked(&vtree)), &[VarId(8)]).unwrap_err(), OperationError::VariableNotInVtree(VarId(8)));
-    assert!(eng.forall_vars(Tdd::zero(&crate::vtree::Home::unchecked(&vtree)), &[VarId(1)]).unwrap().is_zero());
-    assert!(eng.equivalent(&eng.forall_vars(Tdd::one(&crate::vtree::Home::unchecked(&vtree)), &[VarId(1)]).unwrap(), &Tdd::one(&crate::vtree::Home::unchecked(&vtree))).unwrap());
+    assert_eq!(eng.forall_vars(Tdd::zero(&vtree), &[VarId(8)]).unwrap_err(), OperationError::VariableNotInVtree(VarId(8)));
+    assert!(eng.forall_vars(Tdd::zero(&vtree), &[VarId(1)]).unwrap().is_zero());
+    assert!(eng.equivalent(&eng.forall_vars(Tdd::one(&vtree), &[VarId(1)]).unwrap(), &Tdd::one(&vtree)).unwrap());
     let once = eng.forall_vars(f.clone(), &[VarId(1)]).unwrap();
     let repeated = eng.forall_vars(f.clone(), &[VarId(1), VarId(1)]).unwrap();
     assert!(eng.equivalent(&once, &repeated).unwrap());
-    assert!(eng.equivalent(&once, &Tdd::cube(&crate::vtree::Home::unchecked(&vtree), [2]).unwrap()).unwrap());
+    assert!(eng.equivalent(&once, &Tdd::cube(&vtree, [2]).unwrap()).unwrap());
     // Complement needs every level, unlike existential quantification; an
     // empty request returns the operand before that check.
     let mut marginal = f;

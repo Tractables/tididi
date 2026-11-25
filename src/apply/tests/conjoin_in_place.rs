@@ -189,7 +189,7 @@ fn a_node_inside_the_filter_is_kept_whole() {
 
 fn random_model_tdd(vtree: &Arc<Vtree>, vars: &[VarId], nvars: u32, count: usize, rng: &mut Lcg) -> Tdd {
     let rows: Vec<u64> = (0..count).map(|_| rng.below(1 << nvars)).collect();
-    Tdd::from_models(&crate::vtree::Home::unchecked(vtree), vars, &rows).unwrap()
+    Tdd::from_models(&crate::vtree::Home::new(std::sync::Arc::clone(vtree)), vars, &rows).unwrap()
 }
 
 /// A random set of codes over every variable under a random internal vtree

@@ -118,8 +118,8 @@ fn conditioning_a_variable_outside_the_vtree_is_an_error() {
 
 #[test]
 fn a_false_cofactor_leaves_no_empty_internal_node() {
-    let tree = std::sync::Arc::new(crate::vtree::Vtree::balanced(2));
-    let f = crate::Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1]).unwrap();
+    let tree = crate::vtree::Home::new(crate::vtree::Vtree::balanced(2));
+    let f = crate::Tdd::clause(&tree, [1]).unwrap();
     crate::test_helpers::assert_canonical(&f);
     let result = crate::Engine::new().condition_var(f, crate::vtree::VarId(1), false).unwrap();
     assert!(result.is_zero());

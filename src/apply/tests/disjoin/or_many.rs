@@ -15,7 +15,7 @@ fn vtree(n: u32) -> Home {
 /// Every operand set a caller is likely to hand over: overlapping cubes,
 /// disjoint cubes, a repeated operand, and single-literal operands.
 fn operand_sets(v: &Arc<Vtree>) -> Vec<Vec<Tdd>> {
-    let cube = |lits: &[i32]| Tdd::cube(&crate::vtree::Home::unchecked(v), lits.iter().copied()).expect("a cube");
+    let cube = |lits: &[i32]| Tdd::cube(&crate::vtree::Home::new(std::sync::Arc::clone(v)), lits.iter().copied()).expect("a cube");
     vec![
         vec![cube(&[1, 2]), cube(&[3]), cube(&[-4])],
         vec![cube(&[1]), cube(&[2]), cube(&[3]), cube(&[4])],

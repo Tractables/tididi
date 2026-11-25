@@ -14,10 +14,10 @@ use std::sync::Arc;
 #[test]
 fn the_fill_joins_a_level_in_the_form_that_level_already_uses() {
     let eng = &crate::Engine::new();
-    let vtree = Arc::new(crate::Vtree::linear(4));
+    let vtree = crate::vtree::Home::new(crate::Vtree::linear(4));
     // A cube over variable 1 leaves every level below it naming its leaf as
     // `One`; the levels above name theirs as `Pos`.
-    let f = Tdd::cube(&crate::vtree::Home::unchecked(&vtree), [1]).unwrap();
+    let f = Tdd::cube(&vtree, [1]).unwrap();
     let mut full = f.clone();
     expand_full_unmarked(eng, &mut full).unwrap();
     assert_no_mixed_leaf_side(&full, "expand_full");

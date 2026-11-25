@@ -14,13 +14,12 @@ fn restrict_single_variable_reports_contradictions() {
     use crate::diagram::{Arithmetic, RationalWeights, Weights};
 
     for weighted in [false, true] {
-        let mut vtree = Vtree::leaf(VarId(1));
-        if weighted {
-            vtree = vtree.with_weights(Weights::new(RationalWeights::unit(1), Arithmetic::ExactRational)).unwrap();
-        }
-        let vtree = Arc::new(vtree);
-        let operands = [Tdd::zero(&crate::vtree::Home::unchecked(&vtree)), Tdd::one(&crate::vtree::Home::unchecked(&vtree)),
-            Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1]).unwrap(), Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [-1]).unwrap()];
+        let vtree = match weighted {
+            true => crate::vtree::Home::weighted(Vtree::leaf(VarId(1)), Weights::new(RationalWeights::unit(1), Arithmetic::ExactRational)).unwrap(),
+            false => crate::vtree::Home::new(Vtree::leaf(VarId(1))),
+        };
+        let operands = [Tdd::zero(&vtree), Tdd::one(&vtree),
+            Tdd::clause(&vtree, [1]).unwrap(), Tdd::clause(&vtree, [-1]).unwrap()];
         for f in &operands {
             for care in &operands {
                 let f = f.clone();
@@ -64,7 +63,7 @@ fn restrict_tautological_care_is_identity() {
 fn restrict_false_care_is_empty() {
     let eng = Engine::new();
     // c = ⊥: f∧c = ∅ for any g; `restrict_to_care` returns ⊥, the smallest sound answer.
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(3));
     let f = apply_or(clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true)])),
                      clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(2, true), (3, true)])));
     let c = constant_zero(&eng, &vtree);
@@ -76,7 +75,7 @@ fn restrict_false_care_is_empty() {
 #[test]
 fn restrict_of_false_is_false() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(3));
     let f = constant_zero(&eng, &vtree);
     let c = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true)]));
     let g = (f.clone()).restrict_to_care(&c).unwrap().into_tdd();
@@ -100,7 +99,7 @@ fn restrict_cube_care_shrinks_or_holds() {
     // f = (x0 ∧ x1) ∨ (¬x0 ∧ x2); care c = x0. On the care, f reduces to x1 and
     // the x2 branch is don't-care — the classic shrink. We assert the contract
     // (sound, never-larger, valid) and brute-force soundness directly.
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(3));
     let x0 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true)]));
     let nx0 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, false)]));
     let x1 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(2, true)]));
@@ -117,7 +116,7 @@ fn restrict_cube_care_shrinks_or_holds() {
 fn restrict_drop_lever_sound_and_valid() {
     // f = (x0 ∧ x2) ∨ (x1 ∧ ¬x2); care c = x0. Wherever x0 = 0 the second term is
     // don't-care, so the DROP lever can prune it. Contract + brute force.
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(3));
     let x0 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true)]));
     let x1 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(2, true)]));
     let x2 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(3, true)]));
@@ -134,7 +133,7 @@ fn restrict_drops_dead_pair_of_alive_node() {
     // pair ((¬x0∧x1)∧care = ∅) while the root NODE stays alive via the first.
     // Node-granular liveness alone would see an all-alive diagram; the
     // pair-granular probe must drop the dead pair: g ≡ x0, strictly smaller, sound.
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(2));
     let f = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
     let c = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true), (2, false)]));
     assert_restrict_ok(&f, &c, 2);
@@ -157,7 +156,7 @@ fn restrict_drops_dead_pair_of_alive_node() {
 fn restrict_self_care_is_sound() {
     // c = f: g∧f must = f. g is free off f (the bulk of the cube) — a strong
     // don't-care stress, must stay sound and valid.
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(4));
     let f = apply_or(and2(&clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true)])),
                            &clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(2, false)]))),
                      clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(3, true), (4, true)])));
@@ -169,7 +168,7 @@ fn restrict_self_care_is_sound() {
 fn restrict_runs_on_assorted_small_circuits() {
     // "It runs" + stays valid on a spread of structured functions (xors, chains,
     // wide clauses), each against a couple of cube and non-cube cares.
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(4));
     let lit = |v: u32, p: bool| clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(v + 1, p)]));
     let xor = |a: u32, b: u32| {
         apply_or(and2(&lit(a, true), &lit(b, false)), and2(&lit(a, false), &lit(b, true)))
@@ -563,7 +562,7 @@ fn raw_output_is_apply_safe() -> Vec<Tdd> {
 #[test]
 fn a_refused_prune_inside_a_restriction_is_an_error() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(3));
     let x0 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true)]));
     let nx0 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, false)]));
     let x1 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(2, true)]));
@@ -1033,7 +1032,7 @@ fn refusals_in_a_restriction_reach_the_caller() {
         let mut refused = 0u32;
         let mut rng = Lcg::new(0x5eed_0f0c_a4e5);
         for &nvars in &[3u32, 4, 5] {
-            let vtree = Arc::new(Vtree::balanced(nvars));
+            let vtree = crate::vtree::Home::new(Vtree::balanced(nvars));
             for case in 0..24 {
                 let f = rand_conj(&vtree, nvars, 3, nvars as u64, false, &mut rng);
                 let c = rand_conj(&vtree, nvars, 3, nvars as u64, false, &mut rng);
@@ -1184,11 +1183,11 @@ fn refusals_beside_a_join_given_up_reach_the_caller() {
 #[test]
 fn restriction_to_an_unreduced_care_agrees_on_care_for_every_assignment() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(6));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(6));
     for pivot in 1..=6 {
-        let f = eng.clause(&crate::vtree::Home::unchecked(&vtree), [pivot, pivot % 6 + 1, (pivot + 1) % 6 + 1]).unwrap();
-        let left = eng.clause(&crate::vtree::Home::unchecked(&vtree), [-pivot, (pivot + 2) % 6 + 1]).unwrap();
-        let right = eng.clause(&crate::vtree::Home::unchecked(&vtree), [-((pivot + 1) % 6 + 1)]).unwrap();
+        let f = eng.clause(&vtree, [pivot, pivot % 6 + 1, (pivot + 1) % 6 + 1]).unwrap();
+        let left = eng.clause(&vtree, [-pivot, (pivot + 2) % 6 + 1]).unwrap();
+        let right = eng.clause(&vtree, [-((pivot + 1) % 6 + 1)]).unwrap();
         let care = eng.and(left, right).unwrap();
         let care_allocation = care.levels.as_ptr();
         let mut g = eng.restrict_to_care(f.clone(), &care).unwrap().into_tdd();
@@ -1207,9 +1206,9 @@ fn restriction_to_an_unreduced_care_agrees_on_care_for_every_assignment() {
 fn the_walk_polls_the_engine_limits() {
     use crate::limits::{LimitConfig, OperationError, StopAt, StopRules};
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(6));
-    let f = eng.clause(&crate::vtree::Home::unchecked(&vtree), [1, 2, 3, 4, 5, 6]).unwrap();
-    let care = eng.clause(&crate::vtree::Home::unchecked(&vtree), [-1, -2, -3]).unwrap();
+    let vtree = crate::vtree::Home::new(Vtree::balanced(6));
+    let f = eng.clause(&vtree, [1, 2, 3, 4, 5, 6]).unwrap();
+    let care = eng.clause(&vtree, [-1, -2, -3]).unwrap();
     for allowance in [0, 1] {
         let limits = LimitConfig::none().with_stop_rules(StopRules {
             unconditional: Some(StopAt::WorkUnits(eng.limits().work_units() + allowance)),

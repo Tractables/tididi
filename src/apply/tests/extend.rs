@@ -46,10 +46,10 @@ fn part(vars: &[VarId], rng: &mut Lcg) -> Vec<VarId> {
 fn operand(eng: &Engine, home: &Home, vars: &[VarId], rng: &mut Lcg) -> Tdd {
     let empty = Vtree::empty_projection(home);
     if vars.is_empty() {
-        return if rng.coin() { Tdd::one(&crate::vtree::Home::unchecked(&empty)) } else { Tdd::zero(&crate::vtree::Home::unchecked(&empty)) };
+        return if rng.coin() { Tdd::one(&crate::vtree::Home::new(std::sync::Arc::clone(&empty))) } else { Tdd::zero(&crate::vtree::Home::new(std::sync::Arc::clone(&empty))) };
     }
     let vtree = Vtree::projection(home, vars.iter().copied()).unwrap();
-    let mut f = Tdd::one(&crate::vtree::Home::unchecked(&vtree));
+    let mut f = Tdd::one(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)));
     for _ in 0..1 + rng.below(4) {
         let width = 1 + rng.below(3);
         let clause: Vec<i32> = (0..width)
@@ -88,7 +88,7 @@ fn leaf_set_pairs(home: &Vtree, rng: &mut Lcg) -> Vec<(Vec<VarId>, Vec<VarId>)> 
 /// `f` on `home`, placed independently of the code under test.
 fn on_home(f: &Tdd, home: &Arc<Vtree>) -> Tdd {
     if f.vtree().num_nodes() == 0 {
-        return if f.is_one() { Tdd::one(&crate::vtree::Home::unchecked(home)) } else { Tdd::zero(&crate::vtree::Home::unchecked(home)) };
+        return if f.is_one() { Tdd::one(&crate::vtree::Home::new(std::sync::Arc::clone(home))) } else { Tdd::zero(&crate::vtree::Home::new(std::sync::Arc::clone(home))) };
     }
     crate::test_helpers::embedded(f, home, |v| v).unwrap().0
 }
@@ -258,7 +258,7 @@ fn constants_on_the_empty_projection() {
     let eng = Engine::new();
     let home = Home::new(rotated_home(5, 3));
     let empty = Vtree::empty_projection(&home);
-    let (one, zero) = (Tdd::one(&crate::vtree::Home::unchecked(&empty)), Tdd::zero(&crate::vtree::Home::unchecked(&empty)));
+    let (one, zero) = (Tdd::one(&crate::vtree::Home::new(std::sync::Arc::clone(&empty))), Tdd::zero(&crate::vtree::Home::new(std::sync::Arc::clone(&empty))));
     for (c, value) in [(&one, true), (&zero, false)] {
         let negated = eng.negate(c.clone()).unwrap();
         assert!(negated.vtree().num_nodes() == 0 && negated.is_one() != value);
@@ -278,7 +278,7 @@ fn constants_on_the_empty_projection() {
         }
     }
     let x = Vtree::projection(&home, [VarId(2)]).unwrap();
-    let lit = Tdd::cube(&crate::vtree::Home::unchecked(&x), [2]).unwrap();
+    let lit = Tdd::cube(&crate::vtree::Home::new(std::sync::Arc::clone(&x)), [2]).unwrap();
     let excluded = eng.or(lit.clone(), eng.negate(lit.clone()).unwrap()).unwrap();
     assert!(excluded.is_one() && excluded.vtree().num_nodes() == 0, "x or not x is the constant");
     let contradiction = eng.and_not(lit.clone(), lit.clone()).unwrap();
@@ -291,11 +291,11 @@ fn false_of_nested_or_overlapping_leaf_sets_is_on_no_node() {
     let eng = Engine::new();
     let home = Home::new(rotated_home(5, 3));
     let on = |vars: &[u32]| Vtree::projection(&home, vars.iter().map(|&v| VarId(v))).unwrap();
-    let x = Tdd::cube(&crate::vtree::Home::unchecked(&on(&[2])), [2]).unwrap();
-    let wide = eng.and_clause(Tdd::cube(&crate::vtree::Home::unchecked(&on(&[2, 4, 5])), [-2]).unwrap(), &[4, 5]).unwrap();
-    let across = eng.and_clause(Tdd::cube(&crate::vtree::Home::unchecked(&on(&[2, 3])), [2]).unwrap(), &[3]).unwrap();
+    let x = Tdd::cube(&crate::vtree::Home::new(std::sync::Arc::clone(&on(&[2]))), [2]).unwrap();
+    let wide = eng.and_clause(Tdd::cube(&crate::vtree::Home::new(std::sync::Arc::clone(&on(&[2, 4, 5]))), [-2]).unwrap(), &[4, 5]).unwrap();
+    let across = eng.and_clause(Tdd::cube(&crate::vtree::Home::new(std::sync::Arc::clone(&on(&[2, 3]))), [2]).unwrap(), &[3]).unwrap();
     let all = on(&[1, 2, 3, 4, 5]);
-    let (every, but_x) = (Tdd::cube(&crate::vtree::Home::unchecked(&all), [1, 2, 3, 4, 5]).unwrap(), Tdd::cube(&crate::vtree::Home::unchecked(&all), [1, -2, 3, 4, 5]).unwrap());
+    let (every, but_x) = (Tdd::cube(&crate::vtree::Home::new(std::sync::Arc::clone(&all)), [1, 2, 3, 4, 5]).unwrap(), Tdd::cube(&crate::vtree::Home::new(std::sync::Arc::clone(&all)), [1, -2, 3, 4, 5]).unwrap());
     assert!(Arc::ptr_eq(every.vtree(), &home));
     for (f, g) in [(&x, &wide), (&wide, &x), (&wide, &across), (&every, &but_x)] {
         let both = eng.and(f, g).unwrap();
@@ -309,8 +309,8 @@ fn false_of_nested_or_overlapping_leaf_sets_is_on_no_node() {
 fn summed_out_internal_levels_do_not_move() {
     let eng = Engine::new();
     let home = Home::new(rotated_home(6, 11));
-    let f = Tdd::clause(&crate::vtree::Home::unchecked(&Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)]).unwrap()), [1, 2, 3]).unwrap();
-    let g = Tdd::clause(&crate::vtree::Home::unchecked(&Vtree::projection(&home, [VarId(4), VarId(5)]).unwrap()), [4, -5]).unwrap();
+    let f = Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)]).unwrap())), [1, 2, 3]).unwrap();
+    let g = Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&Vtree::projection(&home, [VarId(4), VarId(5)]).unwrap())), [4, -5]).unwrap();
     let mut summed = f.clone();
     let root = summed.vtree().root();
     crate::marginal::tests::marginalize_levels(&eng, &mut summed, &[root]).unwrap();
@@ -328,7 +328,7 @@ fn summed_out_internal_levels_do_not_move() {
 /// A random diagram on the projection of `home` on `vars`, not trimmed, so
 /// that it may name a leaf of a variable it does not depend on as true.
 fn untrimmed(eng: &Engine, home: &Home, vars: &[VarId], rng: &mut Lcg) -> Tdd {
-    let mut f = Tdd::one(&crate::vtree::Home::unchecked(&Vtree::projection(home, vars.iter().copied()).unwrap()));
+    let mut f = Tdd::one(&crate::vtree::Home::new(std::sync::Arc::clone(&Vtree::projection(home, vars.iter().copied()).unwrap())));
     for _ in 0..rng.below(4) {
         let clause: Vec<i32> = (0..1 + rng.below(3))
             .map(|_| {
@@ -385,12 +385,12 @@ fn a_conjunction_with_a_literal_inside_an_equivalence_keeps_its_cone() {
         let vars = leaf_vars(&home).collect::<Vec<_>>();
         let (x, y) = (vars[0].0 as i32, vars[vars.len() - 1].0 as i32);
         let own = Vtree::projection(&hm, vars.iter().copied()).unwrap();
-        let mut f = Tdd::one(&crate::vtree::Home::unchecked(&own));
+        let mut f = Tdd::one(&crate::vtree::Home::new(std::sync::Arc::clone(&own)));
         for clause in [[x, -y], [-x, y]] {
             f = eng.and_clause(f, &clause).unwrap();
         }
         for lit in [x, -x, y, -y] {
-            let g = Tdd::clause(&crate::vtree::Home::unchecked(&Vtree::projection(&hm, [VarId(lit.unsigned_abs())]).unwrap()), [lit]).unwrap();
+            let g = Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&Vtree::projection(&hm, [VarId(lit.unsigned_abs())]).unwrap())), [lit]).unwrap();
             let expected = eng.and(on_home(&f, &home), on_home(&g, &home)).unwrap();
             let out = eng.and(f.clone(), &g).unwrap();
             assert!(Arc::ptr_eq(out.vtree(), f.vtree()), "seed {seed} literal {lit}");
@@ -416,7 +416,7 @@ fn unreduced(eng: &Engine, home: &Home, vars: &[VarId], rng: &mut Lcg) -> Tdd {
         if lits.is_empty() { vec![vars[0].0 as i32] } else { lits }
     };
     let (c, d) = (clause(), clause());
-    eng.and(Tdd::clause(&crate::vtree::Home::unchecked(&vtree), c).unwrap(), Tdd::clause(&crate::vtree::Home::unchecked(&vtree), d).unwrap()).unwrap()
+    eng.and(Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)), c).unwrap(), Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)), d).unwrap()).unwrap()
 }
 
 /// `and(f, g)` with `g` on a part of `f`'s variables equals the conjunction
@@ -609,10 +609,10 @@ fn a_conjunction_across_leaf_sets_builds_the_parent_of_a_top_that_is_not_the_roo
         let lits = |vars: &[VarId], signs: u32| vars.iter().enumerate().map(|(i, v)| if signs >> i & 1 == 1 { v.0 as i32 } else { -(v.0 as i32) }).collect::<Vec<_>>();
         for fs in 0..1u32 << fv.len() {
             for gs in 0..1u32 << gv.len() {
-                let f = eng.clause(&crate::vtree::Home::unchecked(&fp), lits(&fv, fs)).unwrap();
-                let g = eng.clause(&crate::vtree::Home::unchecked(&gp), lits(&gv, gs)).unwrap();
+                let f = eng.clause(&crate::vtree::Home::new(std::sync::Arc::clone(&fp)), lits(&fv, fs)).unwrap();
+                let g = eng.clause(&crate::vtree::Home::new(std::sync::Arc::clone(&gp)), lits(&gv, gs)).unwrap();
                 check_union(&eng, &hm, &f, &g, true, &format!("f {:?} g {:?}", lits(&fv, fs), lits(&gv, gs)));
-                let (f, g) = (eng.cube(&crate::vtree::Home::unchecked(&fp), lits(&fv, fs)).unwrap(), eng.cube(&crate::vtree::Home::unchecked(&gp), lits(&gv, gs)).unwrap());
+                let (f, g) = (eng.cube(&crate::vtree::Home::new(std::sync::Arc::clone(&fp)), lits(&fv, fs)).unwrap(), eng.cube(&crate::vtree::Home::new(std::sync::Arc::clone(&gp)), lits(&gv, gs)).unwrap());
                 check_union(&eng, &hm, &f, &g, true, &format!("cubes f {:?} g {:?}", lits(&fv, fs), lits(&gv, gs)));
             }
         }

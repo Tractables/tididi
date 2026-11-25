@@ -89,7 +89,7 @@ fn shapes(n: u32) -> Vec<(&'static str, Home)> {
 fn random_function(rng: &mut Lcg, vtree: &Arc<Vtree>, n: u32, rows: usize) -> Tdd {
     let vars: Vec<VarId> = (1..=n).filter(|_| rng.below(4) != 0).map(VarId).collect();
     let packed: Vec<u64> = (0..rows).map(|_| rng.next_u64() & ((1u64 << vars.len()) - 1)).collect();
-    let f = Tdd::from_models(&crate::vtree::Home::unchecked(vtree), &vars, &packed).unwrap();
+    let f = Tdd::from_models(&crate::vtree::Home::new(std::sync::Arc::clone(vtree)), &vars, &packed).unwrap();
     assert_canonical(&f);
     f
 }

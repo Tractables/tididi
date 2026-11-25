@@ -21,8 +21,8 @@ fn constant_operands_keep_the_weight_contract() {
     for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
         let vtree = weighted_tree(3, 2, arithmetic);
         for reverse in [false, true] {
-            let zero = Tdd::zero(&crate::vtree::Home::unchecked(&vtree));
-            let f = Tdd::cube(&crate::vtree::Home::unchecked(&vtree), [1]).unwrap();
+            let zero = Tdd::zero(&vtree);
+            let f = Tdd::cube(&vtree, [1]).unwrap();
             let want = eng.or(zero.clone(), f.clone()).unwrap();
             let mut operands = vec![zero, f];
             if reverse { operands.reverse(); }
@@ -34,7 +34,7 @@ fn constant_operands_keep_the_weight_contract() {
             assert_canonical(&got);
             same_weight(got.weighted_value().unwrap(), want.weighted_value().unwrap());
         }
-        let zeros = vec![Tdd::zero(&crate::vtree::Home::unchecked(&vtree)), Tdd::zero(&crate::vtree::Home::unchecked(&vtree))];
+        let zeros = vec![Tdd::zero(&vtree), Tdd::zero(&vtree)];
         let want = eng.or(zeros[0].clone(), zeros[1].clone()).unwrap();
         let got = eng.or_many(zeros.clone()).unwrap();
         assert_canonical(&got);
@@ -50,9 +50,9 @@ fn overlay_compositions_keep_both_weight_arithmetics() {
     let eng = Engine::new();
     for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
         let tree = weighted_tree(6, 2, arithmetic);
-        let a = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, -3, 5]).unwrap();
-        let b = Tdd::cube(&crate::vtree::Home::unchecked(&tree), [-2, 4]).unwrap();
-        let c = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [3, 6]).unwrap();
+        let a = Tdd::clause(&tree, [1, -3, 5]).unwrap();
+        let b = Tdd::cube(&tree, [-2, 4]).unwrap();
+        let c = Tdd::clause(&tree, [3, 6]).unwrap();
         let reference_or = eng.negate(eng.and(eng.negate(a.clone()).unwrap(), eng.negate(b.clone()).unwrap()).unwrap()).unwrap();
         let reference_diff = eng.and(a.clone(), eng.negate(b.clone()).unwrap()).unwrap();
         let reference_or_many = eng.negate(eng.and(eng.negate(reference_or.clone()).unwrap(),eng.negate(c.clone()).unwrap()).unwrap()).unwrap();
