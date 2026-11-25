@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use super::*;
 use crate::diagram::{Arithmetic, RationalWeights, Weights};
 use crate::limits::{LimitConfig, StopAt, StopRules};
@@ -246,8 +247,8 @@ fn sparse_ids_and_single_leaf_diagrams_work() {
 fn boolean_queries_ignore_weights_and_substitution_keeps_destination_weights() {
     let eng = Engine::new();
     let weights = Weights::new(RationalWeights::unit(2), Arithmetic::ExactRational);
-    let tree = Arc::new(Vtree::balanced(2).with_weights(weights).unwrap());
-    let plain_tree = Arc::new(Vtree::balanced(2));
+    let tree = Home::new(Vtree::balanced(2).with_weights(weights).unwrap());
+    let plain_tree = Home::new(Vtree::balanced(2));
     let x = eng.literal(&tree, 1).unwrap();
     let plain = eng.literal(&plain_tree, 1).unwrap();
     let same = x.clone();
@@ -500,7 +501,7 @@ fn renaming_changes_the_function_without_renaming_its_weight_table() {
         },
     ]);
     let weights = Weights::new(weights, Arithmetic::ExactRational);
-    let tree = Arc::new(Vtree::balanced(2).with_weights(weights).unwrap());
+    let tree = Home::new(Vtree::balanced(2).with_weights(weights).unwrap());
     let f = eng.literal(&tree, 1).unwrap();
     assert_eq!(
         eng.weighted_value(&f).unwrap().unwrap().into_rational(),
@@ -519,7 +520,7 @@ fn renaming_changes_the_function_without_renaming_its_weight_table() {
 #[test]
 fn renaming_and_literal_substitution_agree_for_all_three_variable_maps() {
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(3));
+    let tree = Home::new(Vtree::balanced(3));
     let f = function(&tree, 0b00110110, false);
     assert_canonical(&f);
     let literals = [1, 2, 3].map(|v| eng.literal(&tree, v).unwrap());
@@ -560,7 +561,7 @@ fn rename_validates_each_entry_before_shortcuts_or_literal_construction() {
 #[test]
 fn substitution_refusals_leave_replacements_usable() {
     let weights = Weights::new(RationalWeights::unit(3), Arithmetic::SignedLog);
-    let vtree = Arc::new(Vtree::balanced(3).with_weights(weights).unwrap());
+    let vtree = Home::new(Vtree::balanced(3).with_weights(weights).unwrap());
     let f = Tdd::cube(&vtree, [1, -2, 3]).unwrap();
     let g = Tdd::clause(&vtree, [2, 3]).unwrap();
     let h = Tdd::clause(&vtree, [-1, -3]).unwrap();

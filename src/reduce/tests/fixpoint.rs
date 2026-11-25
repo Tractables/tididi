@@ -1,8 +1,8 @@
 //! What a whole-diagram minimize leaves behind: no pending work, and a
 //! certificate the next minimize reads instead of running the passes again.
 
+use crate::vtree::Home;
 use crate::test_helpers::bare_roots;
-use std::sync::Arc;
 
 use crate::diagram::Pass;
 use crate::test_helpers::{assert_canonical, compile_clauses, test_cases, vtree_shapes};
@@ -26,7 +26,7 @@ fn a_minimized_diagram_owes_the_passes_nothing() {
 #[test]
 fn a_second_minimize_of_a_certified_diagram_runs_no_pass() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(6));
+    let vtree = Home::new(Vtree::balanced(6));
     let mut f = compile_clauses(&vtree, &[vec![1, 2, 3], vec![-2, 4], vec![3, -5, 6]]);
     eng.minimize(&mut f).unwrap();
     assert!(f.levels.is_canonical(f.output));
@@ -40,7 +40,7 @@ fn a_second_minimize_of_a_certified_diagram_runs_no_pass() {
 #[test]
 fn an_edit_after_minimize_is_reduced_by_the_next_minimize() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let mut f = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3]]);
     eng.minimize(&mut f).unwrap();
     let g = compile_clauses(&vtree, &[vec![3, -4]]);

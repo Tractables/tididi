@@ -1,5 +1,6 @@
 //! Variable support, conditioning and implied literals.
 
+use crate::vtree::Home;
 use super::*;
 use crate::Engine;
 use crate::diagram::Literal;
@@ -10,7 +11,7 @@ fn cls(vtree: &Arc<Vtree>, lits: &[(u32, bool)]) -> Tdd {
 }
 
 fn unit_forced_tdd() -> Tdd {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let c0 = cls(&vtree, &[(1, true)]);
     let f = cls(&vtree, &[(1, true), (2, true)]);
     let g = cls(&vtree, &[(2, true), (3, true)]);
@@ -121,7 +122,7 @@ fn implied_literals_matches_condition_oracle() {
         }
         out
     };
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let x0 = cls(&vtree, &[(1, true)]);
     let nx0 = cls(&vtree, &[(1, false)]);
     let x1 = cls(&vtree, &[(2, true)]);

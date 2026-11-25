@@ -249,7 +249,7 @@ fn a_conjunction_placed_on_the_root_is_and_on_a_bare_root() {
         let n = 2 + (seed % 10) as u32;
         let hm = Home::new(rotated_home(n, seed));
         let root = &hm;
-        let bare = Arc::new(Vtree::clone(root));
+        let bare = Home::new(Vtree::clone(root));
         let mut rng = Lcg::new(seed ^ 0x7f4a_7c15);
         let (l, r) = root.children(root.root());
         let all = vars_under(root, root.root());

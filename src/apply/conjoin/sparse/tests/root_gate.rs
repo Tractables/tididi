@@ -4,6 +4,7 @@
 //! children's grids — the product of the operands' node counts at each
 //! child — and then walk every combination of the two roots' pairs, to
 //! conjoin two pair lists whose result is a few thousand pairs.
+use crate::vtree::Home;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -27,9 +28,9 @@ fn rows(stride: u64) -> Vec<Vec<u64>> {
 /// At each block's root level both operands hold one node per value, so the
 /// child grids of the vtree root are `2000 × 2000` cells each while the root
 /// level itself is `1 × 1`.
-fn root_join(eng: &Engine) -> (Tdd, Tdd, Arc<Vtree>) {
+fn root_join(eng: &Engine) -> (Tdd, Tdd, Home) {
     let (a, b): (Vec<VarId>, Vec<VarId>) = (block(1, 11), block(12, 11));
-    let vtree = Arc::new(Vtree::join(
+    let vtree = Home::new(Vtree::join(
         &Vtree::balanced_over(&a).unwrap(),
         &Vtree::balanced_over(&b).unwrap(),
     ).unwrap());

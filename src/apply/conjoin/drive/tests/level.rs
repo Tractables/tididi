@@ -1,4 +1,5 @@
 //! Which routes open a level's arenas and arm its growth mode.
+use crate::vtree::Home;
 use super::*;
 use crate::diagram::{Tdd, TddLevel, TddNodeId, NodeIdx};
 use crate::limits::growth::DENSE_GROWTH_DECISION_THRESHOLD;
@@ -27,8 +28,8 @@ fn root_shape(vtree: &Vtree) -> LevelShape {
 
 /// A root whose two operands together bound the emit past the growth
 /// decision threshold, under a budget that makes the bound unaffordable.
-fn tight_level() -> (Engine, Arc<Vtree>, Tdd, Tdd) {
-    let vtree = Arc::new(Vtree::balanced(2));
+fn tight_level() -> (Engine, Home, Tdd, Tdd) {
+    let vtree = Home::new(Vtree::balanced(2));
     let pairs = (DENSE_GROWTH_DECISION_THRESHOLD as f64).sqrt() as usize + 1;
     assert!((pairs as u128) * (pairs as u128) > DENSE_GROWTH_DECISION_THRESHOLD);
     let f = operand(&vtree, pairs);
@@ -73,7 +74,7 @@ fn the_streaming_routes_open_nothing() {
 #[test]
 fn the_column_table_is_kept_wherever_a_cell_can_group() {
     use crate::apply::conjoin::cell::GROUPED_MIN_PAIRS;
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = Home::new(Vtree::balanced(2));
     let t = vtree.root();
     let (long, short) = (operand(&vtree, GROUPED_MIN_PAIRS), operand(&vtree, GROUPED_MIN_PAIRS - 1));
     let (long, short) = (long.level(t), short.level(t));

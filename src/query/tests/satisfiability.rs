@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use super::*;
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
 use crate::limits::{LimitConfig, StopCallback, StopDecision};
@@ -57,7 +58,7 @@ fn checked_satisfiability_ignores_weights_and_reads_marginal_counts() {
 #[test]
 fn checked_satisfiability_returns_refusals_without_changing_the_input() {
     let engine = Engine::new();
-    let tree = Arc::new(Vtree::balanced(3));
+    let tree = Home::new(Vtree::balanced(3));
     let f = engine.clause(&tree, [1, 2]).unwrap();
     assert_canonical(&f);
     {

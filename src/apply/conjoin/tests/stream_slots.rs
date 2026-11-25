@@ -44,7 +44,7 @@ fn a_streamed_column_past_the_slot_cap_is_refused() {
     for store in &stores {
         let tree = match store {
             Some(store) => Arc::new(Vtree::clone(&tree).with_weights(store.clone()).unwrap()),
-            None => Arc::clone(&tree),
+            None => tree.clone(),
         };
         let (f, g) = (conjoin_all(&eng, &tree, a), conjoin_all(&eng, &tree, b));
         let expected = value(&eng, &eng.and_marginalizing(f.clone(), g.clone(), &targets).unwrap());

@@ -100,7 +100,7 @@ fn clause_results_list_their_loose_levels() {
     let mut failed = Vec::new();
     for seed in 0..40u64 {
         let home = Home::new(Vtree::random(6, seed));
-        let bare = Arc::new(Vtree::random(6, seed));
+        let bare = Home::new(Vtree::random(6, seed));
         let lit = 1 + rng.below(6) as i32;
         let x = Tdd::clause(&home, [lit]).unwrap();
         let one_leaf = trimmed(&home, eng.and_clause(eng.clause(&home, [lit, 1 + lit % 6]).unwrap(), &[lit]).unwrap());

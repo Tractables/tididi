@@ -1,7 +1,7 @@
 //! `nor_many`: the conjunction of the operands' complements.
 
+use crate::vtree::Home;
 use crate::{Tdd, Vtree, nor_many, or_many};
-use std::sync::Arc;
 use crate::test_helpers::assert_canonical;
 
 /// On implicit levels and on stored ones alike ([`same_as_stored`]).
@@ -40,7 +40,7 @@ fn nor_many_is_the_conjunction_of_the_complements() {
 
 #[test]
 fn or_many_is_the_complement_of_nor_many() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let cubes = || {
         [
             Tdd::cube(&vtree, [1, 2]).unwrap(),
@@ -58,7 +58,7 @@ fn or_many_is_the_complement_of_nor_many() {
 
 #[test]
 fn a_false_operand_drops_out_and_all_false_is_true() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = Tdd::cube(&vtree, [1]).unwrap();
     let zero = Tdd::zero(&vtree);
     let with_zero = nor_many([f.clone(), zero.clone()]).unwrap();

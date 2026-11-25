@@ -2,7 +2,6 @@
 
 use crate::test_helpers::bare_roots;
 use std::collections::BTreeSet;
-use std::sync::Arc;
 
 use super::*;
 use crate::reduce::ReductionPlan;

@@ -1,8 +1,8 @@
 //! Tests of the CNF encoding: its exact call stream, its agreement with
 //! exhaustive search, its stops, and what it refuses.
 
-use std::ops::ControlFlow;
 use std::sync::Arc;
+use std::ops::ControlFlow;
 
 use super::*;
 use crate::diagram::NodeIdx;

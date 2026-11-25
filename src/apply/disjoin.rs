@@ -127,10 +127,10 @@ fn collect_operands(operands: impl IntoIterator<Item = Tdd>) -> Result<Vec<Tdd>,
 /// Weight compatibility and inheritance follow [`and`](crate::and).
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{literal, or, Tdd, Vtree};
 ///
-/// let vtree = Arc::new(Vtree::balanced(3));
+/// let vtree = Home::new(Vtree::balanced(3));
 /// let first_two = Tdd::cube(&vtree, [1, 2])?;
 /// let third = literal(&vtree, 3)?;
 /// let f = or(first_two, third)?;
@@ -170,10 +170,10 @@ pub fn or(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
 /// so is the result. The result retains the agreed weights, as in [`or`].
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{or_many, Tdd, Vtree};
 ///
-/// let vtree = Arc::new(Vtree::balanced(4));
+/// let vtree = Home::new(Vtree::balanced(4));
 /// let clauses = [
 ///     Tdd::cube(&vtree, [1, 2])?,
 ///     Tdd::cube(&vtree, [3])?,
@@ -210,10 +210,10 @@ pub fn or_many(operands: impl IntoIterator<Item = Tdd>) -> Result<Tdd, Operation
 /// and inheritance follow [`or`], including for false operands.
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{nor_many, Tdd, Vtree};
 ///
-/// let vtree = Arc::new(Vtree::balanced(4));
+/// let vtree = Home::new(Vtree::balanced(4));
 /// let bodies = [Tdd::cube(&vtree, [1, 2])?, Tdd::cube(&vtree, [3])?];
 /// let f = nor_many(bodies)?;
 /// // 16 assignments, 4 with x1 ^ x2, 8 with x3, 2 with both.

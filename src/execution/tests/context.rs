@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use std::sync::{Arc, Barrier};
 
 use super::*;
@@ -171,7 +172,7 @@ fn grafts_preserve_only_a_context_agreed_by_every_source() {
 fn ordinary_diagram_methods_can_reenter_from_a_stop_callback() {
     use crate::limits::{StopCallback, StopDecision};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    let tree = Arc::new(Vtree::balanced(3));
+    let tree = Home::new(Vtree::balanced(3));
     let calls = Arc::new(AtomicUsize::new(0));
     let callback = {
         let tree = Arc::clone(&tree);

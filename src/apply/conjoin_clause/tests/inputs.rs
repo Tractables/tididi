@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use super::*;
 use std::sync::{Arc, Mutex};
 use crate::limits::{LimitConfig, MemoryHooks};
@@ -5,7 +6,7 @@ use crate::test_helpers::assert_canonical;
 
 #[test]
 fn typed_clause_adapter_preserves_kernel_allocation_requests() {
-    let tree = Arc::new(Vtree::balanced(8));
+    let tree = Home::new(Vtree::balanced(8));
     let input = Tdd::one(&tree);
     assert_canonical(&input);
     let literals = [Literal::try_from(1).unwrap(), Literal::try_from(-7).unwrap()];
@@ -32,7 +33,7 @@ fn typed_clause_adapter_preserves_kernel_allocation_requests() {
 
 #[test]
 fn repeated_and_conflicting_literals_read_as_the_normalized_clause_in_both_modes() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let eng = Engine::new();
     let f = Tdd::clause(&vtree, [1, 3]).unwrap();
     assert_eq!(f.model_count().unwrap(), 12u32.into());
@@ -63,7 +64,7 @@ fn repeated_and_conflicting_literals_read_as_the_normalized_clause_in_both_modes
 
 #[test]
 fn a_long_clause_reads_its_repeats_and_conflicts_as_a_short_one_does() {
-    let vtree = Arc::new(Vtree::balanced(24));
+    let vtree = Home::new(Vtree::balanced(24));
     let eng = Engine::new();
     let f = Tdd::clause(&vtree, [1, 3]).unwrap();
     let count = |mut g: Tdd| {

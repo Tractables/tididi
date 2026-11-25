@@ -66,9 +66,9 @@ enum Probe {
 /// for costs and recovery after an error.
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{Tdd, Vtree};
-/// let vtree = Arc::new(Vtree::balanced(3));
+/// let vtree = Home::new(Vtree::balanced(3));
 /// let mut f = Tdd::cube(&vtree, [1, 2, 3])?;
 /// {
 ///     let mut batch = f.maintain()?;
@@ -128,9 +128,9 @@ impl Tdd {
     /// certifies it again.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let vtree = Home::new(Vtree::balanced(4));
     /// let mut f = Tdd::cube(&vtree, [1, 2, 3, 4])?;
     /// f.maintain()?.insert_model([-1, -2, -3, -4])?;
     /// f.minimize()?;

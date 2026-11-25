@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use crate::test_helpers::bare_roots;
 use super::*;
 use crate::build::constant_one;
@@ -11,14 +12,14 @@ use num_bigint::BigUint;
 #[test]
 fn expand_full_constant_one() {
     let eng = &crate::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let mut tdd = constant_one(eng, &vtree);
     expand_full_unmarked(&crate::Engine::new(), &mut tdd).unwrap();
 }
 
 #[test]
 fn expand_full_single_clause() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let mut tdd = clause_to_tdd(&vtree, &clause(&[(1, true), (2, false)]));
     let count_before = tdd.model_count().unwrap();
     expand_full_unmarked(&crate::Engine::new(), &mut tdd).unwrap();

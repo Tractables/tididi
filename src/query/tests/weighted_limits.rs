@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use super::*;
 use crate::diagram::{Arithmetic, RationalWeights, Weights};
 use crate::limits::{LimitConfig, StopRules, StopAt};
@@ -5,7 +6,7 @@ use crate::OperationError;
 
 /// A structural weighted diagram with several internal levels to fold.
 fn weighted_fixture(arithmetic: Arithmetic) -> Tdd {
-    let tree = Arc::new(Vtree::balanced(8).with_weights(Weights::new(RationalWeights::unit(8), arithmetic)).unwrap());
+    let tree = Home::new(Vtree::balanced(8).with_weights(Weights::new(RationalWeights::unit(8), arithmetic)).unwrap());
     let f = Tdd::clause(&tree, [1, 2, 3]).unwrap();
     crate::test_helpers::assert_canonical(&f);
     f
@@ -59,7 +60,7 @@ fn weighted_reads_stop_during_the_fold() {
 #[test]
 fn unweighted_reads_return_none_without_allocating() {
     let engine = Engine::new();
-    let tree = Arc::new(Vtree::balanced(2));
+    let tree = Home::new(Vtree::balanced(2));
     let f = Tdd::one(&tree);
     crate::test_helpers::assert_canonical(&f);
     let _limit = engine.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));

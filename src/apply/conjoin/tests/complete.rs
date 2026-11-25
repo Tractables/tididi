@@ -4,6 +4,7 @@
 //! join a complete child by arithmetic, checked against the scatter over its
 //! listed cells.
 
+use crate::vtree::Home;
 use super::*;
 use crate::Engine;
 use crate::limits::{LimitConfig, SparseRoute, StopAt, StopRules};
@@ -69,7 +70,7 @@ fn same_both_ways(f: &Tdd, g: &Tdd) -> Tdd {
 /// over two internal children reads both by arithmetic.
 #[test]
 fn disjoint_supports_read_both_sides_by_arithmetic() {
-    let vtree = Arc::new(Vtree::balanced(16));
+    let vtree = Home::new(Vtree::balanced(16));
     let odd: Vec<u32> = (1..=16).filter(|v| v % 2 == 1).collect();
     let even: Vec<u32> = (1..=16).filter(|v| v % 2 == 0).collect();
     let mut rng = Lcg::new(0x5eed_a901);
@@ -147,7 +148,7 @@ fn a_level_with_one_complete_side_past_the_seed_cap_never_grows() {
 /// quarter is one node of one pair on every level outside it.
 #[test]
 fn a_level_of_one_pair_nodes_seeds_its_products_arena() {
-    let vtree = Arc::new(Vtree::balanced(16));
+    let vtree = Home::new(Vtree::balanced(16));
     let all: Vec<u32> = (1..=16).collect();
     let mut rng = Lcg::new(0x5eed_a905);
     let before = pairs_grown();
@@ -166,7 +167,7 @@ fn a_level_of_one_pair_nodes_seeds_its_products_arena() {
 /// implicit levels and on stored ones alike ([`same_as_stored`]).
 #[test]
 fn shared_variables_leave_one_side_on_the_grid() {
-    let vtree = Arc::new(Vtree::balanced(16));
+    let vtree = Home::new(Vtree::balanced(16));
     // `f` also reads 2 and 4, under the leftmost quarter, and `g` 13 and 15,
     // under the rightmost.
     let fv: Vec<u32> = (1..=16).filter(|v| v % 2 == 1 || *v == 2 || *v == 4).collect();
@@ -195,7 +196,7 @@ fn shared_variables_leave_one_side_on_the_grid() {
 /// which takes such a level first wherever it may, is closed here.
 #[test]
 fn a_lone_g_pair_is_read_as_its_column() {
-    let vtree = Arc::new(Vtree::balanced(16));
+    let vtree = Home::new(Vtree::balanced(16));
     let all: Vec<u32> = (1..=16).collect();
     let mut rng = Lcg::new(0x5eed_a904);
     let before = complete_census();
@@ -232,7 +233,7 @@ fn one_pair_columns_read_as_their_columns() {
     let fv: Vec<u32> = (1..=16).filter(|v| v % 2 == 1 || *v == 2 || *v == 4).collect();
     let gv: Vec<u32> = (1..=16).filter(|v| v % 2 == 0 || *v == 13 || *v == 15).collect();
     let few: Vec<u32> = vec![1, 2, 3, 4, 9, 10];
-    for (shape, vtree) in [("balanced", Arc::new(Vtree::balanced(16))), ("random", Arc::new(Vtree::random(16, 0x5eed_a907)))] {
+    for (shape, vtree) in [("balanced", Home::new(Vtree::balanced(16))), ("random", Home::new(Vtree::random(16, 0x5eed_a907)))] {
         let mut rng = Lcg::new(0x5eed_a906);
         let before = complete_census();
         for round in 0..8 {
@@ -285,7 +286,7 @@ fn one_pair_columns_give_back_their_table() {
 /// census counts no level while it is forced.
 #[test]
 fn the_oracle_reads_every_side_from_the_grid() {
-    let vtree = Arc::new(Vtree::balanced(8));
+    let vtree = Home::new(Vtree::balanced(8));
     let mut rng = Lcg::new(0x5eed_a903);
     let f = function_of(&vtree, &[1, 3, 5, 7], &mut rng);
     let g = function_of(&vtree, &[2, 4, 6, 8], &mut rng);

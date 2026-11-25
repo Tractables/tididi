@@ -66,7 +66,7 @@ fn minimize_after_embed_onto_a_home() {
     let eng = Engine::new();
     for seed in 0..12u64 {
         let mut rng = Lcg::new(seed ^ 0xe3b);
-        let small = Arc::new(Vtree::balanced(4));
+        let small = Home::new(Vtree::balanced(4));
         let f = rand_conj(&small, 4, 1 + rng.below(4), 3, false, &mut rng);
         let home = Home::new(Vtree::balanced(8));
         let shift = 4 * rng.below(2) as u32;
@@ -248,7 +248,7 @@ fn a_rename_onto_a_home_variable_answers_as_on_a_bare_root() {
     use crate::test_helpers::eval;
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(4));
-    let bare = Arc::new(Vtree::balanced(4));
+    let bare = Home::new(Vtree::balanced(4));
     let f_on = |vtree: &Arc<Vtree>| eng.or(eng.literal(vtree, 1).unwrap(), eng.literal(vtree, 2).unwrap()).unwrap();
     let f = f_on(&home);
     assert_eq!(leaf_vars(&f), [VarId(1), VarId(2)]);

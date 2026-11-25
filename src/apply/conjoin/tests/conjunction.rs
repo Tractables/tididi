@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use super::*;
 use crate::Engine;
 use crate::limits::LimitConfig;
@@ -35,7 +36,7 @@ fn fold_clauses(vtree: &Arc<Vtree>, clauses: &[&[i32]], minimize_each: bool) -> 
 #[test]
 fn test_apply_and_with_constant_one() {
     let eng = &crate::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let one = constant_one(eng, &vtree);
     let clause = vec![Literal::pos(VarId(1))];
     let clause_tdd = clause_to_tdd(&vtree, &clause);
@@ -68,7 +69,7 @@ fn test_apply_and_with_constant_one() {
 
 #[test]
 fn test_apply_and_two_clauses() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = vec![Literal::pos(VarId(1))];
     let g = vec![Literal::neg(VarId(2))];
 
@@ -84,7 +85,7 @@ fn test_apply_and_two_clauses() {
 #[test]
 fn test_apply_and_contradictory() {
     // x0 ∧ ¬x0 should have no models
-    let vtree = Arc::new(Vtree::balanced(1));
+    let vtree = Home::new(Vtree::balanced(1));
     let f = vec![Literal::pos(VarId(1))];
     let g = vec![Literal::neg(VarId(1))];
 
@@ -100,7 +101,7 @@ fn test_apply_and_contradictory() {
 #[test]
 fn test_apply_and_self_conjunction() {
     // f ∧ f = f for a non-trivial diagram.
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let f = vec![Literal::pos(VarId(1)), Literal::pos(VarId(3))];
     let g = vec![Literal::neg(VarId(2)), Literal::pos(VarId(4))];
     let mut tdd = clause_to_tdd(&vtree, &f);
@@ -124,7 +125,7 @@ fn test_apply_and_self_conjunction() {
 #[test]
 fn test_apply_and_self_conjunction_owned() {
     // f ∧ f = f via the owned variant (avoids clone).
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let f = vec![Literal::pos(VarId(1)), Literal::neg(VarId(3))];
     let g = vec![Literal::pos(VarId(2)), Literal::pos(VarId(4))];
     let mut tdd = clause_to_tdd(&vtree, &f);
@@ -147,7 +148,7 @@ fn test_apply_and_stick_vtree_conjunction() {
     // child, so every level takes the leaf route of the conjunction.
     //
     // Both operands are folded clause by clause over the one vtree `Arc`.
-    let vtree = Arc::new(Vtree::linear(8));
+    let vtree = Home::new(Vtree::linear(8));
 
     let f = fold_clauses(&vtree, &[&[1, -3], &[-2, 4], &[5, -6], &[-7, 8]], true);
     let g = fold_clauses(&vtree, &[&[-1, 2], &[3, 5], &[-4, -6], &[7, -8]], true);
@@ -193,7 +194,7 @@ fn conjunction_rejects_a_constrained_marginal_level() {
 fn test_apply_output_node_cap_bails_cleanly() {
     // Two non-trivial functions whose conjunction has a multi-node intermediate
     // diagram (well above a 1-node cap).
-    let vtree = Arc::new(Vtree::balanced(14));
+    let vtree = Home::new(Vtree::balanced(14));
     // Cross-linking clauses over interleaved variables force a wide intermediate
     // diagram on the balanced vtree (hundreds of nodes), so a modest cap clearly
     // trips mid-build while the uncapped conjoin completes.
@@ -234,7 +235,7 @@ fn test_apply_output_node_cap_bails_cleanly() {
 fn conjunction_checks_the_final_root_on_the_preallocated_path() {
     use crate::{Engine, OperationError, Tdd};
     use crate::limits::LimitConfig;
-    let tree = Arc::new(Vtree::balanced(2));
+    let tree = Home::new(Vtree::balanced(2));
     let f = Tdd::clause(&tree, [1, 2]).unwrap();
     let g = Tdd::clause(&tree, [1, -2]).unwrap();
     let eng = Engine::new();

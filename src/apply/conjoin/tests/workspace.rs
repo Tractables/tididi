@@ -1,11 +1,11 @@
+use crate::vtree::Home;
 use crate::{Engine, Tdd, Vtree};
 use crate::test_helpers::assert_canonical;
-use std::sync::Arc;
 
 #[test]
 fn conjunction_returns_workspace_after_refusal_and_reuses_it() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(6));
+    let vtree = Home::new(Vtree::balanced(6));
     let left = Tdd::clause(&vtree, [1, 3, 5]).unwrap();
     let right = Tdd::clause(&vtree, [2, 4, 6]).unwrap();
     assert_canonical(&left);
@@ -34,7 +34,7 @@ fn conjunction_returns_workspace_after_refusal_and_reuses_it() {
 
 #[test]
 fn ordinary_conjunctions_reuse_the_context_workspace() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let left = Tdd::clause(&vtree, [1, 3]).unwrap();
     let right = Tdd::clause(&vtree, [2, 4]).unwrap();
     assert_canonical(&left);

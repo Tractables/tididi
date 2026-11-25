@@ -2,6 +2,7 @@
 //!
 //! The fixtures these read are in `mod.rs`.
 
+use crate::vtree::Home;
 use crate::test_helpers::bare_roots;
 use std::sync::Arc;
 
@@ -31,7 +32,7 @@ fn prune_loose_from_output(eng: &crate::Engine, tdd: &mut crate::Tdd) -> Result<
 /// in-flight byte meter.
 #[test]
 fn the_prune_scratch_reservation_goes_through_the_engine() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let clauses = [vec![1, 2], vec![-2, 3], vec![3, -4]];
 
     // Refused: the diagram is left exactly as it was.

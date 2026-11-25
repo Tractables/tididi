@@ -60,9 +60,9 @@ impl Engine {
     /// certifies it.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Engine, Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let either = Tdd::clause(&vtree, [1, 2])?;
     /// let neither = Engine::new().negate(&either)?;
     /// assert!(neither.equivalent(&Tdd::cube(&vtree, [-1, -2])?)?);

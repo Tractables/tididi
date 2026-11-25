@@ -6,6 +6,7 @@
 //! before compiling it reaches these diagrams by other routes; that variety
 //! belongs to the driver's own tests.
 
+use crate::vtree::Home;
 use super::*;
 
 #[test]
@@ -23,7 +24,7 @@ fn test_minimize_constant_one() {
 
 #[test]
 fn test_minimize_single_clause() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let clause = vec![Literal::pos(VarId(1))];
     let mut tdd = clause_to_tdd(&vtree, &clause);
     let count_before = tdd.model_count().unwrap();
@@ -35,7 +36,7 @@ fn test_minimize_single_clause() {
 
 #[test]
 fn test_minimize_reduces_width_after_apply() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = vec![Literal::pos(VarId(1))];
     let g = vec![Literal::neg(VarId(2))];
 
@@ -63,7 +64,7 @@ fn test_minimize_reduces_width_after_apply() {
 #[test]
 fn test_minimize_preserves_unsat() {
     // Single variable: x ∧ ¬x = UNSAT
-    let vtree = Arc::new(Vtree::balanced(1));
+    let vtree = Home::new(Vtree::balanced(1));
     let f = vec![Literal::pos(VarId(1))];
     let g = vec![Literal::neg(VarId(1))];
 
@@ -80,7 +81,7 @@ fn test_minimize_preserves_unsat() {
 fn test_minimize_unsat_2vars_width() {
     // 2 variables: (x0) AND (not-x0) = UNSAT
     // The canonical diagram for false should have width 0 (ZERO sentinel, empty levels)
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = Home::new(Vtree::balanced(2));
     let f = vec![Literal::pos(VarId(1))];
     let g = vec![Literal::neg(VarId(1))];
 
@@ -104,7 +105,7 @@ fn test_minimize_unsat_2vars_width() {
 fn test_minimize_unsat_3vars_width() {
     // 3 variables: (x0) AND (not-x0) = UNSAT
     // The canonical diagram for false should have width 0 (ZERO sentinel, empty levels)
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = vec![Literal::pos(VarId(1))];
     let g = vec![Literal::neg(VarId(1))];
 
@@ -128,7 +129,7 @@ fn test_minimize_unsat_3vars_width() {
 fn test_minimize_sat_2vars_reduces_width() {
     // (x0) ∧ (x1) over 2 vars → 1 model (x0=1, x1=1)
     // after apply: width 4. After minimize: should have width < 4.
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = Home::new(Vtree::balanced(2));
     let f = vec![Literal::pos(VarId(1))];
     let g = vec![Literal::pos(VarId(2))];
 
@@ -307,7 +308,7 @@ fn a_variable_the_function_ignores_leaves_no_literal_references_behind() {
 fn a_second_minimize_changes_nothing() {
     use crate::test_helpers::check::check_determinism;
 
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let formulas: &[&[&[i32]]] = &[
         // Independent of the second variable.
         &[&[1, 2], &[1, -2]],

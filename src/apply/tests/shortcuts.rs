@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use super::*;
 use crate::limits::{LimitConfig, StopAt, StopRules};
 use crate::{Literal, OperationError};
@@ -29,7 +30,7 @@ fn shortcut(eng: &Engine, tree: &Arc<Vtree>, f: Tdd, case: usize) -> Result<Tdd,
 #[test]
 fn constant_and_empty_transforms_honor_entry_stops_and_recover() {
     for n in [1, 3] {
-        let tree = Arc::new(Vtree::balanced(n));
+        let tree = Home::new(Vtree::balanced(n));
         let f = crate::literal(&tree, 1).unwrap();
         assert_canonical(&f);
         for case in 0..17 {
@@ -52,7 +53,7 @@ fn constant_and_empty_transforms_honor_entry_stops_and_recover() {
 #[test]
 fn conditioning_polls_while_reading_an_assignment() {
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(1));
+    let tree = Home::new(Vtree::balanced(1));
     let f = eng.literal(&tree, 1).unwrap();
     assert_canonical(&f);
     eng.limits().pin_reduce_poll_stride(Some(1));

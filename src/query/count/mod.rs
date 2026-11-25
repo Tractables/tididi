@@ -30,12 +30,12 @@ use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 /// substituted variables, which are now free.
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{literal, and};
 /// use tididi::query::{PinSemantics, Retention};
 /// use tididi::vtree::{VarId, Vtree};
 ///
-/// let vtree = Arc::new(Vtree::balanced(2));
+/// let vtree = Home::new(Vtree::balanced(2));
 /// let f = and(literal(&vtree, 1)?, literal(&vtree, 2)?)?;
 /// # tididi::test_helpers::assert_canonical(&f);
 /// for (semantics, expected) in [(PinSemantics::Evidence, 1u32), (PinSemantics::Cofactor, 2)] {

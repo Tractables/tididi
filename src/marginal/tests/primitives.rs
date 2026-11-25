@@ -2,6 +2,7 @@
 //! the weighted cluster closure, the reclaim of subsumed marginal data, and
 //! single-leaf inlining.
 
+use crate::vtree::Home;
 use crate::Engine;
 use std::sync::Arc;
 
@@ -252,7 +253,7 @@ fn leaf_inline_preserves_count() {
 #[test]
 fn all_leaves_inline_preserve_count() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(6));
+    let vtree = Home::new(Vtree::balanced(6));
     let mut t = compile_clauses(&vtree, &leaf_inline_clauses());
     let baseline = t.model_count().unwrap();
     for v in 0..6u32 {

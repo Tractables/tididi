@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use super::*;
 use crate::limits::{LimitConfig, StopAt, StopRules};
 use crate::query::boolean::visit_leaf_labels;
@@ -81,7 +82,7 @@ fn support_and_backbone_match_sparse_id_truth_tables() {
 fn unsatisfiable_implies_both_signs_of_every_vtree_variable() {
     let eng = Engine::new();
     let vars = [VarId(20), VarId(3), VarId(9)];
-    let vtree = Arc::new(Vtree::balanced_over(&vars).unwrap());
+    let vtree = Home::new(Vtree::balanced_over(&vars).unwrap());
     let positive = eng.literal(&vtree, Literal::pos(vars[0])).unwrap();
     let negative = eng.literal(&vtree, Literal::neg(vars[0])).unwrap();
     assert_canonical(&positive);
@@ -109,7 +110,7 @@ fn unsatisfiable_implies_both_signs_of_every_vtree_variable() {
 fn leaf_outputs_have_only_their_forced_literal() {
     let eng = Engine::new();
     let var = VarId(20);
-    let tree = Arc::new(Vtree::leaf(var));
+    let tree = Home::new(Vtree::leaf(var));
     for (f, expected) in [
         (Tdd::zero(&tree), vec![Literal::neg(var), Literal::pos(var)]),
         (Tdd::one(&tree), vec![]),
@@ -156,7 +157,7 @@ fn leaf_scan_omits_marginal_leaves_and_public_query_rejects_them() {
 #[test]
 fn leaf_scan_stops_before_finishing_a_parent_and_can_retry() {
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(2));
+    let tree = Home::new(Vtree::balanced(2));
     let f = eng.clause(&tree, [1, 2]).unwrap();
     assert_canonical(&f);
     assert!(f.level(tree.root()).pair_count_at(0) > 1);
@@ -267,7 +268,7 @@ fn an_implicit_leaf_parent_names_the_labels_of_its_stored_copy() {
 fn checked_backbone_preserves_inputs_across_resource_refusals() {
     use crate::limits::{StopCallback, StopDecision};
     let engine = Engine::new();
-    let tree = Arc::new(Vtree::balanced(3));
+    let tree = Home::new(Vtree::balanced(3));
     let f = engine.cube(&tree, [1, -2]).unwrap();
     assert_canonical(&f);
     let zero = engine.zero(&tree);

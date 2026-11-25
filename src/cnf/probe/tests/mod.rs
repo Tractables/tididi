@@ -2,7 +2,6 @@
 //! fixtures, its agreement with exhaustive search, and its stops.
 
 use std::ops::ControlFlow;
-use std::sync::Arc;
 
 use super::*;
 use crate::cnf::{ClauseSink, CnfScheme, EncodePoint};

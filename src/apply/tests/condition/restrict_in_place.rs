@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use super::*;
 use crate::vtree::Vtree;
 use crate::limits::Limits;
@@ -83,7 +84,7 @@ fn restricting_an_implicit_level_builds_what_is_left() {
 /// still pointed at it until the falsity sweep ran.
 #[test]
 fn conditioning_leaves_no_node_computing_false() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = Tdd::clause(&vtree, [1, 2]).unwrap();
     let mut c = (f).clone().condition_var(crate::vtree::VarId(2), false).unwrap();
     c.minimize().unwrap();
@@ -99,7 +100,7 @@ fn conditioning_a_variable_outside_the_vtree_is_an_error() {
     use crate::vtree::VarId;
     use crate::OperationError;
     let eng = &crate::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = Tdd::clause(&vtree, [1, 2]).unwrap();
     assert!(matches!(
         eng.condition_var(f.clone(), VarId(10), true),

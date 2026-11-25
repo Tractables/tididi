@@ -1,6 +1,7 @@
 //! The row loop of one-pair cells, checked against the row loop of any
 //! level it replaces: the same diagram.
 
+use crate::vtree::Home;
 use super::*;
 use crate::Engine;
 use crate::test_helpers::{compile_clauses_on, rand_cnf, vtree_shapes, CnfShape, Lcg};
@@ -48,7 +49,7 @@ fn the_loop_of_one_pair_cells_builds_the_levels_of_the_general_loop() {
             }
         }
     }
-    let vtree = Arc::new(Vtree::linear(12));
+    let vtree = Home::new(Vtree::linear(12));
     let vars: Vec<VarId> = (1..=12).map(VarId).collect();
     for case in 0..6 {
         let one_in = [16, 64, 256][case % 3];

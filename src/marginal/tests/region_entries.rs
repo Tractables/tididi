@@ -5,10 +5,10 @@
 //! The reference exists where each region stands for one home node whose
 //! leaves the diagram all had, so the cases are built that way.
 
+use std::sync::Arc;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::Arc;
 
 use num_bigint::BigUint;
 

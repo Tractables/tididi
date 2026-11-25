@@ -3,8 +3,8 @@
 //! for the same work, whatever the plan; and it leaves the operand as it
 //! was.
 
+use crate::vtree::Home;
 use std::borrow::Cow;
-use std::sync::Arc;
 
 use super::plan::shape;
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
@@ -94,7 +94,7 @@ fn a_borrowed_negation_copies_described_levels_and_weights() {
     assert!(described > 0, "no diagram held a described level");
 
     let table = RationalWeights::from_literals(&vec![LiteralWeights { negative: rat(1, 3), positive: rat(2, 3) }; 4]);
-    let vtree = Arc::new(Vtree::balanced(4).with_weights(Weights::new(table, Arithmetic::ExactRational)).unwrap());
+    let vtree = Home::new(Vtree::balanced(4).with_weights(Weights::new(table, Arithmetic::ExactRational)).unwrap());
     let f = Tdd::clause(&vtree, [1, -2]).unwrap() & Tdd::clause(&vtree, [3, 4]).unwrap();
     check("weighted", &f);
     let negated = Engine::new().negate(&f).unwrap();

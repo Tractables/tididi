@@ -592,10 +592,10 @@ impl Tdd {
     /// [`OperationError::OverBudget`] if an allocation is refused.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Literal, Tdd, Vtree};
     /// use tididi::vtree::VarId;
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [Literal::pos(VarId(1)), Literal::neg(VarId(2))])?;
     /// assert_eq!(f.model_count()?, 6u32.into());
     /// # tididi::test_helpers::assert_canonical(&f);

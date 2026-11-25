@@ -2,6 +2,7 @@
 //! `f ∧ g = f.clone()` fires only when the operands are the same function, so
 //! the comparison covers marginal content (a marginal level clears
 //! `nodes`/`pairs`) and the `ranges` table as well as `nodes` and `pairs`.
+use crate::vtree::Home;
 use super::is_self_conjunction;
 use crate::diagram::{
     PairRange, ChildPair, LeafLabel, NodeIdx, Tdd, TddNodeId,
@@ -33,7 +34,7 @@ fn build_operand(vtree: &Arc<Vtree>) -> Tdd {
 
 #[test]
 fn identical_nonmarginal_takes_shortcut() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let a = build_operand(&vtree);
     let b = build_operand(&vtree);
     assert!(
@@ -44,7 +45,7 @@ fn identical_nonmarginal_takes_shortcut() {
 
 #[test]
 fn marginal_level_blocks_shortcut() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, _) = vtree.children(root);
     let mut a = build_operand(&vtree);
@@ -63,7 +64,7 @@ fn marginal_level_blocks_shortcut() {
 
 #[test]
 fn differing_ext_blocks_shortcut() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let a = build_operand(&vtree);
     let mut b = build_operand(&vtree);

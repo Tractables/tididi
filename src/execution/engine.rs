@@ -24,10 +24,10 @@ use super::pool::{Drain, Pool, Pools, ScratchLedger};
 /// Ordinary free functions and diagram methods use separate unlimited checkouts.
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{Tdd, Vtree};
 /// use tididi::limits::LimitConfig;
-/// let vtree = Arc::new(Vtree::balanced(3));
+/// let vtree = Home::new(Vtree::balanced(3));
 /// let f = vtree.context().with_limits(
 ///     LimitConfig::none().with_memory_budget_bytes(Some(1_000_000)),
 ///     |engine| {
@@ -105,10 +105,10 @@ impl Engine {
     /// A returned diagram owns its storage and can outlive the engine:
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Engine, Vtree};
     ///
-    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let vtree = Home::new(Vtree::balanced(2));
     /// let f = {
     ///     let engine = Engine::new();
     ///     engine.clause(&vtree, [1, 2])?

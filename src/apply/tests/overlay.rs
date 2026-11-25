@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use std::sync::Arc;
 
 use super::*;
@@ -244,7 +245,7 @@ fn a_leaf_root_combines_labels() {
 
 #[test]
 fn the_public_entry_points_route_through_the_overlay() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let first = crate::literal(&vtree, 1).unwrap();
     let first_two = Tdd::cube(&vtree, [1, 2]).unwrap();
     let diff = crate::and_not(first.clone(), first_two.clone()).unwrap();
@@ -257,8 +258,8 @@ fn the_public_entry_points_route_through_the_overlay() {
 
 #[test]
 fn operands_on_different_vtrees_are_refused() {
-    let a = Arc::new(Vtree::balanced(3));
-    let b = Arc::new(Vtree::balanced(3));
+    let a = Home::new(Vtree::balanced(3));
+    let b = Home::new(Vtree::balanced(3));
     let f = crate::literal(&a, 1).unwrap();
     let g = crate::literal(&b, 1).unwrap();
     assert_eq!(crate::and_not(f, g).unwrap_err(), OperationError::VtreeMismatch);
@@ -267,7 +268,7 @@ fn operands_on_different_vtrees_are_refused() {
 #[test]
 fn every_overlay_refusal_leaves_the_engine_reusable() {
     use crate::limits::{LimitConfig, StopAt, StopRules};
-    let tree = Arc::new(Vtree::balanced(6));
+    let tree = Home::new(Vtree::balanced(6));
     let f = Tdd::clause(&tree, [1, -3, 5]).unwrap();
     let g = Tdd::cube(&tree, [-2, 4]).unwrap();
     for operation in [Engine::or, Engine::and_not] {

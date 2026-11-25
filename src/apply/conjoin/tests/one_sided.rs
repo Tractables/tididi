@@ -2,6 +2,7 @@
 //! checked against the row loop without masks they replace: the same
 //! diagram, and less work where a mask culls a cell.
 
+use crate::vtree::Home;
 use super::*;
 use crate::Engine;
 use crate::test_helpers::assert_canonical;
@@ -40,7 +41,7 @@ fn conjoin(f: &Tdd, g: &Tdd, masks: bool) -> (Tdd, u64) {
 /// Both ways round, so that the multi-pair operand is f once and g once.
 #[test]
 fn a_one_sided_level_masks_and_culls() {
-    let vtree = Arc::new(Vtree::balanced(32));
+    let vtree = Home::new(Vtree::balanced(32));
     let mut binary = Vec::new();
     let mut ternary = Vec::new();
     for k in 1..=3 {

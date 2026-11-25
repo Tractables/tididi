@@ -1,5 +1,6 @@
 //! `and_in_place` and `and_cube` against the conjunction they stand for.
 
+use crate::vtree::Home;
 use super::*;
 use crate::apply::conjoin_in_place::and_in_place_on;
 use crate::diagram::Literal;
@@ -139,7 +140,7 @@ fn and_in_place_on_implicit_levels() {
 #[test]
 fn constants_and_a_true_operand_are_decided_without_a_rewrite() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let f = eng.clause(&vtree, [1, -3]).unwrap();
     let same = eng.and_in_place(f.clone(), &eng.one(&vtree)).unwrap();
     assert!(eng.equivalent(&same, &f).unwrap());
@@ -147,7 +148,7 @@ fn constants_and_a_true_operand_are_decided_without_a_rewrite() {
     assert!(eng.and_in_place(eng.zero(&vtree), &f).unwrap().is_zero());
     let none = eng.and_cube(f.clone(), [-1, 3]).unwrap();
     assert!(none.is_zero());
-    let other = Arc::new(Vtree::balanced(4));
+    let other = Home::new(Vtree::balanced(4));
     assert!(matches!(eng.and_in_place(f, &eng.one(&other)), Err(crate::OperationError::VtreeMismatch)));
 }
 
@@ -156,7 +157,7 @@ fn constants_and_a_true_operand_are_decided_without_a_rewrite() {
 #[test]
 fn a_cube_keeps_the_nodes_it_does_not_cut() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(8));
+    let vtree = Home::new(Vtree::balanced(8));
     let f = compile_clauses_on(&eng, &vtree, &[vec![1, 2, 5], vec![-2, 6, 7], vec![3, -8], vec![4, 5, -6]]);
     let (_, right) = vtree.children(vtree.root());
     let before = f.level(right).nodes().len();
@@ -173,7 +174,7 @@ fn a_node_inside_the_filter_is_kept_whole() {
     let eng = Engine::new();
     // Two blocks of three variables, one row per code of the first: the
     // codes of the second block are each the first's plus one.
-    let vtree = Arc::new(Vtree::balanced(6));
+    let vtree = Home::new(Vtree::balanced(6));
     let rows: Vec<(u32, u32)> = (0..8).map(|c| (c, (c + 1) % 8)).collect();
     let vars: Vec<VarId> = (1..=6).map(VarId).collect();
     let f = or_of_cubes(&vtree, &vars, |m| rows.iter().any(|&(a, b)| m == (a | (b << 3)) as usize));

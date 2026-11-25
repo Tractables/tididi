@@ -3,7 +3,6 @@
 //! conjunction or any other change to the levels drops them.
 
 use crate::test_helpers::bare_roots;
-use std::sync::Arc;
 
 use super::*;
 use super::relabel::{cases, function_of};

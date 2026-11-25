@@ -1,5 +1,5 @@
+use crate::vtree::Home;
 use crate::test_helpers::bare_roots;
-use std::sync::Arc;
 
 use super::*;
 use crate::apply::restrict_to_care::pairs::PairMarks;
@@ -52,7 +52,7 @@ fn all_live_but_the_output_pairs(eng: &Engine, f: &Tdd) -> Marking {
 
 #[test]
 fn marks_that_kill_nothing_leave_the_operand_as_it_is() {
-    let tree = Arc::new(Vtree::linear(8192));
+    let tree = Home::new(Vtree::linear(8192));
     let f = Tdd::one(&tree);
     assert_canonical(&f);
     let result = all_live(&Engine::new(), &f).rebuild(&Engine::new(), f.clone()).unwrap();
@@ -68,7 +68,7 @@ fn marks_that_kill_nothing_leave_the_operand_as_it_is() {
 /// pair naming it, in place, so the rest of the diagram keeps its indices.
 #[test]
 fn a_dead_node_takes_the_pairs_naming_it_and_nothing_else() {
-    let tree = Arc::new(Vtree::balanced(4));
+    let tree = Home::new(Vtree::balanced(4));
     let eng = Engine::new();
     let f = eng
         .or(
@@ -131,7 +131,7 @@ fn the_rebuild_polls_once_per_pair_it_reads() {
 
 #[test]
 fn the_rebuild_recovers_after_each_refused_reservation() {
-    let tree = Arc::new(Vtree::balanced(4));
+    let tree = Home::new(Vtree::balanced(4));
     let f = Tdd::clause(&tree, [1, -2, 3]).unwrap();
     assert_canonical(&f);
     let mut reached_success = false;

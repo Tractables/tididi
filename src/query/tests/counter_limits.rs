@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use super::*;
 use crate::limits::{LimitConfig, StopCallback, StopDecision};
@@ -8,7 +9,7 @@ use crate::OperationError;
 #[test]
 fn counter_construction_and_ordinary_counts_report_buffer_refusals() {
     let eng = Engine::new();
-    let f = Tdd::clause(&Arc::new(Vtree::balanced(8)), [1, 2]).unwrap();
+    let f = Tdd::clause(&Home::new(Vtree::balanced(8)), [1, 2]).unwrap();
     assert_canonical(&f);
     {
         let _limit = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
@@ -36,7 +37,7 @@ fn counter_construction_and_ordinary_counts_report_buffer_refusals() {
 /// Exercise interrupted writes that promote small values into the overflow table.
 fn overflow_refusals(retention: Retention) {
     let eng = Engine::new();
-    let f = Tdd::one(&Arc::new(Vtree::balanced(132)));
+    let f = Tdd::one(&Home::new(Vtree::balanced(132)));
     assert_canonical(&f);
     let expected = BigUint::from(1u32) << 132usize;
     let mut completed = false;
@@ -106,7 +107,7 @@ fn both_counter_policies_recover_from_every_refresh_stop() {
 #[test]
 fn cached_and_constant_counts_observe_stops_without_losing_pins() {
     let eng = Engine::new();
-    for f in [Tdd::zero(&Arc::new(Vtree::balanced(3))), Tdd::one(&Arc::new(Vtree::leaf(VarId(1))))] {
+    for f in [Tdd::zero(&Home::new(Vtree::balanced(3))), Tdd::one(&Home::new(Vtree::leaf(VarId(1))))] {
         assert_canonical(&f);
         let mut counter = eng.counter_with(&f, Retention::All, PinSemantics::Evidence).unwrap();
         counter.set_pin(VarId(1), Some(true)).unwrap();
@@ -143,7 +144,7 @@ fn checked_queries_refuse_incompatible_marginal_values() {
 
 #[test]
 fn counters_sharing_a_context_retain_independent_evidence() {
-    let tree = Arc::new(Vtree::balanced(4));
+    let tree = Home::new(Vtree::balanced(4));
     let f = Tdd::clause(&tree, [1, -2]).unwrap();
     assert_canonical(&f);
     let mut first = f.counter_with(Retention::All, PinSemantics::Evidence).unwrap();

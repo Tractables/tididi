@@ -1,7 +1,7 @@
 //! The meters are zeroed when an operation starts, and only by the outermost
 //! one on an engine.
 
-use std::sync::Arc;
+use crate::vtree::Home;
 
 use crate::reduce::{ReductionPlan};
 use crate::vtree::Vtree;
@@ -28,7 +28,7 @@ fn the_outermost_operation_zeroes_the_meters_and_a_nested_one_keeps_them() {
 #[test]
 fn a_reduction_does_not_inherit_an_earlier_operations_charge() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(6));
+    let vtree = Home::new(Vtree::balanced(6));
     let mut f = Tdd::clause(&vtree, [1, -2, 3]).unwrap() & Tdd::clause(&vtree, [-1, 4, -5]).unwrap() & Tdd::clause(&vtree, [2, 5, 6]).unwrap();
     let before = f.model_count().unwrap();
     // What an operation that ended mid-way leaves behind, above the budget.
@@ -42,7 +42,7 @@ fn a_reduction_does_not_inherit_an_earlier_operations_charge() {
 #[test]
 fn compound_operations_refuse_their_own_work_and_release_the_scope() {
     use crate::test_helpers::assert_canonical;
-    let tree = Arc::new(Vtree::balanced(4));
+    let tree = Home::new(Vtree::balanced(4));
     let f = Tdd::clause(&tree, [1, 2]).unwrap();
     let care = Tdd::clause(&tree, [-1, 3]).unwrap();
     assert_canonical(&f);

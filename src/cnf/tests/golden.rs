@@ -7,6 +7,7 @@
 //! before any pair's, the single-pair rule on the stored pair count, and the
 //! polls.
 
+use std::sync::Arc;
 use super::*;
 use crate::diagram::{ChildPair, LeafLabel, NEG_LEAF_IDX, POS_LEAF_IDX};
 

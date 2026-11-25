@@ -2,6 +2,7 @@
 //!
 //! Fixtures come from `crate::test_helpers`, re-exported by the parent.
 
+use crate::vtree::Home;
 use super::*;
 
 #[test]
@@ -29,7 +30,7 @@ fn batch_projection_accumulates_charges_across_variables() {
 #[test]
 fn exists_var_of_constant_one_is_one() {
     let eng = &crate::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let tdd = constant_one(eng, &vtree);
     let result = (tdd).clone().exists_var(VarId(1)).unwrap();
     assert!(!result.is_zero());
@@ -39,7 +40,7 @@ fn exists_var_of_constant_one_is_one() {
 #[test]
 fn exists_var_of_constant_zero_is_zero() {
     let eng = &crate::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let tdd = constant_zero(eng, &vtree);
     let result = (tdd).clone().exists_var(VarId(1)).unwrap();
     assert!(result.is_zero());
@@ -47,7 +48,7 @@ fn exists_var_of_constant_zero_is_zero() {
 
 #[test]
 fn exists_var_of_literal_is_one() {
-    let vtree = Arc::new(Vtree::balanced(1));
+    let vtree = Home::new(Vtree::balanced(1));
     let tdd = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true)]));
     assert_eq!(tdd.model_count().unwrap(), BigUint::from(1u32));
 
@@ -58,7 +59,7 @@ fn exists_var_of_literal_is_one() {
 
 #[test]
 fn exists_var_of_x_and_y_drops_x() {
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = Home::new(Vtree::balanced(2));
     let tdd_x = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true)]));
     let tdd_y = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(2, true)]));
 
@@ -73,7 +74,7 @@ fn exists_var_of_x_and_y_drops_x() {
 #[test]
 fn exists_var_soundness_brute_force() {
     // F = (x ∨ y) ∧ (¬y ∨ z), vars 0=x 1=y 2=z. Project out y.
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
 
     let tdd1 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
     let tdd2 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(2, false), (3, true)]));
@@ -285,7 +286,7 @@ fn apply_and_rejects_marginalize_schedule_violation() {
 /// may overlap at any distance below a regrouped level.
 #[test]
 fn projecting_across_a_marginal_sibling_is_refused() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let t1 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
     let t2 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(3, true), (4, true)]));
     let mut fm = apply_and(t1, t2);
@@ -310,7 +311,7 @@ fn projecting_across_a_marginal_sibling_is_refused() {
 /// PMC onto {v1,v2,v3} = 6.
 #[test]
 fn projecting_a_path_side_one_ref_at_the_root() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let t1 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true), (4, true)])); // v0∨v3
     let t2 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(3, true), (4, true)])); // v2∨v3
     let f = apply_and(t1, t2);
@@ -337,7 +338,7 @@ fn projecting_a_weighted_diagram_keeps_its_weights() {
         LiteralWeights { negative: BigRational::from_integer(1.into()), positive: BigRational::from_integer(3.into()) },
         LiteralWeights { negative: BigRational::from_integer(1.into()), positive: BigRational::from_integer(5.into()) },
     ]);
-    let vtree = Arc::new(Vtree::balanced(3).with_weights(Weights::new(algebra, Arithmetic::ExactRational)).unwrap());
+    let vtree = Home::new(Vtree::balanced(3).with_weights(Weights::new(algebra, Arithmetic::ExactRational)).unwrap());
     let tdd = Tdd::clause(&vtree, [1, 2]).unwrap();
 
     let projected = (tdd).clone().exists_var(VarId(1)).unwrap();
@@ -353,7 +354,7 @@ fn projecting_a_weighted_diagram_keeps_its_weights() {
 fn projecting_a_variable_outside_the_vtree_is_an_error() {
     use crate::OperationError;
     let eng = &crate::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = Tdd::clause(&vtree, [1, -2]).unwrap();
     assert!(matches!(
         eng.exists_var(f.clone(), VarId(8)),
@@ -374,7 +375,7 @@ fn projecting_a_variable_outside_the_vtree_is_an_error() {
 /// reduction.
 #[test]
 fn a_projection_is_refused_by_the_engines_budget() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let eng = Engine::new();
     let f = Tdd::clause(&vtree, [1, -2]).unwrap() & Tdd::clause(&vtree, [2, 3]).unwrap() & Tdd::clause(&vtree, [-3, 4]).unwrap();
     let _armed = eng.limits().scope(crate::limits::LimitConfig::none().with_memory_budget_bytes(Some(0)));
@@ -386,7 +387,7 @@ fn bulk_quantification_validates_late_variables_before_rewriting() {
     use crate::{Engine, OperationError};
     use crate::limits::LimitConfig;
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(3));
+    let tree = Home::new(Vtree::balanced(3));
     let f = eng.clause(&tree, [1, 2, 3]).unwrap();
     crate::test_helpers::assert_canonical(&f);
     let vars = [VarId(1), VarId(100)];
@@ -399,7 +400,7 @@ fn bulk_quantification_validates_late_variables_before_rewriting() {
 fn bulk_quantification_is_a_set_independent_of_request_order() {
     use crate::Engine;
     let vars = [VarId(20), VarId(3), VarId(9)];
-    let tree = Arc::new(Vtree::balanced_over(&vars).unwrap());
+    let tree = Home::new(Vtree::balanced_over(&vars).unwrap());
     let f = Engine::new().clause(&tree, vars.map(crate::Literal::pos)).unwrap();
     crate::test_helpers::assert_canonical(&f);
     let order = [vars[2], vars[0], vars[1]];
@@ -531,7 +532,7 @@ fn universal_quantification_keeps_the_weights() {
 
     let weight = |positive: i32| LiteralWeights { negative: BigRational::from_integer(1.into()), positive: BigRational::from_integer(positive.into()) };
     let weights = Weights::new(RationalWeights::from_literals(&[weight(2), weight(3)]), Arithmetic::ExactRational);
-    let vtree = Arc::new(Vtree::balanced(2).with_weights(weights).unwrap());
+    let vtree = Home::new(Vtree::balanced(2).with_weights(weights).unwrap());
     let f = Tdd::clause(&vtree, [1, 2]).unwrap();
     let g = f.forall_vars(&[VarId(1)]).unwrap();
     assert!(g.weights().is_some(), "universal quantification dropped the weights");

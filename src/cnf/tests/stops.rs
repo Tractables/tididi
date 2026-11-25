@@ -1,5 +1,6 @@
 //! Stopping the encoding at each of its polls.
 
+use crate::vtree::Home;
 use super::soundness::assert_sound;
 use super::*;
 
@@ -82,7 +83,7 @@ fn every_poll_cuts_seeded_diagrams() {
 fn a_level_wider_than_the_poll_stride_is_polled_inside() {
     // x_i ↔ x_{i+11} on the linear order: the level whose left leaf is x12
     // holds one node per assignment of x1 to x11.
-    let vtree = Arc::new(Vtree::linear(22));
+    let vtree = Home::new(Vtree::linear(22));
     let clauses: Vec<Vec<i32>> = (1..=11).flat_map(|i| [vec![-i, i + 11], vec![i, -(i + 11)]]).collect();
     let f = compile_clauses(&vtree, &clauses);
     assert_canonical(&f);
@@ -96,7 +97,7 @@ fn a_level_wider_than_the_poll_stride_is_polled_inside() {
 fn a_stop_before_the_first_node_leaves_only_the_true_variable() {
     // Bonsai's prefix fixture: (x1 ∨ x3) ∧ (x2 ∨ ¬x3) on the reversed linear
     // vtree, with its two internal levels.
-    let vtree = Arc::new(Vtree::reverse_linear(3));
+    let vtree = Home::new(Vtree::reverse_linear(3));
     let f = compile_clauses(&vtree, &[vec![1, 3], vec![2, -3]]);
     assert_canonical(&f);
     let [lower, root]: [VtreeIdx; 2] = f.vtree().internal_bottomup().map(|(t, _, _)| t).collect::<Vec<_>>().try_into().unwrap();

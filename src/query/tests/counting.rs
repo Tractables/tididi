@@ -1,10 +1,11 @@
+use crate::vtree::Home;
 use super::*;
 use crate::test_helpers::stopping_engine;
 
 #[test]
 fn test_model_count_constant_one() {
     let eng = &crate::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let tdd = constant_one(eng, &vtree);
     // 3 variables → 2^3 = 8 models
     assert_eq!(tdd.model_count().unwrap(), BigUint::from(8u32));
@@ -12,7 +13,7 @@ fn test_model_count_constant_one() {
 
 #[test]
 fn test_model_count_single_positive_literal() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let clause = vec![Literal::pos(VarId(1))];
     let tdd = clause_to_tdd(&vtree, &clause);
     // x0: satisfied when x0=1. 4 assignments for x1,x2 → 4 models
@@ -21,7 +22,7 @@ fn test_model_count_single_positive_literal() {
 
 #[test]
 fn test_model_count_two_literal_clause() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     // x0 ∨ ¬x1: satisfied unless x0=0 and x1=1
     let clause = vec![
         Literal::pos(VarId(1)),
@@ -34,7 +35,7 @@ fn test_model_count_two_literal_clause() {
 
 #[test]
 fn test_model_count_conjunction() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     // (x0) ∧ (x1): both must be true, x2 free → 2 models
     let f = vec![Literal::pos(VarId(1))];
     let g = vec![Literal::pos(VarId(2))];
@@ -46,7 +47,7 @@ fn test_model_count_conjunction() {
 
 #[test]
 fn test_model_count_unsat() {
-    let vtree = Arc::new(Vtree::balanced(1));
+    let vtree = Home::new(Vtree::balanced(1));
     // (x0) ∧ (¬x0) = UNSAT
     let f = vec![Literal::pos(VarId(1))];
     let g = vec![Literal::neg(VarId(1))];
@@ -60,7 +61,7 @@ fn test_model_count_unsat() {
 #[test]
 fn test_model_count_single_var() {
     let eng = &crate::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(1));
+    let vtree = Home::new(Vtree::balanced(1));
     let tdd = constant_one(eng, &vtree);
     assert_eq!(tdd.model_count().unwrap(), BigUint::from(2u32));
 }
@@ -69,7 +70,7 @@ fn test_model_count_single_var() {
 fn test_model_count_clause_all_vars() {
     // 4 variables, clause x0 ∨ x1 ∨ x2 ∨ x3
     // Unsatisfied only when all are 0: 2^4 - 1 = 15 models
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let clause = vec![
         Literal::pos(VarId(1)),
         Literal::pos(VarId(2)),
@@ -108,8 +109,8 @@ fn test_output_is_satisfiable_agrees_with_model_count() {
     };
 
     // SAT: tautology, single literal, satisfiable conjunction.
-    check(&constant_one(eng, &Arc::new(Vtree::balanced(3))), "constant_one");
-    let vtree = Arc::new(Vtree::balanced(3));
+    check(&constant_one(eng, &Home::new(Vtree::balanced(3))), "constant_one");
+    let vtree = Home::new(Vtree::balanced(3));
     check(&clause_to_tdd(&vtree, &[Literal::pos(VarId(1))]), "single literal");
     {
         let t1 = clause_to_tdd(&vtree, &[Literal::pos(VarId(1))]);
@@ -119,7 +120,7 @@ fn test_output_is_satisfiable_agrees_with_model_count() {
 
     // UNSAT: direct contradiction.
     {
-        let v1 = Arc::new(Vtree::balanced(1));
+        let v1 = Home::new(Vtree::balanced(1));
         let t1 = clause_to_tdd(&v1, &[Literal::pos(VarId(1))]);
         let t2 = clause_to_tdd(&v1, &[Literal::neg(VarId(1))]);
         check(&apply_and(t1, t2), "x0 ∧ ¬x0 (UNSAT)");
@@ -128,7 +129,7 @@ fn test_output_is_satisfiable_agrees_with_model_count() {
     // UNSAT via a chain of conjoins over a wider vtree — exercises a deeper false output,
     // not just the root-stale-grid case the existing FALSE guard already caught.
     {
-        let v = Arc::new(Vtree::balanced(4));
+        let v = Home::new(Vtree::balanced(4));
         let mut acc = clause_to_tdd(&v, &[Literal::pos(VarId(1))]);
         for lit in [
             Literal::pos(VarId(2)),
@@ -143,7 +144,7 @@ fn test_output_is_satisfiable_agrees_with_model_count() {
 
     // A marginal level under the output.
     {
-        let v = Arc::new(Vtree::balanced(4));
+        let v = Home::new(Vtree::balanced(4));
         let marginal_root = (0..v.num_nodes())
             .find(|&vi| !v.node(VtreeIdx(vi as u32)).is_leaf() && vi != v.root().idx())
             .map(|vi| VtreeIdx(vi as u32))
@@ -187,7 +188,7 @@ fn test_apply_fallible_consumes_operands() {
 
     // Two multi-level functions over interleaved vars — a genuine multi-node
     // intermediate diagram, so the ascending loop drains many operand levels.
-    let vtree = Arc::new(Vtree::balanced(14));
+    let vtree = Home::new(Vtree::balanced(14));
     let fa: &[&[i32]] = &[
         &[1, 8], &[2, 9], &[3, 10], &[4, 11], &[5, 12], &[6, 13], &[7, 14],
         &[-1, -9], &[-2, -10], &[-3, -11], &[-4, -12], &[-5, -13], &[-6, -14],
@@ -220,7 +221,7 @@ fn test_apply_fallible_consumes_operands() {
 /// running to the end.
 #[test]
 fn batch_model_count_matches_ordinary_count_and_honors_the_stop_axis() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = Tdd::clause(&vtree, [1, 2, 3]).unwrap();
     assert_eq!(
         Engine::new().model_count(&f).expect("nothing armed"),

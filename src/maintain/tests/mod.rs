@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use crate::test_helpers::bare_roots;
 use super::*;
 
@@ -118,7 +119,7 @@ fn a_batch_of_row_updates_matches_rebuilding_the_relation() {
 
 #[test]
 fn removing_the_last_model_leaves_the_false_diagram() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let mut f = Tdd::cube(&vtree, [1, -2, 3]).expect("the cube is over the vtree");
     f.remove_model([1, -2, 3]).expect("the remove fits");
     assert!(f.is_zero(), "the diagram kept a model");
@@ -133,7 +134,7 @@ fn removing_the_last_model_leaves_the_false_diagram() {
 
 #[test]
 fn an_update_that_changes_nothing_leaves_the_diagram_alone() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let vars: Vec<VarId> = (1..=4).map(VarId).collect();
     let mut f = Tdd::from_models(&vtree, &vars, &[0b0000, 0b0101, 0b1111]).expect("the rows fit");
     let before = f.clone();
@@ -151,7 +152,7 @@ fn an_update_that_changes_nothing_leaves_the_diagram_alone() {
 fn a_free_variable_in_the_diagram_closes_the_edit_route() {
     // `One` is `Pos` and `Neg` together, so a leaf named through it has no
     // node for a single value and the probe cannot resolve the path.
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let mut f = Tdd::clause(&vtree, [1, 2]).expect("the clause is over the vtree");
     f.minimize().expect("minimizing fits");
     let before = f.clone();
@@ -192,7 +193,7 @@ fn a_partial_or_contradictory_assignment_is_answered_by_the_rebuild() {
 fn a_run_of_rebuilds_latches_the_batch_onto_the_rebuild() {
     // An index a batch cannot use still costs a pass over the diagram to
     // build, so a run of rebuilds stops the batch trying.
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let vars: Vec<VarId> = (1..=4).map(VarId).collect();
     let mut f = Tdd::from_models(&vtree, &vars, &[0b0000, 0b0101, 0b1111]).expect("the rows fit");
     let mut want = f.clone();
@@ -225,7 +226,7 @@ fn a_run_of_rebuilds_latches_the_batch_onto_the_rebuild() {
 
 #[test]
 fn an_absent_variable_and_a_zero_literal_are_refused() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let mut f = Tdd::one(&vtree);
     assert_eq!(f.insert_model([1, 9]).err(), Some(OperationError::VariableNotInVtree(VarId(9))));
     assert_eq!(f.remove_model([1, 0]).err(), Some(OperationError::InvalidLiteral(0)));
@@ -233,7 +234,7 @@ fn an_absent_variable_and_a_zero_literal_are_refused() {
 
 #[test]
 fn a_one_variable_vtree_goes_through_the_rebuild() {
-    let vtree = Arc::new(Vtree::balanced(1));
+    let vtree = Home::new(Vtree::balanced(1));
     let mut f = Tdd::zero(&vtree);
     f.insert_model([1]).expect("the insert fits");
     assert_eq!(f.model_count().expect("counting fits"), 1u32.into());
@@ -248,7 +249,7 @@ fn an_edited_node_outgrows_its_arena_range() {
     // Every assignment over five variables, one at a time into the false
     // diagram: the output node's pair list outgrows the range it was encoded
     // in and has to move, which is the one place an edit is not constant work.
-    let vtree = Arc::new(Vtree::balanced(5));
+    let vtree = Home::new(Vtree::balanced(5));
     let mut f = Tdd::zero(&vtree);
     {
         let mut batch = f.maintain().expect("the index fits");
@@ -283,7 +284,7 @@ fn an_edited_node_outgrows_its_arena_range() {
 
 #[test]
 fn every_refused_update_preserves_the_function_and_can_be_retried() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let vars: Vec<_> = (1..=4).map(VarId).collect();
     for (model, insert) in [
         (vec![1, -2, -3, -4], true),
@@ -327,7 +328,7 @@ fn every_refused_update_preserves_the_function_and_can_be_retried() {
 
 #[test]
 fn sparse_ids_still_take_the_single_assignment_edit() {
-    let vtree = Arc::new(Vtree::balanced_over(&[VarId(2), VarId(5), VarId(9)]).unwrap());
+    let vtree = Home::new(Vtree::balanced_over(&[VarId(2), VarId(5), VarId(9)]).unwrap());
     let vars = [VarId(2), VarId(5), VarId(9)];
     let mut f = Tdd::from_models(&vtree, &vars, &[0, 7]).unwrap();
     {
@@ -344,7 +345,7 @@ fn sparse_ids_still_take_the_single_assignment_edit() {
 
 #[test]
 fn empty_cubes_add_or_remove_every_assignment() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let mut f = Tdd::cube(&vtree, [1, 2, 3]).unwrap();
     f.insert_model([] as [i32; 0]).unwrap();
     f.minimize().unwrap();
@@ -358,7 +359,7 @@ fn empty_cubes_add_or_remove_every_assignment() {
 #[test]
 fn maintenance_uses_the_explicit_engines_limits() {
     use crate::limits::LimitConfig;
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let mut f = Tdd::cube(&vtree, [1, 2, 3]).unwrap();
     let eng = Engine::new();
     let zero_budget = LimitConfig::none().with_memory_budget_bytes(Some(0));
@@ -383,7 +384,7 @@ fn weighted_updates_preserve_weights_on_refusal_and_on_the_last_removal() {
     use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
     use crate::test_helpers::rat;
     let table = vec![LiteralWeights { negative: rat(2, 1), positive: rat(2, 1) }; 3];
-    let vtree = Arc::new(Vtree::balanced(3)
+    let vtree = Home::new(Vtree::balanced(3)
         .with_weights(Weights::new(RationalWeights::from_literals(&table), Arithmetic::ExactRational)).unwrap());
     for (model, insert) in [(vec![-1], true), (vec![1, 2, 3], false)] {
         let original = Tdd::cube(&vtree, [1, 2, 3]).unwrap();
@@ -422,7 +423,7 @@ fn the_pair_index_charges_one_entry_per_pair_of_every_node() {
     // A cube's internal levels each hold one node with one pair, stored inline
     // and not in the pair arena, so the owner maps' charge must follow the
     // pair count of the nodes, not the arena length.
-    let vtree = Arc::new(Vtree::balanced(8));
+    let vtree = Home::new(Vtree::balanced(8));
     let tdd = Tdd::cube(&vtree, assignment(8, 0b1010_0110)).unwrap();
     let live_pairs: usize = vtree.internal_bottomup().map(|(t, _, _)| tdd.level(t).live_pairs()).sum();
     assert_eq!(live_pairs, 7);
@@ -441,7 +442,7 @@ fn the_pair_index_charges_one_entry_per_pair_of_every_node() {
 #[test]
 fn a_long_run_of_edits_keeps_the_reduction_worklists_bounded() {
     use crate::diagram::Pass;
-    let vtree = Arc::new(Vtree::balanced(6));
+    let vtree = Home::new(Vtree::balanced(6));
     let vars: Vec<VarId> = (1..=6).map(VarId).collect();
     let mut f = Tdd::from_models(&vtree, &vars, &[0b000000]).expect("the rows fit");
     let mut rng = Lcg::new(5);

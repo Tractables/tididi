@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use std::sync::Arc;
 
 use crate::diagram::{Literal, Tdd};
@@ -159,7 +160,7 @@ fn inserting_a_row_matches_rebuilding_the_relation() {
 
 #[test]
 fn the_false_cube_and_the_true_cube_are_the_two_constants() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = Tdd::clause(&vtree, [1, 2]).expect("the clause is over the vtree");
 
     // Both polarities of a variable: the cube is false and the operand stands.
@@ -179,7 +180,7 @@ fn the_false_cube_and_the_true_cube_are_the_two_constants() {
 
 #[test]
 fn disjoining_into_the_false_diagram_builds_the_cube() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     for cube in [vec![1, -2, 3, -4], vec![1, -3]] {
         let zero = Tdd::zero(&vtree);
         let got = zero.or_cube(&cube).expect("the disjunction fits");
@@ -191,7 +192,7 @@ fn disjoining_into_the_false_diagram_builds_the_cube() {
 
 #[test]
 fn an_absent_variable_and_a_zero_literal_are_refused() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = Tdd::one(&vtree);
     assert_eq!(f.clone().or_cube([1, 9]).err(), Some(OperationError::VariableNotInVtree(VarId(9))));
     assert_eq!(f.or_cube([1, 0]).err(), Some(OperationError::InvalidLiteral(0)));
@@ -199,7 +200,7 @@ fn an_absent_variable_and_a_zero_literal_are_refused() {
 
 #[test]
 fn the_typed_and_integer_cubes_agree() {
-    let vtree = Arc::new(Vtree::balanced(5));
+    let vtree = Home::new(Vtree::balanced(5));
     let f = compile_clauses(&vtree, &[vec![1, 2], vec![-3, 4], vec![5]]);
     let integers = [1, -2, 3, -4, 5];
     let typed: Vec<Literal> = integers.iter().map(|&n| Literal::try_from(n).expect("nonzero")).collect();

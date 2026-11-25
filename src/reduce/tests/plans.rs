@@ -1,6 +1,7 @@
 //! What each public reduction plan and content-twin policy leaves behind.
 
 use std::sync::Arc;
+use crate::vtree::Home;
 
 use crate::diagram::{NEG_LEAF_IDX, POS_LEAF_IDX, Tdd};
 use crate::reduce::{ContentTwinPolicy, ContentTwinSchedule, ReductionPlan};
@@ -119,7 +120,7 @@ fn a_content_scan_between_conjunctions_moves_a_count_diagram_s_fixpoint() {
 
 #[test]
 fn the_contract_plan_drains_its_worklist_and_a_full_plan_finishes_the_job() {
-    let vtree = Arc::new(Vtree::balanced(5));
+    let vtree = Home::new(Vtree::balanced(5));
     let clauses = [vec![1, 2, 3], vec![-2, 4], vec![3, -5], vec![-1, 5]];
     let mut stepwise = compile_clauses(&vtree, &clauses);
     stepwise.reduce(ReductionPlan::Contract).unwrap();
@@ -138,7 +139,7 @@ fn the_contract_plan_drains_its_worklist_and_a_full_plan_finishes_the_job() {
 fn the_prune_and_contract_plans_keep_a_canonical_diagram_certified() {
     for floor in [crate::diagram::FLOOR, 2] {
         with_floor(floor, || {
-            let vtree = Arc::new(Vtree::balanced(5));
+            let vtree = Home::new(Vtree::balanced(5));
             let mut f = compile_clauses(&vtree, &[vec![1, 2, 3], vec![-2, 4], vec![3, -5], vec![-1, 5]]);
             f.minimize().unwrap();
             assert!(f.levels.is_canonical(f.output), "a minimized diagram is certified");

@@ -562,7 +562,7 @@ fn t1_check(entry: &dyn Fn(&Tdd, &Tdd) -> Result<Tdd, OperationError>, levels: &
 
 #[test]
 fn t1a_an_internal_summed_level_read_by_the_other_operand_is_refused() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let (left, _) = vtree.children(vtree.root());
     for weighted in [false, true] {
         t1_check(&|f, g| Engine::new().and(f, g), &[left], weighted, "T1a");
@@ -571,7 +571,7 @@ fn t1a_an_internal_summed_level_read_by_the_other_operand_is_refused() {
 
 #[test]
 fn t1b_a_summed_leaf_read_by_the_other_operand_is_refused() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let x1 = vtree.leaf_of(VarId(1)).unwrap();
     for weighted in [false, true] {
         t1_check(&|f, g| Engine::new().and(f, g), &[x1], weighted, "T1b");
@@ -581,7 +581,7 @@ fn t1b_a_summed_leaf_read_by_the_other_operand_is_refused() {
 
 #[test]
 fn t1c_a_summed_level_read_while_its_parent_is_summed_is_refused() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let (left, _) = vtree.children(vtree.root());
     let root = vtree.root();
     for weighted in [false, true] {

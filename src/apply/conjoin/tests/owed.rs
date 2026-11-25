@@ -1,6 +1,7 @@
 //! A plain conjunction owes contraction the levels it built and what its
 //! operands owed, not the levels it carried from an operand at its fixpoint;
 //! minimizing from those worklists reaches the canonical diagram.
+use crate::vtree::Home;
 use crate::test_helpers::bare_roots;
 use std::sync::Arc;
 
@@ -33,7 +34,7 @@ fn operands_under_the_two_children_owe_only_the_root() {
 #[test]
 fn a_level_one_operand_does_not_branch_at_is_not_owed_the_contraction() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::linear(8));
+    let vtree = Home::new(Vtree::linear(8));
     let clauses = [vec![1, -3, 5], vec![-2, 4, 6], vec![3, -7, 8], vec![-1, 6, -8]];
     let f = compile_clauses(&vtree, &clauses);
     let g = compile_clauses(&vtree, &[vec![2, 7], vec![-2, -7]]);
@@ -152,8 +153,8 @@ fn seeded_conjunctions_minimize_to_the_canonical_diagram() {
 fn a_carried_level_is_loose_only_where_its_carrier_had_it() {
     use crate::vtree::VarId;
     let eng = Engine::new();
-    let pair = Arc::new(Vtree::balanced(2));
-    let wide = Arc::new(Vtree::balanced(8));
+    let pair = Home::new(Vtree::balanced(2));
+    let wide = Home::new(Vtree::balanced(8));
     let mut small = eng.clause(&pair, [1, -2]).unwrap();
     eng.minimize(&mut small).unwrap();
     let (g, _) = crate::test_helpers::moved(&eng, small, &wide, |v| VarId(v.0 + 6)).unwrap();

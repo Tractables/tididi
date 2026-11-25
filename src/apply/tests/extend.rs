@@ -321,7 +321,7 @@ fn summed_out_internal_levels_do_not_move() {
     for result in [eng.or(summed.clone(), g.clone()), eng.and_not(g.clone(), summed.clone()), eng.add(summed.clone(), g.clone())] {
         assert!(matches!(result.unwrap_err(), OperationError::MarginalLevel(_)));
     }
-    let other = Arc::new(Vtree::balanced(6));
+    let other = Home::new(Vtree::balanced(6));
     let elsewhere = Tdd::clause(&other, [1, 2]).unwrap();
     assert_eq!(eng.or(f, elsewhere).unwrap_err(), OperationError::VtreeMismatch);
 }

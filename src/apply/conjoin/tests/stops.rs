@@ -4,6 +4,7 @@
 //! the same work. The gates come due every few units, inside the rows of
 //! small diagrams.
 
+use crate::vtree::Home;
 use super::*;
 use crate::Engine;
 use crate::test_helpers::{compile_clauses_on, rand_cnf, vtree_shapes, CnfShape, Lcg};
@@ -85,7 +86,7 @@ fn a_stop_inside_a_dense_level_falls_where_the_row_loop_stops() {
             cases += 1;
         }
     }
-    let vtree = Arc::new(Vtree::linear(14));
+    let vtree = Home::new(Vtree::linear(14));
     let vars: Vec<VarId> = (1..=14).map(VarId).collect();
     for one_in in [4, 16, 64] {
         let mut operand = || {

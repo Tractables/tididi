@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use super::*;
 use std::sync::Arc;
 use crate::Vtree;
@@ -5,7 +6,7 @@ use crate::test_helpers::assert_canonical;
 
 #[test]
 fn interrupted_ancestor_growth_leaves_room_for_further_pin_updates() {
-    let tree = Arc::new(Vtree::balanced(16));
+    let tree = Home::new(Vtree::balanced(16));
     let diagram = Tdd::one(&tree);
     assert_canonical(&diagram);
     let engine = Engine::new();
@@ -38,7 +39,7 @@ fn panicking_refresh_keeps_dirty_membership_reusable() {
     use crate::limits::{LimitConfig, StopCallback, StopDecision};
     use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    let tree = Arc::new(Vtree::balanced(16));
+    let tree = Home::new(Vtree::balanced(16));
     let diagram = Tdd::one(&tree);
     assert_canonical(&diagram);
     let engine = Engine::new();
@@ -131,7 +132,7 @@ fn a_count_table_matches_counting_each_assignment_alone() {
 
 #[test]
 fn a_count_table_keeps_the_other_pins_and_restores_its_own() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let f = Tdd::clause(&vtree, [1, -2, 3, 4]).unwrap();
     assert_canonical(&f);
     let mut counter = f.counter().unwrap();
@@ -158,7 +159,7 @@ fn a_count_table_keeps_the_other_pins_and_restores_its_own() {
 
 #[test]
 fn an_empty_list_is_the_model_count_and_false_counts_zero_everywhere() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = Tdd::clause(&vtree, [1, 2]).unwrap();
     assert_canonical(&f);
     let mut counter = f.counter().unwrap();
@@ -172,7 +173,7 @@ fn an_empty_list_is_the_model_count_and_false_counts_zero_everywhere() {
 #[test]
 fn a_count_table_refuses_bad_lists_before_counting() {
     use crate::test_helpers::{marginal_diagrams, under};
-    let vtree = Arc::new(Vtree::balanced(40));
+    let vtree = Home::new(Vtree::balanced(40));
     let f = Tdd::clause(&vtree, [1, 2]).unwrap();
     assert_canonical(&f);
     let mut counter = f.counter().unwrap();
@@ -192,7 +193,7 @@ fn a_count_table_refuses_bad_lists_before_counting() {
 #[test]
 fn a_bound_count_table_stops_and_then_counts_with_its_pins_restored() {
     use crate::limits::{LimitConfig, StopCallback, StopDecision};
-    let vtree = Arc::new(Vtree::balanced(5));
+    let vtree = Home::new(Vtree::balanced(5));
     let f = Tdd::clause(&vtree, [1, -2, 5]).unwrap();
     assert_canonical(&f);
     use std::sync::atomic::{AtomicUsize, Ordering};

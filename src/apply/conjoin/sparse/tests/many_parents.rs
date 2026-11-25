@@ -1,6 +1,7 @@
 //! A level with an f parent per key, each holding one pair, against one g
 //! parent: each f parent hands the emit at most one candidate, and the
 //! output must be the dense grid's, the walk's lookups pipelined or not.
+use crate::vtree::Home;
 use std::sync::Arc;
 
 use num_bigint::BigUint;
@@ -18,14 +19,14 @@ fn blocks() -> (Vec<VarId>, Vec<VarId>, Vec<VarId>) {
 }
 
 /// The vtree `((a b) c)`, every block a balanced subtree.
-fn vtree() -> Arc<Vtree> {
+fn vtree() -> Home {
     let (a, b, c) = blocks();
     let ab = Vtree::join(
         &Vtree::balanced_over(&a).unwrap(),
         &Vtree::balanced_over(&b).unwrap(),
     )
     .unwrap();
-    Arc::new(Vtree::join(&ab, &Vtree::balanced_over(&c).unwrap()).unwrap())
+    Home::new(Vtree::join(&ab, &Vtree::balanced_over(&c).unwrap()).unwrap())
 }
 
 /// `f(a, b, c) ∧ g(a, b)` on `((a b) c)`.

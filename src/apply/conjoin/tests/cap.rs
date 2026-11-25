@@ -4,6 +4,7 @@
 //! same outcome at the same work, alone and under stops by work and by
 //! output pairs.
 
+use crate::vtree::Home;
 use super::*;
 use crate::Engine;
 use crate::limits::{LimitConfig, StopAt, StopRules};
@@ -124,7 +125,7 @@ fn disjoint_supports_refuse_the_level_past_the_cap() {
 /// of 16,384 one-pair nodes, past the seeded arena.
 #[test]
 fn a_grid_of_one_pair_nodes_is_refused_whole() {
-    let vtree = Arc::new(Vtree::balanced(64));
+    let vtree = Home::new(Vtree::balanced(64));
     let f = equalities(&vtree, &[(1, 33), (3, 35), (5, 37), (7, 39), (9, 41), (11, 43), (13, 45)]);
     let g = equalities(&vtree, &[(2, 34), (4, 36), (6, 38), (8, 40), (10, 42), (12, 44), (14, 46)]);
     assert!(check_and(&f, &g, "equalities") > 0, "no cap refused a level before it was built");
@@ -151,8 +152,8 @@ fn a_cap_refuses_no_level_the_build_would_finish_otherwise() {
 /// over the even variables of the wider vtree.
 #[test]
 fn a_placement_counts_its_free_levels_under_a_refused_level() {
-    let narrow = Arc::new(Vtree::balanced(16));
-    let wide = Arc::new(Vtree::balanced(32));
+    let narrow = Home::new(Vtree::balanced(16));
+    let wide = Home::new(Vtree::balanced(32));
     let odd: Vec<u32> = (1..=16).filter(|v| v % 2 == 1).collect();
     let even: Vec<u32> = (1..=32).filter(|v| v % 2 == 0).collect();
     let mut rng = Lcg::new(0x5eed_ca93);
@@ -179,7 +180,7 @@ fn a_placement_counts_its_free_levels_under_a_refused_level() {
 /// unchanged, and the engine conjoins them afterwards as a fresh one does.
 #[test]
 fn a_refused_conjunction_restores_its_operands() {
-    let vtree = Arc::new(Vtree::balanced(16));
+    let vtree = Home::new(Vtree::balanced(16));
     let odd: Vec<u32> = (1..=16).filter(|v| v % 2 == 1).collect();
     let even: Vec<u32> = (1..=16).filter(|v| v % 2 == 0).collect();
     let mut rng = Lcg::new(0x5eed_ca94);

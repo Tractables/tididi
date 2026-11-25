@@ -54,7 +54,7 @@ fn same_queries(f: &Tdd, g: &Tdd, n: u32, rng: &mut Lcg, label: &str) {
     let ws = weights(n, rng);
     let algebra = ws.algebra().clone();
     assert_eq!(f.evaluate(&algebra).unwrap(), g.evaluate(&algebra).unwrap(), "{label}: evaluation");
-    let weighted = Arc::new(Vtree::clone(f.vtree()).with_weights(ws).unwrap());
+    let weighted = Home::new(Vtree::clone(f.vtree()).with_weights(ws).unwrap());
     let (fw, gw) = (crate::test_helpers::embedded(f, &weighted, |v| v).unwrap().0, crate::test_helpers::embedded(g, &weighted, |v| v).unwrap().0);
     let value = |t: &Tdd| exact_weight(&t.weighted_value().unwrap().unwrap());
     assert_eq!(value(&fw), value(&gw), "{label}: weighted value");

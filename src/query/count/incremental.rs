@@ -205,9 +205,9 @@ fn read_side<'a>(side: Side<'a, CountVec>, k: EncodedChildRef) -> CountRead<'a> 
 /// changing an observation refreshes only the affected ancestor levels.
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{Tdd, Vtree};
-/// let vtree = Arc::new(Vtree::balanced(4));
+/// let vtree = Home::new(Vtree::balanced(4));
 /// let f = Tdd::clause(&vtree, [1, -2])?;
 /// let mut counter = f.counter()?;
 /// assert_eq!(counter.model_count()?, 12u32.into());
@@ -240,10 +240,10 @@ fn read_side<'a>(side: Side<'a, CountVec>, k: EncodedChildRef) -> CountRead<'a> 
 /// counter remains in use:
 ///
 /// ```compile_fail
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::Tdd;
 /// use tididi::vtree::Vtree;
-/// let vtree = Arc::new(Vtree::balanced(2));
+/// let vtree = Home::new(Vtree::balanced(2));
 /// let mut f = Tdd::clause(&vtree, [1]).unwrap();
 /// let mut counter = f.counter().unwrap();
 /// f.minimize().unwrap();
@@ -284,9 +284,9 @@ impl Tdd {
     /// On construction failure, the consumed circuit is dropped.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let vtree = Home::new(Vtree::balanced(2));
     /// let mut counter = Tdd::clause(&vtree, [1, 2])?.into_counter()?;
     /// counter.observe([-1])?;
     /// assert_eq!(counter.model_count()?, 1u32.into());
@@ -323,11 +323,11 @@ impl Tdd {
     /// or [`OperationError::Stopped`] for an armed stop.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
     /// use tididi::query::{PinSemantics, Retention};
     /// use tididi::vtree::VarId;
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// # tididi::test_helpers::assert_canonical(&f);
     /// let mut counter = f.counter_with(Retention::Frontier, PinSemantics::Cofactor)?;
@@ -352,9 +352,9 @@ impl Tdd {
 /// escape the engine checkout that created it:
 ///
 /// ```compile_fail
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{Tdd, Vtree};
-/// let vtree = Arc::new(Vtree::balanced(2));
+/// let vtree = Home::new(Vtree::balanced(2));
 /// let f = Tdd::one(&vtree);
 /// let mut counter = vtree.context().run(|engine| engine.counter(&f)).unwrap();
 /// counter.model_count().unwrap();
@@ -439,11 +439,11 @@ impl Engine {
     /// for an armed stop.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
     /// use tididi::limits::LimitConfig;
     /// use tididi::vtree::VarId;
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// # tididi::test_helpers::assert_canonical(&f);
     /// vtree.context().with_limits(
@@ -469,11 +469,11 @@ impl Engine {
     /// allocation and stop checks during construction and every count.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Engine, Tdd, Vtree};
     /// use tididi::query::{PinSemantics, Retention};
     /// let engine = Engine::new();
-    /// let f = Tdd::one(&Arc::new(Vtree::balanced(3)));
+    /// let f = Tdd::one(&Home::new(Vtree::balanced(3)));
     /// # tididi::test_helpers::assert_canonical(&f);
     /// let mut counter = engine.counter_with(&f, Retention::Frontier, PinSemantics::Evidence)?;
     /// assert_eq!(counter.model_count()?, 8u32.into());
@@ -504,10 +504,10 @@ impl<D: Borrow<Tdd>> Counter<D> {
     /// binding ends, ordinary reads use the diagram's context again.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
     /// use tididi::vtree::VarId;
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// # tididi::test_helpers::assert_canonical(&f);
     /// let mut counter = f.counter()?;
@@ -545,9 +545,9 @@ impl<D: Borrow<Tdd>> Counter<D> {
     /// with [`Self::bind`] to use that engine's limits for preparation.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let vtree = Home::new(Vtree::balanced(4));
     /// let f = Tdd::clause(&vtree, [1, -2])?;
     /// # tididi::test_helpers::assert_canonical(&f);
     /// let mut counter = f.counter()?;
@@ -592,10 +592,10 @@ impl<D: Borrow<Tdd>> Counter<D> {
     /// An error leaves pins and cached counts unchanged, including when clearing a pin.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{OperationError, Tdd, Vtree};
     /// use tididi::vtree::VarId;
-    /// let vtree = Arc::new(Vtree::leaf(VarId(8)));
+    /// let vtree = Home::new(Vtree::leaf(VarId(8)));
     /// let f = Tdd::one(&vtree);
     /// # tididi::test_helpers::assert_canonical(&f);
     /// let mut counter = f.counter()?;
@@ -625,9 +625,9 @@ impl<D: Borrow<Tdd>> Counter<D> {
     /// any update; an error preserves all pins, cached counts and pending changes.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Literal, Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// # tididi::test_helpers::assert_canonical(&f);
     /// let mut counter = f.counter()?;
@@ -660,10 +660,10 @@ impl<D: Borrow<Tdd>> Counter<D> {
     /// counts and previously pending updates unchanged.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
     /// use tididi::vtree::VarId;
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// # tididi::test_helpers::assert_canonical(&f);
     /// let mut counter = f.counter()?;
@@ -684,10 +684,10 @@ impl<D: Borrow<Tdd>> Counter<D> {
     /// counter is unchanged.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
     /// use tididi::vtree::VarId;
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// # tididi::test_helpers::assert_canonical(&f);
     /// let mut counter = f.counter()?;
@@ -733,11 +733,11 @@ impl<D: Borrow<Tdd>> Counter<D> {
     /// had before, also after an error, and the next read refreshes them.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use num_bigint::BigUint;
     /// use tididi::{Tdd, Vtree};
     /// use tididi::vtree::VarId;
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, -2, 3])?;
     /// # tididi::test_helpers::assert_canonical(&f);
     /// let mut counter = f.counter()?;

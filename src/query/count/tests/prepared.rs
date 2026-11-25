@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use super::*;
 use crate::{Vtree, query::{Retention, PinSemantics}};
 use crate::vtree::VarId;
@@ -16,7 +17,7 @@ fn table(tree: &Arc<Vtree>, vars: &[VarId]) -> (Tdd, Vec<u64>) {
 fn prepared_updates_match_model_enumeration() {
     for sparse in [false, true] {
         let vars: Vec<_> = (1..=16).map(|i| VarId(if sparse { i * 101 } else { i })).collect();
-        let tree = Arc::new(Vtree::balanced_over(&vars).unwrap());
+        let tree = Home::new(Vtree::balanced_over(&vars).unwrap());
         let (f, rows) = table(&tree, &vars);
         let plan = Prepared::new(&Engine::new(), &f).unwrap();
         assert!(plan.levels.iter().any(Option::is_some));
@@ -106,7 +107,7 @@ fn packed_word_boundaries_and_exact_overflow() {
 fn preparation_stops_atomically_and_count_tables_restore_pins() {
     use crate::limits::{LimitConfig, StopCallback, StopDecision};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    let tree = Arc::new(Vtree::balanced(16));
+    let tree = Home::new(Vtree::balanced(16));
     let vars: Vec<_> = (1..=16).map(VarId).collect();
     let (f, _) = table(&tree, &vars);
     let eng = Engine::new();
@@ -205,7 +206,7 @@ fn full_width_headers_and_packed_overflow_use_the_shared_fold() {
 fn prepared_model_tables_on_random_trees_match_enumeration() {
     let vars: Vec<_> = (1..=24).map(VarId).collect();
     for seed in [7, 91, 0x7ead_beef] {
-        let tree = Arc::new(Vtree::random(24, seed));
+        let tree = Home::new(Vtree::random(24, seed));
         let rows: Vec<_> = (0..32768u64).map(|i| {
             let value = (i * 517807 + seed) & ((1 << 24) - 1);
             let value = value ^ (value >> 7);
