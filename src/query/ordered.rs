@@ -46,7 +46,7 @@ use crate::diagram::{LeafLabel, Tdd};
 use crate::limits::{Limits, OperationError};
 use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
 
-use super::column_layout::roles;
+use super::column_layout::{roles, with_listed};
 
 impl Tdd {
     /// The first `limit` models of this diagram in the order of its first
@@ -62,7 +62,8 @@ impl Tdd {
     /// largest code first where `descending[j]` — and rows that tie on those
     /// come in a fixed order the call does not choose. A free listed
     /// variable yields `0` before `1`, or `1` before `0` on a descending
-    /// column.
+    /// column; a listed variable of the home that the diagram's projection
+    /// dropped is free.
     ///
     /// The layout it needs: the vtree's leaves, left to right, read the key
     /// columns' variables before any other listed one, column 0's from the
@@ -128,8 +129,9 @@ impl Tdd {
     /// Every column is a key, so the layout is
     /// [`ordered_models`](Self::ordered_models)'s with every listed
     /// variable a key; every other variable is projected away, so the
-    /// diagram may depend on variables no column lists. Each node's stream
-    /// is kept distinct as it is merged.
+    /// diagram may depend on variables no column lists. A listed variable of
+    /// the home that the diagram's projection dropped is free, so it takes
+    /// both values. Each node's stream is kept distinct as it is merged.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -195,6 +197,8 @@ impl Engine {
         let lim = self.limits();
         let _op = lim.enter()?;
         tdd.require_structure()?;
+        let tdd = with_listed(self, tdd, columns)?;
+        let tdd = &*tdd;
         let vtree = Arc::clone(tdd.vtree());
         let role = roles(&vtree, columns)?;
         let key_bits: Vec<VarId> = columns[..keys]
@@ -278,6 +282,8 @@ impl Engine {
         let lim = self.limits();
         let _op = lim.enter()?;
         tdd.require_structure()?;
+        let tdd = with_listed(self, tdd, columns)?;
+        let tdd = &*tdd;
         let vtree = Arc::clone(tdd.vtree());
         let role = roles(&vtree, columns)?;
         let key_bits: Vec<VarId> = columns.iter().flat_map(|c| c.iter().copied()).collect();

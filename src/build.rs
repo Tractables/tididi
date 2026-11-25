@@ -71,13 +71,16 @@ pub(crate) fn constant_padded_on(eng: &Engine, vtree: &Arc<Vtree>, value: bool) 
 }
 
 /// A constant on a vtree with no node ([`Vtree::empty_projection`]): no
-/// level, and the output a sentinel.
+/// level, and the output a sentinel; certified.
 pub(crate) fn constant_without_leaf(vtree: &Arc<Vtree>, value: bool) -> Tdd {
     debug_assert_eq!(vtree.num_nodes(), 0);
     let local = if value { TRUE } else { ZERO };
     let mut dirty = Dirty::default();
     dirty.set_loose(Some(Vec::new()));
-    Tdd { vtree: Arc::clone(vtree), levels: Vec::new().into(), output: TddNodeId { vtree: vtree.root(), local }, dirty }
+    let output = TddNodeId { vtree: vtree.root(), local };
+    let mut tdd = Tdd { vtree: Arc::clone(vtree), levels: Vec::new().into(), output, dirty };
+    tdd.levels.certify(output);
+    tdd
 }
 
 /// A constant over the operand's vtree ([`constant_on`]) with its weight

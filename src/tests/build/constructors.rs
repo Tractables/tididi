@@ -280,7 +280,6 @@ fn constructors_come_out_certified_at_their_reduction_fixpoint() {
 /// A constant on a home lies on its empty projection and is canonical
 /// there, as a constant on a root is.
 #[test]
-#[ignore = "a constant on the empty projection carries no certificate"]
 fn constants_on_a_home_come_out_certified() {
     let eng = &crate::Engine::new();
     for (shape, home) in vtree_shapes(5) {

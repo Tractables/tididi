@@ -172,6 +172,11 @@ impl ColumnAlgebra for Moments {
     fn read(&self, _: VtreeIdx, col: Vec<Moment>, slot: usize) -> Moment {
         col[slot]
     }
+    fn free(&self, _: VtreeIdx, free: &crate::vtree::FreeVars<'_>, col: &mut Vec<Moment>) -> bool {
+        let factor = free.vars().fold((1, 0), |acc, v| Self::mul(acc, (2, self.weight[v.0 as usize])));
+        col.iter_mut().for_each(|m| *m = Self::mul(*m, factor));
+        true
+    }
 }
 
 /// The value of `f`'s node `x` at `t` with the nodes at `at` valued by
@@ -287,6 +292,67 @@ fn sum_indexed_is_the_conjunctions_value() {
             }
         }
     }
+}
+
+/// Operands on two projections of one home: the conjunction, on a
+/// projection of that home, including where neither projection holds the
+/// other.
+#[test]
+fn and_indexed_takes_operands_on_two_projections_of_a_home() {
+    use crate::vtree::LeafSets;
+    let eng = Engine::new();
+    let mut rng = Lcg::new(0x40e5_2026_1124);
+    let mut apart = 0;
+    for nvars in [3u32, 5, 7] {
+        for (shape, home) in vtree_shapes(nvars) {
+            for round in 0..10 {
+                let label = format!("{shape} n={nvars} round {round} on a home");
+                let f = rand_conj(&home, nvars, 2, 2, false, &mut rng);
+                let g = rand_conj(&home, nvars, 3, 2, round % 2 == 0, &mut rng);
+                if let LeafSets::Union(_) = Vtree::leaf_sets(f.vtree(), g.vtree()).unwrap() {
+                    apart += 1;
+                }
+                let got = indexed(&eng, &f, &g, nvars, &label);
+                assert!(got.vtree().is_on(&home), "{label}: the result left the home");
+            }
+        }
+    }
+    assert!(apart > 0, "no case had operands on two projections apart");
+}
+
+/// Operands on two projections of one home: each slot of the column is the
+/// value of `f`'s node on the vtree both are read on, `at` named on `g`'s.
+#[test]
+fn sum_indexed_takes_operands_on_two_projections_of_a_home() {
+    use std::borrow::Cow;
+    let eng = Engine::new();
+    let mut rng = Lcg::new(0x5e40_2026_1124);
+    let mut apart = 0;
+    for nvars in [3u32, 5, 6] {
+        let alg = Moments { weight: (0..=nvars).map(|v| 1u128 << v).collect() };
+        for (shape, home) in vtree_shapes(nvars) {
+            for round in 0..6 {
+                let f = rand_conj(&home, nvars, 2, 2, false, &mut rng);
+                let g = rand_conj(&home, nvars, 3, 2, round % 2 == 0, &mut rng);
+                let index = PairIndex::new(&g).unwrap();
+                let [fu, gu] = crate::apply::extend::on_one(&eng, [Cow::Borrowed(&f), Cow::Borrowed(&g)]).unwrap();
+                apart += usize::from(!Arc::ptr_eq(gu.vtree(), g.vtree()));
+                for (t, _, _) in g.vtree().internal_bottomup() {
+                    let label = format!("{shape} n={nvars} round {round} at {} on a home", t.idx());
+                    let col = eng.sum_indexed(&f, &g, &index, t, &alg).unwrap();
+                    let tu = gu.vtree().node_at_home(g.vtree().home_node(t)).unwrap();
+                    assert_eq!(col.len(), fu.reference_slot_count(tu), "{label}: a slot per node");
+                    let free = gu.vtree().free_set_under(tu);
+                    let factor = free.iter().flat_map(|free| free.vars()).fold((1, 0), |acc, v| Moments::mul(acc, (2, alg.weight[v.0 as usize])));
+                    for (x, &got) in col.iter().enumerate() {
+                        let want = Moments::mul(brute_slot(&fu, &gu, &alg, tu, x as u32, nvars), factor);
+                        assert_eq!(got, want, "{label}: slot {x}");
+                    }
+                }
+            }
+        }
+    }
+    assert!(apart > 0, "no case had operands on two projections apart");
 }
 
 #[test]

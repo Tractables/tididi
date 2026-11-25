@@ -357,3 +357,38 @@ fn streams_past_the_list_cap_are_refused() {
     }
     assert!(refused > 0, "no list cap refused a stream");
 }
+
+/// On a home, a listed variable the diagram's projection dropped is free:
+/// `model_columns`, `ordered_models` and `ordered_keys` answer as for the
+/// same function on a plain root, and still refuse a variable the home lacks.
+#[test]
+fn readers_on_a_home_take_a_dropped_variable_as_free() {
+    use crate::vtree::Home;
+    let home = Home::new(Vtree::linear(4));
+    let root = Arc::new(Vtree::linear(4));
+    let on_home = Tdd::clause(&home, [1, 3]).unwrap();
+    let on_root = Tdd::clause(&root, [1, 3]).unwrap();
+    assert!(on_home.vtree().leaf_of(VarId(2)).is_none(), "the projection keeps variable 2");
+    let columns: &[&[VarId]] = &[&[VarId(1), VarId(2)], &[VarId(3), VarId(4)]];
+    let rows = |f: &Tdd| {
+        let mut table = f.model_columns(columns).unwrap();
+        let read = table.to_columns();
+        read[0].iter().copied().zip(read[1].iter().copied()).collect::<BTreeSet<_>>()
+    };
+    assert_eq!(rows(&on_home), rows(&on_root));
+    assert_eq!(rows(&on_home).len(), 12);
+    for descending in [[false, false], [true, false]] {
+        assert_eq!(
+            on_home.ordered_models(columns, &descending, 2, 20).unwrap(),
+            on_root.ordered_models(columns, &descending, 2, 20).unwrap(),
+        );
+        assert_eq!(
+            on_home.ordered_keys(columns, &descending, 20).unwrap(),
+            on_root.ordered_keys(columns, &descending, 20).unwrap(),
+        );
+    }
+    let all = Tdd::one(&home);
+    assert_eq!(all.model_columns(&[&[VarId(2), VarId(4)]]).unwrap().rows(), 4);
+    let missing: &[&[VarId]] = &[&[VarId(9)]];
+    assert!(matches!(on_home.model_columns(missing), Err(OperationError::VariableNotInVtree(VarId(9)))));
+}
