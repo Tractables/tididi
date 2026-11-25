@@ -163,7 +163,7 @@ impl Blocks {
             chain(&self.order, balanced(&self.values)),
         );
         let into = around(shape, &self.keys, chain(&self.order, balanced(&self.codes)));
-        (Arc::new(vtree), Arc::new(into))
+        (Arc::clone(&crate::vtree::Home::new(vtree)), Arc::clone(&crate::vtree::Home::new(into)))
     }
 
     fn vars(list: &[u32]) -> Vec<VarId> {
@@ -235,7 +235,7 @@ fn check<M: FoldMonoid<Value = u64>>(
     let all = blocks.all_vars();
     let build = |vars: &[VarId], rows: &[u64]| -> Tdd {
         if !raw {
-            return eng.from_models(&crate::vtree::Home::unchecked(&vtree), vars, rows).unwrap();
+            return eng.from_models(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)), vars, rows).unwrap();
         }
         let have: BTreeSet<u64> = rows.iter().copied().collect();
         let rest: Vec<u64> = (0..1u64 << vars.len())
@@ -248,8 +248,8 @@ fn check<M: FoldMonoid<Value = u64>>(
                 .collect()
         };
         let (f, g) = (
-            eng.from_models(&crate::vtree::Home::unchecked(&vtree), vars, &half(0)).unwrap(),
-            eng.from_models(&crate::vtree::Home::unchecked(&vtree), vars, &half(1)).unwrap(),
+            eng.from_models(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)), vars, &half(0)).unwrap(),
+            eng.from_models(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)), vars, &half(1)).unwrap(),
         );
         eng.and(f, g).unwrap()
     };
@@ -306,7 +306,7 @@ fn check<M: FoldMonoid<Value = u64>>(
         }
     }
     let out = Blocks::vars(&[&blocks.keys[..], &blocks.order[..], &blocks.codes[..]].concat());
-    let built = eng.from_models(&crate::vtree::Home::unchecked(&into), &out, &rows).unwrap();
+    let built = eng.from_models(&crate::vtree::Home::new(std::sync::Arc::clone(&into)), &out, &rows).unwrap();
     assert!(eng.equivalent(&got, &built).unwrap(), "{what}");
     let mut got = got.clone();
     eng.minimize(&mut got).unwrap();
@@ -413,8 +413,8 @@ fn lists_past_the_list_cap_are_refused() {
         let (points, values) = random(&mut rng, &blocks, 3);
         let a_rows: Vec<u64> = points.iter().map(|&(k, e)| blocks.row(k, e, 0)).collect();
         let b_rows: Vec<u64> = values.iter().map(|&(k, e, v)| blocks.row(k, e, v)).collect();
-        let a = eng.from_models(&crate::vtree::Home::unchecked(&vtree), &all[..nk + blocks.order.len()], &a_rows).unwrap();
-        let b = eng.from_models(&crate::vtree::Home::unchecked(&vtree), &all, &b_rows).unwrap();
+        let a = eng.from_models(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)), &all[..nk + blocks.order.len()], &a_rows).unwrap();
+        let b = eng.from_models(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)), &all, &b_rows).unwrap();
         for range in RANGES {
             let fold = || {
                 let coding = |folds: &[u64]| {
@@ -526,8 +526,8 @@ fn a_count_reads_a_value_block_wider_than_a_code() {
     let codes: Vec<u32> = (nk + m + 1..=nk + m + 6).collect();
     let eng = Engine::new();
     for shape in SHAPES {
-        let vtree = Arc::new(around(shape, &keys, chain(&order, balanced(&rows_block))));
-        let into = Arc::new(around(shape, &keys, chain(&order, balanced(&codes))));
+        let vtree = std::sync::Arc::clone(&crate::vtree::Home::new(around(shape, &keys, chain(&order, balanced(&rows_block)))));
+        let into = std::sync::Arc::clone(&crate::vtree::Home::new(around(shape, &keys, chain(&order, balanced(&codes)))));
         let lit = |v: u32, on: bool| if on { v as i32 } else { -(v as i32) };
         // Row `r`'s bit `i`: a bijection of `r` over the first 64, `r` itself
         // over the rest.
@@ -536,7 +536,7 @@ fn a_count_reads_a_value_block_wider_than_a_code() {
             false => r >> (i - 64) & 1 == 1,
         };
         // The cube of key `k`, order `e` and, where given, row `r`.
-        let cube = |vt: &Arc<Vtree>, k: u64, e: u64, r: Option<u64>| -> Tdd {
+        let cube = |vt: &crate::vtree::Home, k: u64, e: u64, r: Option<u64>| -> Tdd {
             let mut lits: Vec<i32> = (0..nk)
                 .map(|i| lit(keys[i as usize], k >> i & 1 == 1))
                 .collect();
@@ -544,7 +544,7 @@ fn a_count_reads_a_value_block_wider_than_a_code() {
             if let Some(r) = r {
                 lits.extend((0..nv).map(|i| lit(rows_block[i as usize], bit(r, i))));
             }
-            eng.cube(&crate::vtree::Home::unchecked(vt), lits).unwrap()
+            eng.cube(vt, lits).unwrap()
         };
         let mut rng = Lcg::new(5);
         let mut points = BTreeSet::new();
@@ -559,11 +559,11 @@ fn a_count_reads_a_value_block_wider_than_a_code() {
                 }
             }
         }
-        let a = points.iter().fold(eng.zero(&crate::vtree::Home::unchecked(&vtree)), |f, &(k, e)| {
-            eng.or(f, cube(&vtree, k, e, None)).unwrap()
+        let a = points.iter().fold(eng.zero(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree))), |f, &(k, e)| {
+            eng.or(f, cube(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)), k, e, None)).unwrap()
         });
-        let b = values.iter().fold(eng.zero(&crate::vtree::Home::unchecked(&vtree)), |f, &(k, e, r)| {
-            eng.or(f, cube(&vtree, k, e, Some(r))).unwrap()
+        let b = values.iter().fold(eng.zero(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree))), |f, &(k, e, r)| {
+            eng.or(f, cube(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)), k, e, Some(r))).unwrap()
         });
         assert_eq!(b.model_count().unwrap(), (values.len() as u64).into());
         let order_vars: Vec<VarId> = order.iter().map(|&v| VarId(v)).collect();
@@ -582,7 +582,7 @@ fn a_count_reads_a_value_block_wider_than_a_code() {
                 )
                 .unwrap();
             assert_canonical(&got);
-            let mut want = eng.zero(&crate::vtree::Home::unchecked(&into));
+            let mut want = eng.zero(&crate::vtree::Home::new(std::sync::Arc::clone(&into)));
             for &(k, e) in &points {
                 let n = values
                     .iter()
@@ -594,7 +594,7 @@ fn a_count_reads_a_value_block_wider_than_a_code() {
                         .collect();
                     lits.extend((0..m).map(|i| lit(order[i as usize], e >> (m - 1 - i) & 1 == 1)));
                     lits.extend((0..6).map(|i| lit(codes[i as usize], n >> i & 1 == 1)));
-                    want = eng.or(want, eng.cube(&crate::vtree::Home::unchecked(&into), lits).unwrap()).unwrap();
+                    want = eng.or(want, eng.cube(&crate::vtree::Home::new(std::sync::Arc::clone(&into)), lits).unwrap()).unwrap();
                 }
             }
             assert!(eng.equivalent(&got, &want).unwrap(), "{shape:?} {range:?}");
@@ -619,9 +619,9 @@ fn an_empty_operand_folds_to_false() {
     let (vtree, into) = blocks.vtrees(Shape::Left);
     let eng = Engine::new();
     let some = eng
-        .from_models(&crate::vtree::Home::unchecked(&vtree), &blocks.all_vars(), &[blocks.row(1, 2, 1)])
+        .from_models(&crate::vtree::Home::new(Arc::clone(&vtree)), &blocks.all_vars(), &[blocks.row(1, 2, 1)])
         .unwrap();
-    let none = eng.from_models(&crate::vtree::Home::unchecked(&vtree), &blocks.all_vars(), &[]).unwrap();
+    let none = eng.from_models(&crate::vtree::Home::new(Arc::clone(&vtree)), &blocks.all_vars(), &[]).unwrap();
     let (order, value_vars, code_vars) = (
         Blocks::vars(&blocks.order),
         Blocks::vars(&blocks.values),
@@ -635,7 +635,7 @@ fn an_empty_operand_folds_to_false() {
                 })
                 .unwrap();
             assert!(got.is_zero());
-            assert!(Arc::ptr_eq(got.vtree(), &into));
+            assert!(got.vtree().is_on(&crate::vtree::Home::new(Arc::clone(&into))));
             let got = eng
                 .prefix_fold(a, b, &order, &value_vars, range, &Count, |f: &[u64]| {
                     coded(&into, &code_vars, f.to_vec())
@@ -646,7 +646,7 @@ fn an_empty_operand_folds_to_false() {
     }
     // A point with no value at its key: false too, and no fold is coded.
     let other = eng
-        .from_models(&crate::vtree::Home::unchecked(&vtree), &blocks.all_vars(), &[blocks.row(0, 2, 1)])
+        .from_models(&crate::vtree::Home::new(Arc::clone(&vtree)), &blocks.all_vars(), &[blocks.row(0, 2, 1)])
         .unwrap();
     let got = eng
         .prefix_fold(
@@ -702,8 +702,8 @@ fn work_against_the_self_join<M: FoldMonoid<Value = u64>>(range: FoldRange, mono
             }
         }
         let all = blocks.all_vars();
-        let a = eng.from_models(&crate::vtree::Home::unchecked(&vtree), &all[..12], &a_rows).unwrap();
-        let b = eng.from_models(&crate::vtree::Home::unchecked(&vtree), &all, &b_rows).unwrap();
+        let a = eng.from_models(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)), &all[..12], &a_rows).unwrap();
+        let b = eng.from_models(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)), &all, &b_rows).unwrap();
         let mark = eng.limits().mark();
         let got = eng
             .prefix_fold(&a, &b, &order, &value_vars, range, monoid, |f: &[u64]| {
@@ -777,8 +777,8 @@ fn work_grows_with_the_keys_not_with_their_pairs() {
                 .map(|&(k, e, v)| blocks.row(k, e, v))
                 .collect();
             let all = blocks.all_vars();
-            let a = eng.from_models(&crate::vtree::Home::unchecked(&vtree), &all[..14], &a_rows).unwrap();
-            let b = eng.from_models(&crate::vtree::Home::unchecked(&vtree), &all, &b_rows).unwrap();
+            let a = eng.from_models(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)), &all[..14], &a_rows).unwrap();
+            let b = eng.from_models(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)), &all, &b_rows).unwrap();
             let mark = eng.limits().mark();
             let got = eng
                 .prefix_fold(
@@ -812,7 +812,7 @@ fn layouts_the_fold_cannot_read_are_refused() {
     let blocks = Blocks::new(2, 3, 2, 3);
     let (vtree, into) = blocks.vtrees(Shape::Left);
     let f = eng
-        .from_models(&crate::vtree::Home::unchecked(&vtree), &blocks.all_vars(), &[blocks.row(1, 2, 1)])
+        .from_models(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)), &blocks.all_vars(), &[blocks.row(1, 2, 1)])
         .unwrap();
     let (order, value_vars, code_vars) = (
         Blocks::vars(&blocks.order),
@@ -891,7 +891,7 @@ fn codes_that_do_not_fit_are_refused() {
         blocks.row(0, 1, 2),
         blocks.row(1, 3, 1),
     ];
-    let f = eng.from_models(&crate::vtree::Home::unchecked(&vtree), &blocks.all_vars(), &rows).unwrap();
+    let f = eng.from_models(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)), &blocks.all_vars(), &rows).unwrap();
     let (order, value_vars, code_vars) = (
         Blocks::vars(&blocks.order),
         Blocks::vars(&blocks.values),
@@ -935,7 +935,7 @@ fn the_code_block_is_as_wide_as_the_folds_need() {
         blocks.row(0, 1, 2),
         blocks.row(1, 3, 1),
     ];
-    let f = eng.from_models(&crate::vtree::Home::unchecked(&vtree), &blocks.all_vars(), &rows).unwrap();
+    let f = eng.from_models(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)), &blocks.all_vars(), &rows).unwrap();
     let (order, value_vars) = (Blocks::vars(&blocks.order), Blocks::vars(&blocks.values));
     let coding = |folds: &[u64]| -> FoldCodes {
         let width = (u64::BITS - (folds.len() as u64 - 1).leading_zeros()).max(1);
@@ -960,7 +960,7 @@ fn the_code_block_is_as_wide_as_the_folds_need() {
     let narrow = Blocks::new(1, 2, 2, 2);
     let want = eng
         .from_models(
-            &crate::vtree::Home::unchecked(got.vtree()),
+            &crate::vtree::Home::new(std::sync::Arc::clone(got.vtree())),
             &narrow.all_vars(),
             &[
                 narrow.row(0, 0, 1),
@@ -979,8 +979,8 @@ fn operands_the_fold_cannot_read_are_refused() {
     let (vtree, into) = blocks.vtrees(Shape::Left);
     let (twin, _) = blocks.vtrees(Shape::Left);
     let rows = [blocks.row(0, 0, 3), blocks.row(1, 3, 1)];
-    let f = eng.from_models(&crate::vtree::Home::unchecked(&vtree), &blocks.all_vars(), &rows).unwrap();
-    let g = eng.from_models(&crate::vtree::Home::unchecked(&twin), &blocks.all_vars(), &rows).unwrap();
+    let f = eng.from_models(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)), &blocks.all_vars(), &rows).unwrap();
+    let g = eng.from_models(&crate::vtree::Home::new(std::sync::Arc::clone(&twin)), &blocks.all_vars(), &rows).unwrap();
     let (order, value_vars, code_vars) = (
         Blocks::vars(&blocks.order),
         Blocks::vars(&blocks.values),
@@ -1034,8 +1034,8 @@ fn operands_on_projections_fold_as_on_their_home() {
                 let (points, values) = random(&mut rng, &blocks, 2 + seed);
                 let a_rows: Vec<u64> = points.iter().map(|&(k, e)| blocks.row(k, e, 0)).collect();
                 let b_rows: Vec<u64> = values.iter().map(|&(k, e, v)| blocks.row(k, e, v)).collect();
-                let a = eng.from_models(&crate::vtree::Home::unchecked(&vtree), &all[..nk as usize + m as usize], &a_rows).unwrap();
-                let b = eng.from_models(&crate::vtree::Home::unchecked(&vtree), &all, &b_rows).unwrap();
+                let a = eng.from_models(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)), &all[..nk as usize + m as usize], &a_rows).unwrap();
+                let b = eng.from_models(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)), &all, &b_rows).unwrap();
                 let (mut ta, mut tb) = (a.clone(), b.clone());
                 ta.trim(&home).unwrap();
                 tb.trim(&home).unwrap();
@@ -1089,8 +1089,8 @@ fn every_refused_reserve_of_a_fold_leaves_the_operands() {
         let (points, values) = random(&mut rng, &blocks, 3);
         let a_rows: Vec<u64> = points.iter().map(|&(k, e)| blocks.row(k, e, 0)).collect();
         let b_rows: Vec<u64> = values.iter().map(|&(k, e, v)| blocks.row(k, e, v)).collect();
-        let a = Engine::new().from_models(&crate::vtree::Home::unchecked(&vtree), &all[..nk + blocks.order.len()], &a_rows).unwrap();
-        let b = Engine::new().from_models(&crate::vtree::Home::unchecked(&vtree), &all, &b_rows).unwrap();
+        let a = Engine::new().from_models(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)), &all[..nk + blocks.order.len()], &a_rows).unwrap();
+        let b = Engine::new().from_models(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)), &all, &b_rows).unwrap();
         let counts = (a.model_count().unwrap(), b.model_count().unwrap());
         for range in RANGES {
             let eng = Engine::new();

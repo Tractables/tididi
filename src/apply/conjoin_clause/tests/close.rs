@@ -40,14 +40,14 @@ fn and_clause_on_a_home_ends_trimmed() {
     let eng = Engine::new();
     let home = Home::new(Vtree::join(&leaf(1), &leaf(2)).unwrap());
     let two = Arc::clone(&home);
-    let y = trimmed(&home, eng.literal(&crate::vtree::Home::unchecked(&two), 2).unwrap());
-    let x_or_y = eng.clause(&crate::vtree::Home::unchecked(&two), [1, 2]).unwrap();
+    let y = trimmed(&home, eng.literal(&crate::vtree::Home::new(std::sync::Arc::clone(&two)), 2).unwrap());
+    let x_or_y = eng.clause(&crate::vtree::Home::new(std::sync::Arc::clone(&two)), [1, 2]).unwrap();
     let cases: [(&str, Tdd, &[i32], Tdd); 5] = [
         ("y and (x or not x)", y.clone(), &[1, -1], y.clone()),
-        ("y and the empty clause", y.clone(), &[], Tdd::zero(&crate::vtree::Home::unchecked(&two))),
-        ("false and x", Tdd::zero(&crate::vtree::Home::unchecked(&Vtree::empty_projection(&home))), &[1], Tdd::zero(&crate::vtree::Home::unchecked(&two))),
+        ("y and the empty clause", y.clone(), &[], Tdd::zero(&crate::vtree::Home::new(std::sync::Arc::clone(&two)))),
+        ("false and x", Tdd::zero(&crate::vtree::Home::new(std::sync::Arc::clone(&Vtree::empty_projection(&home)))), &[1], Tdd::zero(&crate::vtree::Home::new(std::sync::Arc::clone(&two)))),
         ("y and (x or y)", y.clone(), &[1, 2], y.clone()),
-        ("(x or y) and x", x_or_y, &[1], eng.literal(&crate::vtree::Home::unchecked(&two), 1).unwrap()),
+        ("(x or y) and x", x_or_y, &[1], eng.literal(&crate::vtree::Home::new(std::sync::Arc::clone(&two)), 1).unwrap()),
     ];
     let mut failed = Vec::new();
     for (what, f, clause, expected) in cases {
@@ -62,11 +62,11 @@ fn or_cube_on_a_home_ends_trimmed() {
     let eng = Engine::new();
     let home = Home::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap());
     let xyz = Arc::clone(&home);
-    let x_or_z = trimmed(&home, eng.clause(&crate::vtree::Home::unchecked(&xyz), [1, 3]).unwrap());
-    let x = trimmed(&home, eng.literal(&crate::vtree::Home::unchecked(&xyz), 1).unwrap());
+    let x_or_z = trimmed(&home, eng.clause(&crate::vtree::Home::new(std::sync::Arc::clone(&xyz)), [1, 3]).unwrap());
+    let x = trimmed(&home, eng.literal(&crate::vtree::Home::new(std::sync::Arc::clone(&xyz)), 1).unwrap());
     let cases: [(&str, Tdd, &[i32], Tdd); 4] = [
         ("(x or z) or (x and y)", x_or_z.clone(), &[1, 2], x_or_z.clone()),
-        ("(x or z) or the empty cube", x_or_z.clone(), &[], Tdd::one(&crate::vtree::Home::unchecked(&xyz))),
+        ("(x or z) or the empty cube", x_or_z.clone(), &[], Tdd::one(&crate::vtree::Home::new(std::sync::Arc::clone(&xyz)))),
         ("x or (x and y)", x.clone(), &[1, 2], x.clone()),
         ("x or (y and not y)", x.clone(), &[2, -2], x.clone()),
     ];

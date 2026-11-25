@@ -95,12 +95,12 @@ fn and_clause_and_or_cube_widen_as_the_placement_does() {
         let home = Home::new(Vtree::random(n, seed));
         let start = 1 + rng.below(u64::from(n)) as i32;
         let f = match seed % 4 {
-            0 => Tdd::one(&crate::vtree::Home::unchecked(&Vtree::empty_projection(&home))),
-            1 => crate::literal(&crate::vtree::Home::unchecked(&Vtree::projection(&home, [VarId(start as u32)]).unwrap()), -start).unwrap(),
+            0 => Tdd::one(&crate::vtree::Home::new(std::sync::Arc::clone(&Vtree::empty_projection(&home)))),
+            1 => crate::literal(&crate::vtree::Home::new(std::sync::Arc::clone(&Vtree::projection(&home, [VarId(start as u32)]).unwrap())), -start).unwrap(),
             _ => {
                 let lits = literals(n, 3, &mut rng);
                 let on = Vtree::projection(&home, lits.iter().map(|l| VarId(l.unsigned_abs()))).unwrap();
-                Tdd::clause(&crate::vtree::Home::unchecked(&on), lits).unwrap()
+                Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&on)), lits).unwrap()
             }
         };
         let steps: Vec<Step> = (0..8)
@@ -117,7 +117,7 @@ fn and_clause_and_or_cube_widen_as_the_placement_does() {
 #[test]
 fn a_clause_with_seventeen_new_variables_widens_as_the_placement_does() {
     let home = Home::new(Vtree::random(24, 17));
-    let f = crate::literal(&crate::vtree::Home::unchecked(&Vtree::projection(&home, [VarId(1), VarId(20)]).unwrap()), 1).unwrap();
+    let f = crate::literal(&crate::vtree::Home::new(std::sync::Arc::clone(&Vtree::projection(&home, [VarId(1), VarId(20)]).unwrap())), 1).unwrap();
     let wide: Vec<i32> = (2..=18).collect();
     let cube: Vec<i32> = (2..=18).map(|v| if v % 3 == 0 { -v } else { v }).collect();
     for steps in [[Step::And(wide.clone()), Step::Or(cube.clone())], [Step::Or(cube), Step::And(wide)]] {
@@ -128,7 +128,7 @@ fn a_clause_with_seventeen_new_variables_widens_as_the_placement_does() {
 #[test]
 fn a_clause_into_a_region_is_refused_both_ways() {
     let home = Home::new(Vtree::balanced(4));
-    let mut g = Tdd::clause(&crate::vtree::Home::unchecked(&Vtree::projection(&home, [1, 2, 3].map(VarId)).unwrap()), [1, 2, 3]).unwrap();
+    let mut g = Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&Vtree::projection(&home, [1, 2, 3].map(VarId)).unwrap())), [1, 2, 3]).unwrap();
     g.marginalize(|v| v.0 <= 2).unwrap();
     assert!(g.vtree().has_regions());
     assert_eq!(both_ways(g.clone(), &[Step::And(vec![1, 4])], "into a region"), 0);
