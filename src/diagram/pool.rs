@@ -72,6 +72,9 @@ pub(crate) fn reset_level(level: &mut TddLevel, room: &mut u64) -> u64 {
         *room -= bytes;
         bytes
     }
+    // The hint is safe at any value, but a level taken from the pool must
+    // not carry an earlier level's into the result it builds.
+    level.uneven = 0;
     if is_bare(level) {
         level.forget_held_pairs();
         return 0;
