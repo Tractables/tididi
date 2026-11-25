@@ -823,8 +823,12 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, dropped: Option<&[Vtr
     f.close_marked_levels();
     if canonical && !built && !shape.merged && shape.regrouped.is_empty() {
         f.levels.certify(f.output);
+        f.dirty.set_loose(Some(Vec::new()));
         #[cfg(debug_assertions)]
-        super::contract::contract_leaf::assert_no_full_twin_side(f);
+        {
+            super::contract::contract_leaf::assert_no_full_twin_side(f);
+            super::prune::debug_assert_all_reached(f);
+        }
     }
     if let Some(counts) = counts {
         f.levels.keep_counts(counts);
