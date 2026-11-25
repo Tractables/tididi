@@ -158,7 +158,7 @@ fn add_on(eng: &Engine, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
     if !f.is_zero() && !g.is_zero() && !f.has_marginal_level() && !g.has_marginal_level() {
         return overlay_on(eng, Overlay::Add, f, g);
     }
-    let [f, g] = crate::apply::extend::on_one(eng, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
+    let [f, g] = crate::apply::extend::on_one_sharing(eng, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
     eng.limits().check_stop()?;
     let mut result = match (f.is_zero(), g.is_zero()) {
         (true, _) => g,
@@ -266,6 +266,22 @@ fn root_value(level: &TddLevel, slot: NodeIdx) -> Count {
     CountRead::from_slot(counts, level.marginal_counts_big(), slot.idx()).to_count()
 }
 
+/// The sum of `f` and `g` whose roots are summed out: the root holds the sum
+/// of their values.
+fn summed_root(eng: &Engine, mut assembly: Assembly<'_>, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
+    let root = f.vtree.root();
+    let value = count_sum(
+        root_value(&f.levels[root.idx()], f.output.local),
+        root_value(&g.levels[root.idx()], g.output.local),
+    );
+    let mut column = CountVec::try_with_capacity(eng, 1)?;
+    column.push(eng, value)?;
+    let (counts, big) = column.into_parts();
+    assembly.levels_mut()[root.idx()].become_marginal(counts, big);
+    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
+    assembly.finish_asserted(output, None)
+}
+
 /// The sum of two exact counts.
 fn count_sum(a: Count, b: Count) -> Count {
     match (&a, &b) {
@@ -322,16 +338,18 @@ fn joined_store(
     Ok((counts, big))
 }
 
-/// Refuse operands on two projections where one has summed out a leaf or a
-/// region the other lacks: the other reads it as true over its variables,
-/// not summed, which the sum cannot add to a summed value.
+/// Refuse operands on two projections where one has summed out a leaf the
+/// other lacks, or a region the other has not with the same anchor and
+/// extent: the other reads those variables as true, or as other sums, which
+/// the sum cannot add to the region's values.
 #[cold]
 fn refuse_unshared_sums(f: &Tdd, g: &Tdd) -> Result<(), OperationError> {
     for (a, b) in [(f, g), (g, f)] {
         let (av, bv) = (a.vtree(), b.vtree());
-        let lacks = |t: VtreeIdx| match (av.on_home(), bv.on_home()) {
-            (true, true) => bv.node_at_home(av.home_node(t)).is_none_or(|u| !summed(b, u)),
-            _ => false,
+        let (true, true) = (av.on_home(), bv.on_home()) else { continue };
+        let lacks = |t: VtreeIdx| match av.node(t).is_region() {
+            true => !bv.regions().any(|u| bv.region_at(u) == av.region_at(t)),
+            false => bv.node_at_home(av.home_node(t)).is_none_or(|u| !summed(b, u)),
         };
         if let Some(t) = av.bottomup().find(|&t| av.node(t).is_leaf() && summed(a, t) && lacks(t)) {
             return Err(OperationError::MarginalLevel(t));
@@ -392,6 +410,9 @@ fn sum_levels(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
     // A region holds values, as a summed-out internal level does; no
     // summed-out level is above it.
     for region in vtree.regions() {
+        if region == root {
+            return summed_root(eng, assembly, f, g);
+        }
         let (fl, gl) = (&f.levels[region.idx()], &g.levels[region.idx()]);
         let (counts, big) = joined_store(eng, fl, gl)?;
         shift[region.idx()] = fl.marginal_counts().map_or(0, <[u128]>::len) as u32;
@@ -410,24 +431,10 @@ fn sum_levels(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
     for (t, left, right) in vtree.internal_bottomup() {
         let (fl, gl) = (&f.levels[t.idx()], &g.levels[t.idx()]);
         if summed(f, t) {
-            let levels = assembly.levels_mut();
             if t == root {
-                let value = count_sum(
-                    root_value(fl, f.output.local),
-                    root_value(gl, g.output.local),
-                );
-                let mut column = CountVec::try_with_capacity(eng, 1)?;
-                column.push(eng, value)?;
-                let (counts, big) = column.into_parts();
-                levels[t.idx()].become_marginal(counts, big);
-                return assembly.finish_asserted(
-                    TddNodeId {
-                        vtree: root,
-                        local: NodeIdx(0),
-                    },
-                    None,
-                );
+                return summed_root(eng, assembly, f, g);
             }
+            let levels = assembly.levels_mut();
             // Under a summed-out parent a level's values are folded into the
             // parent's, and its store stays empty.
             let (counts, big) = match under_summed(t) {
