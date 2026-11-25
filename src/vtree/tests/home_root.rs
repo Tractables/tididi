@@ -39,21 +39,20 @@ fn and_marginalizing_by_targets_refuses_a_home_root() {
 }
 
 /// The weighted route of `and_model_count` on a home's root goes through
-/// the `_where` form, as on a projection, since targets are refused there:
-/// it answers as on a root vtree of the same shape.
+/// the `_where` form, as on a projection, since targets are refused there,
+/// and refuses the weights as a weighted root vtree of the same shape does.
 #[test]
 fn weighted_and_model_count_on_a_home_root() {
     let eng = Engine::new();
     let half = || BigRational::new(1.into(), 2.into());
     let weights = Weights::new(RationalWeights::from_literals(&vec![LiteralWeights { negative: half(), positive: half() }; 2]), Arithmetic::ExactRational);
-    let home = Home::weighted(Vtree::balanced(2), weights.clone()).unwrap();
-    let plain = Arc::new(Vtree::balanced(2).with_weights(weights).unwrap());
+    let home = Home::weighted(Vtree::balanced(2), weights).unwrap();
     let count = |vtree: &Arc<Vtree>| {
         let f = Tdd::cube(vtree, [1, 2]).unwrap();
         let g = Tdd::clause(vtree, [1, -2]).unwrap();
         eng.and_model_count(f, g, &[vtree.root()])
     };
-    assert_eq!(count(&home), count(&plain));
+    assert_eq!(count(&home), Err(OperationError::IncompatibleWeights));
 }
 
 /// `marginalize` refuses an internal summed-out level that is not a region
@@ -86,7 +85,7 @@ fn embed_places_a_summed_leaf_of_a_home_root() {
 #[test]
 fn tag_level_into_a_home_root_with_the_code_on_the_left() {
     let eng = Engine::new();
-    let pair = Arc::new(Vtree::balanced(2));
+    let pair = Home::new(Vtree::balanced(2));
     let f = Tdd::cube(&pair, [1, 2]).unwrap();
     let code = Vtree::balanced_over(&[VarId(3), VarId(4)]).unwrap();
     let home = Home::new(Vtree::join(&code, &Vtree::balanced(2)).unwrap());
