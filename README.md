@@ -45,10 +45,10 @@ efficiently under Boolean operations; in practice they can be much smaller.
 This example builds `(x ∧ y) ∨ z` and counts its satisfying assignments:
 
 ```rust
-use std::sync::Arc;
+use tididi::vtree::Home;
 use tididi::{literal, Vtree};
 
-let vtree = Arc::new(Vtree::balanced(3));
+let vtree = Home::new(Vtree::balanced(3));
 let x = literal(&vtree, 1)?;
 let y = literal(&vtree, 2)?;
 let z = literal(&vtree, 3)?;
@@ -64,8 +64,8 @@ Satisfying assignments: 5
 
 The model count is the number of satisfying assignments: four have `z` true,
 and one more has `z` false with `x` and `y` true. A **vtree** is a binary tree
-that groups the variables; circuits you combine must share the same
-`Arc<Vtree>`.
+that groups the variables; circuits you combine must be built on the same
+`Home`.
 
 The worked examples cover what the library does:
 

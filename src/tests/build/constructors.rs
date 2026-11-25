@@ -1,6 +1,5 @@
 use crate::test_helpers::bare_roots;
 use crate::diagram::ChildDecoder;
-use std::sync::Arc;
 
 use super::*;
 
@@ -14,7 +13,7 @@ use crate::vtree::{VarId, Vtree, VtreeIdx};
 #[test]
 fn test_constant_one() {
     let eng = &crate::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = std::sync::Arc::new(Vtree::balanced(3));
     let tdd = constant_one(eng, &vtree);
 
     // Internal levels have width 1 (one node with pair (One, One))
@@ -274,6 +273,24 @@ fn constructors_come_out_certified_at_their_reduction_fixpoint() {
             again.minimize().unwrap();
             assert_same_shape(&again, &f, shape);
         }
+    }
+}
+
+/// On a home, a relation from `from_models` leaves levels on the worklists
+/// after its closing trim (balanced, x1 x3 x5: levels 3 and 4).
+#[test]
+#[ignore = "from_models on a home leaves levels on its worklists"]
+fn a_relation_on_a_home_comes_out_at_its_reduction_fixpoint() {
+    let eng = &crate::Engine::new();
+    for (shape, home) in vtree_shapes(5) {
+        let f = eng.from_models(&home, &[VarId(1), VarId(3), VarId(5)], &[0b101, 0b010, 0b111]).unwrap();
+        crate::test_helpers::check::check_trimmed(&f, false).unwrap();
+        assert!(f.levels.is_canonical(f.output), "{shape}: the output is not certified");
+        let mut again = f.clone();
+        again.levels.forget();
+        again.minimize().unwrap();
+        assert_same_shape(&again, &f, shape);
+        assert!(f.dirty.is_empty(), "{shape}: a level was left on a worklist: {:?}", f.dirty);
     }
 }
 

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use crate::vtree::Home;
 use crate::{literal, Engine, Literal, OperationError, Tdd};
 use crate::limits::{LimitConfig, StopAt, StopRules};
 use crate::test_helpers::assert_canonical;
@@ -6,7 +6,7 @@ use crate::vtree::{VarId, Vtree};
 
 #[test]
 fn checked_constructors_report_invalid_variables() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let eng = Engine::new();
     let missing = Literal::pos(VarId(u32::MAX));
     assert_eq!(literal(&vtree, missing).err(), Some(OperationError::VariableNotInVtree(missing.var)));
@@ -20,7 +20,7 @@ fn checked_constructors_report_invalid_variables() {
 
 #[test]
 fn checked_constructors_obey_limits_and_leave_the_engine_reusable() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let eng = Engine::new();
     for (config, error) in [
         (LimitConfig::none().with_memory_budget_bytes(Some(0)), OperationError::OverBudget),
@@ -31,7 +31,10 @@ fn checked_constructors_obey_limits_and_leave_the_engine_reusable() {
             let _scope = eng.limits().scope(config);
             assert_eq!(eng.cube(&vtree, [1, -2]).err(), Some(error));
             assert_eq!(eng.clause(&vtree, [1, -2]).err(), Some(error));
-            assert_eq!(eng.literal(&vtree, -2).err(), Some(error));
+            // A literal on a home lies on its one-leaf projection and stores
+            // no node for the output cap to refuse.
+            let literal = (error != OperationError::OutputCap).then_some(error);
+            assert_eq!(eng.literal(&vtree, -2).err(), literal);
         }
         let cube = eng.cube(&vtree, [1, -2]).unwrap();
         let clause = eng.clause(&vtree, [1, -2]).unwrap();
@@ -44,7 +47,7 @@ fn checked_constructors_obey_limits_and_leave_the_engine_reusable() {
 
 #[test]
 fn checked_constructors_poll_while_reading_literals() {
-    let vtree = Arc::new(Vtree::balanced(8));
+    let vtree = Home::new(Vtree::balanced(8));
     for cube in [false, true] {
         let eng = Engine::new();
         eng.limits().pin_reduce_poll_stride(Some(1));
@@ -59,7 +62,7 @@ fn checked_constructors_poll_while_reading_literals() {
 
 #[test]
 fn clause_constants_and_duplicate_literals_keep_their_semantics() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     for (literals, count) in [(vec![], 0u32), (vec![1, -1], 8), (vec![1, 1], 4)] {
         let result = Engine::new().clause(&vtree, &literals).unwrap();
         let convenience = Tdd::clause(&vtree, &literals).unwrap();
@@ -72,7 +75,9 @@ fn clause_constants_and_duplicate_literals_keep_their_semantics() {
 
 #[test]
 fn an_empty_cube_polls_during_node_construction() {
-    let vtree = Arc::new(Vtree::balanced(8));
+    // On a home the empty cube is the constant on the empty projection,
+    // which builds no node.
+    let vtree = std::sync::Arc::new(Vtree::balanced(8));
     let eng = Engine::new();
     eng.limits().pin_reduce_poll_stride(Some(2));
     {
@@ -90,7 +95,7 @@ fn an_empty_cube_polls_during_node_construction() {
 #[test]
 fn zero_integer_literals_return_errors_at_checked_entry_points() {
     let engine = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     assert_eq!(Literal::try_from(0), Err(OperationError::InvalidLiteral(0)));
     assert_eq!(Literal::try_from(&0), Err(OperationError::InvalidLiteral(0)));
     assert_eq!(engine.literal(&vtree, 0).err(), Some(OperationError::InvalidLiteral(0)));
@@ -115,7 +120,7 @@ fn zero_integer_literals_return_errors_at_checked_entry_points() {
 fn literal_conversion_handles_signed_endpoints_and_borrowed_inputs() {
     assert_eq!(Literal::try_from(i32::MIN), Ok(Literal::neg(VarId(2147483648))));
     assert_eq!(Literal::try_from(i32::MAX), Ok(Literal::pos(VarId(2147483647))));
-    let vtree = Arc::new(Vtree::balanced_over(&[VarId(1), VarId(8)]).unwrap());
+    let vtree = Home::new(Vtree::balanced_over(&[VarId(1), VarId(8)]).unwrap());
     let engine = Engine::new();
     let integers = [1, -8];
     let typed = [Literal::pos(VarId(1)), Literal::neg(VarId(8))];
@@ -139,7 +144,7 @@ fn literal_conversion_handles_signed_endpoints_and_borrowed_inputs() {
 
 #[test]
 fn a_constant_built_inside_an_operation_observes_the_stop_rules() {
-    let vtree = Arc::new(Vtree::balanced(8));
+    let vtree = std::sync::Arc::new(Vtree::balanced(8));
     let eng = Engine::new();
     eng.limits().pin_reduce_poll_stride(Some(2));
     {

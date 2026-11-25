@@ -16,10 +16,10 @@
 //! This example builds `(x ∧ y) ∨ z` and counts its satisfying assignments:
 //!
 //! ```
-//! use std::sync::Arc;
+//! use tididi::vtree::Home;
 //! use tididi::{literal, Vtree};
 //!
-//! let vtree = Arc::new(Vtree::balanced(3));
+//! let vtree = Home::new(Vtree::balanced(3));
 //! let x = literal(&vtree, 1)?;
 //! let y = literal(&vtree, 2)?;
 //! let z = literal(&vtree, 3)?;
@@ -39,7 +39,7 @@
 //! true.
 //!
 //! A [`Vtree`] is a binary tree that groups the variables; diagrams you
-//! combine must share the same `Arc<Vtree>`. Literals are signed variable
+//! combine must be built on the same [`Home`](vtree::Home). Literals are signed variable
 //! numbers: `1` is `x` and `-2` is `¬y`. Boolean operations consume their
 //! operands, so clone an operand first to keep it; queries such as
 //! [`Tdd::model_count`] borrow the diagram.
