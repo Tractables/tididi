@@ -102,7 +102,7 @@ fn a_mirrored_target_costs_no_rotation() {
     for leaf in nodes {
         acc = Vtree::join(&leaf, &acc).unwrap();
     }
-    let mirror = Arc::new(acc);
+    let mirror = crate::vtree::Home::new(acc);
     let mut f = compile_clauses(&stick, &clauses);
     let stats = f.restructure_to(&mirror, usize::MAX).unwrap();
     assert_eq!(stats.rotations, 0);
@@ -139,7 +139,7 @@ fn a_refused_restructure_of_a_projection_leaves_it_as_it_was() {
     // Parity reads every variable, so the diagram is on `own`. Minimized,
     // because the restructure reduces its operand before it can be refused.
     let eng = crate::Engine::new();
-    let mut f = kept.iter().map(|&v| eng.literal(&crate::vtree::Home::unchecked(&own), v as i32).unwrap()).reduce(|a, b| eng.xor(a, b).unwrap()).unwrap();
+    let mut f = kept.iter().map(|&v| eng.literal(&crate::vtree::Home::new(std::sync::Arc::clone(&own)), v as i32).unwrap()).reduce(|a, b| eng.xor(a, b).unwrap()).unwrap();
     f.minimize().unwrap();
     let count = f.model_count().unwrap();
     let order = [1, 10, 2, 9, 3, 8, 4, 7, 5, 6].map(VarId);

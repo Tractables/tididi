@@ -51,9 +51,9 @@ fn inverse(perm: &[VarId]) -> Vec<VarId> {
 
 /// A random CNF of one to five clauses over `vtree`'s leaves, trimmed when
 /// `trim` is set.
-fn diagram(eng: &Engine, vtree: &Arc<Vtree>, trim: bool, rng: &mut Lcg) -> Tdd {
+fn diagram(eng: &Engine, vtree: &crate::vtree::Home, trim: bool, rng: &mut Lcg) -> Tdd {
     let vars: Vec<VarId> = vtree.leaf_bottomup().map(|(_, var)| var).collect();
-    let mut f = Tdd::one(&crate::vtree::Home::unchecked(vtree));
+    let mut f = Tdd::one(vtree);
     for _ in 0..1 + rng.below(5) {
         let clause: Vec<i32> = (0..1 + rng.below(3))
             .map(|_| {
@@ -124,7 +124,7 @@ fn case(eng: &Engine, seed: u64, rng: &mut Lcg) -> Case {
         }
         _ => Vtree::projection(&source_home, vars).unwrap(),
     };
-    let f = diagram(eng, &vtree, rng.below(4) != 0, rng);
+    let f = diagram(eng, &crate::vtree::Home::unchecked(&vtree), rng.below(4) != 0, rng);
     Case { dest, f, back }
 }
 
@@ -303,7 +303,7 @@ fn bad_images_marginal_levels_and_constants() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(6));
     let own = Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)]).unwrap();
-    let f = eng.clause(&crate::vtree::Home::unchecked(&own), [1, -2, 3]).unwrap();
+    let f = eng.clause(&crate::vtree::Home::new(std::sync::Arc::clone(&own)), [1, -2, 3]).unwrap();
 
     let r = eng.transport(&f, &home, |v| VarId(v.0 + 6), 0).unwrap_err();
     assert!(matches!(r.error, TransportError::Variable { variable: VarId(7..=9) }), "{:?}", r.error);
@@ -319,7 +319,7 @@ fn bad_images_marginal_levels_and_constants() {
     let other = Home::new(Vtree::linear(4));
     for value in [false, true] {
         let empty = Vtree::empty_projection(&home);
-        let c = if value { Tdd::one(&crate::vtree::Home::unchecked(&empty)) } else { Tdd::zero(&crate::vtree::Home::unchecked(&empty)) };
+        let c = if value { Tdd::one(&crate::vtree::Home::new(std::sync::Arc::clone(&empty))) } else { Tdd::zero(&crate::vtree::Home::new(std::sync::Arc::clone(&empty))) };
         let (moved, _) = eng.transport(c, &other, |v| v, 0).map_err(|r| r.error).unwrap();
         assert_eq!(moved.vtree().num_nodes(), 0);
         assert!(Arc::ptr_eq(&moved.home(), &other));
@@ -332,7 +332,7 @@ fn bad_images_marginal_levels_and_constants() {
 /// and 2 summed into a region, and the region's level.
 fn with_region(eng: &Engine, home: &Home) -> (Tdd, VtreeIdx) {
     let own = Vtree::projection(home, [VarId(1), VarId(2), VarId(3)]).unwrap();
-    let mut f = eng.and_clause(eng.clause(&crate::vtree::Home::unchecked(&own), [1, -2, 3]).unwrap(), &[2, -3]).unwrap();
+    let mut f = eng.and_clause(eng.clause(&crate::vtree::Home::new(std::sync::Arc::clone(&own)), [1, -2, 3]).unwrap(), &[2, -3]).unwrap();
     eng.marginalize(&mut f, |v| v.0 <= 2).unwrap();
     let region = f.vtree().regions().next().expect("variables 1 and 2 are summed into a region");
     assert!(f.level(region).is_marginal());
@@ -408,12 +408,12 @@ fn a_structural_diagram_moves_onto_any_weights() {
     let eng = Engine::new();
     let home = Home::weighted(Vtree::balanced(8), table(8, &[(1, 5)])).unwrap();
     let own = Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)]).unwrap();
-    let f = eng.clause(&crate::vtree::Home::unchecked(&own), [1, -2, 3]).unwrap();
+    let f = eng.clause(&crate::vtree::Home::new(std::sync::Arc::clone(&own)), [1, -2, 3]).unwrap();
     let onto = Home::weighted(Vtree::balanced(8), table(8, &[(2, 3), (1, 1)])).unwrap();
     let g = eng.transport(&f, &onto, |v| VarId(v.0 + 1), usize::MAX).unwrap().0;
     assert!(g.weights() == onto.weights());
     assert!(Arc::ptr_eq(&g.home(), &onto));
-    let structural = eng.clause(&crate::vtree::Home::unchecked(&Vtree::projection(&onto, [VarId(2), VarId(3), VarId(4)]).unwrap()), [2, -3, 4]).unwrap();
+    let structural = eng.clause(&crate::vtree::Home::new(std::sync::Arc::clone(&Vtree::projection(&onto, [VarId(2), VarId(3), VarId(4)]).unwrap())), [2, -3, 4]).unwrap();
     let value = |t: &Tdd| eng.weighted_value(t).unwrap().map(|w| w.into_rational());
     assert_eq!(value(&g), value(&structural));
 }
@@ -436,18 +436,18 @@ fn a_summed_diagram_moves_beside_a_fresh_variable_or_a_copy_by_transport() {
     let padded = Home::new(j(Vtree::clone(&home), l(9)));
     let (g, stats) = eng.transport(&f, &padded, |v| v, 0).unwrap();
     assert_eq!((stats.rotations, g.vtree().regions().count()), (0, 1));
-    let fixed = eng.cube(&Home::unchecked(&Vtree::projection(&padded, [VarId(9)]).unwrap()), [9]).unwrap();
+    let fixed = eng.cube(&crate::vtree::Home::new(std::sync::Arc::clone(&Vtree::projection(&padded, [VarId(9)]).unwrap())), [9]).unwrap();
     assert_eq!(eng.model_count(&eng.and(&g, &fixed).unwrap()).unwrap(), count);
 
     let copied = Home::new(shape(j(l(3), l(9))));
     let (g, stats) = eng.transport(&f, &copied, |v| v, 0).unwrap();
     assert_eq!((stats.rotations, g.vtree().regions().count()), (0, 1));
-    let pair = Home::unchecked(&Vtree::projection(&copied, [VarId(3), VarId(9)]).unwrap());
+    let pair = crate::vtree::Home::new(std::sync::Arc::clone(&Vtree::projection(&copied, [VarId(3), VarId(9)]).unwrap()));
     let equal = eng.and_clause(eng.clause(&pair, [3, -9]).unwrap(), &[-3, 9]).unwrap();
     assert_eq!(eng.model_count(&eng.and(&g, &equal).unwrap()).unwrap(), count);
 
     // ((R x3) x5) onto the linear home, where the projection is (R (x3 x5)).
-    let own = Home::unchecked(&Vtree::projection(&home, [1, 2, 3, 5].map(VarId)).unwrap());
+    let own = crate::vtree::Home::new(std::sync::Arc::clone(&Vtree::projection(&home, [1, 2, 3, 5].map(VarId)).unwrap()));
     let mut h = eng.and_clause(eng.clause(&own, [1, -2, 3]).unwrap(), &[2, -3, 5]).unwrap();
     eng.marginalize(&mut h, |v| v.0 <= 2).unwrap();
     let r = eng.transport(&h, &Home::new(Vtree::linear(8)), |v| v, usize::MAX).unwrap_err();

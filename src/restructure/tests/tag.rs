@@ -346,7 +346,7 @@ fn tagging_into_a_vtree_on_a_home_lands_on_its_projection() {
         let on = Vtree::projection(&home, (1..=4).map(VarId)).unwrap();
         assert!(g.vtree().is_on(&home) && g.vtree().same_tree(&on), "code on the left: {code_left}");
         assert_canonical(&g);
-        let expected = eng.and(eng.clause(&crate::vtree::Home::unchecked(&on), [1, 2]).unwrap(), eng.cube(&crate::vtree::Home::unchecked(&on), [-3, 4]).unwrap()).unwrap();
+        let expected = eng.and(eng.clause(&crate::vtree::Home::new(std::sync::Arc::clone(&on)), [1, 2]).unwrap(), eng.cube(&crate::vtree::Home::new(std::sync::Arc::clone(&on)), [-3, 4]).unwrap()).unwrap();
         for bits in 0..1u64 << 5 {
             let asn: Vec<bool> = (0..5).map(|i| bits >> i & 1 == 1).collect();
             assert_eq!(crate::test_helpers::eval(&g, &asn), crate::test_helpers::eval(&expected, &asn), "{bits:05b}");

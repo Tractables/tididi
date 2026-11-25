@@ -40,8 +40,8 @@ fn clauses(vars: &[VarId], rng: &mut Lcg) -> Vec<Vec<i32>> {
 
 /// The minimized CNF, on `vtree` itself when it depends on every leaf of
 /// `vtree`, else on the projection of its support.
-fn compile(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
-    let mut f = Tdd::one(&crate::vtree::Home::unchecked(vtree));
+fn compile(eng: &Engine, vtree: &crate::vtree::Home, clauses: &[Vec<i32>]) -> Tdd {
+    let mut f = Tdd::one(vtree);
     for clause in clauses {
         f = eng.and_clause(f, clause).unwrap();
     }
@@ -99,12 +99,12 @@ fn pools(eng: &Engine, home: &Home, full: bool, share: bool, rng: &mut Lcg) -> (
             false => Arc::clone(&root),
         };
         let cnf = clauses(&leaves, rng);
-        let mut f = compile(eng, &vtree, &cnf);
+        let mut f = compile(eng, &crate::vtree::Home::new(std::sync::Arc::clone(&vtree)), &cnf);
         if twin && (share || !full) && i > 0 && let Ok(LeafSets::Equal(same)) = Vtree::leaf_sets(f.vtree(), own[i - 1].vtree()) {
             f.reseat(&same);
         }
         own.push(f);
-        embedded.push(compile(eng, &root, &cnf));
+        embedded.push(compile(eng, &crate::vtree::Home::new(std::sync::Arc::clone(&root)), &cnf));
     }
     (own, embedded)
 }
