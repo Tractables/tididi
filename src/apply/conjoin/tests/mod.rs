@@ -805,6 +805,9 @@ thread_local! {
     /// Whether no pass level on this thread is carried whole for keeping
     /// its child's numbering ([`pass_numbered_off`]).
     static PASS_NUMBERED_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Whether no level a pass level carried whole is recorded as its
+    /// carrier's on this thread ([`pass_tight_off`]).
+    static PASS_TIGHT_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The pass levels on this thread so carried ([`pass_numbered_census`]).
     static PASS_NUMBERED: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0; 2]) };
 }
@@ -843,6 +846,16 @@ pub(super) fn note_pass_numbered(carried: bool) {
 /// numbering: the oracle that route is checked against.
 pub(super) fn pass_numbered_off<R>(f: impl FnOnce() -> R) -> R {
     with_flag(&PASS_NUMBERED_OFF, f)
+}
+
+pub(super) fn pass_tight_forced_off() -> bool {
+    PASS_TIGHT_OFF.with(std::cell::Cell::get)
+}
+
+/// Run `f` with no level a pass level carried whole recorded as its
+/// carrier's: the oracle for the loose levels that leaves out.
+pub(super) fn pass_tight_off<R>(f: impl FnOnce() -> R) -> R {
+    with_flag(&PASS_TIGHT_OFF, f)
 }
 
 /// The pass levels on this thread so far carried whole for keeping their

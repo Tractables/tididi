@@ -361,6 +361,7 @@ pub(super) fn take_pass_level(
             false => g.carry(lim, ti, &mut run.levels[ti])?,
         }
         run.lists.carry(ti, carrier_f, true);
+        note_carried_as_operand(run, ti, carrier_f);
         publish_identity_level(run.products, ti, wo);
         run.products.note_complete(ti);
         return Ok(());
@@ -466,6 +467,16 @@ pub(super) fn take_pass_level(
     }
 }
 
+/// Record that the carrier's level `t` is the output's, pair for pair, with
+/// the carrier's numbering on both children: a child the carrier has tight
+/// is then tight in the output where it has the carrier's node count
+/// ([`SweepLists::as_operand`](super::setup::SweepLists::as_operand)).
+fn note_carried_as_operand(run: &mut ApplyRun, t: usize, carrier_f: bool) {
+    if !pass_tight_forced_off() {
+        run.lists.as_operand.push((t, if carrier_f { 1 } else { 2 }));
+    }
+}
+
 /// [`take_pass_level`] where the passed child's products are the carrier's
 /// nodes there in order, each with one passing node, and every pair of a
 /// carrier node here meets the same passing node: each carrier node is then
@@ -528,6 +539,7 @@ fn carry_numbered(
         false => g.carry(lim, ti, &mut run.levels[ti])?,
     }
     run.lists.carry(ti, carrier_f, true);
+    note_carried_as_operand(run, ti, carrier_f);
     note_pass_numbered(true);
     run.products.publish_listed(ti, (wf, wg), list, wo)?;
     Ok(true)
