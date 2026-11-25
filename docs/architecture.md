@@ -226,9 +226,11 @@ The properties the code relies on are stated once, in the [invariants]
 reference: what holds of every diagram, of a certified one and of one with a
 summed-out level, each with the pass that keeps it, the passes during which it
 may briefly be false, and the checker that decides it. Source comments refer
-to its items by number. The builder and the readers validate storage and
-refuse a repeated pair, which decides that a circuit's nodes are disjoint
-(item 1) only where no summed-out level is under them.
+to its items by number. The builder and the readers validate storage. The
+builder and the text reader also refuse a repeated pair, which decides that a
+circuit's nodes are disjoint (item 1) only where no summed-out level is under
+them; the binary reader trusts the levels a library writer emits, and looks
+for a repeated pair only in a file the trim on a home changes.
 
 ## Testing
 

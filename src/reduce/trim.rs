@@ -155,6 +155,29 @@ pub(crate) fn trim_summed(eng: &Engine, f: &mut Tdd, home: &Home) -> Result<bool
     trim(eng, f, home, None, &tops)
 }
 
+/// Whether [`trim`] leaves `f`, which has no marginal level, as it is: `f`
+/// is not false, its output is not a leaf's `One`, and no leaf is named `One`
+/// by the pairs of its parent. Time goes by the vtree's nodes.
+pub(crate) fn keeps_every_leaf(f: &Tdd) -> bool {
+    debug_assert!(!f.has_marginal_level(), "a diagram with a summed-out level");
+    let vtree = &*f.vtree;
+    if vtree.num_nodes() == 0 {
+        return true;
+    }
+    if f.is_zero() {
+        return false;
+    }
+    if vtree.node(vtree.root()).is_leaf() {
+        return f.output.local != ONE_LEAF_IDX;
+    }
+    vtree.internal_bottomup().all(|(t, left, right)| {
+        let Some(first) = f.levels[t.idx()].pairs_iter_of_idx(0).next() else { return false };
+        [(left, ChildSide::Left), (right, ChildSide::Right)]
+            .into_iter()
+            .all(|(c, side)| !vtree.node(c).is_leaf() || side_ref(first, side) != ONE_LEAF_IDX.0)
+    })
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
     /// No kept leaf under the node.

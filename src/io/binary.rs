@@ -175,8 +175,11 @@ pub fn load_tdd_binary(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd
 /// On a vtree on a home ([`Vtree::projection`](crate::Vtree::projection)),
 /// the supplied vtree names only the home: the file's vtree must be the
 /// projection of the home on the variables it declares. The reader seats the
-/// levels and their counts over that projection, refuses a pair repeated in
-/// a level, as the text reader does, and moves the result by the trim of
+/// levels and their counts over that projection. A file whose pairs name
+/// every leaf of it by a literal, as a trimmed diagram's do, is read as over
+/// a root vtree, its levels trusted. Otherwise the reader refuses a
+/// pair repeated in a level, as the text reader does, since the trim would
+/// count it once, and moves the result by the trim of
 /// [`TddBuilder::finish`](crate::diagram::TddBuilder::finish) to the
 /// projection on the leaves its pairs use, the counts with it.
 ///
@@ -288,8 +291,9 @@ fn decode(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
 }
 
 /// [`decode_levels`] onto the projection of `vtree`'s home on the leaves the
-/// file declares; the seated diagram, its counts attached, is checked for a
-/// repeated pair and then trimmed, which rescales the counts.
+/// file declares. A seated diagram the trim would change, its counts
+/// attached, is checked for a repeated pair and then trimmed, which rescales
+/// the counts.
 // The header is checked here a second time rather than in a helper shared
 // with `decode_levels`: a second caller of anything inlined there changes
 // the code of the level reader, by about 1% of a query that reads its
@@ -316,6 +320,9 @@ fn decode_on_home(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
         return decode_without_leaf(bytes, &own);
     }
     let mut tdd = decode_levels(bytes, &own)?;
+    if crate::reduce::keeps_every_leaf(&tdd) {
+        return Ok(tdd);
+    }
     let built = |e: crate::diagram::TddBuildError| malformed(format!("the records do not form a diagram: {e}"));
     match tdd.weights() {
         None => crate::diagram::check_seated_pairs(&tdd),

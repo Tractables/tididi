@@ -116,7 +116,9 @@ Breaking changes:
   vtree. The readers take the supplied vtree as naming the home only and
   accept a file over any projection of it; another tree, or a vtree with
   a summed-out region, is `IoError::Format`. On a home the binary reader
-  refuses a pair repeated in a level, as the text reader does everywhere.
+  refuses a pair repeated in a level of a file the trim changes, as the
+  text reader does everywhere; a file that names every leaf of its
+  projection is read as over a root vtree, its levels trusted.
   `finish` reports a refused allocation in that trim as the new
   `TddBuildError::OverBudget`, and the readers as the new
   `IoError::OverBudget`. `TddBuilder::finish_unchecked` does not
