@@ -275,3 +275,24 @@ fn constructors_come_out_certified_at_their_reduction_fixpoint() {
         }
     }
 }
+
+/// A constant on a home lies on its empty projection and is canonical
+/// there, as a constant on a root is.
+#[test]
+fn constants_on_a_home_come_out_certified() {
+    let eng = &crate::Engine::new();
+    for (shape, vtree) in vtree_shapes(5) {
+        let hm = crate::vtree::Home::new(vtree);
+        let home = std::sync::Arc::clone(hm.vtree());
+        let built = [
+            constant_one(eng, &home),
+            constant_zero(eng, &home),
+            eng.cube(&home, std::iter::empty::<Literal>()).unwrap(),
+            eng.from_models(&home, &[], &[0]).unwrap(),
+            constant_like(eng, &constant_one(eng, &home), false).unwrap(),
+        ];
+        for f in built {
+            assert!(f.levels.is_canonical(f.output), "{shape}: the constant is not certified");
+        }
+    }
+}

@@ -390,7 +390,9 @@ fn in_place_against_rebuild(seed: u64, seen: &mut [usize; 6]) {
         assert_same_shape(&by_worklists, &by_fresh_pass, &format!("{label}: the worklists against a fresh pass"));
         assert_same_shape(&by_worklists, &rebuilt, &format!("{label}: against the rebuild"));
     }
-    if g.levels.is_canonical(g.output) {
+    if g.vtree().num_nodes() == 0 {
+        assert!(g.levels.is_canonical(g.output), "{label}: a constant on no node is certified");
+    } else if g.levels.is_canonical(g.output) {
         seen[5] += 1;
         assert!(f.levels.is_canonical(f.output), "{label}: certified by the trim");
         assert_canonical(&g);
