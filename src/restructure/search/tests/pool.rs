@@ -34,6 +34,81 @@ pub(super) fn note_accept(mv: PoolMove) {
     ACCEPTED.with(|a| a.borrow_mut().push(mv));
 }
 
+/// The search's table at its start against the reader of each member.
+pub(super) fn check_reader(carried: &super::Carried, members: &[&mut Tdd]) {
+    assert_eq!(
+        super::live_pairs(members) + carried.pairs(),
+        members.iter().map(|m| m.embedded_pair_count()).sum::<usize>(),
+        "the table's total against the reader"
+    );
+}
+
+/// The search's table taken from scratch: from the members' levels and the
+/// groups' leaves under each node of `tree`, without the upkeep of
+/// `passing` or of the groups' parents.
+pub(super) fn check_carried(carried: &super::Carried, members: &[&mut Tdd], tree: &Vtree, groups: &super::Groups) {
+    use super::NONE;
+    use std::collections::HashMap;
+    let mut passing = vec![0u64; tree.num_nodes()];
+    let mut total = 0u64;
+    let mut cnt = vec![0usize; tree.num_nodes()];
+    let mut cur = vec![NONE; tree.num_nodes()];
+    for group in &groups.groups {
+        let Some(kids) = &group.kids else { continue };
+        if kids.is_empty() {
+            continue;
+        }
+        let k = kids.len().div_ceil(2);
+        let mut parent = vec![NONE; kids.len()];
+        for (t, &(l, r)) in kids.iter().enumerate() {
+            if l.idx() != t {
+                parent[l.idx()] = t as u32;
+                parent[r.idx()] = t as u32;
+            }
+        }
+        assert_eq!(parent, group.up, "the own parents kept");
+        let own = &members[group.members[0]].vtree;
+        let leaf_at: HashMap<_, _> = own.leaf_bottomup().map(|(t, var)| (var, t)).collect();
+        let mut widths = vec![vec![1u32; kids.len()]; group.members.len()];
+        for (j, &i) in group.members.iter().enumerate() {
+            super::carried::own_widths(members[i], kids, &mut widths[j]);
+            let at = carried.at[i];
+            assert_eq!(widths[j][..], carried.widths[at..at + kids.len()], "member {i}'s widths");
+        }
+        let g = |t: u32| widths.iter().map(|w| u64::from(w[t as usize] - 1)).sum::<u64>();
+        for (u, var) in tree.leaf_bottomup() {
+            (cnt[u.idx()], cur[u.idx()]) = match leaf_at.get(&var) {
+                Some(&t) => (1, t.0),
+                None => (0, NONE),
+            };
+        }
+        for (u, l, r) in tree.internal_bottomup() {
+            let (cl, cr) = (cnt[l.idx()], cnt[r.idx()]);
+            (cnt[u.idx()], cur[u.idx()]) = match (cl > 0, cr > 0) {
+                (true, true) => {
+                    let p = parent[cur[l.idx()] as usize];
+                    assert_eq!(p, parent[cur[r.idx()] as usize], "the union has the group's node");
+                    assert_eq!(group.union_of[p as usize], u);
+                    (cl + cr, p)
+                }
+                (false, false) => (0, NONE),
+                (true, false) => (cl, cur[l.idx()]),
+                (false, true) => (cr, cur[r.idx()]),
+            };
+            if (cl == 0) != (cr == 0) && cnt[u.idx()] < k {
+                total += g(cur[u.idx()]);
+            }
+        }
+        for u in 0..tree.num_nodes() {
+            if cnt[u] > 0 && cnt[u] < k {
+                passing[u] += g(cur[u]);
+            }
+        }
+    }
+    assert_eq!(passing, carried.passing, "the carried widths by node");
+    assert_eq!(total, carried.total, "the carried pairs");
+}
+
 /// Whether the pool search replays the cached refusal it holds, counting
 /// each one it does.
 pub(super) fn replays_refusal() -> bool {
@@ -327,7 +402,7 @@ fn a_refused_score_charges_the_pairs_it_reads() {
                 let every: Vec<usize> = (0..refs.len()).collect();
                 let listed = super::Listed { on_union: &every, info: &info, rest: &[] };
                 let moved = super::Touched::new(listed, mv, usize::MAX);
-                let kept = super::probe_scored(&eng, refs, moved, &mut scratch, super::Twin::Alone, 0, None);
+                let kept = super::probe_scored(&eng, refs, moved, &mut scratch, super::Twin::Alone, 0, [0; 2], None);
                 pending.revert(&mut tree);
                 kept
             })

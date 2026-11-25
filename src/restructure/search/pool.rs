@@ -35,6 +35,9 @@ use crate::vtree::{Home, RotationKind, VarId, Vtree, VtreeIdx, VtreeNode};
 use super::RotationMove;
 use super::probe::{Preimage, Preimages, pivot_pairs};
 
+mod carried;
+use carried::Carried;
+
 /// A rotation, with the promoted child's children swapped first if
 /// `crossed`.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
@@ -266,10 +269,10 @@ pub struct PoolSearchStats {
     pub probes: usize,
     /// Moves kept, not counting those of restarts put back.
     pub accepts: usize,
-    /// Live pairs over all members before the search, after the opening
-    /// reduction.
+    /// Embedded pairs ([`Tdd::embedded_pair_count`]) over all members before
+    /// the search, after the opening reduction.
     pub pairs_before: usize,
-    /// Live pairs over all members after the search and its closing
+    /// Embedded pairs over all members after the search and its closing
     /// reduction.
     pub pairs_after: usize,
     /// Work charged by the search, its two reductions included.
@@ -347,7 +350,7 @@ impl Engine {
         if members.is_empty() {
             return Ok(false);
         }
-        let (mut tree, mut groups) = pool_tree(members)?;
+        let (mut tree, mut groups) = pool_tree(members, false)?;
         let pivot = mv.rotation.pivot;
         if pivot.idx() >= tree.link_home().map_or(tree.num_nodes(), |home| home.vtree().num_nodes()) {
             return Err(OperationError::LevelNotInVtree(pivot));
@@ -381,7 +384,9 @@ impl Engine {
 
     /// A greedy descent over the members' shared vtree: at every internal
     /// node, the rotations both ways, crossed and not if `config.crossed`,
-    /// each kept when it lowers the members' total live pairs. Sweeps repeat
+    /// each kept when it lowers the members' total embedded pairs
+    /// ([`Tdd::embedded_pair_count`]), their live pairs where none is on a
+    /// projection. Sweeps repeat
     /// until one keeps nothing, `config.max_sweeps` is reached, or the
     /// search has charged `config.max_work_units`. A descent that stops
     /// because a sweep kept nothing is followed by `config.restarts`
@@ -393,9 +398,12 @@ impl Engine {
     /// as probed and refused at no charge.
     ///
     /// The members are as [`rotate_pool_if`](Self::rotate_pool_if) takes
-    /// them, and the descent runs on their union: a probe reads and rebuilds
-    /// only the members with leaves under all three subtrees its move turns.
-    /// The members keep their functions. A search that kept no move leaves
+    /// them. Where they are on projections the descent runs on the
+    /// projection of the home on all its leaves, so it also makes the moves
+    /// that change only the pairs members carry through home nodes they have
+    /// no level at: a probe reads and rebuilds only the members with leaves
+    /// under all three subtrees its move turns, and reads a table of the
+    /// others' widths. The members keep their functions. A search that kept no move leaves
     /// every member's vtree allocation as it was. One that kept a move ends as
     /// a kept [`rotate_pool_if`](Self::rotate_pool_if) does, once: the
     /// members share a new allocation, or they are on projections of one new
@@ -434,7 +442,7 @@ impl Engine {
         // The members keep their allocations until the descent ends, which
         // seats them on these if it kept a move: their levels follow the
         // moves, and nothing in a probe reads a member's tree.
-        let (mut tree, mut groups) = pool_tree(members)?;
+        let (mut tree, mut groups) = pool_tree(members, true)?;
         let start = self.limits().work_units();
         let mut changed = false;
         let pool = (&mut tree, &mut groups, &mut changed);
@@ -466,12 +474,12 @@ impl Engine {
             .and_then(|mut descent| descent.run(members, changed))
     }
 
-    /// Reduce every member; their live pairs after.
+    /// Reduce every member; their embedded pairs after.
     fn reduce_members(&self, members: &mut [&mut Tdd]) -> Result<usize, OperationError> {
         for m in members.iter_mut() {
             self.reduce(m, crate::reduce::ReductionPlan::default())?;
         }
-        Ok(live_pairs(members))
+        Ok(members.iter().map(|m| m.embedded_pair_count()).sum())
     }
 }
 
@@ -490,6 +498,7 @@ struct PoolDescent<'a> {
     /// The probe under way's [`Listed`] members.
     touched: Vec<(usize, RotationInfo)>,
     marginal: bool,
+    carried: Carried,
 }
 
 impl<'l> PoolDescent<'l> {
@@ -517,6 +526,12 @@ impl<'l> PoolDescent<'l> {
         let mut crossed_scores = Transient::new(lim, Vec::new());
         lim.reserve_exact(&mut crossed_scores, members.len())?;
         let until = start.saturating_add(config.max_work_units);
+        let (carried, read) = Carried::new(members, tree, groups);
+        lim.charge_work(read);
+        #[cfg(test)]
+        tests::check_carried(&carried, members, tree, groups);
+        #[cfg(test)]
+        tests::check_reader(&carried, members);
         Ok(PoolDescent {
             eng,
             tree,
@@ -529,6 +544,7 @@ impl<'l> PoolDescent<'l> {
             crossed_scores,
             touched: Vec::with_capacity(members.len()),
             marginal,
+            carried,
         })
     }
 
@@ -554,7 +570,7 @@ impl<'l> PoolDescent<'l> {
         let mut result = Ok(());
         while self.stats.restarts < restarts.count && lim.work_units() < self.until {
             self.stats.restarts += 1;
-            let mut undo = match Undo::begin(lim, members, self.tree, &self.known, self.groups) {
+            let mut undo = match Undo::begin(lim, members, self.tree, &self.known, self.groups, &self.carried) {
                 Ok(undo) => undo,
                 // A restart is an improvement the search may go without.
                 Err(OperationError::OverBudget) => break,
@@ -565,14 +581,12 @@ impl<'l> PoolDescent<'l> {
             };
             let accepts = self.stats.accepts;
             let outcome = self.restart(members, &internals, &mut rng, &mut undo);
-            if outcome.is_ok()
-                && live_pairs(members) < kept_below(undo.pairs, restarts.min_gain_permille)
-            {
+            if outcome.is_ok() && self.pairs(members) < kept_below(undo.pairs, restarts.min_gain_permille) {
                 self.stats.restarts_kept += 1;
                 *changed |= self.stats.accepts > accepts;
                 drop(undo);
             } else {
-                undo.revert(members, self.tree, &mut self.known, self.groups);
+                undo.revert(members, self.tree, &mut self.known, self.groups, &mut self.carried);
                 self.stats.accepts = accepts;
             }
             match outcome {
@@ -589,6 +603,11 @@ impl<'l> PoolDescent<'l> {
         }
         self.stats.restart_work_units = lim.work_units() - begun;
         result
+    }
+
+    /// The members' embedded pairs.
+    fn pairs(&self, members: &[&mut Tdd]) -> usize {
+        live_pairs(members) + self.carried.pairs()
     }
 
     /// One restart of [`PoolDescent::run`]: `restarts.kick` random moves kept, then a
@@ -617,7 +636,7 @@ impl<'l> PoolDescent<'l> {
                 RotationKind::Right
             };
             let crossed = self.config.crossed && rng.below(2) == 0;
-            let slack = (live_pairs(members) as u64)
+            let slack = (self.pairs(members) as u64)
                 .saturating_mul(u64::from(restarts.slack_permille))
                 / 1000;
             let (left, right) = self.tree.children(v);
@@ -642,7 +661,8 @@ impl<'l> PoolDescent<'l> {
     }
 }
 
-/// The live pairs a restart that began at `pairs` must end under to be kept.
+/// The embedded pairs a restart that began at `pairs` must end under to be
+/// kept.
 fn kept_below(pairs: usize, min_gain_permille: u32) -> usize {
     let gain = (pairs as u64).saturating_mul(u64::from(min_gain_permille)) / 1000;
     pairs.saturating_sub(usize::try_from(gain).unwrap_or(usize::MAX))
@@ -745,7 +765,8 @@ struct Undo<'a> {
     /// By slot: whether the levels there were mirrored an odd number of
     /// times before they were filed.
     flipped: Vec<bool>,
-    /// The members' live pairs when the restart began.
+    carried: Carried,
+    /// The members' embedded pairs when the restart began.
     pairs: usize,
 }
 
@@ -756,6 +777,7 @@ impl<'a> Undo<'a> {
         tree: &Vtree,
         known: &Known,
         groups: &Groups,
+        carried: &Carried,
     ) -> Result<Undo<'a>, OperationError> {
         let levels = members.iter().map(|m| m.vtree.num_nodes()).fold(0usize, usize::saturating_add);
         let mut pre = Preimages::new(lim, members.len(), levels)?;
@@ -769,7 +791,8 @@ impl<'a> Undo<'a> {
             pre,
             filed: vec![false; groups.slots],
             flipped: vec![false; groups.slots],
-            pairs: live_pairs(members),
+            pairs: live_pairs(members) + carried.pairs(),
+            carried: carried.clone(),
         })
     }
 
@@ -800,10 +823,17 @@ impl<'a> Undo<'a> {
         }
     }
 
-    /// Put every member, the union, the groups and what the descent knew
-    /// back as the restart found them.
-    fn revert(self, members: &mut [&mut Tdd], tree: &mut Vtree, known: &mut Known, groups: &mut Groups) {
-        let Undo { tree: t, known: k, groups: g, pre, flipped, .. } = self;
+    /// Put every member, the union, the groups, their table and what the
+    /// descent knew back as the restart found them.
+    fn revert(
+        self,
+        members: &mut [&mut Tdd],
+        tree: &mut Vtree,
+        known: &mut Known,
+        groups: &mut Groups,
+        carried: &mut Carried,
+    ) {
+        let Undo { tree: t, known: k, groups: g, carried: c, pre, flipped, .. } = self;
         pre.put_back_then(members, |members| {
             for group in &g.groups {
                 let nodes = group.kids.as_ref().map_or(t.num_nodes(), Vec::len);
@@ -817,6 +847,7 @@ impl<'a> Undo<'a> {
         *tree = t;
         *known = k;
         *groups = g;
+        *carried = c;
     }
 }
 
@@ -943,8 +974,8 @@ impl<'l> PoolDescent<'l> {
     }
 
     /// One probe of the descent or of a restart's random moves: `mv` made on
-    /// `self.tree` in place and kept when the members' live pairs end below their
-    /// total plus `slack`, else undone. A kept move's replaced levels go to
+    /// `self.tree` in place and kept when the members' embedded pairs end
+    /// below their total plus `slack`, else undone. A kept move's replaced levels go to
     /// `undo` when given.
     fn probe_in_place(
         &mut self,
@@ -954,19 +985,25 @@ impl<'l> PoolDescent<'l> {
         slack: usize,
         mut undo: Option<&mut Undo<'l>>,
     ) -> Result<bool, OperationError> {
-        let PoolDescent { eng, tree, groups, config, scratch, crossed_scores, touched, .. } = self;
+        let PoolDescent { eng, tree, groups, config, scratch, crossed_scores, touched, carried, .. } = self;
         let eng: &'l Engine = eng;
         let Some(pending) = move_in_place(tree, mv) else {
             return Ok(false);
         };
         let info = pending.info();
+        let (change, read) = carried.change(tree, groups, &info, mv.rotation.kind);
+        eng.limits().charge_work(read);
         let listed = Touched::new(groups.touch(&info, mv, touched), mv, config.max_inner_pairs);
         let twin = twin.with(crossed_scores);
-        let outcome = probe_scored(eng, members, listed, scratch, twin, slack, undo.as_deref_mut());
+        let outcome = probe_scored(eng, members, listed, scratch, twin, slack, change.by, undo.as_deref_mut());
         let kept = matches!(outcome, Ok(true));
         end_move(eng, tree, pending, mv, kept);
         if kept {
             groups.kept(tree, &info, mv, members, undo);
+            let read = carried.kept(tree, groups, members, touched, &change);
+            eng.limits().charge_work(read);
+            #[cfg(test)]
+            tests::check_carried(carried, members, tree, groups);
         }
         outcome
     }
@@ -1051,16 +1088,18 @@ fn refuse_regions(members: &[&mut Tdd]) -> Result<(), OperationError> {
 }
 
 /// The tree a search over `members` moves, a private copy: their shared
-/// tree, or the union of their projections, with their groups.
-fn pool_tree(members: &[&mut Tdd]) -> Result<(Vtree, Groups), OperationError> {
+/// tree, or the union of their projections, with their groups; with
+/// `on_home`, members on projections have the projection on all the home's
+/// leaves.
+fn pool_tree(members: &[&mut Tdd], on_home: bool) -> Result<(Vtree, Groups), OperationError> {
     refuse_regions(members)?;
     let first = &members[0].vtree;
-    let shared = members.iter().all(|m| Arc::ptr_eq(&m.vtree, first));
+    let shared = members.iter().all(|m| Arc::ptr_eq(&m.vtree, first)) && !(on_home && first.link_home().is_some());
     let home_of = |v: &Arc<Vtree>| v.link_home().map_or(Arc::as_ptr(v), |home| Arc::as_ptr(home.vtree()));
     if members.iter().any(|m| home_of(&m.vtree) != home_of(first)) {
         return Err(OperationError::VtreeMismatch);
     }
-    let group = |members: Vec<usize>, kids| Group { members, kids, union_of: Vec::new(), base: 0 };
+    let group = |members: Vec<usize>, kids| Group { members, kids, union_of: Vec::new(), up: Vec::new(), base: 0 };
     let mut groups: Vec<Group> = Vec::new();
     let mut of = Vec::with_capacity(members.len());
     let mut root = None;
@@ -1088,8 +1127,10 @@ fn pool_tree(members: &[&mut Tdd]) -> Result<(Vtree, Groups), OperationError> {
         Some(i) => Vtree::clone(&members[i].vtree),
         None => {
             let home = first.link_home().expect("a projection has a home");
-            let vars: Vec<VarId> =
-                groups.iter().flat_map(|g| tree_of(g).leaf_bottomup().map(|(_, var)| var)).collect();
+            let vars: Vec<VarId> = match on_home {
+                true => home.vtree().leaf_bottomup().map(|(_, var)| var).collect(),
+                false => groups.iter().flat_map(|g| tree_of(g).leaf_bottomup().map(|(_, var)| var)).collect(),
+            };
             match vars.is_empty() {
                 true => Vtree::clone(&Vtree::empty_projection(home)),
                 false => Arc::unwrap_or_clone(Vtree::projection(home, vars).expect("a home has its projections' leaves")),
@@ -1111,9 +1152,13 @@ fn pool_tree(members: &[&mut Tdd]) -> Result<(Vtree, Groups), OperationError> {
         group.union_of = (0..tree.num_nodes() as u32)
             .map(|t| union.node_at_home(tree.home_node(VtreeIdx(t))).expect("the union has every own node"))
             .collect();
+        group.up = vec![NONE; tree.num_nodes()];
         for &t in tree.internal_bottomup_slice() {
             let u = group.union_of[t.idx()];
             lists.append(&mut tail[u.idx()], u, g, t);
+            let (l, r) = tree.children(t);
+            group.up[l.idx()] = t.0;
+            group.up[r.idx()] = t.0;
         }
     }
     let seen = vec![0; groups.len()];
@@ -1203,6 +1248,8 @@ struct Group {
     kids: Option<Vec<(VtreeIdx, VtreeIdx)>>,
     /// By node of the tree: the node of the union over the same leaves.
     union_of: Vec<VtreeIdx>,
+    /// By node of the tree: its parent, [`NONE`] for the root.
+    up: Vec<u32>,
     /// The first of the group's slots.
     base: usize,
 }
@@ -1282,6 +1329,10 @@ impl Groups {
                             let (moved, v_kids, w_kids) = rotated(kids, t, mv);
                             kids[t.idx()] = v_kids;
                             kids[moved.w_idx.idx()] = w_kids;
+                            for (p, (l, r)) in [(t, v_kids), (moved.w_idx, w_kids)] {
+                                group.up[l.idx()] = p.0;
+                                group.up[r.idx()] = p.0;
+                            }
                         }
                         break 'to from;
                     }
@@ -1594,7 +1645,9 @@ fn probe<'t>(
 
 /// [`probe`] for a move kept exactly when it leaves the members' total below
 /// what it was plus `slack`: the descent's, which must lower it, with no
-/// slack, and a restart's random ones with some.
+/// slack, and a restart's random ones with some. The total is that of the
+/// members' pairs plus `carried[0]`, the move's change of the pairs carried
+/// ([`Carried::change`]); `carried[1]` is the crossing's, for [`Twin::Fill`].
 ///
 /// Each member is scored ([`score_levels`]), which is never above the pairs
 /// its rebuild holds and almost always equal to them. A score reads the
@@ -1610,6 +1663,7 @@ fn probe<'t>(
 /// after all; if not, or if a rebuild passes `step.max_pairs` or fails, every
 /// member is put back. So the scores decide, and no member's rebuild waits
 /// for the others'.
+#[expect(clippy::too_many_arguments, reason = "a probe's members, move, twin, bounds and undo")]
 fn probe_scored<'l, 't>(
     eng: &'l Engine,
     members: &mut [&mut Tdd],
@@ -1617,6 +1671,7 @@ fn probe_scored<'l, 't>(
     scratch: &mut RestructureScratch,
     twin: Twin<'_>,
     slack: usize,
+    carried: [i64; 2],
     undo: Option<&mut Undo<'l>>,
 ) -> Result<bool, OperationError> {
     // The tables leave the scratch, whose rest the scores and the rebuilds
@@ -1624,7 +1679,7 @@ fn probe_scored<'l, 't>(
     // over few members, which fresh tables would each allocate.
     let mut tables = std::mem::take(&mut scratch.probe);
     tables.clear();
-    let kept = probe_scored_with(eng, members, moved, scratch, &mut tables, twin, slack, undo);
+    let kept = probe_scored_with(eng, members, moved, scratch, &mut tables, twin, slack, carried, undo);
     scratch.probe = tables;
     kept
 }
@@ -1640,6 +1695,7 @@ fn probe_scored_with<'l, 't>(
     tables: &mut ProbeTables,
     mut twin: Twin<'_>,
     slack: usize,
+    carried: [i64; 2],
     undo: Option<&mut Undo<'l>>,
 ) -> Result<bool, OperationError> {
     debug_assert!(match twin {
@@ -1663,8 +1719,9 @@ fn probe_scored_with<'l, 't>(
         floors.push(owners);
     }
     let total = before.iter().sum::<usize>();
-    // The total the move must stay under.
-    let limit = total.saturating_add(slack);
+    // The total the move must stay under, and its crossing's.
+    let under = |change: i64| (total.saturating_add(slack) as i128 - i128::from(change)).clamp(0, usize::MAX as i128) as usize;
+    let (limit, crossed_limit) = (under(carried[0]), under(carried[1]));
     lim.reserve_exact(after, n)?;
     after.extend_from_slice(before);
     // The largest members first: a move they refuse is refused with less
@@ -1680,6 +1737,7 @@ fn probe_scored_with<'l, 't>(
     let mut rest = floors.iter().sum::<usize>();
     let (mut sum, mut sum_crossed) = (0usize, Some(0usize));
     let cap = |sum: usize, rest: usize| limit.saturating_sub(sum + rest);
+    let crossed_cap = |sum: usize, rest: usize| crossed_limit.saturating_sub(sum + rest);
     for (at, &i) in order.iter().enumerate() {
         let (m, step) = (&members[moved.member(i)], moved.step(i));
         rest -= floors[i];
@@ -1691,7 +1749,7 @@ fn probe_scored_with<'l, 't>(
             Twin::Fill(slots) => {
                 // A crossing refused by an earlier member's score is capped
                 // at nothing.
-                let crossed_cap = sum_crossed.map_or(0, |s| cap(s, rest));
+                let crossed_cap = sum_crossed.map_or(0, |s| crossed_cap(s, rest));
                 let [plain, crossed] = score_levels_crossed_too(
                     lim,
                     m,
