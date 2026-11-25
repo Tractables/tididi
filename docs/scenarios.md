@@ -351,11 +351,13 @@ comparison remains in the Rust and Python lessons.
 
 Construct x₁ XOR x₂ over a balanced four-variable vtree and compare it with
 literal x₁. Find the stored internal node with the most pairs: XOR has a
-maximum of 2; a literal has 1. Distinguish per-node width, total pair count,
+maximum of 2. On a plain vtree a literal stores one node of 1 pair; on a home
+it stores no internal node. Distinguish per-node width, total pair count,
 and model count (8 for XOR with the other two variables free).
 
 Rust traverses level storage directly and uses (root,0) for an empty traversal.
-Python traverses a `node_sizes()` snapshot and uses None when it is empty.
+Python traverses a `node_sizes()` snapshot and uses None when it is empty,
+which it is for the literal, because a Python vtree is a home.
 Storage IDs and the chosen maximum on ties are not semantic identities.
 Use the direct XOR operation to construct the circuit. Rust passes a copy
 of x₁ to XOR so the original stays available for its literal comparison;
@@ -366,11 +368,11 @@ omits the literal comparison and represents an empty maximum by zero pairs.
 
 ### Instances
 
-- [Rust walkthrough](examples/statistics.md) <!-- reviewed: c307927ba504f6c7f3329377ef5e4af5e9b8b27885994abf1387a35623e5cd3d -->
-- [Rust program](../examples/statistics.rs) <!-- reviewed: af452250f58ee6f6a2ddacdeb1380ba0efc6405a902214ab6df305d3973ea70a -->
-- [Python walkthrough and program](../bindings/python/examples/09_statistics.py) <!-- reviewed: d405decff7aa771faa37c7c8694e017388052b40060de82be72e3180fee835e3 -->
-- [C statistics](../bindings/c/docs/statistics.rst) <!-- reviewed: 9445ca2077f5955c6a34013c4abec4f0132b827e6c32738aa84bfb7cee1d367c -->
-- [C program statistics](../bindings/c/examples/statistics.c) <!-- reviewed: d4b8534d0c233aa6b18754eb98bb3f6be219cdeb5009eb252f34da77531c044d -->
+- [Rust walkthrough](examples/statistics.md) <!-- reviewed: a083881c0ed0cf653f750bfef0f7d2584c47c5ccfba53274a2cbf91161cc226f -->
+- [Rust program](../examples/statistics.rs) <!-- reviewed: 67f086410454aba59e59fd1cf08faae45738bc58b1593595d543f4a26992b879 -->
+- [Python walkthrough and program](../bindings/python/examples/09_statistics.py) <!-- reviewed: 10a3585a97f1e7b9da6d56c6448fc3bf3c39b21fd2922224b2b40b1a45663af2 -->
+- [C statistics](../bindings/c/docs/statistics.rst) <!-- reviewed: 8922f2f9b27daec2539e8d647404fdcbe401472a86bf0f98a1e9d7bcb4ddc866 -->
+- [C program statistics](../bindings/c/examples/statistics.c) <!-- reviewed: 6eeee3ec8dce779d687740d4936a6dff07bb458860245301f7800d6c38a5172a -->
 
 ## Ownership
 
