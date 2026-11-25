@@ -428,7 +428,7 @@ fn a_pair_held_twice_beside_a_full_region(home: &Home, n: u32, fill: impl FnOnce
     use crate::diagram::{NodeIdx, TddNodeId};
     let vars: Vec<VarId> = (1..=n).map(VarId).collect();
     let clause: Vec<i32> = (1..=n as i32).collect();
-    let mut g = Tdd::clause(&crate::vtree::Home::unchecked(&Vtree::projection(home, vars).unwrap()), clause).unwrap();
+    let mut g = Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&Vtree::projection(home, vars).unwrap())), clause).unwrap();
     g.marginalize(|v| v.0 <= 2).unwrap();
     let v = Arc::clone(g.vtree());
     let root = v.root();
@@ -496,7 +496,7 @@ fn a_pair_held_twice_over_a_level_beside_a_full_region_keeps_the_region() {
 fn two_equal_nodes_of_a_dropped_level_both_keep_what_they_name() {
     use crate::diagram::{NodeIdx, TddNodeId, NEG_LEAF_IDX};
     let home = Home::new(join(&join(&join(&leaf(1), &leaf(2)), &leaf(3)), &leaf(4)));
-    let g = Tdd::clause(&crate::vtree::Home::unchecked(&Vtree::projection(&home, [1, 2, 3, 4].map(VarId)).unwrap()), [1, 2, 3, 4]).unwrap();
+    let g = Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&Vtree::projection(&home, [1, 2, 3, 4].map(VarId)).unwrap())), [1, 2, 3, 4]).unwrap();
     let v = Arc::clone(g.vtree());
     let root = v.root();
     let (t, _) = v.children(root);
@@ -534,7 +534,7 @@ fn two_equal_nodes_of_a_dropped_level_both_keep_what_they_name() {
 fn an_end_node_two_dropped_nodes_name_beside_a_region_stays_in_both() {
     use crate::diagram::{NodeIdx, TddNodeId, NEG_LEAF_IDX};
     let home = Home::new(join(&join(&join(&leaf(1), &join(&leaf(2), &leaf(3))), &leaf(4)), &leaf(5)));
-    let mut g = Tdd::clause(&crate::vtree::Home::unchecked(&Vtree::projection(&home, [1, 2, 3, 4, 5].map(VarId)).unwrap()), [1, 2, 3, 4, 5]).unwrap();
+    let mut g = Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&Vtree::projection(&home, [1, 2, 3, 4, 5].map(VarId)).unwrap())), [1, 2, 3, 4, 5]).unwrap();
     g.marginalize(|v| [2, 3].contains(&v.0)).unwrap();
     let v = Arc::clone(g.vtree());
     let root = v.root();

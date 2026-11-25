@@ -35,12 +35,12 @@ use crate::vtree::{Home, RotationKind, VarId, Vtree, VtreeIdx};
 /// Route 1: fold `clauses` into one accumulator.
 fn build_by_folding<'a>(
     eng: &Engine,
-    vtree: &Arc<Vtree>,
+    vtree: &crate::vtree::Home,
     clauses: impl IntoIterator<Item = &'a Vec<i32>>,
 ) -> Tdd {
     let mut acc = constant_one(eng, vtree);
     for c in clauses {
-        acc = apply_and(acc, Tdd::clause(&crate::vtree::Home::unchecked(vtree), c).unwrap());
+        acc = apply_and(acc, Tdd::clause(vtree, c).unwrap());
     }
     acc.minimize().unwrap();
     acc
@@ -51,7 +51,7 @@ fn build_by_folding<'a>(
 /// rebuild again.
 fn build_by_rotation_round_trip(
     eng: &Engine,
-    vtree: &Arc<Vtree>,
+    vtree: &crate::vtree::Home,
     clauses: &[Vec<i32>],
 ) -> Option<Tdd> {
     let mut acc = build_by_folding(eng, vtree, clauses.iter().rev());
@@ -94,7 +94,7 @@ fn rotate_own(acc: &mut Tdd, v: VtreeIdx, kind: RotationKind) -> Option<Rotation
 /// weighted marginalization of the whole diagram must equal its model count.
 /// Reads the integer and semiring value paths against each other on the same
 /// structure.
-fn weighted_unit_value(eng: &Engine, vtree: &Arc<Vtree>, f: &Tdd) -> BigRational {
+fn weighted_unit_value(eng: &Engine, vtree: &crate::vtree::Home, f: &Tdd) -> BigRational {
     let weighted = Arc::new(Vtree::clone(vtree).with_weights(Weights::new(
         RationalWeights::unit(vtree.num_leaves() as usize),
         Arithmetic::ExactRational,
