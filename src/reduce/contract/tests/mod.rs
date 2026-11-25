@@ -7,6 +7,12 @@ mod listing;
 mod merge_scratch;
 mod refused_move;
 
+/// [`contract_all_twins`](super::contract_all_twins) leaving the nodes no pair names in place, so that
+/// only a twin changes the node count.
+pub(crate) fn contract_named_twins(eng: &crate::Engine, tdd: &mut crate::Tdd) -> Result<(), crate::OperationError> {
+    super::sweep::sweep_twins(eng, tdd, false, None)
+}
+
 thread_local! {
     /// The listed searches this thread's sweeps have run
     /// ([`note_listed_search`]).
