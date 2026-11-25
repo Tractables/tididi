@@ -184,7 +184,8 @@ fn a_carried_level_is_loose_only_where_its_carrier_had_it() {
     assert_same_shape(&out, &compile_clauses(&wide, &all), "embedded clause");
 }
 
-/// A diagram built from its models has no loose level, so a conjunction of
+/// A diagram built from its models on a home, on the projection of its
+/// variables, has no loose level, so a conjunction of
 /// two such diagrams knows its own loose levels, and the prune after it,
 /// which walks down only to them, leaves as many nodes as a prune of the
 /// whole diagram.
@@ -202,11 +203,13 @@ fn built_operands_give_their_conjunction_its_loose_levels() {
         let fv: Vec<VarId> = (1..=half + 1).map(VarId).collect();
         let gv: Vec<VarId> = (half..=num_vars).map(VarId).collect();
         for (label, vtree) in vtree_shapes(num_vars) {
+            let home = crate::vtree::Home::new(Vtree::clone(&vtree));
+            let vtree = home.vtree();
             for round in 0..4 {
                 let mut rows = |width: usize| -> Vec<u64> { (0..1u64 << width).filter(|_| rng.below(3) != 0).collect() };
                 let (f_rows, g_rows) = (rows(fv.len()), rows(gv.len()));
-                let f = eng.from_models(&vtree, &fv, &f_rows).unwrap();
-                let g = eng.from_models(&vtree, &gv, &g_rows).unwrap();
+                let f = eng.from_models(vtree, &fv, &f_rows).unwrap();
+                let g = eng.from_models(vtree, &gv, &g_rows).unwrap();
                 assert!(f.dirty.loose().is_some_and(|l| l.is_empty()), "{label}");
                 assert!(g.dirty.loose().is_some_and(|l| l.is_empty()), "{label}");
                 let out = eng.and(f, g).unwrap();
