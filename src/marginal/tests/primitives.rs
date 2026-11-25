@@ -226,12 +226,12 @@ fn leaf_inline_clauses() -> Vec<Vec<i32>> {
     ]
 }
 
-/// Inlining a leaf's fixed 0/1/2 count at its parent is count-neutral and flips
-/// the leaf marginal.
+/// Inlining a leaf's fixed 0/1/2 count at its parent is count-neutral, and the
+/// reduction after it closes the leaf into a region.
 #[test]
 fn leaf_inline_preserves_count() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(6));
+    let vtree = Home::new(Vtree::balanced(6));
     for v in 0..6u32 {
         let mut t = compile_clauses(&vtree, &leaf_inline_clauses());
         let baseline = t.model_count().unwrap();
@@ -240,7 +240,7 @@ fn leaf_inline_preserves_count() {
             .expect("the vtree carries this variable");
         marginalize_leaf_inline(&crate::limits::Limits::new(), &mut t, leaf, &vtree).unwrap();
         eng.reduce(&mut t, Default::default()).unwrap();
-        assert!(t.levels[leaf.idx()].is_marginal(), "leaf {v} not marginal");
+        assert!(t.vtree().region_of(VarId(v + 1)).is_some(), "leaf {v} not summed into a region");
         assert_eq!(
             t.model_count().unwrap(),
             baseline,
