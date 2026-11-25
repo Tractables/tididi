@@ -981,6 +981,63 @@ fn the_unnamed_count_is_the_nodes_no_pair_of_the_parent_level_names() {
     assert!(counted > unknown && nonzero > counted / 10, "{nonzero} of {counted} counts nonzero, {unknown} unknown");
 }
 
+#[test]
+fn the_unnamed_count_is_the_nodes_no_pair_of_the_parent_level_names_on_a_home() {
+    use crate::reduce::ReductionPlan;
+    use crate::test_helpers::{assert_canonical, assert_same_shape, vtree_shapes, rand_cnf, CnfShape, Lcg};
+    let eng = crate::Engine::new();
+    let (mut counted, mut nonzero, mut unknown) = (0, 0, 0);
+    for seed in 0..24u64 {
+        let num_vars = 6 + (seed % 5) as u32;
+        let mut rng = Lcg::new(seed ^ 0x0dd_c0de);
+        let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 14, width: 3 });
+        for (label, shape) in vtree_shapes(num_vars) {
+            let home = crate::vtree::Home::new(Vtree::clone(&shape));
+            let vtree = Arc::clone(home.vtree());
+            let mut f = eng.cube(&vtree, std::iter::empty::<i32>()).unwrap();
+            for (i, c) in clauses.iter().enumerate() {
+                f = match rng.below(2) {
+                    0 => eng.and(f, eng.clause(&vtree, c.iter().copied()).unwrap()).unwrap(),
+                    _ => eng.and_clause(f, c).unwrap(),
+                };
+                if rng.below(3) == 0 {
+                    eng.reduce(&mut f, ReductionPlan::Contract).unwrap();
+                }
+                let label = format!("seed {seed}, {label}, clause {i}");
+                if let Some(listed) = f.dirty.loose() {
+                    for t in unnamed_levels(&f) {
+                        assert!(listed.contains(t), "{label}: level {t} holds an unnamed node and is not listed");
+                    }
+                }
+                let Some(unnamed) = eng.unnamed_nodes(&mut f).unwrap() else {
+                    unknown += usize::from(!f.is_zero());
+                    continue;
+                };
+                counted += 1;
+                nonzero += usize::from(unnamed.nodes > 0);
+                assert_eq!(unnamed, unnamed_by_pairs(&f), "{label}");
+                assert_eq!(eng.unnamed_nodes(&mut f).unwrap(), Some(unnamed), "{label}: second read");
+                if rng.below(3) == 0 {
+                    eng.reduce(&mut f, ReductionPlan::Contract).unwrap();
+                    let contracted = eng.unnamed_nodes(&mut f).unwrap();
+                    assert_eq!(contracted, Some(unnamed_by_pairs(&f)), "{label}: contracted after a read");
+                }
+                if rng.below(4) == 0 {
+                    eng.reduce(&mut f, ReductionPlan::Prune).unwrap();
+                    assert_eq!(eng.unnamed_nodes(&mut f).unwrap(), Some(crate::reduce::Unnamed::default()), "{label}: pruned");
+                    assert_eq!(unnamed_by_pairs(&f), crate::reduce::Unnamed::default(), "{label}: pruned");
+                }
+            }
+            eng.minimize(&mut f).unwrap();
+            assert_canonical(&f);
+            assert_same_shape(&f, &compile_clauses(&vtree, &clauses), &format!("seed {seed}, {label}"));
+        }
+    }
+    // A clause conjunction drops most of the nodes it leaves unnamed, so
+    // about one count in six is nonzero.
+    assert!(counted > unknown && nonzero > counted / 10, "{nonzero} of {counted} counts nonzero, {unknown} unknown");
+}
+
 /// A diagram with a marginal level keeps no loose levels to count.
 #[test]
 fn a_marginal_level_leaves_the_unnamed_count_unknown() {
