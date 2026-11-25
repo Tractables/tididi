@@ -2,6 +2,8 @@
 //! node for node, and refusals of every truncation, flipped bit and
 //! resealed corruption without a panic.
 
+use crate::vtree::Home;
+use crate::test_helpers::check::check_trimmed;
 use std::sync::Arc;
 
 use crate::diagram::{LevelCounts, Tdd};
@@ -72,7 +74,10 @@ fn round_trip(f: &Tdd, what: &str) {
     let bytes = binary(f);
     let back = read_tdd_binary(&mut bytes.as_slice(), vtree).unwrap();
     let from_text = read_tdd(&mut text(f).as_slice(), vtree).unwrap();
-    assert!(Arc::ptr_eq(back.vtree(), vtree));
+    match vtree.home() {
+        Some(home) => assert!(back.vtree().is_on(&home)),
+        None => assert!(Arc::ptr_eq(back.vtree(), vtree)),
+    }
     assert_same_levels(&back, &from_text, what);
     assert_canonical(&back);
     assert_eq!(back.model_count().unwrap(), f.model_count().unwrap(), "{what}: count");
@@ -108,7 +113,7 @@ fn compiled_formulas_round_trip_as_the_text_reader_reads_them() {
 #[test]
 fn constants_and_a_single_leaf_round_trip() {
     for num_vars in [1, 2, 5] {
-        let vtree = Arc::new(Vtree::balanced(num_vars));
+        let vtree = Home::new(Vtree::balanced(num_vars));
         for f in [Tdd::zero(&vtree), Tdd::one(&vtree), Tdd::clause(&vtree, [1]).unwrap(), Tdd::clause(&vtree, [-1]).unwrap()] {
             assert_canonical(&f);
             round_trip(&f, &format!("{num_vars} vars"));
@@ -203,7 +208,7 @@ fn two_leaf_level(counts: &[u8; 3], multi: &[u8], fields: &[(u32, u32)]) -> Vec<
 
 #[test]
 fn hand_written_node_codes_are_read_or_refused() {
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = Home::new(Vtree::balanced(2));
     let xor = crate::and(Tdd::clause(&vtree, [1, 2]).unwrap(), Tdd::clause(&vtree, [-1, -2]).unwrap()).unwrap();
     assert_canonical(&xor);
     // Leaf indices: 1 is the variable, 2 its negation. The pairs are
@@ -234,7 +239,7 @@ fn hand_written_node_codes_are_read_or_refused() {
 
 #[test]
 fn single_pair_nodes_are_read_or_refused() {
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = Home::new(Vtree::balanced(2));
     let both = crate::and(Tdd::clause(&vtree, [1]).unwrap(), Tdd::clause(&vtree, [2]).unwrap()).unwrap();
     // One node, the pair (x1, x2): leaf index 1 on each side, two bits each.
     let back = read_tdd_binary(&mut two_leaf_level(&[1, 0, 1], &[], &[(1, 2), (1, 2)]).as_slice(), &vtree).unwrap();
@@ -250,7 +255,7 @@ fn single_pair_nodes_are_read_or_refused() {
 
 #[test]
 fn a_leaf_named_both_as_one_and_as_a_literal_is_refused() {
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = Home::new(Vtree::balanced(2));
     // Leaf indices: 0 is One, 1 the variable, 2 its negation. Two
     // single-pair nodes, or one node of two pairs in the plain code.
     for (counts, multi, fields, what) in [
@@ -267,7 +272,7 @@ fn a_leaf_named_both_as_one_and_as_a_literal_is_refused() {
 fn a_level_over_one_node_levels_holds_one_pair() {
     // x1 and x2 and x3 and x4 over ((x1 x2) (x3 x4)): each child of the root
     // has one node, so the root's one pair, (0, 0), takes no bits.
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let literal = |v: i32| Tdd::clause(&vtree, [v]).unwrap();
     let low = crate::and(literal(1), literal(2)).unwrap();
     let high = crate::and(literal(3), literal(4)).unwrap();
@@ -297,7 +302,7 @@ fn a_level_over_one_node_levels_holds_one_pair() {
 fn unreachable_nodes_are_dropped_as_the_text_writer_drops_them() {
     use crate::diagram::{ChildPair, TddNodeId, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
     let eng = crate::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let (left, right) = vtree.children(vtree.root());
     let mut b = Tdd::builder(&eng, &vtree).unwrap();
     // Two nodes on each child level and two at the root; the output reaches
@@ -311,13 +316,16 @@ fn unreachable_nodes_are_dropped_as_the_text_writer_drops_them() {
     let f = b.finish(TddNodeId { vtree: vtree.root(), local: out }).unwrap();
     let back = read_tdd_binary(&mut binary(&f).as_slice(), &vtree).unwrap();
     assert_same_levels(&back, &read_tdd(&mut text(&f).as_slice(), &vtree).unwrap(), "pruned");
-    assert_eq!(back.node_count(), 3);
+    // On a home the trim drops x2 and x3, which every pair names `One`.
+    check_trimmed(&back, false).unwrap();
+    assert_eq!(back.node_count(), 1);
     assert!(back.equivalent(&f).unwrap());
+    assert!(back.equivalent(&Tdd::cube(&vtree, [-1, 4]).unwrap()).unwrap());
 }
 
 #[test]
 fn several_diagrams_follow_each_other_in_one_stream() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let a = compile_clauses(&vtree, &[vec![1, -2], vec![3]]);
     let b = compile_clauses(&vtree, &[vec![-1, 4]]);
     let mut stream = binary(&a);
@@ -333,7 +341,7 @@ fn several_diagrams_follow_each_other_in_one_stream() {
 
 #[test]
 fn a_file_holds_one_diagram() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = Tdd::clause(&vtree, [1, -3]).unwrap();
     let path = std::env::temp_dir().join(format!("tididi-binary-trailing-{}.tddb", std::process::id()));
     let mut bytes = binary(&f);
@@ -348,7 +356,7 @@ fn a_file_holds_one_diagram() {
 
 #[test]
 fn every_truncation_is_refused() {
-    let vtree = Arc::new(Vtree::balanced(6));
+    let vtree = Home::new(Vtree::balanced(6));
     let f = compile_clauses(&vtree, &[vec![1, 2, -3], vec![-2, 4], vec![5, -6, 1]]);
     let bytes = binary(&f);
     for end in 0..bytes.len() {
@@ -358,7 +366,7 @@ fn every_truncation_is_refused() {
 
 #[test]
 fn every_flipped_bit_is_refused() {
-    let vtree = Arc::new(Vtree::random(5, 3));
+    let vtree = Home::new(Vtree::random(5, 3));
     let f = compile_clauses(&vtree, &[vec![1, -2], vec![2, 3, -4], vec![-5, 1]]);
     let bytes = binary(&f);
     for bit in 0..bytes.len() * 8 {
@@ -370,7 +378,7 @@ fn every_flipped_bit_is_refused() {
 
 #[test]
 fn the_header_is_checked_field_by_field() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let bytes = binary(&Tdd::clause(&vtree, [2, 3]).unwrap());
     let mut text_file = Vec::new();
     write_tdd(&mut text_file, &Tdd::clause(&vtree, [2, 3]).unwrap()).unwrap();
@@ -390,23 +398,26 @@ fn the_header_is_checked_field_by_field() {
 
 #[test]
 fn another_vtree_is_refused() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let f = compile_clauses(&vtree, &[vec![1, 2], vec![-3, 4]]);
     let bytes = binary(&f);
     let order = [VarId(2), VarId(1), VarId(3), VarId(4)];
     for other in [
         Vtree::linear(4),
-        Vtree::balanced(5),
         Vtree::balanced_over(&order).unwrap(),
         Vtree::linear_from_order(&order).unwrap(),
     ] {
-        refused(&bytes, &Arc::new(other), "another vtree");
+        refused(&bytes, &Home::new(other), "another vtree");
     }
+    // A home of balanced(5) projects onto the same tree on x1 to x4.
+    let wider = read_tdd_binary(&mut bytes.as_slice(), &Home::new(Vtree::balanced(5))).unwrap();
+    assert_eq!(binary(&wider), bytes);
     // The same tree under another numbering is the same vtree.
-    let same = Arc::new(Vtree::from_text(&vtree.to_text()).unwrap());
+    let same = Home::new(Vtree::from_text(&vtree.to_text()).unwrap());
     assert!(read_tdd_binary(&mut bytes.as_slice(), &same).unwrap().equivalent(&compile_clauses(&same, &[vec![1, 2], vec![-3, 4]])).unwrap());
-    // The false diagram stores its vtree too.
-    refused(&binary(&Tdd::zero(&vtree)), &Arc::new(Vtree::linear(4)), "false over another vtree");
+    // The false diagram on a home lies on the empty projection: its file
+    // names no leaf and reads as false onto any vtree.
+    assert!(read_tdd_binary(&mut binary(&Tdd::zero(&vtree)).as_slice(), &Home::new(Vtree::linear(4))).unwrap().is_zero());
 }
 
 /// `f` keeping its level counts.
@@ -441,7 +452,7 @@ fn level_counts_round_trip() {
             let plain = binary(&f);
             assert_eq!(plain[8..12], 1u32.to_le_bytes(), "{what}");
             let bytes = binary(&counted(&f));
-            if f.is_zero() || vtree.internal_bottomup().next().is_none() {
+            if f.is_zero() || f.vtree().internal_bottomup().next().is_none() {
                 assert_eq!(bytes, plain, "{what}: nothing to count");
                 continue;
             }
@@ -459,7 +470,7 @@ fn level_counts_round_trip() {
 /// A count past the assignments of its level's variables is refused.
 #[test]
 fn a_count_past_its_levels_assignments_is_refused() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let f = counted(&compile_clauses(&vtree, &[vec![1, 2], vec![-3, 4]]));
     let (left, _) = vtree.children(vtree.root());
     let column = f.levels.counts().unwrap().column(left).unwrap();
@@ -498,7 +509,7 @@ fn resealed_corruption(with_counts: bool) {
     let mut read = 0;
     for case in 0..40u64 {
         let num_vars = 2 + rng.below(9) as u32;
-        let vtree = Arc::new(Vtree::random(num_vars, case));
+        let vtree = Home::new(Vtree::random(num_vars, case));
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 6, width: 3 });
         let f = compile_clauses(&vtree, &clauses);
         let bytes = binary(&if with_counts { counted(&f) } else { f });
@@ -555,9 +566,9 @@ fn a_marginal_diagram_is_not_written() {
 
 #[test]
 fn both_writers_preserve_node_and_pair_order_when_compacting_gaps() {
-    use crate::diagram::{ChildPair, NodeIdx, TddNodeId, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
+    use crate::diagram::{ChildPair, NodeIdx, TddNodeId, NEG_LEAF_IDX, POS_LEAF_IDX};
     let eng = crate::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let root = vtree.root();
     let (left, right) = vtree.children(root);
     let mut builder = Tdd::builder(&eng, &vtree).unwrap();
@@ -567,8 +578,8 @@ fn both_writers_preserve_node_and_pair_order_when_compacting_gaps() {
     let first = builder.push(&eng, left, &[ChildPair::new(POS_LEAF_IDX, POS_LEAF_IDX)]).unwrap();
     builder.push(&eng, left, &[ChildPair::new(NEG_LEAF_IDX, POS_LEAF_IDX)]).unwrap();
     let last = builder.push(&eng, left, &[ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX)]).unwrap();
-    let dead_right = builder.push(&eng, right, &[ChildPair::new(ONE_LEAF_IDX, NEG_LEAF_IDX)]).unwrap();
-    let kept_right = builder.push(&eng, right, &[ChildPair::new(ONE_LEAF_IDX, POS_LEAF_IDX)]).unwrap();
+    let dead_right = builder.push(&eng, right, &[ChildPair::new(NEG_LEAF_IDX, NEG_LEAF_IDX)]).unwrap();
+    let kept_right = builder.push(&eng, right, &[ChildPair::new(NEG_LEAF_IDX, POS_LEAF_IDX)]).unwrap();
     builder.push(&eng, root, &[ChildPair::new(dead_left, dead_right)]).unwrap();
     let output = builder.push(&eng, root, &[ChildPair::new(last, kept_right), ChildPair::new(first, kept_right)]).unwrap();
     let f = builder.finish(TddNodeId { vtree: root, local: output }).unwrap();
@@ -580,7 +591,7 @@ fn both_writers_preserve_node_and_pair_order_when_compacting_gaps() {
     assert_eq!(records, vec![
         format!("I {} {} {} 1 1", vtree.topo_pos(left), vtree.topo_pos(ll), vtree.topo_pos(lr)),
         format!("I {} {} {} 1 2", vtree.topo_pos(left), vtree.topo_pos(ll), vtree.topo_pos(lr)),
-        format!("I {} {} {} 0 1", vtree.topo_pos(right), vtree.topo_pos(rl), vtree.topo_pos(rr)),
+        format!("I {} {} {} 2 1", vtree.topo_pos(right), vtree.topo_pos(rl), vtree.topo_pos(rr)),
         format!("I {} {} {} 1 0 0 0", vtree.topo_pos(root), vtree.topo_pos(left), vtree.topo_pos(right)),
     ]);
     for mut back in [
@@ -591,7 +602,7 @@ fn both_writers_preserve_node_and_pair_order_when_compacting_gaps() {
         assert_eq!(back.level(left).slot_count(), 2);
         assert_eq!(back.level(right).slot_count(), 1);
         assert_eq!(back.level(root).pairs_vec(0), vec![ChildPair::new(NodeIdx(1), NodeIdx(0)), ChildPair::new(NodeIdx(0), NodeIdx(0))]);
-        assert_eq!(back.model_count().unwrap(), 4u32.into());
+        assert_eq!(back.model_count().unwrap(), 2u32.into());
         assert_eq!(binary(&back), bytes);
         assert_eq!(text(&back), written);
         // The fixture deliberately retains unreachable nodes and a fusion;

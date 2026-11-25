@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use std::sync::{Arc, Barrier};
 
 use super::*;
@@ -171,7 +172,7 @@ fn grafts_preserve_only_a_context_agreed_by_every_source() {
 fn ordinary_diagram_methods_can_reenter_from_a_stop_callback() {
     use crate::limits::{StopCallback, StopDecision};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    let tree = Arc::new(Vtree::balanced(3));
+    let tree = Home::new(Vtree::balanced(3));
     let calls = Arc::new(AtomicUsize::new(0));
     let callback = {
         let tree = Arc::clone(&tree);
@@ -230,8 +231,8 @@ fn accepted_rotation_keeps_context_and_detaches_only_the_changed_tree() {
             if std::mem::replace(&mut self.0, false) { -1 } else { 0 }
         }
     }
-    let tree = Arc::new(Vtree::balanced(4));
-    let original = Tdd::clause(&tree, [1, 3]).unwrap();
+    let tree = Home::new(Vtree::balanced(4));
+    let original = Tdd::clause(&tree, [1, 2, 3, 4]).unwrap();
     assert_canonical(&original);
     let mut rotated = original.clone();
     let stats = rotated.rotation_search(&mut AcceptOnce(true), &RotationSearchConfig {
@@ -247,7 +248,7 @@ fn accepted_rotation_keeps_context_and_detaches_only_the_changed_tree() {
         let assignment = (0..4).map(|var| bits & (1 << var) != 0).collect::<Vec<_>>();
         assert_eq!(eval(&rotated, &assignment), eval(&original, &assignment));
     }
-    assert_eq!(rotated.model_count().unwrap(), 12u32.into());
+    assert_eq!(rotated.model_count().unwrap(), 15u32.into());
     let companion = crate::literal(rotated.vtree(), 1).unwrap();
     assert_canonical(&companion);
     let mut combined = crate::and(rotated, companion).unwrap();

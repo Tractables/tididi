@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use super::*;
 use crate::Engine;
 
@@ -44,7 +45,7 @@ fn clause_rebuild_exact_when_output_far_below_worst_case() {
         vec![-2],
         vec![7],
     ];
-    let acc = fold_cnf(&eng, &Arc::new(Vtree::random(n, 7)), &cnf);
+    let acc = fold_cnf(&eng, &Home::new(Vtree::random(n, 7)), &cnf);
     let expected = BigUint::from(brute_force_count(n, &cnf));
     assert!(expected > BigUint::from(0u32), "fixture must stay satisfiable");
     assert_eq!(acc.model_count().unwrap(), expected);
@@ -69,7 +70,7 @@ fn both_relevant_rebuild_exact_under_demand_reserve() {
         vec![3, -6],
         vec![-3, 4, -5],
     ];
-    let acc = fold_cnf(&eng, &Arc::new(Vtree::random(n, 3)), &cnf);
+    let acc = fold_cnf(&eng, &Home::new(Vtree::random(n, 3)), &cnf);
     assert_eq!(acc.model_count().unwrap(), BigUint::from(brute_force_count(n, &cnf)));
     assert_fold_is_valid(&acc);
 }

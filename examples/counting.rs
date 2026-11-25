@@ -1,10 +1,10 @@
 // scenario: docs/scenarios.md#counting-choices
 
 fn main() -> Result<(), tididi::OperationError> {
-    use std::sync::Arc;
+    use tididi::vtree::Home;
     use tididi::{literal, Literal, Tdd, Vtree};
 
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let local = Literal::try_from(1)?;
     let remote = Literal::try_from(2)?;
     let encrypted = Literal::try_from(3)?;

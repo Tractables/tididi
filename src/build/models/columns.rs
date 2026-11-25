@@ -54,12 +54,12 @@ impl Tdd {
     /// The result is certified ([`is_canonical`](Self::is_canonical)).
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
     /// use tididi::diagram::RowSelection;
     /// use tididi::vtree::VarId;
     ///
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// // A two-bit code on variables 1 and 2, a one-bit code on variable 3.
     /// let columns: [&[VarId]; 2] = [&[VarId(1), VarId(2)], &[VarId(3)]];
     /// let codes: [&[u32]; 2] = [&[3, 0, 3, 2], &[1, 0, 1, 1]];

@@ -1,3 +1,5 @@
+use crate::test_helpers::bare_roots;
+use crate::vtree::Home;
 use std::sync::Arc;
 
 use crate::diagram::{TddNodeId, NodeIdx, LEAF_WIDTH};
@@ -68,7 +70,7 @@ fn cycling(f: &Tdd, at: VtreeIdx) -> Vec<Option<u32>> {
 #[test]
 fn tagged_nodes_carry_their_codes() {
     for (num_vars, clauses) in test_cases().into_iter().filter(|(n, _)| (2..=8).contains(n)) {
-        for (_, vtree) in vtree_shapes(num_vars) {
+        for (_, vtree) in bare_roots(vtree_shapes(num_vars)) {
             let f = compile_clauses(&vtree, &clauses);
             let (left, right) = vtree.children(vtree.root());
             for at in [vtree.root(), left, right] {
@@ -96,7 +98,7 @@ fn unreduced_diagrams_tag_to_canonical_ones() {
 fn a_level_summed_beside_the_tagged_one_is_not_read() {
     let eng = Engine::new();
     for (num_vars, clauses) in test_cases().into_iter().filter(|(n, _)| (4..=8).contains(n)) {
-        for (_, vtree) in vtree_shapes(num_vars) {
+        for (_, vtree) in bare_roots(vtree_shapes(num_vars)) {
             let (left, right) = vtree.children(vtree.root());
             if vtree.node(left).is_leaf() || vtree.node(right).is_leaf() {
                 continue;
@@ -121,7 +123,7 @@ fn a_level_summed_beside_the_tagged_one_is_not_read() {
 
 #[test]
 fn a_leaf_level_tags_its_literals() {
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = Home::new(Vtree::balanced(2));
     let f = compile_clauses(&vtree, &[vec![1, 2]]);
     let (left, _) = vtree.children(vtree.root());
     check(&f, left, &[None, Some(0), Some(1)]);
@@ -135,7 +137,7 @@ fn a_leaf_level_tags_its_literals() {
 
 #[test]
 fn nothing_tagged_is_false() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let f = compile_clauses(&vtree, &[vec![1, 2], vec![3, 4]]);
     let (left, _) = vtree.children(vtree.root());
     let (into, local, code) = destination(&f, left);
@@ -147,7 +149,7 @@ fn nothing_tagged_is_false() {
 
 #[test]
 fn shapes_codes_and_tags_are_checked() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let f = compile_clauses(&vtree, &[vec![1, 2], vec![3, 4]]);
     let (left, _) = vtree.children(vtree.root());
     let (into, local, code) = destination(&f, left);
@@ -291,7 +293,7 @@ fn wide_codes_share_the_cube_nodes_they_agree_on() {
 fn every_refused_reserve_of_a_tagging_leaves_the_operand() {
     let mut refused = 0;
     for (num_vars, clauses) in test_cases().into_iter().filter(|(n, _)| (4..=8).contains(n)).take(4) {
-        let vtree = vtree_shapes(num_vars).into_iter().next().unwrap().1;
+        let vtree = bare_roots(vtree_shapes(num_vars)).into_iter().next().unwrap().1;
         let f = compile_clauses(&vtree, &clauses);
         let count = f.model_count().unwrap();
         let (left, right) = vtree.children(vtree.root());
@@ -332,7 +334,7 @@ fn every_refused_reserve_of_a_tagging_leaves_the_operand() {
 fn tagging_into_a_vtree_on_a_home_lands_on_its_projection() {
     use crate::vtree::Home;
     let eng = Engine::new();
-    let pair = Arc::new(Vtree::balanced(2));
+    let pair = Home::new(Vtree::balanced(2));
     let f = eng.clause(&pair, [1, 2]).unwrap();
     let (tagged, code) = (Vtree::balanced(2), Vtree::balanced_over(&[VarId(3), VarId(4)]).unwrap());
     for code_left in [false, true] {

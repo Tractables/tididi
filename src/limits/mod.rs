@@ -495,12 +495,12 @@ impl Limits {
     /// Replace the configuration and return the previous settings without resetting measurements.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{OperationError, Engine, Tdd};
     /// use tididi::limits::LimitConfig;
     /// use tididi::vtree::Vtree;
     ///
-    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let vtree = Home::new(Vtree::balanced(4));
     /// let engine = Engine::new();
     ///
     /// // Nothing is armed on a fresh engine, so the conjunction runs.
@@ -545,12 +545,12 @@ impl Limits {
     /// configuration, including during panic unwinding.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Engine, OperationError, Vtree};
     /// use tididi::limits::LimitConfig;
     ///
     /// let engine = Engine::new();
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// {
     ///     let _limit = engine.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
     ///     assert_eq!(engine.clause(&vtree, [1, 2]).err(), Some(OperationError::OverBudget));
@@ -689,11 +689,11 @@ impl Limits {
     /// The clock is never reset, so a mark remains valid across operations.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Engine, Vtree};
     ///
     /// let engine = Engine::new();
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let start = engine.limits().mark();
     /// let f = engine.clause(&vtree, [1, 2, 3]).unwrap();
     /// let work = engine.limits().work_since(start);

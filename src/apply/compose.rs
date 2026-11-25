@@ -52,9 +52,9 @@ impl SharedCircuit {
 /// The structural-input, compatibility and resource errors of [`ite`](crate::ite).
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{literal, xor, Vtree};
-/// let vtree = Arc::new(Vtree::balanced(2));
+/// let vtree = Home::new(Vtree::balanced(2));
 /// let parity = xor(literal(&vtree, 1)?, literal(&vtree, 2)?)?;
 /// assert_eq!(parity.model_count()?, 2u32.into());
 /// # Ok::<(), tididi::OperationError>(())
@@ -87,9 +87,9 @@ pub fn xor(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
 /// or a resource error from a component operation.
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{literal, ite, Vtree};
-/// let vtree = Arc::new(Vtree::balanced(3));
+/// let vtree = Home::new(Vtree::balanced(3));
 /// let select = literal(&vtree, 1)?;
 /// let yes = literal(&vtree, 2)?;
 /// let no = literal(&vtree, 3)?;
@@ -153,10 +153,10 @@ impl Quantification {
 /// applying; component resource errors propagate.
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{literal, and_exists, xor, Vtree};
 /// use tididi::vtree::VarId;
-/// let vtree = Arc::new(Vtree::balanced(2));
+/// let vtree = Home::new(Vtree::balanced(2));
 /// let current = literal(&vtree, -1)?; // current state x is false
 /// let transition = xor(literal(&vtree, 1)?, literal(&vtree, 2)?)?;
 /// // The relation flips x to next-state y; forget the current-state variable.

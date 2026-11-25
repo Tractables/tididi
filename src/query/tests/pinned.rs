@@ -75,7 +75,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
     let mut checked = 0u32;
     let mut nonzero = 0u32;
     for &nvars in &[2u32, 3, 4, 5, 6] {
-        let vtree = Arc::new(Vtree::balanced(nvars));
+        let vtree = crate::vtree::Home::new(Vtree::balanced(nvars));
         for _ in 0..100 {
             // Conjoined without an intervening minimize: the counter must agree
             // with its oracle on the diagrams the apply produces, not only on

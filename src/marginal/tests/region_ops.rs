@@ -80,7 +80,6 @@ fn operations_on_regions_answer_as_the_smooth_form_on_homes_of_up_to_64_leaves()
         assert!(same(&moved, &f), "{what}: transport");
         if g.weights().is_none() {
             let mirrored: Vec<String> = home
-                .vtree()
                 .to_text()
                 .lines()
                 .map(|line| match line.strip_prefix("L ").and_then(|rest| rest.split_once(' ')) {
@@ -98,7 +97,7 @@ fn operations_on_regions_answer_as_the_smooth_form_on_homes_of_up_to_64_leaves()
             let mut c = g.clone();
             eng.rotate_marginal_cluster(&mut c, t, 8, &mut Vec::new()).unwrap();
             check_form(&c, &what);
-            assert!(Arc::ptr_eq(c.vtree().home().unwrap().vtree(), home.vtree()), "{what}: the home rotated");
+            assert!(Arc::ptr_eq(&c.vtree().home().unwrap(), &home), "{what}: the home rotated");
             assert!(same(&c, &f), "{what}: cluster at {t:?}");
         }
     }
@@ -136,7 +135,7 @@ fn two_sibling_regions_merge_into_one_and_the_home_stays() {
     assert_eq!(region.len(), 1);
     let (_, extent) = merged.vtree().region_vars(region[0]);
     assert_eq!(extent, [1, 2, 3, 4].map(VarId));
-    assert!(Arc::ptr_eq(merged.vtree().home().unwrap().vtree(), home.vtree()));
+    assert!(Arc::ptr_eq(&merged.vtree().home().unwrap(), &home));
     assert_eq!(merged.model_count().unwrap(), g.model_count().unwrap());
 }
 

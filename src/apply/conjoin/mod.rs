@@ -377,10 +377,10 @@ fn conjoin_recycling(
 /// but may retain unreachable nodes and twins; [`Tdd::minimize`] certifies it.
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{and, literal, Tdd, Vtree};
 ///
-/// let vtree = Arc::new(Vtree::balanced(3));
+/// let vtree = Home::new(Vtree::balanced(3));
 /// let either = Tdd::clause(&vtree, [1, 2])?;
 /// let not_third = literal(&vtree, -3)?;
 /// let f = and(&either, not_third)?;
@@ -801,12 +801,12 @@ impl crate::Engine {
     /// costs what it would have.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Engine, Vtree};
     /// use tididi::limits::{LimitConfig, StopCallback, StopDecision};
     ///
     /// let engine = Engine::new();
-    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let vtree = Home::new(Vtree::balanced(4));
     /// let f = engine.clause(&vtree, [1, 2])?;
     /// let g = engine.clause(&vtree, [-2, 3])?;
     /// let refused = {
@@ -1006,11 +1006,11 @@ impl crate::Engine {
     /// of the conjunction built with them, as [`Engine::model_count`] gives it.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Engine, Vtree};
     ///
     /// let engine = Engine::new();
-    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let vtree = Home::new(Vtree::balanced(4));
     /// let f = engine.clause(&vtree, [1, 2])?;
     /// let g = engine.clause(&vtree, [3, 4])?;
     /// assert_eq!(engine.and_model_count(f, g, &[])?, 9u32.into());

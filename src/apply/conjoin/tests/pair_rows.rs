@@ -1,6 +1,7 @@
 //! Masked levels read by pairs, checked against the row loop of any level
 //! on the same masks: the same diagram and the same work.
 
+use crate::vtree::Home;
 use super::*;
 use crate::Engine;
 use crate::limits::{LimitConfig, SparseRoute};
@@ -145,7 +146,7 @@ fn the_levels_read_by_pairs_build_what_the_row_loop_builds() {
             }
         }
     }
-    let vtree = Arc::new(Vtree::linear(14));
+    let vtree = Home::new(Vtree::linear(14));
     let vars: Vec<VarId> = (1..=14).map(VarId).collect();
     for case in 0..6 {
         let one_in = [4, 16, 64][case % 3];

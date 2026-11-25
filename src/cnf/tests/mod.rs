@@ -1,8 +1,8 @@
 //! Tests of the CNF encoding: its exact call stream, its agreement with
 //! exhaustive search, its stops, and what it refuses.
 
-use std::ops::ControlFlow;
 use std::sync::Arc;
+use std::ops::ControlFlow;
 
 use super::*;
 use crate::diagram::NodeIdx;
@@ -207,18 +207,12 @@ fn a_refused_allocation_leaves_the_calls_so_far_given() {
 }
 
 #[test]
-fn a_false_diagram_gets_only_the_true_variable() {
-    let tree = Arc::new(Vtree::balanced(4));
+fn a_false_diagram_on_a_home_gets_no_call() {
+    let tree = crate::vtree::Home::new(Vtree::balanced(4));
     let f = Tdd::zero(&tree);
     assert_canonical(&f);
     let (encoding, sink) = encode(&f, None);
-    let t = 6;
-    let mut expected = vec![Call::Fresh(t), Call::Clause(vec![t])];
-    expected.extend((1..=4).map(Call::Leaf));
-    expected.extend(f.vtree().internal_bottomup().enumerate().flat_map(|(complete, (level, _, _))| {
-        [Call::Poll(EncodePoint::Level { level, complete }), Call::Poll(EncodePoint::Node { level, slot: 0 })]
-    }).filter(|call| !matches!(call, Call::Poll(EncodePoint::Node { level, .. }) if f.levels[level.idx()].nodes().is_empty())));
-    assert_eq!(sink.calls, expected);
+    assert_eq!(sink.calls, Vec::new());
     assert_eq!((encoding.encoded_nodes(), encoding.skipped(), encoding.stop()), (0, 0, None));
     assert_eq!(encoding.literal(f.output()), None);
     assert!(encoding.erasure_certified());

@@ -134,14 +134,14 @@ impl<'a> LevelView<'a> {
 /// into a TDD.
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{Engine, Tdd};
 /// use tididi::diagram::{ChildPair, NEG_LEAF_IDX, POS_LEAF_IDX, TddNodeId};
 /// use tididi::vtree::Vtree;
 ///
 /// // x1 ∧ ¬x2 over a two-leaf vtree: one root node with one pair.
 /// let eng = Engine::new();
-/// let vtree = Arc::new(Vtree::balanced(2));
+/// let vtree = Home::new(Vtree::balanced(2));
 /// let root = vtree.root();
 /// let mut builder = Tdd::builder(&eng, &vtree)?;
 /// let node = builder.push(&eng, root, &[ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX)])?;
@@ -424,13 +424,13 @@ impl TddBuilder {
     /// allocation.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Engine, Tdd};
     /// use tididi::diagram::{ChildPair, NodeIdx, POS_LEAF_IDX, NEG_LEAF_IDX, TddNodeId};
     /// use tididi::vtree::Vtree;
     ///
     /// let eng = Engine::new();
-    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let vtree = Home::new(Vtree::balanced(2));
     /// let root = vtree.root();
     ///
     /// let mut b = Tdd::builder(&eng, &vtree)?;

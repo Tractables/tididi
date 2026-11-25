@@ -1,6 +1,7 @@
 //! The queries at their boundaries: a marginal output level, ⊥, a pin outside
 //! the counter.
 
+use crate::vtree::Home;
 use super::*;
 
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
@@ -55,7 +56,7 @@ fn a_weight_marginal_output_is_satisfiable() {
 #[test]
 fn the_incremental_count_of_bottom_is_zero() {
     let eng = &Engine::new();
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = crate::build::constant_zero(eng, &vtree);
     assert!(f.is_zero());
     let mut counter = eng.counter_with(&f, Retention::All, PinSemantics::Evidence).unwrap();

@@ -12,11 +12,12 @@ const EDGES: &[(usize, usize)] = &[
 
 fn main() -> Result<(), tididi::OperationError> {
     use std::sync::Arc;
+    use tididi::vtree::Home;
 
     use tididi::vtree::VarId;
     use tididi::{and_exists, Literal, OperationError, Tdd, Vtree};
 
-    let vtree = Arc::new(Vtree::balanced(2 * NODES as u32));
+    let vtree = Home::new(Vtree::balanced(2 * NODES as u32));
     let current_vars: Vec<_> = (1..=NODES as u32).map(VarId).collect();
     let next_vars: Vec<_> = (NODES as u32 + 1..=2 * NODES as u32).map(VarId).collect();
 

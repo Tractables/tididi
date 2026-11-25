@@ -130,7 +130,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|vars| {
             let mut ranks: Vec<u32> = vars.iter().map(|&v| home.rank(v).expect("a home variable")).collect();
             ranks.sort_unstable();
-            let depths = ranks.windows(2).map(|w| depth(home.vtree(), home.node_over(w[0], w[1]))).collect();
+            let depths = ranks.windows(2).map(|w| depth(&home, home.node_over(w[0], w[1]))).collect();
             ((1..=k as u32).map(VarId).collect(), depths)
         })
         .collect();

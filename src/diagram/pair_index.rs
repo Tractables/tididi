@@ -57,11 +57,11 @@ use super::{ChildPair, NodeIdx, Tdd};
 /// feature is not detected.
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{Tdd, Vtree};
 /// use tididi::diagram::{NodeIdx, PairIndex};
 ///
-/// let vtree = Arc::new(Vtree::balanced(2));
+/// let vtree = Home::new(Vtree::balanced(2));
 /// let g = Tdd::clause(&vtree, [1, 2])?;
 /// let index = PairIndex::new(&g)?;
 /// let root = vtree.root();

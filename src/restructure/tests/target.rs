@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use std::sync::Arc;
 
 use crate::restructure::RestructureError;
@@ -74,9 +75,9 @@ fn shared_blocks_move_as_units() {
         Vtree::linear_from_order(&[VarId(3 * k + 1), VarId(3 * k + 2), VarId(3 * k + 3)]).unwrap()
     };
     let (a, b, c) = (block(0), block(1), block(2));
-    let ab_c = Arc::new(Vtree::join(&Vtree::join(&a, &b).unwrap(), &c).unwrap());
-    let a_bc = Arc::new(Vtree::join(&a, &Vtree::join(&b, &c).unwrap()).unwrap());
-    let ac_b = Arc::new(Vtree::join(&Vtree::join(&c, &a).unwrap(), &b).unwrap());
+    let ab_c = Home::new(Vtree::join(&Vtree::join(&a, &b).unwrap(), &c).unwrap());
+    let a_bc = Home::new(Vtree::join(&a, &Vtree::join(&b, &c).unwrap()).unwrap());
+    let ac_b = Home::new(Vtree::join(&Vtree::join(&c, &a).unwrap(), &b).unwrap());
     let clauses = vec![vec![1, 4], vec![-2, 7], vec![5, -8, 3], vec![6, 9], vec![-1, -9]];
     for target in [&a_bc, &ac_b] {
         let mut f = compile_clauses(&ab_c, &clauses);
@@ -92,7 +93,7 @@ fn a_mirrored_target_costs_no_rotation() {
     let order: Vec<VarId> = (1..=5).map(VarId).collect();
     let mut reversed = order.clone();
     reversed.reverse();
-    let stick = Arc::new(Vtree::linear_from_order(&order).unwrap());
+    let stick = Home::new(Vtree::linear_from_order(&order).unwrap());
     let clauses = vec![vec![1, -2], vec![3, 4, -5], vec![-1, 5]];
     // The right-leaning stick over the reversed order is the left-leaning
     // one's mirror image.
@@ -305,4 +306,18 @@ fn every_refusal_or_stop_keeps_a_move_retryable() {
             assert!(completed && refusals > 0, "n={n}, stop={stopping}");
         }
     }
+}
+
+/// A diagram on a home whose function ignores a variable of its home moves
+/// onto another home over the same variables, as on a root.
+#[test]
+#[ignore = "defect: restructure_to compares the target with the projection's variables, not the home's"]
+fn a_diagram_on_a_home_moves_onto_a_vtree_over_the_home_s_variables() {
+    let source = Home::new(Vtree::linear(4));
+    let target = Home::new(Vtree::balanced(4));
+    let mut f = compile_clauses(&source, &[vec![1, -3]]);
+    let count = f.model_count().unwrap();
+    f.restructure_to(&target, usize::MAX).unwrap();
+    assert_eq!(f.model_count().unwrap(), count);
+    assert_canonical(&f);
 }

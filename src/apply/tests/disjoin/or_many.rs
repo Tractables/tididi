@@ -6,9 +6,10 @@ use crate::test_helpers::assert_canonical;
 use crate::build::constant_zero;
 use crate::vtree::Vtree;
 use crate::{or, or_many, Engine, OperationError, Tdd};
+use crate::vtree::Home;
 
-fn vtree(n: u32) -> Arc<Vtree> {
-    Arc::new(Vtree::balanced(n))
+fn vtree(n: u32) -> Home {
+    Home::new(Vtree::balanced(n))
 }
 
 /// Every operand set a caller is likely to hand over: overlapping cubes,

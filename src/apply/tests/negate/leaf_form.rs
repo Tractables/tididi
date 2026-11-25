@@ -57,7 +57,7 @@ fn a_fill_on_a_one_form_level_is_emitted_as_one() {
     let mut rng = Lcg::new(0x1405_7b7e);
     let mut one_form_fills = 0usize;
     for num_vars in [3u32, 5, 8] {
-        for (_name, vtree) in crate::test_helpers::vtree_shapes(num_vars) {
+        for (_name, vtree) in crate::test_helpers::bare_roots(crate::test_helpers::vtree_shapes(num_vars)) {
             for _ in 0..12 {
                 let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 6, width: 3 });
                 let tdd = compile_clauses_on(eng, &vtree, &clauses);

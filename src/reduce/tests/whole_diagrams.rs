@@ -6,6 +6,7 @@
 //! before compiling it reaches these diagrams by other routes; that variety
 //! belongs to the driver's own tests.
 
+use crate::vtree::Home;
 use super::*;
 
 #[test]
@@ -23,7 +24,7 @@ fn test_minimize_constant_one() {
 
 #[test]
 fn test_minimize_single_clause() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let clause = vec![Literal::pos(VarId(1))];
     let mut tdd = clause_to_tdd(&vtree, &clause);
     let count_before = tdd.model_count().unwrap();
@@ -35,7 +36,7 @@ fn test_minimize_single_clause() {
 
 #[test]
 fn test_minimize_reduces_width_after_apply() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = vec![Literal::pos(VarId(1))];
     let g = vec![Literal::neg(VarId(2))];
 
@@ -63,7 +64,7 @@ fn test_minimize_reduces_width_after_apply() {
 #[test]
 fn test_minimize_preserves_unsat() {
     // Single variable: x ∧ ¬x = UNSAT
-    let vtree = Arc::new(Vtree::balanced(1));
+    let vtree = Home::new(Vtree::balanced(1));
     let f = vec![Literal::pos(VarId(1))];
     let g = vec![Literal::neg(VarId(1))];
 
@@ -80,7 +81,7 @@ fn test_minimize_preserves_unsat() {
 fn test_minimize_unsat_2vars_width() {
     // 2 variables: (x0) AND (not-x0) = UNSAT
     // The canonical diagram for false should have width 0 (ZERO sentinel, empty levels)
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = Home::new(Vtree::balanced(2));
     let f = vec![Literal::pos(VarId(1))];
     let g = vec![Literal::neg(VarId(1))];
 
@@ -104,7 +105,7 @@ fn test_minimize_unsat_2vars_width() {
 fn test_minimize_unsat_3vars_width() {
     // 3 variables: (x0) AND (not-x0) = UNSAT
     // The canonical diagram for false should have width 0 (ZERO sentinel, empty levels)
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = vec![Literal::pos(VarId(1))];
     let g = vec![Literal::neg(VarId(1))];
 
@@ -128,7 +129,7 @@ fn test_minimize_unsat_3vars_width() {
 fn test_minimize_sat_2vars_reduces_width() {
     // (x0) ∧ (x1) over 2 vars → 1 model (x0=1, x1=1)
     // after apply: width 4. After minimize: should have width < 4.
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = Home::new(Vtree::balanced(2));
     let f = vec![Literal::pos(VarId(1))];
     let g = vec![Literal::pos(VarId(2))];
 
@@ -259,44 +260,20 @@ fn test_minimize_sat_2vars_reduces_width() {
 // (X, Inline(2)), leaving the model count unchanged.
 
 
-/// `(a ∨ b) ∧ (a ∨ ¬b)` is `a`: `b` is irrelevant, and minimize has to say so
-/// at the diagram level. After the pass, no pair list anywhere may still name
-/// the positive or negative label of the `b` leaf — every reference into that
-/// leaf must be the don't-care one.
+/// `(a ∨ b) ∧ (a ∨ ¬b)` is `a`: `b` is irrelevant, and minimize on a home
+/// drops its leaf.
 #[test]
 fn a_variable_the_function_ignores_leaves_no_literal_references_behind() {
-    use crate::diagram::LeafLabel;
     use crate::test_helpers::check::check_determinism;
-    use crate::vtree::{VtreeIdx, VtreeNode};
 
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = Arc::clone(&Home::new(Vtree::balanced(2)));
     let mut tdd = compile_clauses(&vtree, &[vec![1, 2], vec![1, -2]]);
     tdd.minimize().unwrap();
     assert_canonical(&tdd);
 
     // `a` over two variables: `a` true, `b` free.
     assert_eq!(tdd.model_count().unwrap(), 2u64.into());
-
-    let b_leaf = vtree.leaf_of(VarId(2)).expect("the vtree carries this variable");
-    for level_idx in 0..vtree.num_nodes() {
-        let (left, right) = match *vtree.node(VtreeIdx(level_idx as u32)) {
-            VtreeNode::Internal { left, right, .. } => (left, right),
-            VtreeNode::Leaf { .. } => continue,
-        };
-        for (_, pairs) in tdd.levels()[level_idx].internal_inputs_iter() {
-            for pair in pairs {
-                if left == b_leaf {
-                    assert_ne!(pair.left.raw() as usize, LeafLabel::Pos as usize, "level {level_idx}");
-                    assert_ne!(pair.left.raw() as usize, LeafLabel::Neg as usize, "level {level_idx}");
-                }
-                if right == b_leaf {
-                    assert_ne!(pair.right.raw() as usize, LeafLabel::Pos as usize, "level {level_idx}");
-                    assert_ne!(pair.right.raw() as usize, LeafLabel::Neg as usize, "level {level_idx}");
-                }
-            }
-        }
-    }
-
+    assert_eq!(tdd.vtree().leaf_of(VarId(2)), None, "minimize kept the leaf of an ignored variable");
     check_determinism(&tdd).expect("leaf-mode determinism holds after minimize");
 }
 
@@ -307,7 +284,7 @@ fn a_variable_the_function_ignores_leaves_no_literal_references_behind() {
 fn a_second_minimize_changes_nothing() {
     use crate::test_helpers::check::check_determinism;
 
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let formulas: &[&[&[i32]]] = &[
         // Independent of the second variable.
         &[&[1, 2], &[1, -2]],

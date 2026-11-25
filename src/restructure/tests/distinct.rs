@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 
 use crate::restructure::DistinctError;
 use crate::test_helpers::{assert_canonical, compile_clauses, eval, rand_conj, random_diagrams, test_cases, under, vtree_shapes};
@@ -19,7 +18,10 @@ fn vars_under(vtree: &Vtree, t: VtreeIdx) -> Vec<VarId> {
 /// Every count of `f` keyed on each node [`keys`] gives, for `m` up to
 /// four, against enumerating its truth table.
 fn check(eng: &Engine, f: &Tdd) {
-    let vtree = f.vtree();
+    // On a home the key is a node of the home and the counted values range
+    // over the home's variables.
+    let home = f.vtree().home();
+    let vtree = home.as_deref().map_or(f.vtree(), |h| h);
     let n = vtree.num_vars() as usize;
     let truth: Vec<Vec<bool>> = (0..1u64 << n)
         .map(|bits| (0..n).map(|i| bits >> i & 1 == 1).collect::<Vec<bool>>())
@@ -37,7 +39,7 @@ fn check(eng: &Engine, f: &Tdd) {
         for m in 0..=4u64 {
             let g = eng.at_least_distinct(f, key, m).unwrap();
             assert_canonical(&g);
-            assert_eq!(g.vtree().num_leaves() as usize, kv.len());
+            assert!(g.vtree().leaf_bottomup().all(|(_, v)| kv.contains(&v)), "on a home the result keeps the key variables it depends on");
             for bits in 0..1u64 << kv.len() {
                 let mut asn = vec![false; n];
                 for (i, v) in kv.iter().enumerate() {
@@ -88,25 +90,30 @@ fn a_projection_onto_a_subtree_is_the_quantified_diagram() {
 #[test]
 fn false_counts_nothing_and_zero_is_true() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let f = compile_clauses(&vtree, &[vec![1], vec![-1]]);
     let left = vtree.children(vtree.root()).0;
     assert!(eng.at_least_distinct(&f, left, 1).unwrap().is_zero());
     let all = eng.at_least_distinct(&f, left, 0).unwrap();
-    assert_eq!(eng.model_count(&all).unwrap(), 4u32.into());
+    assert_canonical(&all);
+    assert!(all.is_one());
+    // Counted over the home's four variables, not the key's two.
+    assert_eq!(eng.model_count(&all).unwrap(), 16u32.into());
 }
 
 #[test]
 fn the_root_is_refused_as_a_key() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::linear(4));
+    let vtree = Home::new(Vtree::linear(4));
     let f = compile_clauses(&vtree, &[vec![1, 2, 3, 4]]);
     assert!(matches!(eng.at_least_distinct(&f, vtree.root(), 1), Err(DistinctError::Root)));
     // x4 sits three levels down a linear vtree of four variables: a key
     // there reads the levels on its path only.
     let deep = vtree.leaf_of(VarId(4)).unwrap();
     let g = eng.project_to_subtree(&f, deep).unwrap();
-    assert_eq!(eng.model_count(&g).unwrap(), 2u32.into());
+    assert_canonical(&g);
+    assert!(g.is_one());
+    assert_eq!(eng.model_count(&g).unwrap(), 16u32.into());
 }
 
 /// A distinct count and a subtree projection refused at each reserve in
@@ -155,7 +162,7 @@ fn every_refused_reserve_of_a_distinct_count_leaves_the_operand() {
 /// conditioned and quantified at random, then trimmed to the leaves it
 /// names, so that a sibling may hold a home variable it has no leaf for.
 fn on_a_projection(home: &Home, n: u32, rng: &mut Lcg) -> Tdd {
-    let mut f = rand_conj(home.vtree(), n, 4, 3, false, rng);
+    let mut f = rand_conj(home, n, 4, 3, false, rng);
     for _ in 0..rng.below(4) {
         let var = VarId(1 + rng.below(n as u64) as u32);
         f = match rng.coin() {
@@ -185,7 +192,7 @@ fn counts_on_a_projection_range_over_the_home() {
         let mut rng = Lcg::new(seed);
         let n = 2 + rng.below(11) as u32;
         let home = Home::new(Vtree::random(n, seed));
-        let at_home = home.vtree();
+        let at_home = &home;
         let f = on_a_projection(&home, n, &mut rng);
         let own = f.vtree();
         let truth: Vec<Vec<bool>> = (0..1u64 << n)
@@ -262,7 +269,7 @@ fn a_key_by_variables_names_the_home_node_where_an_own_index_does_not() {
         let mut rng = Lcg::new(seed);
         let n = 2 + rng.below(9) as u32;
         let home = Home::new(Vtree::random(n, seed));
-        let at_home = home.vtree();
+        let at_home = &home;
         let f = on_a_projection(&home, n, &mut rng);
         let root = eng.and(rand_conj(at_home, n, 4, 3, false, &mut rng), rand_conj(at_home, n, 4, 3, false, &mut rng)).unwrap();
         for g in [&f, &root] {
@@ -337,7 +344,7 @@ fn a_count_that_returns_its_operand_copies_it_within_the_budget() {
     use crate::limits::LimitConfig;
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(16));
-    let at_home = home.vtree();
+    let at_home = &home;
     let key = at_home.children(at_home.root()).0;
     let kv = vars_under(at_home, key);
     let mut rng = Lcg::new(7);

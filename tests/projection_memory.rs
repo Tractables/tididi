@@ -89,11 +89,11 @@ fn a_union_of_equal_or_nested_leaf_sets_allocates_nothing() {
         Vtree::union(&a, &same).unwrap(),
         Vtree::union(&inside, &a).unwrap(),
         Vtree::union(&a, &few).unwrap(),
-        Vtree::union(&a, home.vtree()).unwrap(),
+        Vtree::union(&a, &home).unwrap(),
     ];
     COUNTING.store(false, Ordering::Relaxed);
 
     assert_eq!(ALLOCATIONS.load(Ordering::Relaxed), 0);
     assert!(Arc::ptr_eq(&unions[0], &a) && Arc::ptr_eq(&unions[1], &a) && Arc::ptr_eq(&unions[2], &a));
-    assert!(Arc::ptr_eq(&unions[3], home.vtree()));
+    assert!(Arc::ptr_eq(&unions[3], &home));
 }

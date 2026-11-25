@@ -1,7 +1,7 @@
 //! The meters are zeroed when an operation starts, and only by the outermost
 //! one on an engine.
 
-use std::sync::Arc;
+use crate::vtree::Home;
 
 use crate::reduce::{ReductionPlan};
 use crate::vtree::Vtree;
@@ -28,7 +28,7 @@ fn the_outermost_operation_zeroes_the_meters_and_a_nested_one_keeps_them() {
 #[test]
 fn a_reduction_does_not_inherit_an_earlier_operations_charge() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(6));
+    let vtree = Home::new(Vtree::balanced(6));
     let mut f = Tdd::clause(&vtree, [1, -2, 3]).unwrap() & Tdd::clause(&vtree, [-1, 4, -5]).unwrap() & Tdd::clause(&vtree, [2, 5, 6]).unwrap();
     let before = f.model_count().unwrap();
     // What an operation that ended mid-way leaves behind, above the budget.
@@ -42,7 +42,7 @@ fn a_reduction_does_not_inherit_an_earlier_operations_charge() {
 #[test]
 fn compound_operations_refuse_their_own_work_and_release_the_scope() {
     use crate::test_helpers::assert_canonical;
-    let tree = Arc::new(Vtree::balanced(4));
+    let tree = Home::new(Vtree::balanced(4));
     let f = Tdd::clause(&tree, [1, 2]).unwrap();
     let care = Tdd::clause(&tree, [-1, 3]).unwrap();
     assert_canonical(&f);
@@ -70,10 +70,12 @@ fn an_armed_stop_comes_before_every_input_error() {
     use crate::vtree::{VarId, VtreeIdx};
     use crate::OperationError::Stopped;
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let f = Tdd::clause(&vtree, [1, -2]).unwrap();
     // The same shape on another vtree: every binary operation rejects the pair.
-    let other = Tdd::clause(&Arc::new(Vtree::balanced(4)), [1, -2]).unwrap();
+    let other = Tdd::clause(&Home::new(Vtree::balanced(4)), [1, -2]).unwrap();
+    // `marginalize_levels` refuses a diagram on a home before the stop.
+    let root = Tdd::clause(&Arc::new(Vtree::balanced(4)), [1, -2]).unwrap();
     let absent = [VarId(99)];
     let wide: Vec<VarId> = (1..=65).map(VarId).collect();
     let _stop = eng.limits().scope(LimitConfig::none().with_stop_callback(Some(
@@ -97,7 +99,7 @@ fn an_armed_stop_comes_before_every_input_error() {
     assert_eq!(eng.clause(&vtree, [0]).err(), Some(Stopped));
     assert_eq!(eng.from_models(&vtree, &wide, &[0]).err(), Some(Stopped));
     assert_eq!(eng.rotate_marginal_cluster(&mut f.clone(), VtreeIdx(999), 1, &mut Vec::new()).err(), Some(Stopped));
-    assert_eq!(eng.marginalize_levels(&mut f.clone(), &[VtreeIdx(999)]).err(), Some(Stopped));
+    assert_eq!(eng.marginalize_levels(&mut root.clone(), &[VtreeIdx(999)]).err(), Some(Stopped));
     // An unweighted diagram has no weighted value, but the stop is tested first.
     assert_eq!(eng.weighted_value(&f).err(), Some(Stopped));
 }

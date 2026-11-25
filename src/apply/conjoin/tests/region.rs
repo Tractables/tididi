@@ -40,7 +40,7 @@ fn summed(f: &Tdd) -> BTreeSet<VarId> {
     for t in vtree.bottomup() {
         if vtree.node(t).is_region() {
             for &(lo, hi) in vtree.region_at(t).1.iter() {
-                vars.extend(home.vtree().leaf_bottomup().map(|(_, v)| v).filter(|&v| (lo..hi).contains(&home.rank(v).unwrap())));
+                vars.extend(home.leaf_bottomup().map(|(_, v)| v).filter(|&v| (lo..hi).contains(&home.rank(v).unwrap())));
             }
         } else if vtree.node(t).is_leaf() && f.level(t).is_marginal() {
             vars.insert(vtree.leaf_var(t));
@@ -82,7 +82,7 @@ fn new_parent(f: &Tdd, result: &Tdd) -> bool {
 /// A random diagram over a random part of the home, summed out at random
 /// home nodes zero to two times.
 fn make(eng: &Engine, home: &Home, rng: &mut Lcg) -> Operand {
-    let vtree = home.vtree();
+    let vtree = home;
     let all: Vec<VarId> = vtree.leaf_bottomup().map(|(_, v)| v).collect();
     let used: Vec<VarId> = match rng.below(6) {
         0 => Vec::new(),
@@ -208,10 +208,10 @@ fn and_on_projections_with_regions_matches_the_smooth_form() {
             let onto = super::and_on(&eng, &a.f, &b.f, &into).map_err(|r| r.error);
             case.check(&what("conjoin_onto"), &ops, onto, &smooth, false);
         }
-        let hs = targets(home.vtree(), &[], &mut rng);
+        let hs = targets(&home, &[], &mut rng);
         case.check(&what("and_marginalizing_where"), &ops, eng.and_marginalizing_where(&a.f, &b.f, under(&home, &hs)), &smooth, true);
         // A clause over random home variables.
-        let all: Vec<VarId> = home.vtree().leaf_bottomup().map(|(_, v)| v).collect();
+        let all: Vec<VarId> = home.leaf_bottomup().map(|(_, v)| v).collect();
         let mut picked: Vec<i32> = (0..1 + rng.below(3)).map(|_| all[rng.below(all.len() as u64) as usize].0 as i32).collect();
         picked.sort_unstable();
         picked.dedup();
@@ -240,7 +240,7 @@ fn and_on_projections_with_regions_matches_the_smooth_form() {
 fn summed_clause(eng: &Engine, home: &Home, lits: &[i32], at: &[VtreeIdx]) -> Operand {
     let own = Vtree::projection(home, lits.iter().map(|l| VarId(l.unsigned_abs()))).unwrap();
     let mut f = Tdd::clause(&own, lits.iter().copied()).unwrap();
-    let smooth = on_home(&f, home.vtree());
+    let smooth = on_home(&f, home);
     if !at.is_empty() {
         eng.marginalize(&mut f, under(home, at)).unwrap();
     }
@@ -269,7 +269,7 @@ fn and_refuses_intersecting_regions() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(4));
     let a = summed_clause(&eng, &home, &[1, 2, 3], &[over(&home, &[1, 2])]);
-    let b = summed_clause(&eng, &home, &[1, 3, 4], &[home.vtree().root()]);
+    let b = summed_clause(&eng, &home, &[1, 3, 4], &[home.root()]);
     assert!(b.f.vtree().regions().next().is_some());
     assert!(matches!(eng.and(&a.f, &b.f), Err(OperationError::MarginalLevel(_))));
     let c = summed_clause(&eng, &home, &[-2, 3], &[over(&home, &[1, 2])]);
@@ -302,7 +302,7 @@ fn and_gives_a_region_a_new_parent() {
 /// variables, each summed whole: two extents of two intervals each, every
 /// rank of one between two of the other's.
 fn interleaved(eng: &Engine, home: &Home) -> (Operand, Operand) {
-    let root = [home.vtree().root()];
+    let root = [home.root()];
     (summed_clause(eng, home, &[1, 3], &root), summed_clause(eng, home, &[2, 4], &root))
 }
 
@@ -310,7 +310,7 @@ fn interleaved(eng: &Engine, home: &Home) -> (Operand, Operand) {
 fn a_leaf_between_two_ranks_of_an_extent_is_accepted() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(4));
-    let a = summed_clause(&eng, &home, &[1, 3], &[home.vtree().root()]);
+    let a = summed_clause(&eng, &home, &[1, 3], &[home.root()]);
     assert_eq!(max_intervals(&a.f), 2);
     let b = summed_clause(&eng, &home, &[-2], &[]);
     let mut case = Case { n: 4, arithmetic: None, seen: Seen::default() };
@@ -387,16 +387,16 @@ fn pool_case(eng: &Engine, index: u64, wrong: bool, seen: &mut Pool, rng: &mut L
     let arithmetic = modes[index as usize % modes.len()];
     let w = weights(n, rng);
     let home = home_on(Vtree::random(n, index), &w, arithmetic);
-    let all: Vec<VarId> = home.vtree().leaf_bottomup().map(|(_, v)| v).collect();
+    let all: Vec<VarId> = home.leaf_bottomup().map(|(_, v)| v).collect();
     let held: BTreeSet<VarId> = all.iter().copied().filter(|_| rng.below(8) == 0).collect();
     let mut pool = Vec::new();
     let mut smooth: Option<Tdd> = None;
     for _ in 0..3 + rng.below(4) {
-        let s = VtreeIdx(rng.below(home.vtree().num_nodes() as u64) as u32);
+        let s = VtreeIdx(rng.below(home.num_nodes() as u64) as u32);
         let used: Vec<VarId> =
-            home.vtree().subtree(s).filter(|&t| home.vtree().node(t).is_leaf()).map(|t| home.vtree().leaf_var(t)).filter(|_| rng.below(3) != 0).collect();
+            home.subtree(s).filter(|&t| home.node(t).is_leaf()).map(|t| home.leaf_var(t)).filter(|_| rng.below(3) != 0).collect();
         let f = operand(eng, &home, &used, rng);
-        let on = on_home(&f, home.vtree());
+        let on = on_home(&f, &home);
         smooth = Some(match smooth {
             None => on,
             Some(s) => eng.and(s, on).unwrap(),
@@ -488,7 +488,7 @@ fn summing_out_the_root_follows_the_output_when_equal_counts_merge() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(2));
     let not_x1 = Tdd::clause(&Vtree::projection(&home, [VarId(1)]).unwrap(), [-1]).unwrap();
-    let summed = eng.and_marginalizing_where(Tdd::one(home.vtree()), &not_x1, |_| true).unwrap();
+    let summed = eng.and_marginalizing_where(Tdd::one(&home), &not_x1, |_| true).unwrap();
     assert_eq!(summed.model_count().unwrap(), BigUint::from(2u32));
 }
 
@@ -562,7 +562,7 @@ fn t1_check(entry: &dyn Fn(&Tdd, &Tdd) -> Result<Tdd, OperationError>, levels: &
 
 #[test]
 fn t1a_an_internal_summed_level_read_by_the_other_operand_is_refused() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let (left, _) = vtree.children(vtree.root());
     for weighted in [false, true] {
         t1_check(&|f, g| Engine::new().and(f, g), &[left], weighted, "T1a");
@@ -571,7 +571,7 @@ fn t1a_an_internal_summed_level_read_by_the_other_operand_is_refused() {
 
 #[test]
 fn t1b_a_summed_leaf_read_by_the_other_operand_is_refused() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let x1 = vtree.leaf_of(VarId(1)).unwrap();
     for weighted in [false, true] {
         t1_check(&|f, g| Engine::new().and(f, g), &[x1], weighted, "T1b");
@@ -581,7 +581,7 @@ fn t1b_a_summed_leaf_read_by_the_other_operand_is_refused() {
 
 #[test]
 fn t1c_a_summed_level_read_while_its_parent_is_summed_is_refused() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let (left, _) = vtree.children(vtree.root());
     let root = vtree.root();
     for weighted in [false, true] {
@@ -623,7 +623,7 @@ fn a_weighted_home_computes_what_a_weighted_root_computes() {
         let (mut on_held, mut on_plain) = (Lcg::new(seed), Lcg::new(seed));
         let [a, b] = [(); 2].map(|()| make(&eng, &held, &mut on_held));
         let [pa, pb] = [(); 2].map(|()| make(&eng, &plain, &mut on_plain).f);
-        let [ra, rb] = [&a, &b].map(|op| crate::apply::extend::onto(&eng, &op.smooth, held.vtree()).unwrap().into_owned());
+        let [ra, rb] = [&a, &b].map(|op| crate::apply::extend::onto(&eng, &op.smooth, &held).unwrap().into_owned());
         let (a, b) = (a.f, b.f);
         let product = eng.and(&ra, &rb).unwrap();
         let what = |entry: &str| format!("case {index} {entry} {arithmetic:?}");
@@ -644,7 +644,7 @@ fn a_weighted_home_computes_what_a_weighted_root_computes() {
         let text = |e: OperationError| format!("{e:?}");
         check("and borrowed", eng.and(&a, &b).map_err(text), Some(eng.and(&pa, &pb).map_err(text)), &product);
         check("and owned", eng.and(a.clone(), b.clone()).map_err(text), Some(eng.and(pa.clone(), pb.clone()).map_err(text)), &product);
-        let hs = targets(held.vtree(), &[], &mut rng);
+        let hs = targets(&held, &[], &mut rng);
         check(
             "and_marginalizing_where",
             eng.and_marginalizing_where(&a, &b, under(&held, &hs)).map_err(text),

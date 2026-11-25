@@ -226,7 +226,7 @@ impl Tdd {
     /// given to the sink stay there, and the caller retires `activation`.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
     /// use tididi::cnf::{ClauseSink, CnfScheme};
     /// use tididi::vtree::VarId;
@@ -243,7 +243,7 @@ impl Tdd {
     ///     }
     /// }
     ///
-    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let vtree = Home::new(Vtree::balanced(2));
     /// let f = Tdd::cube(&vtree, [1, -2])?;
     /// // Variables 1 and 2 are the diagram's, and 3 is the activation literal.
     /// let mut sink = Clauses { last: 3, activation: 3, clauses: Vec::new() };

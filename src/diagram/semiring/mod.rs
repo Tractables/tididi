@@ -60,7 +60,7 @@ use crate::vtree::{FreeVars, VarId, VtreeIdx};
 /// Count the fewest true variables in any satisfying assignment with a min-plus algebra:
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{literal, Tdd, Vtree};
 /// use tididi::diagram::{EvalAlgebra, LeafLabel};
 ///
@@ -81,7 +81,7 @@ use crate::vtree::{FreeVars, VarId, VtreeIdx};
 ///     fn add_assign(&self, a: &mut usize, b: &usize) { *a = (*a).min(*b); }
 ///     fn mul(&self, a: &usize, b: &usize) -> usize { a.saturating_add(*b) }
 /// }
-/// let vtree = Arc::new(Vtree::balanced(3));
+/// let vtree = Home::new(Vtree::balanced(3));
 /// let f = Tdd::clause(&vtree, [1, 2])? & literal(&vtree, 3)?;
 /// assert_eq!(f.evaluate(&FewestTrue)?, 2);
 /// # Ok::<(), Box<dyn std::error::Error>>(())

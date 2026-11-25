@@ -18,11 +18,11 @@ use super::{IoError, TDD_FORMAT_VERSION};
 /// [`Tdd::minimize`](crate::Tdd::minimize) certifies it.
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{Tdd, Vtree};
 /// use tididi::io::{load_tdd, save_tdd};
 ///
-/// let vtree = Arc::new(Vtree::balanced(3));
+/// let vtree = Home::new(Vtree::balanced(3));
 /// let f = Tdd::clause(&vtree, [1, -2])?;
 /// let path = std::env::temp_dir().join("tididi-doc-load.tdd");
 /// save_tdd(&f, &path)?;
@@ -83,11 +83,11 @@ pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoErr
 /// Read from an in-memory buffer:
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{Tdd, Vtree};
 /// use tididi::io::{read_tdd, write_tdd};
 ///
-/// let vtree = Arc::new(Vtree::balanced(3));
+/// let vtree = Home::new(Vtree::balanced(3));
 /// let f = Tdd::clause(&vtree, [1, -2])?;
 /// let mut bytes = Vec::new();
 /// write_tdd(&mut bytes, &f)?;
@@ -101,11 +101,11 @@ pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoErr
 /// Malformed input reports a format error:
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::Vtree;
 /// use tididi::io::{read_tdd, IoError};
 ///
-/// let vtree = Arc::new(Vtree::balanced(3));
+/// let vtree = Home::new(Vtree::balanced(3));
 /// let result = read_tdd(&mut b"not a diagram".as_slice(), &vtree);
 /// assert!(matches!(result, Err(IoError::Format(_))));
 /// ```
@@ -345,14 +345,14 @@ fn check_problem_line(h: &ProblemLine, vtree: &Vtree, line: usize) -> Result<(),
 /// nothing larger is allocated from them.
 fn bound_problem_line(h: &ProblemLine, home: &Home, line: usize) -> Result<(), IoError> {
     let nodes = (2 * h.num_leaves as usize).saturating_sub(1);
-    if h.num_leaves > home.vtree().num_leaves() || h.num_vtree_nodes != nodes {
+    if h.num_leaves > home.num_leaves() || h.num_vtree_nodes != nodes {
         return Err(malformed(
             line,
             format!(
                 "file has {} leaves and {} vtree nodes, not a projection of the vtree's home of {} leaves",
                 h.num_leaves,
                 h.num_vtree_nodes,
-                home.vtree().num_leaves()
+                home.num_leaves()
             ),
         ));
     }

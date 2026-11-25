@@ -8,13 +8,13 @@
 //! conjunction with a block quantified and the counted conjunction, whose
 //! root either sums its candidates per inner child or, with counts past
 //! `u64`, folds them one by one.
-use std::sync::Arc;
 
 use super::inner_index::{block, pack};
 use super::{prefetches_run, random_rows, vtrees, ForcedPrefetch, ForcedThresholds, SparseThresholds};
 use crate::test_helpers::{assert_canonical, assert_same_shape};
 use crate::vtree::Vtree;
 use crate::Engine;
+use std::sync::Arc;
 
 #[test]
 fn a_walk_that_prefetches_returns_what_the_walk_without_returns() {

@@ -1,5 +1,6 @@
 use super::*;
 use crate::{Engine, Vtree};
+use crate::vtree::Home;
 
 #[test]
 fn canonical_guarantee_follows_storage_and_output() {
@@ -85,7 +86,7 @@ fn a_diagram_reseated_on_another_allocation_of_its_projection_stays_closed() {
     use crate::vtree::{Home, VarId};
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(5));
-    let mut f = eng.xor(eng.literal(home.vtree(), 1).unwrap(), eng.clause(home.vtree(), [3, -4]).unwrap()).unwrap();
+    let mut f = eng.xor(eng.literal(&home, 1).unwrap(), eng.clause(&home, [3, -4]).unwrap()).unwrap();
     let first = Arc::clone(f.vtree());
     assert_eq!(first.num_leaves(), 3);
     let second = Vtree::projection(&home, [1, 3, 4].map(VarId)).unwrap();
@@ -113,7 +114,7 @@ fn a_diagram_reseated_on_another_allocation_of_its_projection_stays_closed() {
 fn reseating_a_diagram_on_a_home_off_the_home_panics_in_debug() {
     use crate::vtree::Home;
     let home = Home::new(Vtree::balanced(3));
-    let mut f = Tdd::clause(home.vtree(), [1, 2, 3]).unwrap();
+    let mut f = Tdd::clause(&home, [1, 2, 3]).unwrap();
     let bare = Arc::new(Vtree::balanced(3));
     // Safety: never reached past the debug check.
     unsafe { f.reseat_vtree_unchecked(&bare) };
@@ -182,6 +183,25 @@ mod producers {
         }
     }
 
+    /// The same on homes. Where the key's subtree holds every leaf of the
+    /// operand's projection, the operand comes back canonical but not
+    /// certified (seed 6, key 2: a literal).
+    #[test]
+    #[ignore = "defect: on a home, a key subtree over the whole projection returns the operand uncertified"]
+    fn projections_to_a_subtree_on_a_home_are_certified() {
+        let eng = Engine::new();
+        for seed in 0..100u64 {
+            let mut rng = Lcg::new(seed ^ 0x51b);
+            let n = 2 + rng.below(6) as u32;
+            let vtree = Home::new(Vtree::random(n, seed));
+            let f = rand_conj(&vtree, n, 4, 3, false, &mut rng);
+            for key in vtree.bottomup().filter(|&t| t != vtree.root()) {
+                let g = eng.project_to_subtree(&f, key).unwrap();
+                certified(&g, &format!("seed {seed}: project_to_subtree at {}", key.0));
+            }
+        }
+    }
+
     #[test]
     fn constants_without_a_node_are_certified() {
         let home = crate::vtree::Home::new(Vtree::random(3, 1));
@@ -199,7 +219,7 @@ mod producers {
         for seed in 0..300u64 {
             let mut rng = Lcg::new(seed ^ 0x4e9);
             let n = 2 + rng.below(7) as u32;
-            let vtree = Arc::new(Vtree::random(n, seed));
+            let vtree = Home::new(Vtree::random(n, seed));
             let f = rand_conj(&vtree, n, 5, 3, false, &mut rng);
             let mut c = f.clone();
             eng.minimize(&mut c).unwrap();
@@ -226,9 +246,10 @@ mod producers {
 /// The checker rejects a certificate on a diagram with twins.
 #[test]
 fn a_false_certificate_fails_the_check() {
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = Home::new(Vtree::balanced(2));
     let f = Tdd::clause(&vtree, [-1, 2]).unwrap();
     let mut y = crate::and(f, Tdd::clause(&vtree, [1, 2]).unwrap()).unwrap();
     y.levels.certify(y.output);
     assert!(crate::test_helpers::check::check_certified(&y).is_err());
 }
+

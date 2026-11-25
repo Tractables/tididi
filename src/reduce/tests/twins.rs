@@ -26,7 +26,7 @@ use std::sync::Arc;
 #[test]
 fn test_leaf_contract_skips_when_one_parent_unmatched() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Arc::clone(&crate::vtree::Home::new(Vtree::balanced(3)));
     // balanced(3): leaves 0/1/2; level 3 = parent of leaves 0,1; level 4 = root (3, 2).
     assert!(matches!(*vtree.node(VtreeIdx(3)), VtreeNode::Internal { .. }));
     assert!(matches!(*vtree.node(VtreeIdx(4)), VtreeNode::Internal { .. }));
@@ -253,7 +253,7 @@ fn assert_contracts_to_width(
 #[test]
 fn test_contract_detects_twins_with_scrambled_signature_order_width3() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Arc::clone(&crate::vtree::Home::new(Vtree::balanced(4)));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
 
@@ -294,7 +294,7 @@ fn test_contract_detects_twins_with_scrambled_signature_order_width3() {
 #[test]
 fn test_contract_detects_twins_with_reversed_multi_sibling_signature() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Arc::clone(&crate::vtree::Home::new(Vtree::balanced(4)));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
 

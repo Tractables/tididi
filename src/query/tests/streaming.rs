@@ -11,7 +11,7 @@ use crate::apply::conjoin::tests::apply_and_fallible;
 use crate::apply::conjoin::{VtreeMask, apply_and};
 use crate::build::constant_one;
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Tdd, Weights};
-use crate::test_helpers::{CnfShape, Lcg, clause_to_tdd, exact_weight, literals, rand_cnf, rat};
+use crate::test_helpers::{CnfShape, Lcg, clause_to_tdd, exact_weight, literals, on_one, rand_cnf, rat};
 use crate::vtree::{Vtree, VtreeIdx};
 
 fn interior_targets(vtree: &Vtree) -> Vec<bool> {
@@ -38,20 +38,21 @@ fn streaming_fold_count_matches_materialized_randomized() {
     let mut rng = Lcg::new(0x0bad_c0de_1337_f00d);
     let (mut checked, mut nonzero) = (0u32, 0u32);
     for &nvars in &[2u32, 3, 4, 5, 6] {
-        let vtree = Arc::new(Vtree::balanced(nvars));
-        let targets = interior_targets(&vtree);
+        let vtree = crate::vtree::Home::new(Vtree::balanced(nvars));
         for _ in 0..200 {
             let a = rand_unminimized_tdd(&eng, &vtree, &mut rng, nvars);
             let b = rand_unminimized_tdd(&eng, &vtree, &mut rng, nvars);
-            let run = |mask: VtreeMask<'_>| {
-                let (mut a_c, mut b_c) = (a.clone(), b.clone());
+            let run = |masked: bool| {
+                let (mut a_c, mut b_c) = on_one(&eng, a.clone(), b.clone());
+                let targets = interior_targets(a_c.vtree());
+                let mask = if masked { VtreeMask::new(Some(&targets)) } else { VtreeMask::default() };
                 apply_and_fallible(&eng, &mut a_c, &mut b_c, mask)
                     .unwrap()
                     .model_count()
                     .unwrap()
             };
-            let oracle = run(VtreeMask::default());
-            let fold = run(VtreeMask::new(Some(&targets)));
+            let oracle = run(false);
+            let fold = run(true);
             assert_eq!(
                 fold, oracle,
                 "nvars={nvars}: streaming fold != materialized"
@@ -71,7 +72,6 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
     let rand_weight =
         |rng: &mut Lcg| -> BigRational { rat(1 + rng.below(9) as i64, 1 + rng.below(9) as i64) };
     for &nvars in &[2u32, 3, 4, 5, 6] {
-        let targets = interior_targets(&Vtree::balanced(nvars));
         for _ in 0..50 {
             let weights: Vec<LiteralWeights<BigRational>> = (0..nvars)
                 .map(|_| LiteralWeights {
@@ -79,14 +79,16 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
                     positive: rand_weight(&mut rng),
                 })
                 .collect();
-            let vtree = Arc::new(Vtree::balanced(nvars).with_weights(Weights::new(
+            let vtree = crate::vtree::Home::new(Vtree::balanced(nvars).with_weights(Weights::new(
                 RationalWeights::from_literals(&weights),
                 Arithmetic::ExactRational,
             )).unwrap());
             let a = rand_unminimized_tdd(&eng, &vtree, &mut rng, nvars);
             let b = rand_unminimized_tdd(&eng, &vtree, &mut rng, nvars);
-            let run = |mask: VtreeMask<'_>| {
-                let (mut a_c, mut b_c) = (a.clone(), b.clone());
+            let run = |masked: bool| {
+                let (mut a_c, mut b_c) = on_one(&eng, a.clone(), b.clone());
+                let targets = interior_targets(a_c.vtree());
+                let mask = if masked { VtreeMask::new(Some(&targets)) } else { VtreeMask::default() };
                 let res =
                     apply_and_fallible(&eng, &mut a_c, &mut b_c, mask)
                         .unwrap();
@@ -96,8 +98,8 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
                         .expect("store follows the result"),
                 )
             };
-            let oracle = run(VtreeMask::default());
-            let fold = run(VtreeMask::new(Some(&targets)));
+            let oracle = run(false);
+            let fold = run(true);
             assert_eq!(
                 fold, oracle,
                 "nvars={nvars}: weighted streaming fold != materialized"

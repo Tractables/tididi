@@ -2,7 +2,6 @@
 //! diagram, the same count and the same quantified diagram, on every vtree
 //! shape, with one operand's support under each subtree in turn, on both
 //! product-store layouts; and operands handed back on a refusal.
-
 use std::sync::Arc;
 
 use super::*;
@@ -11,6 +10,7 @@ use crate::limits::{LimitConfig, SparseRoute, StopAt, StopRules};
 use crate::test_helpers::{assert_canonical, assert_same_shape, rand_conj_over, same_storage, vtree_shapes, Lcg};
 use crate::test_helpers::check::check_no_false_nodes_in_levels;
 use crate::vtree::{VarId, Vtree, VtreeNode};
+use crate::test_helpers::bare_roots;
 
 /// The variables at the leaves under `t`.
 pub(super) fn vars_under(vtree: &Vtree, t: VtreeIdx) -> Vec<u32> {
@@ -42,7 +42,7 @@ pub(super) fn function_of(vtree: &Arc<Vtree>, vars: &[u32], rng: &mut Lcg) -> Td
 pub(super) fn cases(nvars: u32, seed: u64) -> Vec<(String, Tdd, Tdd)> {
     let mut rng = Lcg::new(seed);
     let mut out = Vec::new();
-    for (shape, vtree) in vtree_shapes(nvars) {
+    for (shape, vtree) in bare_roots(vtree_shapes(nvars)) {
         let all: Vec<u32> = (1..=nvars).collect();
         for (t, _, _) in vtree.internal_bottomup() {
             if t == vtree.root() {

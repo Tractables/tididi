@@ -102,7 +102,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let home = Home::new(Vtree::balanced(h));
-    let homes = [home.clone(), Home::new(mirror_image(home.vtree()))];
+    let homes = [home.clone(), Home::new(mirror_image(&home))];
     let eng = Engine::new();
     let mut f: Option<Tdd> = None;
     for b in 0..blocks {

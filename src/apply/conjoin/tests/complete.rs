@@ -4,6 +4,7 @@
 //! join a complete child by arithmetic, checked against the scatter over its
 //! listed cells.
 
+use crate::vtree::Home;
 use super::*;
 use crate::Engine;
 use crate::limits::{LimitConfig, SparseRoute, StopAt, StopRules};
@@ -69,7 +70,7 @@ fn same_both_ways(f: &Tdd, g: &Tdd) -> Tdd {
 /// over two internal children reads both by arithmetic.
 #[test]
 fn disjoint_supports_read_both_sides_by_arithmetic() {
-    let vtree = Arc::new(Vtree::balanced(16));
+    let vtree = Home::new(Vtree::balanced(16));
     let odd: Vec<u32> = (1..=16).filter(|v| v % 2 == 1).collect();
     let even: Vec<u32> = (1..=16).filter(|v| v % 2 == 0).collect();
     let mut rng = Lcg::new(0x5eed_a901);
@@ -96,20 +97,24 @@ fn equalities(vtree: &Arc<Vtree>, pairs: &[(i32, i32)]) -> Tdd {
     f
 }
 
+/// The live pairs at the root of `t`'s vtree.
+fn root_pairs(t: &Tdd) -> usize {
+    t.level(t.vtree().root()).live_pairs()
+}
+
 /// Two roots of 128 pairs each, over disjoint supports, make a root of
 /// 16,384 pairs, past the cap on a level's seeded arena: the arithmetic
 /// route's arena, reserved whole, charges the meter on the schedule the
 /// grid route's arena grows by.
 #[test]
 fn an_arena_past_the_seed_cap_charges_on_the_schedule() {
-    let vtree = Arc::new(Vtree::balanced(64));
+    let vtree = Home::new(Vtree::balanced(64));
     let f = equalities(&vtree, &[(1, 33), (3, 35), (5, 37), (7, 39), (9, 41), (11, 43), (13, 45)]);
     let g = equalities(&vtree, &[(2, 34), (4, 36), (6, 38), (8, 40), (10, 42), (12, 44), (14, 46)]);
-    let root = vtree.root().idx();
-    assert_eq!((f.levels[root].live_pairs(), g.levels[root].live_pairs()), (128, 128));
+    assert_eq!((root_pairs(&f), root_pairs(&g)), (128, 128));
     let before = complete_census();
     let fg = same_both_ways(&f, &g);
-    assert_eq!(fg.levels[root].live_pairs(), 128 * 128);
+    assert_eq!(root_pairs(&fg), 128 * 128);
     let census = complete_census();
     assert!(census[3] > before[3], "no reserved arena outgrew its seed, so the meter's schedule went unchecked");
 }
@@ -122,14 +127,13 @@ fn an_arena_past_the_seed_cap_charges_on_the_schedule() {
 /// from the grid and its left by arithmetic.
 #[test]
 fn a_level_with_one_complete_side_past_the_seed_cap_never_grows() {
-    let vtree = Arc::new(Vtree::balanced(64));
+    let vtree = Home::new(Vtree::balanced(64));
     let f = equalities(&vtree, &[(1, 33), (3, 35), (5, 37), (7, 39), (9, 41), (11, 43), (13, 45)]);
     let g = equalities(&vtree, &[(2, 34), (4, 36), (6, 38), (8, 40), (10, 42), (12, 44), (14, 46), (16, 45)]);
-    let root = vtree.root().idx();
-    assert_eq!((f.levels[root].live_pairs(), g.levels[root].live_pairs()), (128, 256));
+    assert_eq!((root_pairs(&f), root_pairs(&g)), (128, 256));
     let before = complete_census();
     let fg = same_both_ways(&f, &g);
-    assert_eq!(fg.levels[root].live_pairs(), 128 * 128);
+    assert_eq!(root_pairs(&fg), 128 * 128);
     let census = complete_census();
     assert!(census[1] > before[1], "no level read its left side alone by arithmetic");
     assert!(census[3] > before[3], "no reserved arena outgrew its seed, so the meter's schedule went unchecked");
@@ -147,7 +151,7 @@ fn a_level_with_one_complete_side_past_the_seed_cap_never_grows() {
 /// quarter is one node of one pair on every level outside it.
 #[test]
 fn a_level_of_one_pair_nodes_seeds_its_products_arena() {
-    let vtree = Arc::new(Vtree::balanced(16));
+    let vtree = Home::new(Vtree::balanced(16));
     let all: Vec<u32> = (1..=16).collect();
     let mut rng = Lcg::new(0x5eed_a905);
     let before = pairs_grown();
@@ -166,7 +170,7 @@ fn a_level_of_one_pair_nodes_seeds_its_products_arena() {
 /// implicit levels and on stored ones alike ([`same_as_stored`]).
 #[test]
 fn shared_variables_leave_one_side_on_the_grid() {
-    let vtree = Arc::new(Vtree::balanced(16));
+    let vtree = Home::new(Vtree::balanced(16));
     // `f` also reads 2 and 4, under the leftmost quarter, and `g` 13 and 15,
     // under the rightmost.
     let fv: Vec<u32> = (1..=16).filter(|v| v % 2 == 1 || *v == 2 || *v == 4).collect();
@@ -195,7 +199,7 @@ fn shared_variables_leave_one_side_on_the_grid() {
 /// which takes such a level first wherever it may, is closed here.
 #[test]
 fn a_lone_g_pair_is_read_as_its_column() {
-    let vtree = Arc::new(Vtree::balanced(16));
+    let vtree = Home::new(Vtree::balanced(16));
     let all: Vec<u32> = (1..=16).collect();
     let mut rng = Lcg::new(0x5eed_a904);
     let before = complete_census();
@@ -232,7 +236,7 @@ fn one_pair_columns_read_as_their_columns() {
     let fv: Vec<u32> = (1..=16).filter(|v| v % 2 == 1 || *v == 2 || *v == 4).collect();
     let gv: Vec<u32> = (1..=16).filter(|v| v % 2 == 0 || *v == 13 || *v == 15).collect();
     let few: Vec<u32> = vec![1, 2, 3, 4, 9, 10];
-    for (shape, vtree) in [("balanced", Arc::new(Vtree::balanced(16))), ("random", Arc::new(Vtree::random(16, 0x5eed_a907)))] {
+    for (shape, vtree) in [("balanced", Home::new(Vtree::balanced(16))), ("random", Home::new(Vtree::random(16, 0x5eed_a907)))] {
         let mut rng = Lcg::new(0x5eed_a906);
         let before = complete_census();
         for round in 0..8 {
@@ -267,12 +271,13 @@ fn one_pair_columns_give_back_their_table() {
         eng.and(f.clone(), g.clone()).unwrap();
         eng.limits().meters().in_flight_bytes
     };
-    for (shape, vtree) in [("balanced", Arc::new(Vtree::balanced(16))), ("random", Arc::new(Vtree::random(16, 0x5eed_a907)))] {
+    for (shape, vtree) in [("balanced", Home::new(Vtree::balanced(16))), ("random", Home::new(Vtree::random(16, 0x5eed_a907)))] {
         let mut rng = Lcg::new(0x5eed_a908);
         let before = complete_census();
         for round in 0..4 {
             let f = function_of(&vtree, &fv, &mut rng);
             let g = function_of(&vtree, &gv, &mut rng);
+            let (f, g) = crate::test_helpers::on_one(&crate::Engine::new(), f, g);
             let lone = meter(&f, &g);
             let read = column_reads(|| meter(&f, &g));
             assert_eq!(lone, read, "{shape}, round {round}: the meter after the conjunction moved with the column reads");
@@ -285,7 +290,7 @@ fn one_pair_columns_give_back_their_table() {
 /// census counts no level while it is forced.
 #[test]
 fn the_oracle_reads_every_side_from_the_grid() {
-    let vtree = Arc::new(Vtree::balanced(8));
+    let vtree = Home::new(Vtree::balanced(8));
     let mut rng = Lcg::new(0x5eed_a903);
     let f = function_of(&vtree, &[1, 3, 5, 7], &mut rng);
     let g = function_of(&vtree, &[2, 4, 6, 8], &mut rng);

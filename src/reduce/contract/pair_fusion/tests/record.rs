@@ -1,6 +1,7 @@
 //! A pair fusion that runs to the end is recorded on its parent, and the
 //! next fusion there is skipped until an edit pushes the level.
 
+use crate::test_helpers::bare_roots;
 use super::*;
 use crate::diagram::{
     ChildDecoder, ChildPair, EncodedChildRef, LeafLabel, NodeIdx, TddLevel, TddNodeId, ValueRef,
@@ -105,7 +106,7 @@ fn a_skipped_fusion_is_one_that_finds_no_group() {
     let mut rng = Lcg::new(29);
     let mut recorded = 0;
     for num_vars in 4..9u32 {
-        for (shape, vtree) in vtree_shapes(num_vars) {
+        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
             let eng = Engine::new();
             let clauses = rand_cnf(
                 &mut rng,
@@ -232,7 +233,7 @@ fn a_conjunction_records_the_levels_it_builds_beside_a_recorded_carrier() {
     let mut rng = Lcg::new(37);
     let (mut recorded, mut kept_by_clause) = (0, 0);
     for num_vars in 5..9u32 {
-        for (shape, vtree) in vtree_shapes(num_vars) {
+        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
             let eng = Engine::new();
             let clauses = rand_cnf(
                 &mut rng,

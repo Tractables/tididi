@@ -61,11 +61,11 @@ impl Tdd {
     /// The result is certified ([`is_canonical`](Self::is_canonical)).
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
     /// use tididi::vtree::VarId;
     ///
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let vars = [VarId(1), VarId(2), VarId(3)];
     /// // Bit 0 is read access, bit 1 write access, bit 2 sharing.
     /// let rows = [0b001, 0b011, 0b101, 0b011];

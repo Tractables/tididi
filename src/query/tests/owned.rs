@@ -1,13 +1,13 @@
+use crate::vtree::Home;
 use crate::{Engine, OperationError, Tdd, Vtree};
 use crate::query::{OwnedEvaluator, OwnedModelCounter, PinSemantics, Retention};
 use crate::diagram::RationalWeights;
 use crate::test_helpers::assert_canonical;
 use crate::vtree::VarId;
-use std::sync::Arc;
 
 #[test]
 fn moved_queries_match_borrowed_queries_and_return_the_original_storage() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let f = Tdd::clause(&vtree, [1, -2, 3]).unwrap();
     assert_canonical(&f);
     for retention in [Retention::All, Retention::Frontier] {
@@ -40,7 +40,7 @@ fn moved_queries_match_borrowed_queries_and_return_the_original_storage() {
 
 #[test]
 fn owned_evaluation_survives_moves_weight_changes_and_failed_observations() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = Tdd::clause(&vtree, [1, 2]).unwrap();
     assert_canonical(&f);
     let weights = RationalWeights::unit(3);
@@ -66,7 +66,7 @@ fn owned_evaluation_survives_moves_weight_changes_and_failed_observations() {
 
 #[test]
 fn owned_queries_bind_to_limits_and_recover_after_every_reservation_refusal() {
-    let vtree = Arc::new(Vtree::balanced(16));
+    let vtree = Home::new(Vtree::balanced(16));
     let f = Tdd::clause(&vtree, [1, 8, 16]).unwrap();
     assert_canonical(&f);
     let engine = Engine::new();

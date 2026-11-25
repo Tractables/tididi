@@ -65,11 +65,11 @@ const FIELD_WIDTH_BITS: u32 = 5;
 /// partial file may then be left behind.
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{Tdd, Vtree};
 /// use tididi::io::{load_tdd_binary, save_tdd_binary};
 ///
-/// let vtree = Arc::new(Vtree::balanced(3));
+/// let vtree = Home::new(Vtree::balanced(3));
 /// let f = Tdd::clause(&vtree, [1, -2])?;
 /// let path = std::env::temp_dir().join("tididi-doc-save.tddb");
 /// save_tdd_binary(&f, &path)?;
@@ -106,11 +106,11 @@ pub fn save_tdd_binary(f: &Tdd, path: impl AsRef<Path>) -> Result<(), IoError> {
 /// [`IoError::Io`] if a write to `w` fails.
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{Tdd, Vtree};
 /// use tididi::io::{read_tdd_binary, write_tdd, write_tdd_binary};
 ///
-/// let vtree = Arc::new(Vtree::balanced(3));
+/// let vtree = Home::new(Vtree::balanced(3));
 /// let f = Tdd::clause(&vtree, [1, -2])?;
 /// let (mut binary, mut text) = (Vec::new(), Vec::new());
 /// write_tdd_binary(&mut binary, &f)?;
@@ -193,11 +193,11 @@ pub fn load_tdd_binary(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd
 /// if reading fails.
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{Tdd, Vtree};
 /// use tididi::io::{read_tdd_binary, write_tdd_binary, IoError};
 ///
-/// let vtree = Arc::new(Vtree::balanced(3));
+/// let vtree = Home::new(Vtree::balanced(3));
 /// let f = Tdd::clause(&vtree, [1, -2])?;
 /// let mut bytes = Vec::new();
 /// write_tdd_binary(&mut bytes, &f)?;
@@ -1006,7 +1006,7 @@ fn parse_body(with_trailer: &[u8], vtree: &Arc<Vtree>, with_counts: bool) -> Res
 fn read_projection(body: &mut Body<'_>, home: &Home) -> Result<Arc<Vtree>, IoError> {
     let leaves = body.varint("leaf count")?;
     let nodes = body.varint("vtree node count")?;
-    let most = u64::from(home.vtree().num_leaves());
+    let most = u64::from(home.num_leaves());
     if leaves > most || nodes != (2 * leaves).saturating_sub(1) || nodes > body.left() as u64 {
         return Err(malformed(format!(
             "the file's vtree has {leaves} leaves and {nodes} nodes, not a projection of the \

@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use super::*;
 use crate::limits::{LimitConfig, OperationError, StopAt, StopRules};
 use crate::test_helpers::{assert_canonical, stopping_engine};
@@ -40,7 +41,7 @@ fn projected_counts_match_all_three_variable_truth_tables() {
 
 #[test]
 fn projected_counts_cover_leaf_outputs_and_large_free_domains() {
-    let vtree = Arc::new(Vtree::leaf(VarId(72)));
+    let vtree = Home::new(Vtree::leaf(VarId(72)));
     for f in [Tdd::zero(&vtree), Tdd::one(&vtree), crate::literal(&vtree, 72).unwrap()] {
         assert_canonical(&f);
         assert_eq!(f.projected_model_count(&[VarId(72)]).unwrap(), f.model_count().unwrap());
@@ -48,7 +49,7 @@ fn projected_counts_cover_leaf_outputs_and_large_free_domains() {
         assert_eq!(f.projected_model_count(&[VarId(72), VarId(1)]),
             Err(OperationError::VariableNotInVtree(VarId(1))));
     }
-    let vtree = Arc::new(Vtree::balanced(132));
+    let vtree = Home::new(Vtree::balanced(132));
     let f = crate::literal(&vtree, 132).unwrap();
     assert_canonical(&f);
     let selected: Vec<_> = (1..=130).map(VarId).collect();
@@ -81,7 +82,7 @@ fn projected_counts_ignore_weights_and_reject_marginal_structure() {
 
 #[test]
 fn projected_counts_preserve_inputs_and_recover_after_refusals() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = Tdd::clause(&vtree, [1, 2]).unwrap();
     assert_canonical(&f);
     let engine = Engine::new();
@@ -109,7 +110,7 @@ fn projected_counts_preserve_inputs_and_recover_after_refusals() {
 
 #[test]
 fn projected_counts_recover_from_each_allocation_failure() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let left = Tdd::clause(&vtree, [1, 3]).unwrap();
     let right = Tdd::clause(&vtree, [2, 4]).unwrap();
     assert_canonical(&left);

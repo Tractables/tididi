@@ -18,11 +18,12 @@ budget lets us demonstrate a refused allocation:
 
 ```rust,ignore,{class=tested-example}
 use std::sync::Arc;
+use tididi::vtree::Home;
 
 use tididi::limits::LimitConfig;
 use tididi::{literal, OperationError, Tdd, Vtree};
 
-let vtree = Arc::new(Vtree::balanced(4));
+let vtree = Home::new(Vtree::balanced(4));
 let context = Arc::clone(vtree.context());
 let limit = LimitConfig::none().with_memory_budget_bytes(Some(0));
 let attempt = context.with_limits(limit, |operations| {

@@ -1,5 +1,5 @@
+use crate::test_helpers::bare_roots;
 use crate::diagram::ChildDecoder;
-use std::sync::Arc;
 
 use super::*;
 
@@ -13,7 +13,7 @@ use crate::vtree::{VarId, Vtree, VtreeIdx};
 #[test]
 fn test_constant_one() {
     let eng = &crate::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = std::sync::Arc::new(Vtree::balanced(3));
     let tdd = constant_one(eng, &vtree);
 
     // Internal levels have width 1 (one node with pair (One, One))
@@ -243,7 +243,7 @@ fn a_clause_reads_its_literals_as_a_set() {
 #[test]
 fn constructors_come_out_certified_at_their_reduction_fixpoint() {
     let eng = &crate::Engine::new();
-    for (shape, vtree) in vtree_shapes(5) {
+    for (shape, vtree) in bare_roots(vtree_shapes(5)) {
         let built = [
             constant_one(eng, &vtree),
             constant_zero(eng, &vtree),
@@ -281,9 +281,7 @@ fn constructors_come_out_certified_at_their_reduction_fixpoint() {
 #[test]
 fn constants_on_a_home_come_out_certified() {
     let eng = &crate::Engine::new();
-    for (shape, vtree) in vtree_shapes(5) {
-        let hm = crate::vtree::Home::new(vtree);
-        let home = std::sync::Arc::clone(hm.vtree());
+    for (shape, home) in vtree_shapes(5) {
         let built = [
             constant_one(eng, &home),
             constant_zero(eng, &home),

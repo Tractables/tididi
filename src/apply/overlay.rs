@@ -898,10 +898,10 @@ fn across(eng: &Engine, op: Overlay, f: Tdd, g: Tdd) -> Result<Tdd, OperationErr
 /// [`Engine::minimize`](crate::Engine::minimize) certifies it.
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{and_not, literal, Tdd, Vtree};
 ///
-/// let vtree = Arc::new(Vtree::balanced(3));
+/// let vtree = Home::new(Vtree::balanced(3));
 /// let first = literal(&vtree, 1)?;
 /// let first_two = Tdd::cube(&vtree, [1, 2])?;
 /// let f = and_not(first, first_two)?;

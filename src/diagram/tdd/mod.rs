@@ -32,10 +32,10 @@ use super::primitives::{LEAF_WIDTH, ONE_LEAF_IDX, TddNodeId, TRUE, ZERO};
 /// [`or`](crate::or):
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{and, literal, Vtree};
 ///
-/// let vtree = Arc::new(Vtree::balanced(2));
+/// let vtree = Home::new(Vtree::balanced(2));
 /// let x = literal(&vtree, 1)?;
 /// let y = literal(&vtree, 2)?;
 /// let f = and(x, y.negate()?)?;
@@ -61,11 +61,11 @@ use super::primitives::{LEAF_WIDTH, ONE_LEAF_IDX, TddNodeId, TRUE, ZERO};
 /// ([`and`](crate::and)) a borrowed operand, which it reads in place.
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{Tdd, Vtree};
 /// use tididi::vtree::VarId;
 ///
-/// let vtree = Arc::new(Vtree::balanced(3));
+/// let vtree = Home::new(Vtree::balanced(3));
 /// let f = Tdd::clause(&vtree, [1, 2])?;
 /// let with_first = f.clone().condition_var(VarId(1), true)?;
 /// let without_first = f.clone().condition_var(VarId(1), false)?;
@@ -189,9 +189,9 @@ impl Tdd {
     ///
     /// let home = Home::new(Vtree::balanced(4));
     /// let f = Tdd::clause(&Vtree::projection(&home, [VarId(1), VarId(3)])?, [1, -3])?;
-    /// assert!(Arc::ptr_eq(f.home().unwrap().vtree(), home.vtree()));
-    /// let all = Tdd::clause(home.vtree(), [2, 4])?;
-    /// assert!(Arc::ptr_eq(all.home().unwrap().vtree(), home.vtree()));
+    /// assert!(Arc::ptr_eq(&f.home().unwrap(), &home));
+    /// let all = Tdd::clause(&home, [2, 4])?;
+    /// assert!(Arc::ptr_eq(&all.home().unwrap(), &home));
     /// assert!(Tdd::clause(&Arc::new(Vtree::balanced(4)), [1])?.home().is_none());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -258,12 +258,12 @@ impl crate::Engine {
     /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical)).
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Engine, OperationError, Vtree};
     /// use tididi::limits::LimitConfig;
     ///
     /// let engine = Engine::new();
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = engine.clause(&vtree, [1, 2])?;
     /// let g = engine.try_clone(&f)?;
     /// assert!(engine.equivalent(&f, &g)?);
@@ -410,9 +410,9 @@ impl Tdd {
     /// still be canonical, unknown to the library.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{and, Engine, Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let vtree = Home::new(Vtree::balanced(2));
     /// let f = Tdd::clause(&vtree, [-1, 2])?;
     /// let mut y = and(f, Tdd::clause(&vtree, [1, 2])?)?;
     /// assert!(!y.is_canonical());
@@ -509,11 +509,11 @@ impl Tdd {
     /// sums the levels; later calls are constant-time.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::Tdd;
     /// use tididi::vtree::Vtree;
     ///
-    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let vtree = Home::new(Vtree::balanced(4));
     /// let mut f = Tdd::clause(&vtree, [1, -2])? & Tdd::clause(&vtree, [2, 3])?;
     /// f.minimize()?;
     /// assert!(f.pair_count() > 0);

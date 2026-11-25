@@ -22,11 +22,11 @@ use super::numbering::{number_reachable, LevelNumbering, OMITTED};
 /// created or a write to it fails; a partial file may then be left behind.
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{Tdd, Vtree};
 /// use tididi::io::{load_tdd, save_tdd};
 ///
-/// let vtree = Arc::new(Vtree::balanced(3));
+/// let vtree = Home::new(Vtree::balanced(3));
 /// let f = Tdd::clause(&vtree, [1, -2])?;
 /// let path = std::env::temp_dir().join("tididi-doc-save.tdd");
 /// save_tdd(&f, &path)?;
@@ -80,17 +80,17 @@ fn push_num<N: itoa::Integer>(buf: &mut Vec<u8>, n: N) {
 /// Save the vtree and diagram together, then restore them:
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{Tdd, Vtree};
 /// use tididi::io::{read_tdd, write_tdd};
 ///
-/// let vtree = Arc::new(Vtree::balanced(3));
+/// let vtree = Home::new(Vtree::balanced(3));
 /// let f = Tdd::clause(&vtree, [1, -2])?;
 /// let vtree_text = vtree.to_text();
 /// let mut bytes = Vec::new();
 /// write_tdd(&mut bytes, &f)?;
 ///
-/// let loaded_vtree = Arc::new(Vtree::from_text(&vtree_text)?);
+/// let loaded_vtree = Home::new(Vtree::from_text(&vtree_text)?);
 /// let loaded = read_tdd(&mut bytes.as_slice(), &loaded_vtree)?;
 /// let expected = Tdd::clause(&loaded_vtree, [1, -2])?;
 /// assert!(loaded.equivalent(&expected)?);

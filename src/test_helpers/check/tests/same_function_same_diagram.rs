@@ -16,7 +16,7 @@
 //! component — reaches these diagrams by other routes; that variety belongs to
 //! the driver's own tests, not here.
 
-use std::sync::Arc;
+use crate::vtree::Home;
 
 
 use crate::test_helpers::{
@@ -99,7 +99,7 @@ fn compiling_the_same_formula_twice_is_deterministic() {
 #[test]
 fn clause_order_does_not_reach_a_different_diagram_on_four_queens() {
     let (num_vars, clauses) = queens_clauses(4);
-    let vtree = Arc::new(Vtree::balanced(num_vars));
+    let vtree = Home::new(Vtree::balanced(num_vars));
 
     let original = compile_clauses(&vtree, &clauses);
     let mut reversed = clauses;

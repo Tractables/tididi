@@ -22,11 +22,11 @@ use super::evaluate::Evaluate;
 /// probability. Divide by the evidence probability to normalize it.
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use num_rational::BigRational;
 /// use tididi::{Tdd, Vtree};
 /// use tididi::diagram::{LiteralWeights, RationalWeights};
-/// let vtree = Arc::new(Vtree::balanced(2));
+/// let vtree = Home::new(Vtree::balanced(2));
 /// let either = Tdd::clause(&vtree, [1, 2])?;
 /// let half = BigRational::new(1.into(), 2.into());
 /// let weights = RationalWeights::from_literals(&[

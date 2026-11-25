@@ -4,10 +4,12 @@
 //! children's grids — the product of the operands' node counts at each
 //! child — and then walk every combination of the two roots' pairs, to
 //! conjoin two pair lists whose result is a few thousand pairs.
+use crate::vtree::Home;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::inner_index::{block, pack};
+use crate::test_helpers::on_one;
 
 use crate::apply::conjoin::route::Route;
 use crate::diagram::Tdd;
@@ -27,9 +29,9 @@ fn rows(stride: u64) -> Vec<Vec<u64>> {
 /// At each block's root level both operands hold one node per value, so the
 /// child grids of the vtree root are `2000 × 2000` cells each while the root
 /// level itself is `1 × 1`.
-fn root_join(eng: &Engine) -> (Tdd, Tdd, Arc<Vtree>) {
+fn root_join(eng: &Engine) -> (Tdd, Tdd, Home) {
     let (a, b): (Vec<VarId>, Vec<VarId>) = (block(1, 11), block(12, 11));
-    let vtree = Arc::new(Vtree::join(
+    let vtree = Home::new(Vtree::join(
         &Vtree::balanced_over(&a).unwrap(),
         &Vtree::balanced_over(&b).unwrap(),
     ).unwrap());
@@ -121,13 +123,14 @@ fn a_one_cell_root_over_long_pair_lists_takes_the_sparse_route() {
     // combinations alone.
     let eng = Engine::new();
     let bits = 10;
-    let vtree = Arc::new(Vtree::join(
+    let vtree = Home::new(Vtree::join(
         &Vtree::balanced_over(&block(1, bits)).unwrap(),
         &Vtree::balanced_over(&block(1 + bits, bits)).unwrap(),
     ).unwrap());
     let f = rectangles(&eng, &vtree, bits, 32, 0);
     let g = rectangles(&eng, &vtree, bits, 32, 16);
-    let root = vtree.root();
+    let (f, g) = on_one(&eng, f, g);
+    let root = f.vtree().root();
     assert_eq!((f.level(root).node_count(), g.level(root).node_count()), (1, 1), "one node at each root");
     let conjoin = |route: SparseRoute| {
         let _installed = eng.limits().scope(LimitConfig::none().with_sparse_route(route));

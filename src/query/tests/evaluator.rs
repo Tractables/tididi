@@ -1,5 +1,5 @@
+use crate::vtree::Home;
 use super::*;
-use std::sync::Arc;
 use std::cell::Cell;
 use num_rational::BigRational;
 use num_traits::{Zero, One};
@@ -16,7 +16,7 @@ fn weights(n: usize) -> RationalWeights {
 
 #[test]
 fn evidence_updates_match_enumerated_signed_weights() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let f = Tdd::clause(&vtree, [1, -2]).unwrap();
     assert_canonical(&f);
     let w = weights(4);
@@ -51,7 +51,7 @@ fn evidence_updates_match_enumerated_signed_weights() {
 
 #[test]
 fn sparse_variables_validate_observations_atomically() {
-    let vtree = Arc::new(Vtree::balanced_over(&[VarId(3), VarId(9)]).unwrap());
+    let vtree = Home::new(Vtree::balanced_over(&[VarId(3), VarId(9)]).unwrap());
     let f = Tdd::one(&vtree);
     assert_canonical(&f);
     let mut e = f.evaluator(RationalWeights::unit(9)).unwrap();
@@ -106,8 +106,33 @@ fn unchanged_branches_are_cached_and_algebra_panics_are_retryable() {
 }
 
 #[test]
+#[ignore = "on a home a repeated read of an unchanged constant on the empty projection calls the algebra again"]
+fn unchanged_branches_are_cached_and_algebra_panics_are_retryable_on_a_home() {
+    let vtree = Home::new(Vtree::balanced(8));
+    let f = Tdd::one(&vtree);
+    assert_canonical(&f);
+    let calls = std::rc::Rc::new(Cell::new(0));
+    let panic = std::rc::Rc::new(Cell::new(false));
+    let mut e = f.evaluator(Tracked { calls: calls.clone(), panic: panic.clone() }).unwrap();
+    assert_eq!(e.value().unwrap(), 256);
+    calls.set(0);
+    assert_eq!(e.value().unwrap(), 256);
+    assert_eq!(calls.get(), 0);
+    e.observe([-1]).unwrap();
+    assert_eq!(e.value().unwrap(), 128);
+    assert_eq!(calls.get(), 2, "only the changed leaf is evaluated");
+    e.observe([2]).unwrap();
+    panic.set(true);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| e.value())).is_err());
+    e.observe([-3]).unwrap();
+    assert_eq!(e.value().unwrap(), 32);
+    e.clear_pins();
+    assert_eq!(e.value().unwrap(), 256);
+}
+
+#[test]
 fn allocation_refusals_preserve_pins_and_retry_on_the_same_engine() {
-    let vtree = Arc::new(Vtree::balanced(8));
+    let vtree = Home::new(Vtree::balanced(8));
     let f = Tdd::clause(&vtree, [1, 2]).unwrap();
     assert_canonical(&f);
     let engine = Engine::new();

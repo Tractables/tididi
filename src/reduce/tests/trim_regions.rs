@@ -303,7 +303,7 @@ fn with_region(case: u64, rng: &mut Lcg) -> Option<(Home, Tdd, Option<Arithmetic
     let arithmetic = modes[case as usize % modes.len()];
     let n = 3 + rng.below(8) as u32;
     let mut home = Home::new(Vtree::random(n, case));
-    let all: Vec<VarId> = home.vtree().leaf_bottomup().map(|(_, var)| var).collect();
+    let all: Vec<VarId> = home.leaf_bottomup().map(|(_, var)| var).collect();
     let used: Vec<VarId> = all.iter().copied().filter(|_| rng.below(4) != 0).collect();
     let mut f = operand(&eng, &home, &used, rng);
     if let Some(arithmetic) = arithmetic {
@@ -311,7 +311,7 @@ fn with_region(case: u64, rng: &mut Lcg) -> Option<(Home, Tdd, Option<Arithmetic
         f = reweighted(&f, &home, &weighted);
         home = weighted;
     }
-    let h = VtreeIdx(rng.below(home.vtree().num_nodes() as u64) as u32);
+    let h = VtreeIdx(rng.below(home.num_nodes() as u64) as u32);
     eng.marginalize(&mut f, under(&home, &[h])).ok()?;
     f.vtree().has_regions().then_some((home, f, arithmetic))
 }
@@ -332,7 +332,7 @@ fn a_dropped_leaf_over_a_region_adds_the_values_its_nodes_name() {
             continue;
         }
         let untrimmed = unsafe { b.finish_unchecked(out) };
-        let n = home.vtree().num_leaves();
+        let n = home.num_leaves();
         let floats = arithmetic == Some(Arithmetic::ScaledFloat);
         let mut t = untrimmed.clone();
         Engine::new().trim(&mut t, &home).unwrap_or_else(|e| panic!("{what}: {e:?}"));        same_pointwise(&untrimmed, &t, n, floats, &what);
@@ -384,7 +384,7 @@ fn a_refused_trim_over_a_region_leaves_the_diagram() {
             continue;
         }
         checked += 1;
-        let n = home.vtree().num_leaves();
+        let n = home.num_leaves();
         let floats = arithmetic == Some(Arithmetic::ScaledFloat);
         let unchanged = |g: &Tdd, what: &str| {
             assert!(Arc::ptr_eq(g.vtree(), untrimmed.vtree()), "{what}: the vtree moved");

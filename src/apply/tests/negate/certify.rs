@@ -2,7 +2,7 @@
 //! certified, and a full reduction with the certificate dropped finds nothing
 //! to merge.
 
-use std::sync::Arc;
+use crate::vtree::Home;
 
 use crate::reduce::ReductionPlan;
 use crate::test_helpers::{assert_same_shape, compile_clauses_on, rand_cnf, vtree_shapes, CnfShape, Lcg};
@@ -53,7 +53,7 @@ fn the_complement_of_a_minimized_operand_is_minimal_once_pruned() {
 #[test]
 fn an_uncertified_operands_complement_minimizes_to_the_certified_one() {
     let eng = &Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let f = Tdd::clause(&vtree, [1, 2]).unwrap();
     let g = Tdd::clause(&vtree, [-2, 3]).unwrap();
     let mut conj = eng.and(f, g).unwrap();
@@ -71,7 +71,7 @@ fn an_uncertified_operands_complement_minimizes_to_the_certified_one() {
 #[test]
 fn a_leaf_root_complement_is_certified() {
     let eng = &Engine::new();
-    let vtree = Arc::new(Vtree::balanced(1));
+    let vtree = Home::new(Vtree::balanced(1));
     let x = crate::literal(&vtree, 1).unwrap();
     let negated = crate::apply::with_plan::negate_with(eng, x, ReductionPlan::Prune).unwrap();
     assert_certified_minimal(eng, &negated, "leaf root");

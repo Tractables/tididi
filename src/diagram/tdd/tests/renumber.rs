@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use crate::vtree::Home;
 
 use super::*;
 use crate::limits::{LimitConfig, StopAt, StopRules};
@@ -136,7 +136,7 @@ fn renumbering_twice_changes_nothing() {
 #[test]
 fn the_output_comes_first_and_unreached_nodes_last() {
     // A conjunction left unreduced keeps nodes the output does not reach.
-    let vtree = Arc::new(Vtree::balanced(6));
+    let vtree = Home::new(Vtree::balanced(6));
     let eng = Engine::new();
     let a = compile_clauses_on(&eng, &vtree, &[vec![1, -4], vec![2, 5], vec![-3, 6]]);
     let b = compile_clauses_on(&eng, &vtree, &[vec![-1, 4], vec![-2, -6]]);
@@ -220,7 +220,7 @@ fn an_implicit_level_is_read_off_its_description() {
 
 #[test]
 fn false_is_copied() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let mut f = Tdd::clause(&vtree, [1]).unwrap() & Tdd::clause(&vtree, [-1]).unwrap();
     f.minimize().unwrap();
     assert!(f.is_zero());
@@ -232,7 +232,7 @@ fn false_is_copied() {
 
 #[test]
 fn renumbering_honors_cancellation_memory_and_the_output_cap() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let f = Tdd::clause(&vtree, [1, 2, 3, 4]).unwrap();
     assert_canonical(&f);
     let eng = Engine::new();
@@ -252,7 +252,7 @@ fn renumbering_honors_cancellation_memory_and_the_output_cap() {
 
 #[test]
 fn a_refused_allocation_leaves_the_operand_intact() {
-    let vtree = Arc::new(Vtree::balanced(8));
+    let vtree = Home::new(Vtree::balanced(8));
     let mut f = compile_clauses(&vtree, &[vec![1, 2, -5], vec![-2, 3, 6], vec![4, -7, 8], vec![-1, 5, -8], vec![3, -4, 7]]);
     f.attach_level_counts().unwrap();
     let before = pairs_by_node(&f);

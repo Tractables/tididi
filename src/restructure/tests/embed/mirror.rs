@@ -1,3 +1,4 @@
+use crate::test_helpers::bare_roots;
 use std::sync::Arc;
 
 use crate::test_helpers::{assert_canonical, compile_clauses, test_cases, vtree_shapes};
@@ -42,7 +43,7 @@ fn renamed(clauses: &[Vec<i32>], rename: impl Fn(VarId) -> VarId) -> Vec<Vec<i32
 #[test]
 fn a_mirrored_copy_is_the_diagram_compiled_on_the_mirrored_tree() {
     for (num_vars, clauses) in test_cases() {
-        for (name, vtree) in vtree_shapes(num_vars) {
+        for (name, vtree) in bare_roots(vtree_shapes(num_vars)) {
             let f = compile_clauses(&vtree, &clauses);
             let rename = |v: VarId| VarId(num_vars + 1 - v.0);
             for pick in 0..3u32 {

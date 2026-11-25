@@ -4,11 +4,10 @@
 //! (its walks asking the cache ahead or not, and its routed lookups
 //! pipelined or not) and with none. All give the same levels, the same
 //! minimized diagram and the same count.
-
 use std::sync::Arc;
 
 use super::{ForcedPrefetch, ForcedThresholds, SparseThresholds};
-use crate::apply::conjoin::{conjoin_checked, VtreeMask};
+use crate::apply::conjoin::conjoin_either;
 use crate::diagram::Tdd;
 use crate::test_helpers::{assert_canonical, normalized_levels, rand_conj_over, vtree_shapes, Lcg};
 use crate::vtree::Vtree;
@@ -25,7 +24,7 @@ const NEVER: SparseThresholds = SparseThresholds { min_grid: usize::MAX, ..Spars
 
 fn and_under(eng: &Engine, thresholds: SparseThresholds, f: &Tdd, g: &Tdd) -> Tdd {
     let _forced = ForcedThresholds::install(thresholds);
-    conjoin_checked(eng, f.clone(), g.clone(), VtreeMask::new(None))
+    conjoin_either(eng, f.into(), g.into())
         .expect("an unarmed engine refuses nothing")
 }
 

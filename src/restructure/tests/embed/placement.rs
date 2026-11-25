@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use std::sync::Arc;
 
 use crate::diagram::LEAF_WIDTH;
@@ -172,7 +173,7 @@ fn a_one_variable_diagram_embeds() {
 
 #[test]
 fn a_constant_true_diagram_embeds() {
-    let small = Arc::new(Vtree::balanced(3));
+    let small = Home::new(Vtree::balanced(3));
     let f = Tdd::one(&small);
     let big = Arc::new(
         Vtree::join(

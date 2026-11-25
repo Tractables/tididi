@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use tididi::vtree::Home;
 
 use tididi::{Engine, Literal, OperationError, Tdd, Vtree};
 use tididi::limits::LimitConfig;
@@ -14,7 +14,7 @@ fn assert_clause(mut result: Tdd, expected: &Tdd) {
 
 #[test]
 fn clause_conjunction_accepts_integer_and_typed_collections() {
-    let tree = Arc::new(Vtree::balanced(3));
+    let tree = Home::new(Vtree::balanced(3));
     let signed = vec![1, -2];
     let typed = vec![Literal::pos(VarId(1)), Literal::neg(VarId(2))];
     let expected = Tdd::clause(&tree, &signed).unwrap();
@@ -34,7 +34,7 @@ fn clause_conjunction_accepts_integer_and_typed_collections() {
 
 #[test]
 fn integer_clause_boundaries_preserve_boolean_meaning() {
-    let tree = Arc::new(Vtree::balanced(3));
+    let tree = Home::new(Vtree::balanced(3));
     let input = tididi::literal(&tree, 3).unwrap();
     let zero = Tdd::zero(&tree);
     let expected = Tdd::cube(&tree, [1, 3]).unwrap();
@@ -49,7 +49,7 @@ fn integer_clause_boundaries_preserve_boolean_meaning() {
 
 #[test]
 fn integer_clauses_validate_even_after_tautology_or_on_false() {
-    let tree = Arc::new(Vtree::balanced(3));
+    let tree = Home::new(Vtree::balanced(3));
     for input in [Tdd::one(&tree), Tdd::zero(&tree)] {
         assert_canonical(&input);
         assert_eq!(input.clone().and_clause([1, -1, 0]).unwrap_err(), OperationError::InvalidLiteral(0));
@@ -62,7 +62,7 @@ fn integer_clauses_validate_even_after_tautology_or_on_false() {
 
 #[test]
 fn integer_conversion_obeys_the_batch_allocation_budget() {
-    let tree = Arc::new(Vtree::balanced(3));
+    let tree = Home::new(Vtree::balanced(3));
     let input = Tdd::one(&tree);
     assert_canonical(&input);
     let engine = Engine::new();

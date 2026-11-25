@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use tididi::vtree::Home;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tididi::{Engine, OperationError, Tdd, Vtree};
@@ -23,7 +24,7 @@ fn expected_count(pins: [Option<bool>; 3], semantics: PinSemantics) -> usize {
 /// Exercise sparse variables, partial updates and duplicates against enumeration.
 fn bulk_counts(retention: Retention) {
     let vars = [VarId(10), VarId(3), VarId(72)];
-    let tree = Arc::new(Vtree::balanced_over(&vars).unwrap());
+    let tree = Home::new(Vtree::balanced_over(&vars).unwrap());
     let f = Tdd::clause(&tree, [10, -3]).unwrap();
     assert_canonical(&f);
     for semantics in [PinSemantics::Evidence, PinSemantics::Cofactor] {
@@ -64,7 +65,7 @@ fn bulk_evidence_matches_enumeration_with_both_policies_and_semantics() {
 
 /// Reject a bad middle entry without applying neighboring updates or losing pending ones.
 fn invalid_batches(retention: Retention) {
-    let tree = Arc::new(Vtree::balanced_over(&[VarId(10), VarId(3), VarId(72)]).unwrap());
+    let tree = Home::new(Vtree::balanced_over(&[VarId(10), VarId(3), VarId(72)]).unwrap());
     let f = Tdd::clause(&tree, [10, -3]).unwrap();
     assert_canonical(&f);
     for semantics in [PinSemantics::Evidence, PinSemantics::Cofactor] {
@@ -96,7 +97,7 @@ fn invalid_bulk_updates_preserve_cached_and_pending_evidence() {
 
 /// Reject summed-out variables in a batch while retaining live structural evidence.
 fn marginal_batches(retention: Retention) {
-    let tree = Arc::new(Vtree::balanced(4));
+    let tree = std::sync::Arc::new(Vtree::balanced(4));
     for summed in [tree.children(tree.root()).0, tree.leaf_of(VarId(1)).unwrap()] {
         let mut f = Tdd::clause(&tree, [1, 3]).unwrap();
         assert_canonical(&f);
@@ -127,7 +128,7 @@ fn summed_out_bulk_updates_are_atomic_and_remaining_pins_can_be_cleared() {
 
 /// Check both owned and borrowed bindings while their engine refuses reads.
 fn bound_batches(retention: Retention) {
-    let tree = Arc::new(Vtree::balanced(3));
+    let tree = Home::new(Vtree::balanced(3));
     let f = Tdd::clause(&tree, [1, -2]).unwrap();
     assert_canonical(&f);
     let engine = Engine::new();

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use crate::vtree::Home;
 
 use super::inner_index::{block, pack};
 use super::{ForcedThresholds, SparseThresholds};
@@ -56,7 +56,7 @@ fn unwinding_discards_partially_filled_sparse_workspace() {
 fn keyed_operands(eng: &Engine) -> (Tdd, Tdd) {
     let (a, b, c) = (block(1, 4), block(5, 3), block(8, 4));
     let ab = Vtree::join(&Vtree::balanced_over(&a).unwrap(), &Vtree::balanced_over(&b).unwrap()).unwrap();
-    let vtree = Arc::new(Vtree::join(&ab, &Vtree::balanced_over(&c).unwrap()).unwrap());
+    let vtree = Home::new(Vtree::join(&ab, &Vtree::balanced_over(&c).unwrap()).unwrap());
     let f_rows: Vec<Vec<u64>> = (0..12u64).map(|k| vec![k, (k * 5) % 8, k]).collect();
     let g_rows: Vec<Vec<u64>> = (0..12u64).filter(|k| k % 5 != 4).map(|k| vec![k, (k * 5) % 8]).collect();
     let (fv, fr) = pack(&[&a, &b, &c], &f_rows);

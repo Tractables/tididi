@@ -16,10 +16,10 @@ notifications. At least one destination is required, and remote backups
 require encryption: **(local ∨ remote) ∧ (¬remote ∨ encrypted)**.
 
 ```rust,ignore,{class=tested-example}
-use std::sync::Arc;
+use tididi::vtree::Home;
 use tididi::{literal, Vtree};
 
-let vtree = Arc::new(Vtree::balanced(4));
+let vtree = Home::new(Vtree::balanced(4));
 let local = literal(&vtree, 1)?;
 let remote = literal(&vtree, 2)?;
 let encrypted = literal(&vtree, 3)?;

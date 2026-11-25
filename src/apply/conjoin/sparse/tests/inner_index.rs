@@ -3,6 +3,7 @@
 //! when the outer's g keys hold more of the level's g pairs than the wanted
 //! inner-g children do, which a g operand free over the outer child makes
 //! true at every outer: all of its pairs sit under one key.
+use crate::vtree::Home;
 use std::sync::Arc;
 
 use num_bigint::BigUint;
@@ -43,14 +44,14 @@ pub(super) fn pack(blocks: &[&[VarId]], values: &[Vec<u64>]) -> (Vec<VarId>, Vec
 
 /// The three blocks `o`, `p`, `c` and the vtree `((o p) c)` over them, each
 /// block a balanced subtree.
-fn blocks_and_vtree() -> ([Vec<VarId>; 3], Arc<Vtree>) {
+fn blocks_and_vtree() -> ([Vec<VarId>; 3], Home) {
     let (o, p, c) = (block(1, 4), block(5, 3), block(8, 3));
     let op = Vtree::join(
         &Vtree::balanced_over(&o).unwrap(),
         &Vtree::balanced_over(&p).unwrap(),
     )
     .unwrap();
-    let vtree = Arc::new(Vtree::join(&op, &Vtree::balanced_over(&c).unwrap()).unwrap());
+    let vtree = Home::new(Vtree::join(&op, &Vtree::balanced_over(&c).unwrap()).unwrap());
     ([o, p, c], vtree)
 }
 

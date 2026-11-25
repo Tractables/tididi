@@ -69,24 +69,24 @@ pub(crate) fn region_unsupported(operation: &str) -> ! {
 /// Its leaves determine the variables counted by a diagram, including those
 /// the function leaves free.
 ///
-/// Wrap the vtree in one `Arc` and share that allocation among operands:
+/// Wrap the vtree in one [`Home`](super::Home) and share it among operands:
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{and, literal, Vtree};
 ///
-/// let vtree = Arc::new(Vtree::balanced(3));
+/// let vtree = Home::new(Vtree::balanced(3));
 /// let f = literal(&vtree, 1)?;
-/// let g = literal(f.vtree(), -2)?;
-/// assert!(Arc::ptr_eq(f.vtree(), g.vtree()));
+/// let g = literal(&vtree, -2)?;
+/// assert!(f.vtree().is_on(&vtree) && g.vtree().is_on(&vtree));
 /// let both = and(f, g)?;
 /// assert_eq!(both.model_count()?, 2u32.into());
 /// # Ok::<(), tididi::OperationError>(())
 /// ```
 ///
-/// Clone the `Arc` to share a vtree. Operands are matched by allocation, not by
-/// comparing shapes, so constructing an identical vtree separately creates an
-/// incompatible one.
+/// Clone the `Home` to share it. Operands are matched by their home's
+/// allocation, not by comparing shapes, so a home made separately from an
+/// identical vtree is incompatible.
 ///
 /// # Choosing a vtree
 ///

@@ -1,7 +1,7 @@
 //! [`Tdd::rotate_if`]: what a kept sequence leaves behind, and what a
 //! declined one does not.
+use crate::vtree::Home;
 
-use std::sync::Arc;
 
 use crate::Tdd;
 use crate::restructure::search::RotationMove;
@@ -10,8 +10,8 @@ use crate::vtree::{RotationKind, Vtree, VtreeIdx};
 
 /// A diagram with room to rotate: six variables, a cycle of clauses, and a
 /// balanced vtree.
-fn fixture() -> (Arc<Vtree>, Tdd) {
-    let vtree = Arc::new(Vtree::balanced(6));
+fn fixture() -> (Home, Tdd) {
+    let vtree = Home::new(Vtree::balanced(6));
     let mut tdd = compile_clauses(
         &vtree,
         &[

@@ -1,4 +1,5 @@
 //! What the rotation rebuild does when it cannot have the memory it needs.
+use crate::vtree::Home;
 
 use std::sync::Arc;
 
@@ -13,7 +14,7 @@ use crate::{Engine, and};
 #[test]
 fn a_rebuild_that_does_not_fit_the_budget_is_refused_not_taken() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(6));
+    let vtree = Home::new(Vtree::balanced(6));
     let mut f = and(Tdd::clause(&vtree, [1, 2, 3]).unwrap(), Tdd::clause(&vtree, [4, 5, 6]).unwrap())
         .unwrap();
     eng.minimize(&mut f).unwrap();

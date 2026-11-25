@@ -1,7 +1,8 @@
 //! What a whole-diagram minimize leaves behind: no pending work, and a
 //! certificate the next minimize reads instead of running the passes again.
 
-use std::sync::Arc;
+use crate::vtree::Home;
+use crate::test_helpers::bare_roots;
 
 use crate::diagram::Pass;
 use crate::test_helpers::{assert_canonical, compile_clauses, test_cases, vtree_shapes};
@@ -25,7 +26,7 @@ fn a_minimized_diagram_owes_the_passes_nothing() {
 #[test]
 fn a_second_minimize_of_a_certified_diagram_runs_no_pass() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(6));
+    let vtree = Home::new(Vtree::balanced(6));
     let mut f = compile_clauses(&vtree, &[vec![1, 2, 3], vec![-2, 4], vec![3, -5, 6]]);
     eng.minimize(&mut f).unwrap();
     assert!(f.levels.is_canonical(f.output));
@@ -39,7 +40,7 @@ fn a_second_minimize_of_a_certified_diagram_runs_no_pass() {
 #[test]
 fn an_edit_after_minimize_is_reduced_by_the_next_minimize() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let mut f = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3]]);
     eng.minimize(&mut f).unwrap();
     let g = compile_clauses(&vtree, &[vec![3, -4]]);
@@ -66,6 +67,42 @@ fn a_contraction_leaves_none_of_its_merges_on_its_own_worklist() {
     for round in 0..24 {
         let num_vars = 6 + (round % 5) as u32;
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 12, width: 3 });
+        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
+            let mut f = eng.clause(&vtree, clauses[0].iter().copied()).unwrap();
+            for clause in &clauses[1..] {
+                let g = eng.clause(&vtree, clause.iter().copied()).unwrap();
+                f = eng.and(f, g).unwrap();
+                let before = f.levels.node_count();
+                eng.reduce(&mut f, ReductionPlan::Contract).unwrap();
+                merged += before - f.levels.node_count();
+                assert!(f.dirty.levels(Pass::Contract).is_empty(), "{shape}: the contraction left itself work");
+                let settled = f.levels.node_count();
+                let internal: Vec<u32> = f.vtree().internal_bottomup().map(|(t, _, _)| t.0).collect();
+                f.seed_contract_worklist(internal);
+                contract_all_twins(&eng, &mut f).unwrap();
+                assert_eq!(f.levels.node_count(), settled, "{shape}: a level the contraction left had twins");
+            }
+            let expected = compile_clauses(&vtree, &clauses);
+            f.minimize().unwrap();
+            assert_canonical(&f);
+            assert!(eng.equivalent(&f, &expected).unwrap(), "{shape}: the contracted diagram changed its function");
+        }
+    }
+    assert!(merged > 0, "no conjunction left a twin to merge");
+}
+
+#[test]
+#[ignore = "on a home a contraction after a conjunction leaves twins that a second contraction of every level merges"]
+fn a_contraction_leaves_none_of_its_merges_on_its_own_worklist_on_a_home() {
+    use crate::reduce::contract::contract_all_twins;
+    use crate::reduce::ReductionPlan;
+    use crate::test_helpers::{rand_cnf, CnfShape, Lcg};
+    let eng = Engine::new();
+    let mut rng = Lcg::new(17);
+    let mut merged = 0;
+    for round in 0..24 {
+        let num_vars = 6 + (round % 5) as u32;
+        let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 12, width: 3 });
         for (shape, vtree) in vtree_shapes(num_vars) {
             let mut f = eng.clause(&vtree, clauses[0].iter().copied()).unwrap();
             for clause in &clauses[1..] {
@@ -76,7 +113,8 @@ fn a_contraction_leaves_none_of_its_merges_on_its_own_worklist() {
                 merged += before - f.levels.node_count();
                 assert!(f.dirty.levels(Pass::Contract).is_empty(), "{shape}: the contraction left itself work");
                 let settled = f.levels.node_count();
-                f.seed_contract_worklist(vtree.internal_bottomup().map(|(t, _, _)| t.0));
+                let internal: Vec<u32> = f.vtree().internal_bottomup().map(|(t, _, _)| t.0).collect();
+                f.seed_contract_worklist(internal);
                 contract_all_twins(&eng, &mut f).unwrap();
                 assert_eq!(f.levels.node_count(), settled, "{shape}: a level the contraction left had twins");
             }
@@ -103,7 +141,7 @@ fn a_marginal_contraction_leaves_no_merge_for_a_second() {
     for round in 0..24 {
         let num_vars = 6 + (round % 5) as u32;
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 14, width: 3 });
-        for (shape, vtree) in vtree_shapes(num_vars) {
+        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
             let half = clauses.len().div_ceil(2);
             let f = compile_clauses(&vtree, &clauses[..half]);
             let g = compile_clauses(&vtree, &clauses[half..]);

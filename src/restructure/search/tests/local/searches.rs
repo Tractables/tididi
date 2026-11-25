@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use super::*;
 use crate::vtree::Vtree;
 use std::sync::Arc;
@@ -15,8 +16,8 @@ fn level_snapshot(tdd: &Tdd) -> Vec<crate::diagram::TddLevel> {
     tdd.levels.to_vec()
 }
 
-fn six_var_cycle() -> (Arc<Vtree>, Tdd) {
-    let vtree = Arc::new(Vtree::balanced(6));
+fn six_var_cycle() -> (Home, Tdd) {
+    let vtree = Home::new(Vtree::balanced(6));
     let tdd = compile_clauses(
         &vtree,
         &[
@@ -72,7 +73,7 @@ fn rotation_search_on_non_canonical_clause_build_preserves_count() {
         vec![vec![1, -2], vec![2, 3], vec![-1, 3]],
         vec![vec![1, -2], vec![2, 3], vec![-1, 3], vec![4, -3]],
     ] {
-        let vtree = Arc::new(Vtree::balanced(4));
+        let vtree = Home::new(Vtree::balanced(4));
         let mut acc = Tdd::one(&vtree);
         for clause in &cnf {
             acc = acc.and_clause(literals(clause)).unwrap();
@@ -121,8 +122,8 @@ fn a_search_keeps_its_private_tree_between_rejected_probes() {
         }
     }
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(8));
-    let mut f = Tdd::one(&tree);
+    let tree = Home::new(Vtree::balanced(8));
+    let mut f = Tdd::clause(&tree, [1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
     assert_canonical(&f);
     {
         let mut search = crate::restructure::search::SearchTree::new(&eng, &mut f).unwrap();
@@ -154,8 +155,8 @@ fn a_panicking_search_restores_shared_tree_identity() {
             panic!("objective failed")
         }
     }
-    let tree = Arc::new(Vtree::balanced(8));
-    let mut f = Tdd::one(&tree);
+    let tree = Home::new(Vtree::balanced(8));
+    let mut f = Tdd::clause(&tree, [1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
     assert_canonical(&f);
     f.minimize().unwrap();
     let before = format!("{f:?}");

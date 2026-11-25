@@ -36,7 +36,7 @@ fn summed(rng: &mut Lcg, eng: &Engine) -> Option<(Tdd, String)> {
             Some(w) => Home::weighted(Vtree::clone(base), w).ok()?,
             None => Home::new(Vtree::clone(base)),
         };
-        let vtree = home.vtree();
+        let vtree = &home;
         let f = compile_clauses_on(eng, vtree, &f_cnf);
         let g = compile_clauses_on(eng, vtree, &g_cnf);
         let mask: Vec<bool> = (0..=n).map(|_| rng.below(2) == 0).collect();

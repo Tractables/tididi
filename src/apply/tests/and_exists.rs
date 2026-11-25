@@ -7,6 +7,7 @@
 //! merely on the function, so every comparison here is `assert_same_shape` over
 //! minimized results.
 
+use crate::vtree::Home;
 use super::*;
 
 use crate::Quantification;
@@ -119,7 +120,7 @@ fn the_two_routes_agree_when_each_target_is_local_to_one_operand() {
 #[test]
 fn the_two_routes_agree_on_empty_and_total_quantifications() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(6));
+    let vtree = Home::new(Vtree::balanced(6));
     let all: Vec<VarId> = (1..=6).map(VarId).collect();
     let satisfiable = compile_clauses(&vtree, &[vec![1, 2], vec![-3, 4]]);
     let contradictory = compile_clauses(&vtree, &[vec![5], vec![-5]]);
@@ -146,7 +147,7 @@ fn the_two_routes_agree_on_empty_and_total_quantifications() {
 fn a_target_local_to_one_operand_never_reaches_the_product() {
     // Interleaved variable order, so the conjunction of the two halves is a
     // genuine product rather than two stacked blocks.
-    let vtree = Arc::new(Vtree::linear(16));
+    let vtree = Home::new(Vtree::linear(16));
     let odd: Vec<Vec<i32>> = (1..=7)
         .step_by(2)
         .map(|v| vec![-v, v + 2])
@@ -196,7 +197,7 @@ fn the_two_routes_agree_when_a_quantified_block_straddles_both_operands() {
 #[test]
 fn the_two_routes_agree_over_a_vtree_wider_than_the_formulas() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(12));
+    let vtree = Home::new(Vtree::balanced(12));
     let f = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3]]);
     let g = compile_clauses(&vtree, &[vec![3, 4], vec![-4, 5]]);
     for vars in [

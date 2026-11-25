@@ -54,7 +54,7 @@ fn same_queries(f: &Tdd, g: &Tdd, n: u32, rng: &mut Lcg, label: &str) {
     let ws = weights(n, rng);
     let algebra = ws.algebra().clone();
     assert_eq!(f.evaluate(&algebra).unwrap(), g.evaluate(&algebra).unwrap(), "{label}: evaluation");
-    let weighted = Arc::new(Vtree::clone(f.vtree()).with_weights(ws).unwrap());
+    let weighted = Home::new(Vtree::clone(f.vtree()).with_weights(ws).unwrap());
     let (fw, gw) = (crate::test_helpers::embedded(f, &weighted, |v| v).unwrap().0, crate::test_helpers::embedded(g, &weighted, |v| v).unwrap().0);
     let value = |t: &Tdd| exact_weight(&t.weighted_value().unwrap().unwrap());
     assert_eq!(value(&fw), value(&gw), "{label}: weighted value");
@@ -67,7 +67,7 @@ fn trimmed_copies_answer_as_the_original() {
         let mut rng = Lcg::new(seed);
         let n = 2 + rng.below(8) as u32;
         let hm = Home::new(Vtree::random(n, seed));
-        let home = Arc::clone(hm.vtree());
+        let home = Arc::clone(&hm);
         let f = random_diagram(&home, n, &mut rng);
         let label = format!("seed {seed}, {n} variables");
 
@@ -95,7 +95,7 @@ fn trimmed_copies_answer_as_the_original() {
 #[test]
 fn constants_have_no_leaf() {
     let hm = Home::new(Vtree::balanced(5));
-    let home = Arc::clone(hm.vtree());
+    let home = Arc::clone(&hm);
     let mut zero = crate::test_helpers::padded(Tdd::zero(&home), &home);
     assert!(zero.trim(&hm).unwrap());
     assert!(zero.is_zero() && zero.vtree().num_nodes() == 0);
@@ -105,7 +105,7 @@ fn constants_have_no_leaf() {
     assert!(one.trim(&hm).unwrap());
     assert!(one.is_one() && !one.is_zero());
     assert_eq!(one.vtree().num_nodes(), 0);
-    assert!(Arc::ptr_eq(one.vtree().home().unwrap().vtree(), &home));
+    assert!(Arc::ptr_eq(&one.vtree().home().unwrap(), &home));
     assert_eq!(one.model_count().unwrap(), 32u32.into());
     assert_eq!(one.projected_model_count(&[VarId(2), VarId(4), VarId(2)]).unwrap(), 4u32.into());
     assert!(one.is_sat().unwrap());
@@ -142,7 +142,7 @@ fn own_at_finds_the_top_own_node_under_a_home_node() {
         let mut rng = Lcg::new(seed);
         let n = 1 + rng.below(12) as u32;
         let hm = Home::new(Vtree::random(n, seed));
-        let home = Arc::clone(hm.vtree());
+        let home = Arc::clone(&hm);
         let mut vars = var_subset(n, &mut rng);
         if vars.is_empty() {
             vars.push(VarId(1));
@@ -160,7 +160,7 @@ fn own_at_finds_the_top_own_node_under_a_home_node() {
 #[test]
 fn counts_on_a_projection_are_over_the_home() {
     let hm = Home::new(Vtree::balanced(6));
-    let home = Arc::clone(hm.vtree());
+    let home = Arc::clone(&hm);
     let own = Vtree::projection(&hm, [VarId(2), VarId(5)]).unwrap();
     let f = Tdd::clause(&own, [2, 5]).unwrap();
     assert_eq!(f.model_count().unwrap(), (3u32 << 4).into());
@@ -180,7 +180,7 @@ fn merged_nodes_and_leaves_named_by_both_literals() {
     let eng = Engine::new();
     // x1 ↔ x2, its two nodes under one root node beside true over x3, x4.
     let hm = Home::new(Vtree::balanced(4));
-    let home = Arc::clone(hm.vtree());
+    let home = Arc::clone(&hm);
     let (l, r) = home.children(home.root());
     let mut b = Tdd::builder(&eng, &home).unwrap();
     let same = b.push(&eng, l, &[ChildPair::new(POS_LEAF_IDX, POS_LEAF_IDX)]).unwrap();
@@ -200,7 +200,7 @@ fn merged_nodes_and_leaves_named_by_both_literals() {
     // (x1 ∨ ¬x1) beside true: x1 is named by both literals, and goes in a
     // second round.
     let hm = Home::new(Vtree::balanced(2));
-    let two = Arc::clone(hm.vtree());
+    let two = Arc::clone(&hm);
     let mut b = Tdd::builder(&eng, &two).unwrap();
     let root = b
         .push(&eng, two.root(), &[ChildPair::new(POS_LEAF_IDX, ONE_LEAF_IDX), ChildPair::new(NEG_LEAF_IDX, ONE_LEAF_IDX)])
@@ -217,7 +217,7 @@ fn counters_count_over_the_home() {
         let mut rng = Lcg::new(seed);
         let n = 2 + rng.below(7) as u32;
         let hm = Home::new(Vtree::random(n, seed));
-        let home = Arc::clone(hm.vtree());
+        let home = Arc::clone(&hm);
         let f = random_diagram(&home, n, &mut rng);
         let mut g = f.clone();
         g.trim(&hm).unwrap();
@@ -319,7 +319,7 @@ fn in_place_against_rebuild(seed: u64, seen: &mut [usize; 6]) {
         true => Home::weighted(Vtree::random(n, seed), weights(n, &mut rng)).unwrap(),
         false => Home::new(Vtree::random(n, seed)),
     };
-    let home = Arc::clone(hm.vtree());
+    let home = Arc::clone(&hm);
     let mut f = if seed.is_multiple_of(2) {
         random_diagram(&home, n, &mut rng)
     } else {

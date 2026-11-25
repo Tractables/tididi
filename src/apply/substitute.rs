@@ -72,7 +72,7 @@ impl Engine {
                         return Err(f.vtree().no_leaf_for(var));
                     };
                     if off_leaf.is_empty() {
-                        lim.try_resize(&mut off_leaf, home.vtree().num_leaves() as usize, false)?;
+                        lim.try_resize(&mut off_leaf, home.num_leaves() as usize, false)?;
                     }
                     std::mem::replace(&mut off_leaf[rank as usize], true)
                 }

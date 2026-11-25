@@ -1,6 +1,7 @@
 //! `LimitConfig::with_deadline_at_most`: a deadline that only tightens what is
 //! already armed.
 
+use crate::vtree::Home;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -109,7 +110,7 @@ fn a_work_clock_bound_without_a_callback_continues_until_the_deadline() {
 #[test]
 fn an_edited_scope_stops_an_operation_and_restores_the_prior_rules() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let (callback, calls) = counting();
     let stops = StopRules { unconditional: Some(StopAt::WorkUnits(u64::MAX)), after_pairs: None };
     let _outer = eng.limits().scope(LimitConfig::none().with_stop_rules(stops).with_stop_callback(Some(callback)));

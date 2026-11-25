@@ -1,6 +1,6 @@
 //! The two clauses with no spine: the empty clause is ⊥, a tautology is ⊤.
 
-use std::sync::Arc;
+use crate::vtree::Home;
 
 use num_bigint::BigUint;
 
@@ -9,7 +9,7 @@ use crate::{Engine, Tdd};
 
 #[test]
 fn the_empty_clause_is_false() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = Tdd::clause(&vtree, [] as [i32; 0]).unwrap();
     assert!(f.is_zero());
     assert_eq!(f.model_count().unwrap(), BigUint::from(0u32));
@@ -22,7 +22,7 @@ fn the_empty_clause_is_false() {
 
 #[test]
 fn a_tautological_clause_is_true() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = Tdd::clause(&vtree, [1, -1]).unwrap();
     assert_eq!(f.model_count().unwrap(), BigUint::from(8u32));
     let g = Engine::new().and_clause(Tdd::clause(&vtree, [2, 3]).unwrap(), &[crate::Literal::try_from(1).unwrap(), crate::Literal::try_from(-1).unwrap()]).expect("no limit is armed");
@@ -34,7 +34,7 @@ fn a_tautological_clause_is_true() {
 /// rebuilt one would owe them every level.
 #[test]
 fn the_identity_exits_leave_nothing_to_contract() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let eng = Engine::new();
     let tautology = [crate::Literal::try_from(1).unwrap(), crate::Literal::try_from(-1).unwrap()];
     let mut f = Tdd::clause(&vtree, [2, 3]).unwrap();

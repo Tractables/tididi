@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use super::*;
 use crate::limits::{LimitConfig, OperationError};
 
@@ -42,7 +43,7 @@ fn negation_and_disjunction_reject_summed_out_structure() {
 
 #[test]
 fn a_clause_rejects_unknown_variables_even_on_false_input() {
-    let tree = Arc::new(Vtree::balanced(2));
+    let tree = Home::new(Vtree::balanced(2));
     let eng = Engine::new();
     for f in [Tdd::zero(&tree), Tdd::one(&tree)] {
         assert_canonical(&f);

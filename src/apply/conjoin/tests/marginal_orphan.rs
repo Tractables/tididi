@@ -1,7 +1,6 @@
 use super::*;
 use crate::Engine;
 use crate::vtree::Vtree;
-use std::sync::Arc;
 
 /// A conjunction over a diagram carrying a zero-width marginal orphan level.
 ///

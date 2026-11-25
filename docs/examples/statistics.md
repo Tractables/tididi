@@ -13,19 +13,16 @@ if the distinction between a vtree level, a TDD node, and a child pair is new.
 
 Use a balanced vtree over four variables. The exclusive OR of its first two
 variables is **(x1 ∧ ¬x2) ∨ (¬x1 ∧ x2)**. Build it with [`xor`](crate::xor),
-copying `x1` so we can inspect the literal separately. `xor` does not minimize
-its result: each alternative is one child pair of the root, whose left child
-is a node holding that alternative at the level containing x1 and x2.
-[`minimize`](crate::Tdd::minimize) would merge those two nodes into one with
-two pairs.
+copying `x1` so we can inspect the literal separately. A diagram on a home
+stores levels only on the projection of the vtree on the variables it uses,
+here x1 and x2: the circuit is one node at the vtree node over x1 and x2,
+with one child pair per alternative. x3 and x4 have no level.
 
 ```rust,ignore,{class=tested-example}
-use std::sync::Arc;
-
 use tididi::{literal, xor, Tdd};
-use tididi::vtree::{Vtree, VtreeIdx};
+use tididi::vtree::{Home, Vtree, VtreeIdx};
 
-let vtree = Arc::new(Vtree::balanced(4));
+let vtree = Home::new(Vtree::balanced(4));
 let x1 = literal(&vtree, 1)?;
 let x2 = literal(&vtree, 2)?;
 let exclusive = xor(x1.clone(), x2)?;
@@ -39,7 +36,9 @@ none. The iterator knows its length, so obtaining the pair count does not
 require decoding the children.
 
 The helper returns `(root, 0)` if there are no stored nodes and keeps the
-first maximum on ties.
+first maximum on ties. Its vtree node is a node of the projection;
+[`home_node`](crate::vtree::Vtree::home_node) names the node of the home's
+vtree it stands for.
 
 ```rust,ignore,{class=tested-example}
 fn widest_node(circuit: &Tdd) -> (VtreeIdx, usize) {
@@ -56,26 +55,26 @@ fn widest_node(circuit: &Tdd) -> (VtreeIdx, usize) {
 }
 
 let (level, pairs) = widest_node(&exclusive);
-println!("Widest XOR node: {pairs} pairs at vtree node {}", level.idx());
+println!("Widest XOR node: {pairs} pairs at vtree node {}", exclusive.vtree().home_node(level).idx());
 ```
 
 Output:
 
 ```text
-Widest XOR node: 2 pairs at vtree node 6
+Widest XOR node: 2 pairs at vtree node 4
 ```
 
-The other two variables are free. For comparison, a single positive literal
-needs just one pair per stored node:
+For comparison, a single positive literal is decided by its variable's leaf
+alone, so it stores no internal node:
 
 ```rust,ignore,{class=tested-example}
-println!("Widest literal node: {} pair", widest_node(&x1).1);
+println!("Widest literal node: {} pairs", widest_node(&x1).1);
 ```
 
 Output:
 
 ```text
-Widest literal node: 1 pair
+Widest literal node: 0 pairs
 ```
 
 ## Compare with total storage
@@ -91,12 +90,12 @@ println!("Satisfying assignments: {}", exclusive.model_count()?);
 Output:
 
 ```text
-Total XOR pairs: 5
+Total XOR pairs: 2
 Satisfying assignments: 8
 ```
 
 Exactly one of `x1` and `x2` is true, giving two choices. Each of the other
-two variables is free, so the model count is 2 × 2 × 2 = 8. The five stored
+two variables is free, so the model count is 2 × 2 × 2 = 8. The two stored
 pairs describe those eight assignments.
 
 Adapt the same traversal for a histogram of node sizes or a per-level report.

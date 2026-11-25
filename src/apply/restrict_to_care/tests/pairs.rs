@@ -1,5 +1,6 @@
-use super::*;
 use std::sync::Arc;
+use crate::vtree::Home;
+use super::*;
 use crate::Vtree;
 use crate::test_helpers::assert_canonical;
 
@@ -22,7 +23,7 @@ fn pair_marks_union_contexts_across_word_boundaries() {
 
 #[test]
 fn wide_marks_recover_after_allocation_refusal() {
-    let tree = Arc::new(Vtree::balanced(2));
+    let tree = Home::new(Vtree::balanced(2));
     let f = Tdd::one(&tree);
     assert_canonical(&f);
     let eng = Engine::new();
@@ -42,7 +43,7 @@ fn wide_marks_recover_after_allocation_refusal() {
 #[test]
 fn restriction_of_a_wide_relation_preserves_exact_models() {
     // A bijection across the root cut needs a distinct pair for each row.
-    let tree = Arc::new(Vtree::balanced(14));
+    let tree = Home::new(Vtree::balanced(14));
     let vars: Vec<_> = (1..=14).map(crate::vtree::VarId).collect();
     let rows: Vec<u64> = (0..128).map(|x| x | (((x * 37 + 11) % 128) << 7)).collect();
     let f = Tdd::from_models(&tree, &vars, &rows).unwrap();

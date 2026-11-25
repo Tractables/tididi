@@ -13,6 +13,7 @@
 //! post-apply walks consult the same `PollGate`, so re-testing it here would
 //! pin nothing new.
 
+use crate::vtree::Home;
 use super::*;
 
 use crate::Engine;
@@ -24,7 +25,6 @@ use crate::test_helpers::clause_to_tdd;
 use crate::test_helpers::check::marginal::{check_slot_count_uniqueness, check_inline_discipline};
 use crate::apply::apply_and;
 use crate::test_helpers::deadline_probe;
-use std::sync::Arc;
 
 /// A four-variable diagram and the two internal levels under its root, in the
 /// bottom-up order a batch requires.
@@ -32,8 +32,8 @@ use std::sync::Arc;
 /// Both targets carry real nodes, so a batch over them is two units of metered
 /// work — which is what lets a stride cut between them rather than only before
 /// the first.
-fn two_target_tdd() -> (Tdd, Arc<Vtree>, [VtreeIdx; 2]) {
-    let vtree = Arc::new(Vtree::balanced(4));
+fn two_target_tdd() -> (Tdd, Home, [VtreeIdx; 2]) {
+    let vtree = Home::new(Vtree::balanced(4));
     let lit = |v: u32, sign: bool| Literal::new(VarId(v + 1), sign);
     let clauses = [
         vec![lit(0, true), lit(1, true)],

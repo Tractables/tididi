@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use crate::io::{IoError, write_tdd};
 use super::read_tdd;
 use crate::test_helpers::assert_canonical;
@@ -5,8 +6,8 @@ use crate::{Tdd, Vtree};
 use std::sync::Arc;
 
 /// A nonconstant diagram serialized without optional comments.
-fn fixture() -> (Arc<Vtree>, Tdd, String) {
-    let tree = Arc::new(Vtree::balanced(2));
+fn fixture() -> (Home, Tdd, String) {
+    let tree = Home::new(Vtree::balanced(2));
     let f = Tdd::clause(&tree, [1, 2]).unwrap();
     assert_canonical(&f);
     let mut bytes = Vec::new();
@@ -177,7 +178,7 @@ fn undefined_format_versions_are_refused_even_below_the_current_version() {
 
 #[test]
 fn file_local_ids_and_record_order_do_not_change_the_function() {
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = Home::new(Vtree::balanced(2));
     // The root is file node 0; its children and leaf declarations arrive later.
     let text = "p tdd 1 2 3 0 0\nI 0 2 1 1 2\nL 1 2\nL 2 1\n";
     let expected = Tdd::cube(&vtree, [1, -2]).unwrap();
@@ -199,7 +200,7 @@ fn file_local_ids_and_record_order_do_not_change_the_function() {
 #[test]
 fn rotated_version_one_file_with_original_indices_still_loads() {
     // Older writers used in-memory IDs, which differ from the separately saved vtree.
-    let vtree = Arc::new(
+    let vtree = Home::new(
         Vtree::from_text("vtree 7\nL 0 1\nL 1 2\nL 2 3\nL 3 4\nI 4 2 3\nI 5 1 4\nI 6 0 5\n")
             .unwrap(),
     );
@@ -208,7 +209,7 @@ fn rotated_version_one_file_with_original_indices_still_loads() {
                 I 6 0 4 1 0 1 1 2 1\n";
     let expected = Tdd::clause(&vtree, [1, -3]).unwrap();
     assert_loads_equivalent(text, &vtree, &expected);
-    refused(text, &Arc::new(Vtree::balanced(4)));
+    refused(text, &Home::new(Vtree::balanced(4)));
 }
 
 /// A ZERO output names the root by its position, which a rotation leaves
@@ -218,7 +219,7 @@ fn a_zero_output_names_the_root_on_a_rotated_vtree() {
     let mut vtree = Vtree::linear(3);
     let root = vtree.root();
     crate::test_helpers::rotate_left(&mut vtree, root).unwrap();
-    let vtree = Arc::new(vtree);
+    let vtree = Home::new(vtree);
     assert_eq!((vtree.root().0, vtree.topo_pos(vtree.root())), (4, 4));
     assert!(read_tdd(&mut "p tdd 1 3 5 4 ZERO\n".as_bytes(), &vtree).unwrap().is_zero());
     for other in 0..4 {
@@ -229,7 +230,7 @@ fn a_zero_output_names_the_root_on_a_rotated_vtree() {
 /// Unknown layouts must be rejected before parsing their version-specific fields.
 #[test]
 fn header_errors_check_version_before_interpreting_fields() {
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = Home::new(Vtree::balanced(2));
     for (header, diagnostic) in [
         (
             "p tdd 2 unknown fields may differ",

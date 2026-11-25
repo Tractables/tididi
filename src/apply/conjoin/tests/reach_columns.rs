@@ -2,6 +2,7 @@
 //! row columns, checked against the scan of the reach masks they replace:
 //! the same diagram.
 
+use crate::vtree::Home;
 use super::*;
 use crate::Engine;
 use crate::test_helpers::{compile_clauses_on, rand_cnf, vtree_shapes, CnfShape, Lcg};
@@ -56,7 +57,7 @@ fn the_reach_columns_enter_the_cells_the_scan_enters() {
             }
         }
     }
-    let vtree = Arc::new(Vtree::linear(14));
+    let vtree = Home::new(Vtree::linear(14));
     let vars: Vec<VarId> = (1..=14).map(VarId).collect();
     for case in 0..6 {
         let one_in = [4, 16, 64][case % 3];

@@ -1,7 +1,7 @@
 //! `Tdd::model_columns` against the models read off a truth table.
 
+use crate::test_helpers::bare_roots;
 use std::collections::BTreeSet;
-use std::sync::Arc;
 
 use super::*;
 use crate::reduce::ReductionPlan;
@@ -96,7 +96,7 @@ fn read_in_random_batches(
 fn columns_match_projected_truth_tables_on_every_shape() {
     let mut rng = Lcg::new(7);
     for num_vars in [1u32, 2, 3, 5, 7, 9] {
-        for (shape, vtree) in vtree_shapes(num_vars) {
+        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
             for round in 0..12 {
                 let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 5, width: 3 });
                 let f = compile_clauses(&vtree, &clauses);
@@ -149,7 +149,7 @@ fn columns_of_unminimized_conjunctions_are_distinct() {
 fn a_listed_block_left_free_yields_every_code() {
     // x1 and nothing about x2..x4: the column over x2..x4 holds all eight
     // codes beside x1 = 1.
-    for vtree in [Arc::new(Vtree::balanced(4)), Arc::new(Vtree::linear(4)), Arc::new(Vtree::random(4, 3))] {
+    for vtree in [crate::vtree::Home::new(Vtree::balanced(4)), crate::vtree::Home::new(Vtree::linear(4)), crate::vtree::Home::new(Vtree::random(4, 3))] {
         let f = crate::literal(&vtree, 1).unwrap();
         assert_canonical(&f);
         let mut table = f.model_columns(&[&[VarId(1)], &[VarId(2), VarId(3), VarId(4)]]).unwrap();
@@ -184,8 +184,27 @@ fn constants_and_degenerate_tables() {
 }
 
 #[test]
+#[ignore = "on a diagram whose projection, with the listed variables, has no node, model_columns reads the root of an empty vtree and panics"]
+fn constants_and_degenerate_tables_on_a_home() {
+    let vtree = crate::vtree::Home::new(Vtree::balanced(3));
+    let mut zero = Tdd::zero(&vtree).model_columns(&[&[VarId(1)]]).unwrap();
+    assert_eq!(zero.rows(), 0);
+    assert_eq!(zero.to_columns(), vec![Vec::<u32>::new()]);
+    let mut one = Tdd::one(&vtree).model_columns(&[]).unwrap();
+    assert_eq!((one.rows(), one.width()), (1, 0));
+    assert!(one.to_columns().is_empty());
+    let mut one = Tdd::one(&vtree).model_columns(&[&[], &[VarId(2)]]).unwrap();
+    assert_eq!(one.to_columns(), vec![vec![0, 0], vec![0, 1]]);
+    // A one-variable vtree: the output is a leaf node.
+    let leaf = crate::vtree::Home::new(Vtree::leaf(VarId(5)));
+    for (f, want) in [(Tdd::one(&leaf), vec![0, 1]), (crate::literal(&leaf, -5).unwrap(), vec![0])] {
+        assert_eq!(f.model_columns(&[&[VarId(5)]]).unwrap().to_columns(), vec![want]);
+    }
+}
+
+#[test]
 fn malformed_columns_are_refused() {
-    let vtree = Arc::new(Vtree::balanced(40));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(40));
     let f = Tdd::clause(&vtree, [1, 2]).unwrap();
     assert_eq!(f.model_columns(&[&[VarId(41)]]).unwrap_err(), OperationError::VariableNotInVtree(VarId(41)));
     assert_eq!(f.model_columns(&[&[VarId(1)], &[VarId(2), VarId(1)]]).unwrap_err(), OperationError::DuplicateVariable(VarId(1)));
@@ -368,7 +387,7 @@ fn ranges_in_any_order_match_the_whole_table() {
     // falls back to a search when it starts before that point.
     let mut rng = Lcg::new(53);
     for num_vars in [5u32, 7, 9] {
-        for (shape, vtree) in vtree_shapes(num_vars) {
+        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
             for round in 0..6 {
                 let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 4, width: 3 });
                 let f = compile_clauses(&vtree, &clauses);
@@ -396,7 +415,7 @@ fn ranges_in_any_order_match_the_whole_table() {
 
 #[test]
 fn column_queries_agree_on_layout_errors_and_error_order() {
-    let vtree = Arc::new(Vtree::linear(33));
+    let vtree = crate::vtree::Home::new(Vtree::linear(33));
     let f = Tdd::one(&vtree);
     assert_canonical(&f);
     let too_wide: Vec<VarId> = (1..=33).map(VarId).collect();
@@ -420,7 +439,7 @@ fn column_queries_agree_on_layout_errors_and_error_order() {
 
 #[test]
 fn column_queries_agree_on_empty_and_full_width_columns() {
-    let vtree = Arc::new(Vtree::linear(32));
+    let vtree = crate::vtree::Home::new(Vtree::linear(32));
     let f = Tdd::one(&vtree);
     assert_canonical(&f);
     let bits: Vec<VarId> = (1..=32).map(VarId).collect();

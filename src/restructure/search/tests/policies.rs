@@ -1,6 +1,7 @@
 //! Acceptance policies, wider neighborhoods and the multistart driver.
-
 use std::sync::Arc;
+use crate::vtree::Home;
+
 
 use crate::Engine;
 use crate::limits::OperationError;
@@ -32,7 +33,7 @@ fn plateau() -> Tdd {
 /// Nine variables on a linear vtree. Three connected rotations reach a shape
 /// that pairs of them do not.
 fn triple_plateau() -> Tdd {
-    let vtree = Arc::new(Vtree::linear(9));
+    let vtree = Home::new(Vtree::linear(9));
     let mut tdd = compile_clauses(
         &vtree,
         &[
@@ -190,7 +191,7 @@ fn a_policy_starts_every_search_from_its_settings() {
 /// levels: a zero-cost move at every temperature.
 #[test]
 fn annealing_stops_on_a_plateau_of_zero_cost_moves() {
-    let vtree = Arc::new(Vtree::balanced(8));
+    let vtree = Home::new(Vtree::balanced(8));
     let mut tdd = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3], vec![3, -4]]);
     tdd.minimize().expect("an unarmed engine refuses nothing");
     for neighborhood in [Neighborhood::Single, Neighborhood::Pair] {
@@ -307,7 +308,7 @@ fn tabu_is_never_worse_than_the_descent_over_a_seeded_corpus() {
         let num_vars = 5 + (seed % 5) as u32;
         let mut rng = Lcg::new(seed);
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 8, width: 3 });
-        let vtree = Arc::new(Vtree::balanced(num_vars));
+        let vtree = Home::new(Vtree::balanced(num_vars));
         let mut start = compile_clauses(&vtree, &clauses);
         eng.minimize(&mut start).unwrap();
 

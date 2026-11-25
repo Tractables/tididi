@@ -15,7 +15,7 @@ use crate::Engine;
 
 use super::compile::compile_clauses_on;
 use super::oracle::{assert_canonical, assert_marginal_canonical};
-use super::r#gen::{rand_cnf, vtree_shapes, CnfShape, Lcg};
+use super::r#gen::{bare_roots, rand_cnf, vtree_shapes, CnfShape, Lcg};
 
 /// A variable count drawn from `vars`.
 fn draw_vars(rng: &mut Lcg, vars: &Range<u32>) -> u32 {
@@ -156,7 +156,7 @@ pub fn random_diagrams(seed: u64, count: usize, vars: Range<u32>) -> Vec<Tdd> {
     while out.len() < count {
         let n = draw_vars(&mut rng, &vars);
         let shape = CnfShape { clauses: n as usize, width: 4 };
-        for (_, vtree) in vtree_shapes(n) {
+        for (_, vtree) in bare_roots(vtree_shapes(n)) {
             let eng = Engine::new();
             let f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, shape));
             assert_canonical(&f);
@@ -181,7 +181,7 @@ pub fn marginal_diagrams(seed: u64, count: usize, vars: Range<u32>) -> Vec<(Tdd,
     while out.len() < count {
         let n = draw_vars(&mut rng, &vars);
         let shape = CnfShape { clauses: n as usize, width: 4 };
-        for (_, vtree) in vtree_shapes(n) {
+        for (_, vtree) in bare_roots(vtree_shapes(n)) {
             let eng = Engine::new();
             let mut f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, shape));
             let inner: Vec<VtreeIdx> = vtree.internal_bottomup().map(|(t, _, _)| t).filter(|&t| t != vtree.root()).collect();

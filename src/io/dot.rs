@@ -69,9 +69,9 @@ impl Tdd {
     /// For an unannotated vtree, use [`vtree_to_dot`].
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, -2])?;
     /// # tididi::test_helpers::assert_canonical(&f);
     /// let dot = f.level_sizes_to_dot();
@@ -146,11 +146,11 @@ fn render_vtree(vtree: &Vtree, tdd: Option<&Tdd>) -> String {
 /// values instead of nodes has no such edges to draw.
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{Tdd, Vtree};
 /// use tididi::io::tdd_to_dot;
 ///
-/// let vtree = Arc::new(Vtree::balanced(3));
+/// let vtree = Home::new(Vtree::balanced(3));
 /// let f = Tdd::clause(&vtree, [1, -2])?;
 /// let dot = tdd_to_dot(&f)?;
 /// assert!(dot.starts_with("graph tdd {"));

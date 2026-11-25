@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use tididi::vtree::Home;
 
 use num_rational::BigRational;
 use num_traits::{One, Zero};
@@ -9,11 +9,11 @@ use tididi::vtree::VarId;
 use tididi::{Engine, Tdd, Vtree};
 
 /// Three shapes/orders over the same dense variable IDs.
-pub(super) fn trees(n: u32) -> [Arc<Vtree>; 3] {
+pub(super) fn trees(n: u32) -> [Home; 3] {
     [
-        Arc::new(Vtree::balanced(n)),
-        Arc::new(Vtree::linear(n)),
-        Arc::new(Vtree::linear_from_order(
+        Home::new(Vtree::balanced(n)),
+        Home::new(Vtree::linear(n)),
+        Home::new(Vtree::linear_from_order(
             &(1..=n).rev().map(VarId).collect::<Vec<_>>(),
         ).unwrap()),
     ]
@@ -35,6 +35,11 @@ pub(super) fn bernoulli(probabilities: &[BigRational]) -> Vec<LiteralWeights<Big
         .collect()
 }
 
+/// The leaves a model count ranges over: the home's, for a diagram on a home.
+fn counted(diagram: &Tdd) -> u32 {
+    diagram.vtree().home().map_or_else(|| diagram.vtree().num_leaves(), |home| home.num_leaves())
+}
+
 /// Check each assignment, the count over covered variables and a complete witness.
 pub(super) fn assert_truth(engine: &Engine, diagram: &Tdd, expected: &[bool], context: &str) {
     let n = diagram.vtree().num_vars();
@@ -53,7 +58,7 @@ pub(super) fn assert_truth(engine: &Engine, diagram: &Tdd, expected: &[bool], co
     }
     assert_eq!(
         engine.model_count(diagram).unwrap(),
-        (expected.iter().filter(|&&yes| yes).count() >> (n - diagram.vtree().num_leaves())).into(),
+        (expected.iter().filter(|&&yes| yes).count() >> (n - counted(diagram))).into(),
         "{context}, count"
     );
     match engine.satisfying_assignment(diagram).unwrap() {
@@ -62,7 +67,10 @@ pub(super) fn assert_truth(engine: &Engine, diagram: &Tdd, expected: &[bool], co
             "{context}, missing witness"
         ),
         Some(witness) => {
-            let mut covered: Vec<_> = diagram.vtree().leaf_bottomup().map(|(_, var)| var).collect();
+            let mut covered: Vec<_> = match diagram.vtree().home() {
+                Some(home) => home.leaf_bottomup().map(|(_, var)| var).collect(),
+                None => diagram.vtree().leaf_bottomup().map(|(_, var)| var).collect(),
+            };
             covered.sort_unstable();
             assert_eq!(witness.len(), covered.len(), "{context}, complete witness");
             let mut row = 0;

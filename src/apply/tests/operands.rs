@@ -1,10 +1,11 @@
+use crate::vtree::Home;
 use super::*;
 use crate::OperationError;
 
 /// Boolean operators combine diagrams after their independent engines are dropped.
 #[test]
 fn operators_accept_diagrams_from_dropped_independent_engines() {
-    let tree = Arc::new(Vtree::balanced(3));
+    let tree = Home::new(Vtree::balanced(3));
     let f = {
         let engine = Engine::new();
         engine.clause(&tree, [1, 2]).unwrap()

@@ -2,6 +2,7 @@
 //! its function under every move, a declined move puts every member back,
 //! and the pool always shares one vtree allocation.
 
+use crate::test_helpers::bare_roots;
 use std::sync::Arc;
 
 use crate::restructure::search::{PoolMove, PoolRestarts, PoolSearchConfig, RotationMove};
@@ -301,7 +302,7 @@ fn a_refused_score_charges_the_pairs_it_reads() {
     let mut rng = Lcg::new(0xca9);
     let mut pools = vec![pool()];
     for n in 6..9 {
-        for (_, vtree) in vtree_shapes(n) {
+        for (_, vtree) in bare_roots(vtree_shapes(n)) {
             pools.push(seeded_pool(&eng, &mut rng, &vtree, n, CnfShape { clauses: n as usize, width: 3 }));
         }
     }
@@ -821,7 +822,7 @@ fn restarts_end_where_restarts_descending_from_scratch_end() {
     let mut rng = Lcg::new(0x7e57);
     let (mut restarts, mut won, mut pools) = (0, 0, 0);
     for n in 6..10 {
-        for (shape, vtree) in vtree_shapes(n) {
+        for (shape, vtree) in bare_roots(vtree_shapes(n)) {
             let members = seeded_pool(&eng, &mut rng, &vtree, n, CnfShape { clauses: n as usize, width: 3 });
             for (crossed, min_gain_permille) in [(false, 0), (true, 0), (true, 100)] {
                 let config = PoolSearchConfig {
@@ -858,7 +859,7 @@ fn a_restart_kept_for_its_random_moves_alone_leaves_their_vtree() {
     let mut rng = Lcg::new(0x7e57);
     let (mut by_their_random_moves, mut pools) = (0, 0);
     for n in 6..9 {
-        for (shape, vtree) in vtree_shapes(n) {
+        for (shape, vtree) in bare_roots(vtree_shapes(n)) {
             let members = seeded_pool(&eng, &mut rng, &vtree, n, CnfShape { clauses: 2, width: 2 });
             for seed in 0..8 {
                 let config = PoolSearchConfig {
@@ -930,7 +931,7 @@ fn skipping_refused_moves_keeps_the_moves_of_the_full_descent_on_seeded_pools() 
     let config = PoolSearchConfig { max_sweeps: usize::MAX, ..PoolSearchConfig::default() };
     let (mut kept, mut skipped) = (0, 0);
     for n in 6..10 {
-        for (shape, vtree) in vtree_shapes(n) {
+        for (shape, vtree) in bare_roots(vtree_shapes(n)) {
             let members = seeded_pool(&eng, &mut rng, &vtree, n, CnfShape { clauses: n as usize, width: 3 });
             let mut searched = members.clone();
             let stats = with_members(&mut searched, |refs| eng.pool_search(refs, &config)).unwrap();
@@ -1008,7 +1009,7 @@ fn a_pool_search_makes_the_moves_and_charges_it_made_before() {
     };
     let mut accepted = 0usize;
     for n in 6..11u32 {
-        for (_, vtree) in vtree_shapes(n) {
+        for (_, vtree) in bare_roots(vtree_shapes(n)) {
             let mut members = seeded_pool(&eng, &mut rng, &vtree, n, CnfShape { clauses: n as usize, width: 3 });
             for clauses in [vec![vec![2]], vec![], vec![vec![1, -(n as i32)]]] {
                 let mut f = compile_clauses_on(&eng, &vtree, &clauses);

@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use std::sync::Arc;
 
 use super::*;
@@ -58,22 +59,22 @@ fn spell(shape: &Shape, lines: &mut Vec<String>) -> usize {
     id.0
 }
 
-fn vtree_of(shape: &Shape) -> Arc<Vtree> {
+fn vtree_of(shape: &Shape) -> Home {
     let mut lines = Vec::new();
     spell(shape, &mut lines);
     let text = format!("vtree {}\n{}\n", lines.len(), lines.join("\n"));
-    Arc::new(Vtree::from_text(&text).expect("a well-formed vtree"))
+    Home::new(Vtree::from_text(&text).expect("a well-formed vtree"))
 }
 
 /// The shapes every comparison runs on: balanced, right- and left-linear,
 /// random, and two blocks of uneven widths joined at the root.
-fn shapes(n: u32) -> Vec<(&'static str, Arc<Vtree>)> {
+fn shapes(n: u32) -> Vec<(&'static str, Home)> {
     let vars: Vec<u32> = (1..=n).collect();
     let mut out = vec![
-        ("balanced", Arc::new(Vtree::balanced(n))),
-        ("right-linear", Arc::new(Vtree::linear(n))),
+        ("balanced", Home::new(Vtree::balanced(n))),
+        ("right-linear", Home::new(Vtree::linear(n))),
         ("left-linear", vtree_of(&left_linear(&vars))),
-        ("random(7)", Arc::new(Vtree::random(n, 7))),
+        ("random(7)", Home::new(Vtree::random(n, 7))),
     ];
     if n >= 3 {
         let (a, b) = vars.split_at(((n as usize) / 3).max(1));
@@ -228,7 +229,7 @@ fn constants_and_equal_operands() {
 #[test]
 fn a_leaf_root_combines_labels() {
     let eng = &Engine::new();
-    let vtree = Arc::new(Vtree::balanced(1));
+    let vtree = Home::new(Vtree::balanced(1));
     let fns = [
         Tdd::zero(&vtree),
         Tdd::one(&vtree),
@@ -244,7 +245,7 @@ fn a_leaf_root_combines_labels() {
 
 #[test]
 fn the_public_entry_points_route_through_the_overlay() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let first = crate::literal(&vtree, 1).unwrap();
     let first_two = Tdd::cube(&vtree, [1, 2]).unwrap();
     let diff = crate::and_not(first.clone(), first_two.clone()).unwrap();
@@ -257,8 +258,8 @@ fn the_public_entry_points_route_through_the_overlay() {
 
 #[test]
 fn operands_on_different_vtrees_are_refused() {
-    let a = Arc::new(Vtree::balanced(3));
-    let b = Arc::new(Vtree::balanced(3));
+    let a = Home::new(Vtree::balanced(3));
+    let b = Home::new(Vtree::balanced(3));
     let f = crate::literal(&a, 1).unwrap();
     let g = crate::literal(&b, 1).unwrap();
     assert_eq!(crate::and_not(f, g).unwrap_err(), OperationError::VtreeMismatch);
@@ -267,7 +268,7 @@ fn operands_on_different_vtrees_are_refused() {
 #[test]
 fn every_overlay_refusal_leaves_the_engine_reusable() {
     use crate::limits::{LimitConfig, StopAt, StopRules};
-    let tree = Arc::new(Vtree::balanced(6));
+    let tree = Home::new(Vtree::balanced(6));
     let f = Tdd::clause(&tree, [1, -3, 5]).unwrap();
     let g = Tdd::cube(&tree, [-2, 4]).unwrap();
     for operation in [Engine::or, Engine::and_not] {

@@ -70,7 +70,7 @@ impl Engine {
     /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical)).
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Engine, Vtree};
     /// use tididi::vtree::VarId;
     ///
@@ -80,14 +80,15 @@ impl Engine {
     /// let engine = Engine::new();
     /// let counted = Vtree::balanced_over(&[VarId(2), VarId(3)])?;
     /// let left = Vtree::join(&Vtree::leaf(VarId(1)), &counted)?;
-    /// let vtree = Arc::new(Vtree::join(&left, &Vtree::leaf(VarId(4)))?);
+    /// let vtree = Home::new(Vtree::join(&left, &Vtree::leaf(VarId(4)))?);
     /// let f = engine.or(engine.cube(&vtree, [1, 4])?, engine.cube(&vtree, [-1, 2, 3])?)?;
     /// let key = vtree.leaf_of(VarId(1)).unwrap();
     /// let two = engine.at_least_distinct(&f, key, 2)?;
     /// assert_eq!(two.vtree().num_leaves(), 1);
-    /// assert_eq!(engine.model_count(&two)?, 1u32.into());      // x1 = 1
+    /// // Counts are over the home's four variables.
+    /// assert_eq!(engine.model_count(&two)?, 8u32.into());      // x1 = 1
     /// let one = engine.at_least_distinct(&f, key, 1)?;
-    /// assert_eq!(engine.model_count(&one)?, 2u32.into());      // both values
+    /// assert_eq!(engine.model_count(&one)?, 16u32.into());     // both values
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -155,16 +156,17 @@ impl Engine {
     /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical)).
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Engine, Vtree};
     ///
     /// // (x1 ∨ x2) ∧ (x3 ∨ x4) on ((x1 x2) (x3 x4)), onto x1 and x2.
     /// let engine = Engine::new();
-    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let vtree = Home::new(Vtree::balanced(4));
     /// let f = engine.and(engine.clause(&vtree, [1, 2])?, engine.clause(&vtree, [3, 4])?)?;
     /// let left = vtree.children(vtree.root()).0;
     /// let g = engine.project_to_subtree(&f, left)?;
-    /// assert_eq!(engine.model_count(&g)?, 3u32.into());
+    /// // Three of the four values of (x1, x2), counted over the home's four variables.
+    /// assert_eq!(engine.model_count(&g)?, 12u32.into());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -223,7 +225,7 @@ fn key_node(lim: &Limits, vtree: &Vtree, key: DistinctKey<'_>) -> Result<VtreeId
 /// home variables. With `S` empty every satisfying value of `K` has all
 /// `2^n` of them; with `K` empty the result is a constant.
 fn distinct_on_home(eng: &Engine, tdd: &Tdd, home: &Home, key: VtreeIdx, m: u64) -> Result<Tdd, DistinctError> {
-    let (lim, vtree, at_home) = (eng.limits(), tdd.vtree(), home.vtree());
+    let (lim, vtree, at_home) = (eng.limits(), tdd.vtree(), home);
     if key.idx() >= at_home.num_nodes() {
         return Err(OperationError::LevelNotInVtree(key).into());
     }

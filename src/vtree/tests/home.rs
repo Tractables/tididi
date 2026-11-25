@@ -33,7 +33,7 @@ fn cases(mut each: impl FnMut(&Home, &Arc<Vtree>, &[VarId], &mut Lcg)) {
         let mut rng = Lcg::new(seed ^ 0x5bd1_e995);
         for _ in 0..6 {
             let vars = subset(n, &mut rng);
-            each(&home, home.vtree(), &vars, &mut rng);
+            each(&home, &home, &vars, &mut rng);
         }
     }
 }
@@ -51,7 +51,7 @@ fn projection_is_project_to_vars_keeping_ids() {
         let expected = tree.project_to_vars(|v| keep[v.0 as usize].then_some(v), tree.num_vars()).unwrap();
         assert!(own.same_tree(&expected));
         assert_eq!(own.validate(), Ok(()));
-        assert!(Arc::ptr_eq(own.home().unwrap().vtree(), tree));
+        assert!(Arc::ptr_eq(&own.home().unwrap(), tree));
         assert!(Arc::ptr_eq(own.context(), tree.context()));
         assert_eq!(own.num_vars(), tree.num_vars());
         assert_eq!(own.var_to_leaf.is_empty(), !Arc::ptr_eq(&own, tree));
@@ -84,7 +84,7 @@ fn home_answers_as_the_tree() {
     for seed in 0..30u64 {
         let n = 1 + (seed % 15) as u32 * 14;
         let home = rotated_home(n, seed);
-        let tree = home.vtree();
+        let tree = &home;
         let leaf_at = |r: u32| home.node_over(r, r);
         let mut ranks: Vec<(VtreeIdx, u32)> = (0..n).map(|r| (leaf_at(r), r)).collect();
         ranks.sort_unstable();
@@ -162,7 +162,7 @@ fn equal_leaf_sets_give_equal_layouts() {
             let other = Vtree::projection(&twin, fewer.iter().copied()).unwrap();
             let direct = Vtree::projection(&Home::new(Arc::clone(&own)), fewer).unwrap();
             assert_eq!(other.nodes, direct.nodes);
-            assert!(Arc::ptr_eq(direct.home().unwrap().vtree(), tree));
+            assert!(Arc::ptr_eq(&direct.home().unwrap(), tree));
             assert_eq!(other.validate(), Ok(()));
             assert!(matches!(Vtree::leaf_sets(&other, &own), Ok(LeafSets::AInB | LeafSets::Equal(_))));
         }
@@ -209,7 +209,7 @@ fn projection_refuses_no_variables_and_foreign_ones() {
     }
     let lone = Vtree::projection(&home, [VarId(9)]).unwrap();
     assert_eq!((lone.num_nodes(), lone.leaf_var(lone.root()), lone.num_vars()), (1, VarId(9), 9));
-    assert_eq!(lone.home_node(lone.root()), home.vtree().leaf_of(VarId(9)).unwrap());
+    assert_eq!(lone.home_node(lone.root()), home.leaf_of(VarId(9)).unwrap());
 }
 
 /// A home's vtree does not change: rotating it in place copies it, and its
@@ -218,11 +218,11 @@ fn projection_refuses_no_variables_and_foreign_ones() {
 fn rotating_a_homes_vtree_copies_it() {
     let home = rotated_home(12, 7);
     let own = Vtree::projection(&home, [1, 3, 4, 8, 11].map(VarId)).unwrap();
-    let mut moved = Arc::clone(home.vtree());
+    let mut moved = Arc::clone(&home);
     let root = moved.root();
     let shape = Arc::make_mut(&mut moved);
     rotate_right(shape, root).or_else(|| rotate_left(shape, root)).unwrap();
-    assert!(!Arc::ptr_eq(&moved, home.vtree()));
+    assert!(!Arc::ptr_eq(&moved, &home));
     assert_eq!(own.validate(), Ok(()));
     let again = Vtree::projection(&Home::new(moved), [1, 3, 4, 8, 11].map(VarId)).unwrap();
     assert_eq!(again.validate(), Ok(()));
@@ -248,7 +248,7 @@ fn every_leaf_is_the_home() {
     for seed in 0..30u64 {
         let n = 2 + (seed % 9) as u32;
         let home = rotated_home(n, seed);
-        let tree = home.vtree();
+        let tree = &home;
         let all: Vec<VarId> = (1..=n).map(VarId).collect();
         let full = Vtree::projection(&home, all.iter().copied()).unwrap();
         assert!(Arc::ptr_eq(&full, tree));
@@ -289,13 +289,13 @@ fn equal_leaf_sets_are_never_inclusion() {
 #[test]
 fn a_home_is_made_once_and_not_cloned() {
     let home = Home::new(Vtree::balanced(6));
-    let again = Home::new(Arc::clone(home.vtree()));
-    assert!(Arc::ptr_eq(again.vtree(), home.vtree()));
+    let again = Home::new(Arc::clone(&home));
+    assert!(Arc::ptr_eq(&again, &home));
     assert!(std::ptr::eq(again.index(), home.index()));
     let own = Vtree::projection(&home, [VarId(2), VarId(5)]).unwrap();
-    assert!(Arc::ptr_eq(Home::new(own).vtree(), home.vtree()));
-    let copy = Arc::new(Vtree::clone(home.vtree()));
-    assert!(home.vtree().is_home() && !copy.is_home());
+    assert!(Arc::ptr_eq(&Home::new(own), &home));
+    let copy = Arc::new(Vtree::clone(&home));
+    assert!(home.is_home() && !copy.is_home());
     assert!(copy.home().is_none());
     assert_eq!(std::mem::size_of::<Vtree>(), 160);
 }

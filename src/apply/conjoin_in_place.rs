@@ -779,11 +779,11 @@ impl Engine {
     /// [`Engine::minimize`](crate::Engine::minimize) certifies it.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Engine, Vtree};
     ///
     /// let engine = Engine::new();
-    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let vtree = Home::new(Vtree::balanced(4));
     /// let f = engine.clause(&vtree, [1, 2, 3])?;
     /// let g = engine.cube(&vtree, [-1, 4])?;
     /// let both = engine.and_in_place(f.clone(), &g)?;
@@ -818,11 +818,11 @@ impl Engine {
     /// [`Engine::minimize`](crate::Engine::minimize) certifies it.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Engine, Vtree};
     ///
     /// let engine = Engine::new();
-    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let vtree = Home::new(Vtree::balanced(4));
     /// let f = engine.clause(&vtree, [1, 2, 3])?;
     /// let g = engine.cube(&vtree, [-1, 4])?;
     /// let mut both = engine.and_in_place_loose(f.clone(), &g)?;
@@ -851,11 +851,11 @@ impl Engine {
     /// [`Engine::minimize`](crate::Engine::minimize) certifies it.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Engine, Vtree};
     ///
     /// let engine = Engine::new();
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = engine.clause(&vtree, [1, 2])?;
     /// let kept = engine.and_cube(f, [-1, 3])?;
     /// assert_eq!(engine.model_count(&kept)?, 1u32.into());

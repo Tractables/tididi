@@ -71,17 +71,16 @@ impl Engine {
     ///   counts, `Σ_x m(x)²`.
     ///
     /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
+    /// use tididi::Engine;
+    /// use tididi::vtree::{Home, VarId, Vtree};
     ///
-    /// // x1 ∨ x2 on the left of the root, x3 ∨ x4 on the right: summing the
-    /// // right out leaves a count of 3 on each model of x1 ∨ x2.
+    /// // x1 ∨ x2 on the left of the root, x3 ∨ x4 on the right: summing x3
+    /// // and x4 out leaves a count of 3 on each model of x1 ∨ x2.
     /// let engine = Engine::new();
-    /// let vtree = Arc::new(Vtree::balanced(4));
-    /// let (_, right) = vtree.children(vtree.root());
+    /// let vtree = Home::new(Vtree::balanced(4));
     /// let f = engine.clause(&vtree, [1, 2])?;
     /// let g = engine.clause(&vtree, [3, 4])?;
-    /// let counted = engine.and_marginalizing(f, g, &[right])?;
+    /// let counted = engine.and_marginalizing_where(f, g, |v| v >= VarId(3))?;
     /// assert_eq!(engine.model_count(&counted)?, 9u32.into());
     /// // Three models of x1 ∨ x2, each counted 3 · 3 times.
     /// assert_eq!(engine.marginal_product_count(&counted, &counted)?, 27u32.into());

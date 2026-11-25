@@ -84,12 +84,11 @@ impl Tdd {
     /// order that does not depend on how they are later written.
     ///
     /// ```
-    /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
-    /// use tididi::vtree::VarId;
+    /// use tididi::vtree::{Home, VarId};
     ///
     /// // Variables 1 and 2 are a two-bit code, variable 3 is a one-bit code.
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 3])?;
     /// let mut table = f.model_columns(&[&[VarId(1), VarId(2)], &[VarId(3)]])?;
     /// let columns = table.to_columns();

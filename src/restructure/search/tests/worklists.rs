@@ -1,4 +1,6 @@
 //! What a rotation trial does with the reduction obligations it inherits.
+use crate::test_helpers::bare_roots;
+use crate::vtree::Home;
 
 use std::sync::Arc;
 
@@ -21,7 +23,7 @@ fn owed(tdd: &Tdd) -> [Vec<u32>; 3] {
 #[test]
 fn an_accepted_rotation_keeps_what_the_diagram_already_owed() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     // A conjunction puts the levels it rebuilt on the worklists, and nothing
     // drains them before the probe, so the diagram enters the trial owing work
     // the way a mid-compile caller's does.
@@ -65,7 +67,7 @@ fn an_accepted_rotation_keeps_the_fusion_records_it_left_alone() {
     let mut rng = Lcg::new(41);
     let mut kept_records = 0;
     for num_vars in 5..9u32 {
-        for (shape, vtree) in vtree_shapes(num_vars) {
+        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
             let eng = Engine::new();
             let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 2 * num_vars as usize, width: 3 });
             let mut f = compile_clauses_on(&eng, &vtree, &clauses);
@@ -113,7 +115,7 @@ fn an_accepted_rotation_keeps_the_fusion_records_it_left_alone() {
 #[test]
 fn a_kept_rotation_of_an_uncertified_diagram_owes_its_outer_level_every_pass() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let mut f = Tdd::clause(&vtree, [1, 2]).unwrap() & Tdd::clause(&vtree, [3, 4]).unwrap();
     eng.minimize(&mut f).unwrap();
     assert!(f.dirty.is_empty());
@@ -180,7 +182,10 @@ fn a_rotation_of_a_canonical_diagram_keeps_the_certificate() {
                 continue;
             }
             let label = format!("{shape} over {num_vars} variables, round {round}");
-            let pivots: Vec<VtreeIdx> = vtree.internal_bottomup_slice().to_vec();
+            let pivots: Vec<VtreeIdx> = f.vtree().internal_bottomup_slice().to_vec();
+            if pivots.is_empty() {
+                continue;
+            }
             let kind = |rng: &mut Lcg| if rng.below(2) == 0 { RotationKind::Left } else { RotationKind::Right };
 
             for _ in 0..6 {

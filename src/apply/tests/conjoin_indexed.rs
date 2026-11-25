@@ -4,6 +4,7 @@
 use super::*;
 use crate::apply::conjoin_indexed::{and_indexed_counted, sum_indexed_counted, IndexedWork};
 use crate::diagram::{ChildPair, ColumnAlgebra, LeafLabel, Literal, NodeIdx, PairIndex, SlotPairs};
+use crate::test_helpers::bare_roots;
 use crate::test_helpers::check::{check_all_fast, check_determinism, check_no_false_nodes};
 use crate::vtree::VtreeIdx;
 
@@ -253,7 +254,7 @@ fn sum_indexed_is_the_conjunctions_value() {
     let eng = Engine::new();
     let mut rng = Lcg::new(0x05ad_2026_1011);
     for nvars in [3u32, 5, 6] {
-        for (shape, vtree) in vtree_shapes(nvars) {
+        for (shape, vtree) in bare_roots(vtree_shapes(nvars)) {
             for (t, _, _) in vtree.internal_bottomup() {
                 let under = vars_under(&vtree, t);
                 // Count alone, then a weighted sum over the block under `at`.
@@ -299,17 +300,16 @@ fn sum_indexed_is_the_conjunctions_value() {
 /// other.
 #[test]
 fn and_indexed_takes_operands_on_two_projections_of_a_home() {
-    use crate::vtree::{Home, LeafSets};
+    use crate::vtree::LeafSets;
     let eng = Engine::new();
     let mut rng = Lcg::new(0x40e5_2026_1124);
     let mut apart = 0;
     for nvars in [3u32, 5, 7] {
-        for (shape, vtree) in vtree_shapes(nvars) {
-            let home = Home::new(vtree);
+        for (shape, home) in vtree_shapes(nvars) {
             for round in 0..10 {
                 let label = format!("{shape} n={nvars} round {round} on a home");
-                let f = rand_conj(home.vtree(), nvars, 2, 2, false, &mut rng);
-                let g = rand_conj(home.vtree(), nvars, 3, 2, round % 2 == 0, &mut rng);
+                let f = rand_conj(&home, nvars, 2, 2, false, &mut rng);
+                let g = rand_conj(&home, nvars, 3, 2, round % 2 == 0, &mut rng);
                 if let LeafSets::Union(_) = Vtree::leaf_sets(f.vtree(), g.vtree()).unwrap() {
                     apart += 1;
                 }
@@ -326,17 +326,15 @@ fn and_indexed_takes_operands_on_two_projections_of_a_home() {
 #[test]
 fn sum_indexed_takes_operands_on_two_projections_of_a_home() {
     use std::borrow::Cow;
-    use crate::vtree::Home;
     let eng = Engine::new();
     let mut rng = Lcg::new(0x5e40_2026_1124);
     let mut apart = 0;
     for nvars in [3u32, 5, 6] {
         let alg = Moments { weight: (0..=nvars).map(|v| 1u128 << v).collect() };
-        for (shape, vtree) in vtree_shapes(nvars) {
-            let home = Home::new(vtree);
+        for (shape, home) in vtree_shapes(nvars) {
             for round in 0..6 {
-                let f = rand_conj(home.vtree(), nvars, 2, 2, false, &mut rng);
-                let g = rand_conj(home.vtree(), nvars, 3, 2, round % 2 == 0, &mut rng);
+                let f = rand_conj(&home, nvars, 2, 2, false, &mut rng);
+                let g = rand_conj(&home, nvars, 3, 2, round % 2 == 0, &mut rng);
                 let index = PairIndex::new(&g).unwrap();
                 let [fu, gu] = crate::apply::extend::on_one(&eng, [Cow::Borrowed(&f), Cow::Borrowed(&g)]).unwrap();
                 apart += usize::from(!Arc::ptr_eq(gu.vtree(), g.vtree()));
@@ -407,7 +405,7 @@ fn errors_name_the_operand_the_index_does_not_fit() {
 fn the_index_finds_each_pair_by_its_sides() {
     let eng = Engine::new();
     let mut rng = Lcg::new(0x1d_2026_1011);
-    for (shape, vtree) in vtree_shapes(6) {
+    for (shape, vtree) in bare_roots(vtree_shapes(6)) {
         let mut g = rand_conj(&vtree, 6, 5, 3, true, &mut rng);
         g.minimize().unwrap();
         let index = PairIndex::new(&g).unwrap();

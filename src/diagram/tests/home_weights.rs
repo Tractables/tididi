@@ -30,15 +30,15 @@ fn a_home_takes_weights_once_and_keeps_them() {
     assert_eq!(home.weights(), Some(&table(4)));
     let own = Vtree::projection(&home, [VarId(1), VarId(3)]).unwrap();
     let again = Home::weighted(Arc::clone(&own), table(4)).unwrap();
-    assert!(Arc::ptr_eq(again.vtree(), home.vtree()));
-    assert_eq!(Home::weighted(Arc::clone(home.vtree()), table(5)).unwrap_err(), TddBuildError::IncompatibleWeights);
+    assert!(Arc::ptr_eq(&again, &home));
+    assert_eq!(Home::weighted(Arc::clone(&home), table(5)).unwrap_err(), TddBuildError::IncompatibleWeights);
     let plain = Home::new(Vtree::balanced(4));
     assert_eq!(plain.weights(), None);
-    assert_eq!(Home::weighted(Arc::clone(plain.vtree()), table(4)).unwrap_err(), TddBuildError::IncompatibleWeights);
+    assert_eq!(Home::weighted(Arc::clone(&plain), table(4)).unwrap_err(), TddBuildError::IncompatibleWeights);
     assert!(Home::new(Arc::clone(&own)).weights().is_some());
     // A copy is not a home but keeps the weights, which a rotation of the
     // copy does not change; a home made on it has them.
-    let copy = Vtree::clone(home.vtree());
+    let copy = Vtree::clone(&home);
     assert!(!copy.is_home());
     assert_eq!(copy.weights(), home.weights());
     assert_eq!(Home::new(copy).weights(), home.weights());
@@ -83,7 +83,7 @@ fn a_borrowed_weighted_operand_on_a_home_is_not_cloned() {
 fn a_rotation_search_keeps_the_weights_of_the_home() {
     let eng = Engine::new();
     let home = Home::weighted(Vtree::linear(6), table(6)).unwrap();
-    let mut f = eng.and_clause(eng.clause(home.vtree(), [1, -4]).unwrap(), &[2, 5]).unwrap();
+    let mut f = eng.and_clause(eng.clause(&home, [1, -4]).unwrap(), &[2, 5]).unwrap();
     f = eng.and_clause(f, &[-3, 6]).unwrap();
     let before = value_of(&f);
     drop(home);
@@ -100,7 +100,7 @@ fn a_rotation_search_keeps_the_weights_of_the_home() {
 fn a_weighted_root_computes_what_a_weighted_home_computes() {
     assert_eq!(Vtree::balanced(4).with_weights(table(3)).unwrap_err(), TddBuildError::MissingVariableWeight(VarId(4)));
     let home = Home::new(Vtree::balanced(4));
-    assert!(Vtree::clone(home.vtree()).with_weights(table(4)).is_ok());
+    assert!(Vtree::clone(&home).with_weights(table(4)).is_ok());
     let own = Vtree::projection(&home, [VarId(1), VarId(3)]).unwrap();
     assert_eq!(Vtree::clone(&own).with_weights(table(4)).unwrap_err(), TddBuildError::IncompatibleWeights);
     let again = Vtree::balanced(4).with_weights(table(4)).unwrap();
@@ -116,7 +116,7 @@ fn a_weighted_root_computes_what_a_weighted_home_computes() {
         (f, g)
     };
     let (f, g) = build(&weighted);
-    let (fh, gh) = build(home.vtree());
+    let (fh, gh) = build(&home);
     assert_eq!(f.weights(), Some(&table(6)));
     assert_eq!(value_of(&f), value_of(&fh));
     let (left, _) = weighted.children(weighted.root());

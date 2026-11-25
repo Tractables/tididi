@@ -1,6 +1,8 @@
+use std::sync::Arc;
+use crate::vtree::Home;
+use crate::test_helpers::bare_roots;
 use super::*;
 use std::collections::HashMap;
-use std::sync::Arc;
 use crate::limits::{LimitConfig, StopAt, StopRules};
 use crate::test_helpers::{assert_canonical, compile_clauses, or_of_cubes, rand_cnf, same_as_stored, vtree_shapes, CnfShape, Lcg};
 use crate::vtree::{VarId, Vtree};
@@ -12,7 +14,7 @@ fn freed_leaf(eng: &Engine) -> Remap {
 
 #[test]
 fn regrouping_checks_its_allocations_before_reduction() {
-    let tree = Arc::new(Vtree::balanced(4));
+    let tree = Home::new(Vtree::balanced(4));
     let original = Tdd::clause(&tree, [1, -2, 3]).unwrap();
     assert_canonical(&original);
     let leaf = tree.leaf_of(VarId(1)).unwrap();
@@ -34,7 +36,7 @@ fn regrouping_checks_its_allocations_before_reduction() {
 
 #[test]
 fn regrouping_polls_inside_a_level() {
-    let tree = Arc::new(Vtree::balanced(4));
+    let tree = Home::new(Vtree::balanced(4));
     let mut f = Tdd::clause(&tree, [1, -2, 3]).unwrap();
     assert_canonical(&f);
     let leaf = tree.leaf_of(VarId(1)).unwrap();
@@ -77,7 +79,7 @@ fn freeing_a_whole_subtree_matches_one_variable_at_a_time() {
 
 #[test]
 fn quantifying_every_variable_leaves_the_constant() {
-    let tree = Arc::new(Vtree::balanced(4));
+    let tree = Home::new(Vtree::balanced(4));
     let f = Tdd::clause(&tree, [1, -2, 3]).unwrap();
     let all: Vec<VtreeIdx> = (1..=4).map(|v| tree.leaf_of(VarId(v)).unwrap()).collect();
     let eng = Engine::new();
@@ -88,7 +90,7 @@ fn quantifying_every_variable_leaves_the_constant() {
 
 #[test]
 fn structural_projection_recovers_after_each_refused_reservation() {
-    let tree = Arc::new(Vtree::balanced(5));
+    let tree = Home::new(Vtree::balanced(5));
     let f = Tdd::clause(&tree, [1, -2, 3]).unwrap() & Tdd::clause(&tree, [-1, 4, 5]).unwrap();
     let mut f = f;
     f.minimize().unwrap();
@@ -121,7 +123,7 @@ fn quantifying_an_unreduced_product_matches_quantifying_a_reduced_one() {
     // `and` leaves its result for the caller to reduce, so the product holds
     // nodes nothing reaches. The sweep prunes them first; what comes out is
     // what comes out of the same quantification over the reduced product.
-    let tree = Arc::new(Vtree::balanced(6));
+    let tree = Home::new(Vtree::balanced(6));
     let product = Tdd::clause(&tree, [1, -2, 3]).unwrap()
         & Tdd::clause(&tree, [-1, 4, 5]).unwrap()
         & Tdd::clause(&tree, [2, -4, 6]).unwrap();
@@ -149,7 +151,7 @@ fn the_prune_after_the_sweep_drops_what_a_whole_prune_drops() {
     let eng = Engine::new();
     let mut rng = Lcg::new(0x0001_005e_5ee9);
     for nvars in [6u32, 9] {
-        for (name, tree) in vtree_shapes(nvars) {
+        for (name, tree) in bare_roots(vtree_shapes(nvars)) {
             for _ in 0..6 {
                 let clauses = rand_cnf(&mut rng, nvars, CnfShape { clauses: 2 * nvars as usize, width: 3 });
                 let f = compile_clauses(&tree, &clauses);
@@ -311,7 +313,7 @@ fn regrouping_matches_the_owner_set_rule() {
     for round in 0..24u32 {
         let num_vars = 6 + round % 9;
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 4 + round as usize, width: 4 });
-        for (shape, vtree) in vtree_shapes(num_vars) {
+        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
             let f = compile_clauses(&vtree, &clauses);
             if f.is_zero() { continue; }
             for &parent in vtree.bottomup_slice() {
@@ -391,7 +393,7 @@ fn a_level_of_one_atom_per_pair_follows_the_owner_set_rule() {
         // About three models a variable, drawn once for every vtree.
         let rows: Vec<bool> = (0..1u64 << num_vars).map(|_| rng.below(1 << num_vars) < 3 * u64::from(num_vars)).collect();
         let vars: Vec<VarId> = (1..=num_vars).map(VarId).collect();
-        for (shape, vtree) in vtree_shapes(num_vars) {
+        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
             for f in [compile_clauses(&vtree, &clauses), or_of_cubes(&vtree, &vars, |row| rows[row])] {
                 if f.is_zero() { continue; }
                 for &parent in vtree.bottomup_slice() {
@@ -452,7 +454,7 @@ fn a_level_of_one_node_is_written_alike_run_by_run() {
     for round in 0..24u32 {
         let num_vars = 6 + round % 9;
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 4 + round as usize, width: 4 });
-        for (shape, vtree) in vtree_shapes(num_vars) {
+        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
             let f = compile_clauses(&vtree, &clauses);
             if f.is_zero() { continue; }
             for &parent in vtree.bottomup_slice() {
@@ -531,7 +533,7 @@ fn a_level_of_one_node_with_unsorted_runs_is_written_in_order() {
     for round in 0..48u32 {
         let num_vars = 6 + round % 9;
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 4 + round as usize, width: 4 });
-        for (shape, vtree) in vtree_shapes(num_vars) {
+        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
             let f = compile_clauses(&vtree, &clauses);
             if f.is_zero() { continue; }
             for &parent in vtree.bottomup_slice() {
@@ -625,7 +627,7 @@ fn written_by_rows() -> Vec<Tdd> {
     for round in 0..24u32 {
         let num_vars = 6 + round % 9;
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 4 + round as usize, width: 4 });
-        for (shape, vtree) in vtree_shapes(num_vars) {
+        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
             let f = compile_clauses(&vtree, &clauses);
             if f.is_zero() { continue; }
             for &parent in vtree.bottomup_slice() {

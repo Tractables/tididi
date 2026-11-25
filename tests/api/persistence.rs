@@ -47,7 +47,7 @@ fn named_roots_and_weight_metadata_survive_a_fresh_context() {
             ("true", vec![true; 16]),
             ("false", vec![false; 16]),
         ]);
-        let weighted_tree = Arc::new(Vtree::clone(tree).with_weights(Weights::new(
+        let weighted_tree = Home::new(Vtree::clone(tree).with_weights(Weights::new(
             RationalWeights::from_literals(&weights),
             Arithmetic::ExactRational,
         )).unwrap());
@@ -59,7 +59,7 @@ fn named_roots_and_weight_metadata_survive_a_fresh_context() {
             encoded_roots.insert(*name, bytes);
         }
 
-        let restored_tree = Arc::new(Vtree::from_text(&tree.to_text()).unwrap());
+        let restored_tree = Home::new(Vtree::from_text(&tree.to_text()).unwrap());
         assert!(!Arc::ptr_eq(tree, &restored_tree));
         let mut names = BTreeMap::new();
         let mut restored_weights = vec![None; restored_tree.num_vars() as usize];
@@ -83,7 +83,7 @@ fn named_roots_and_weight_metadata_survive_a_fresh_context() {
         let mut restored_roots = BTreeMap::new();
         for (name, bytes) in &encoded_roots {
             let diagram = read_tdd(&mut Cursor::new(bytes), &restored_tree).unwrap();
-            assert!(Arc::ptr_eq(diagram.vtree(), &restored_tree));
+            assert!(diagram.vtree().is_on(&restored_tree));
             assert!(diagram.weights().is_none()); // the structural format omits weights
             let expected = &root_truths[name];
             assert_truth(
@@ -117,10 +117,10 @@ fn named_roots_and_weight_metadata_survive_a_fresh_context() {
         let named_query = engine
             .xor(
                 engine
-                    .literal(restored_weighted.vtree(), tididi::Literal::pos(names["rain"]))
+                    .literal(&restored_weighted, tididi::Literal::pos(names["rain"]))
                     .unwrap(),
                 engine
-                    .literal(restored_weighted.vtree(), tididi::Literal::pos(names["sensor"]))
+                    .literal(&restored_weighted, tididi::Literal::pos(names["sensor"]))
                     .unwrap(),
             )
             .unwrap();
@@ -188,7 +188,7 @@ fn rotated_vtrees_and_diagrams_round_trip_together() {
                 let stats = f.rotation_search(&mut AcceptProbe(probe), &config).unwrap();
                 assert_eq!(stats.accepts, 1);
                 assert_canonical(&f);
-                let restored_vtree = Arc::new(Vtree::from_text(&f.vtree().to_text()).unwrap());
+                let restored_vtree = Home::new(Vtree::from_text(&f.vtree().to_text()).unwrap());
                 assert!(f.vtree().same_tree(&restored_vtree));
                 let assignments = 1 << f.vtree().num_vars();
                 let truth: Vec<_> = (0..assignments).map(|row| bit(row, 0) || !bit(row, 2)).collect();
@@ -217,7 +217,7 @@ fn rotated_vtrees_and_diagrams_round_trip_together() {
                     for target in [f.vtree(), &restored_vtree] {
                         let loaded = read_tdd(&mut bytes.as_slice(), target).unwrap();
                         assert_canonical(&loaded);
-                        assert!(Arc::ptr_eq(loaded.vtree(), target));
+                        assert!(target.home().map_or_else(|| Arc::ptr_eq(loaded.vtree(), target), |home| loaded.vtree().is_on(&home)));
                         assert_truth(&engine, &loaded, &expected, "rotated round trip");
                     }
                 }

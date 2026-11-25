@@ -10,9 +10,9 @@ use crate::*;
 pub struct TididiVtree(Arc<Vtree>);
 /// A handle on `vtree` made a home: a circuit built on it is held on the home's projection on the
 /// variables it uses, so it stores no level for any other variable.
-fn domain_handle(vtree: Vtree) -> *mut TididiVtree { Box::into_raw(Box::new(TididiVtree(Arc::clone(Home::new(vtree).vtree())))) }
+fn domain_handle(vtree: Vtree) -> *mut TididiVtree { Box::into_raw(Box::new(TididiVtree(Arc::clone(&Home::new(vtree))))) }
 /// The vtree a circuit was built on: the home of its projection.
-pub(crate) fn domain(f: &Tdd) -> Arc<Vtree> { Arc::clone(f.home().expect("a binding circuit is on a home").vtree()) }
+pub(crate) fn domain(f: &Tdd) -> Arc<Vtree> { Arc::clone(&f.home().expect("a binding circuit is on a home")) }
 /// Per-operation limits and options. Pass NULL for unlimited work and no options, or initialize with
 /// tididi_limits_default.
 #[repr(C)]

@@ -26,7 +26,7 @@ const RESERVES_PER_CONTRACTION: u32 = 24;
 /// The two groups have distinct signatures and their siblings are non-twins, so
 /// no cascade masks the merge.
 fn two_twin_groups() -> (Arc<Vtree>, Tdd) {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Arc::clone(&crate::vtree::Home::new(Vtree::balanced(4)));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
 
@@ -92,7 +92,7 @@ fn test_contract_twins_overbudget_w1_count_unchanged() {
 /// it proves the heap-remainder restore; `root` proves the failed-mid-processing
 /// restore. Fails if the worklist is dropped instead of restored (→ empty).
 fn two_dirty_parents() -> (Arc<Vtree>, Tdd, VtreeIdx, VtreeIdx) {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Arc::clone(&crate::vtree::Home::new(Vtree::balanced(4)));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
 

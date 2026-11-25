@@ -1,3 +1,5 @@
+use crate::vtree::Home;
+use crate::test_helpers::bare_roots;
 use std::sync::Arc;
 
 use num_bigint::BigUint;
@@ -80,7 +82,7 @@ fn adds_the_counts_of_functions_summed_out_alike() {
     for round in 0..24 {
         let n = 3 + (round % 6) as u32;
         let shape = CnfShape { clauses: n as usize, width: 2 + (round % 3) };
-        for (name, vtree) in vtree_shapes(n) {
+        for (name, vtree) in bare_roots(vtree_shapes(n)) {
             let eng = Engine::new();
             let summed = targets(&mut rng, &vtree);
             let (f, g) = random_marginal_pair(&eng, &vtree, &mut rng, n, shape, &summed);
@@ -101,7 +103,7 @@ fn adds_the_counts_of_functions_summed_out_alike() {
 fn adds_a_diagram_to_itself() {
     let mut rng = Lcg::new(5);
     for n in 3..=6 {
-        for (name, vtree) in vtree_shapes(n) {
+        for (name, vtree) in bare_roots(vtree_shapes(n)) {
             let eng = Engine::new();
             let mut f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, CnfShape { clauses: n as usize, width: 3 }));
             eng.marginalize_levels(&mut f, &targets(&mut rng, &vtree)).unwrap();
@@ -155,7 +157,7 @@ fn boolean_operands_sharing_a_model_are_refused() {
         }
     }
     // On one variable the root is a leaf.
-    let vtree = Arc::new(Vtree::balanced(1));
+    let vtree = Home::new(Vtree::balanced(1));
     let x = || Tdd::cube(&vtree, [1]).unwrap();
     assert_eq!(add(x(), x()).unwrap_err(), OperationError::SharedModel);
     assert_eq!(add(x(), Tdd::one(&vtree)).unwrap_err(), OperationError::SharedModel);
@@ -195,8 +197,8 @@ fn a_false_operand_returns_the_other() {
 /// Operands on different vtree allocations are refused.
 #[test]
 fn operands_on_different_vtrees_are_refused() {
-    let a = Arc::new(Vtree::balanced(3));
-    let b = Arc::new(Vtree::balanced(3));
+    let a = Home::new(Vtree::balanced(3));
+    let b = Home::new(Vtree::balanced(3));
     let err = add(Tdd::cube(&a, [1]).unwrap(), Tdd::cube(&b, [-1]).unwrap()).unwrap_err();
     assert_eq!(err, OperationError::VtreeMismatch);
 }
@@ -255,7 +257,7 @@ fn weights_on_summed_out_levels_are_refused() {
 fn a_sum_conjoins_with_a_filter_on_its_structural_variables() {
     let mut rng = Lcg::new(41);
     let n = 6;
-    for (name, vtree) in vtree_shapes(n) {
+    for (name, vtree) in bare_roots(vtree_shapes(n)) {
         let eng = Engine::new();
         let summed = targets(&mut rng, &vtree);
         let shape = CnfShape { clauses: n as usize, width: 3 };
@@ -305,7 +307,7 @@ fn every_refused_reserve_of_a_sum_leaves_the_operands() {
     let mut rng = Lcg::new(6);
     let mut refused = 0;
     for n in [4u32, 6] {
-        for (name, vtree) in vtree_shapes(n).into_iter().take(3) {
+        for (name, vtree) in bare_roots(vtree_shapes(n)).into_iter().take(3) {
             let eng = Engine::new();
             let mut f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, CnfShape { clauses: n as usize, width: 3 }));
             eng.marginalize_levels(&mut f, &targets(&mut rng, &vtree)).unwrap();

@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use super::*;
 use crate::diagram::{Arithmetic, RationalWeights, Weights};
 use crate::limits::{LimitConfig, StopAt, StopRules};
@@ -43,7 +44,7 @@ fn exists_truth_table_3(bits: u16, vars: &[VarId], row: usize) -> bool {
 #[test]
 fn comparisons_support_and_witnesses_match_all_two_variable_truth_tables() {
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(2));
+    let tree = Home::new(Vtree::balanced(2));
     let fs: Vec<_> = (0..16).map(|bits| function(&tree, bits, false)).collect();
     for (bits, f) in fs.iter().enumerate() {
         let other = function(&tree, bits as u16, true);
@@ -164,7 +165,7 @@ fn substitution_is_simultaneous_for_cycles_identification_and_functions() {
 #[test]
 fn ite_and_existential_conjunction_match_enumeration() {
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(3));
+    let tree = Home::new(Vtree::balanced(3));
     for (a, b, c) in [(42, 97, 130), (255, 16, 0), (0, 100, 150), (150, 85, 170)] {
         let (f, g, h) = (
             function(&tree, a, false),
@@ -247,8 +248,8 @@ fn sparse_ids_and_single_leaf_diagrams_work() {
 fn boolean_queries_ignore_weights_and_substitution_keeps_destination_weights() {
     let eng = Engine::new();
     let weights = Weights::new(RationalWeights::unit(2), Arithmetic::ExactRational);
-    let tree = Arc::new(Vtree::balanced(2).with_weights(weights).unwrap());
-    let plain_tree = Arc::new(Vtree::balanced(2));
+    let tree = Home::new(Vtree::balanced(2).with_weights(weights).unwrap());
+    let plain_tree = Home::new(Vtree::balanced(2));
     let x = eng.literal(&tree, 1).unwrap();
     let plain = eng.literal(&plain_tree, 1).unwrap();
     let same = x.clone();
@@ -293,8 +294,8 @@ fn invalid_maps_and_marginal_inputs_are_rejected_even_for_constants() {
     let tree = Arc::new(Vtree::balanced(4));
     let x = eng.literal(&tree, 1).unwrap();
     let home = Home::new(Vtree::balanced(4));
-    let home_x = eng.literal(home.vtree(), 1).unwrap();
-    for (f, x) in [(Tdd::zero(&tree), &x), (Tdd::one(&tree), &x), (eng.zero(home.vtree()), &home_x), (eng.one(home.vtree()), &home_x)] {
+    let home_x = eng.literal(&home, 1).unwrap();
+    for (f, x) in [(Tdd::zero(&tree), &x), (Tdd::one(&tree), &x), (eng.zero(&home), &home_x), (eng.one(&home), &home_x)] {
         assert_eq!(
             eng.rename_vars(f.clone(), &[(VarId(1), VarId(5))])
                 .unwrap_err(),
@@ -479,9 +480,9 @@ fn composed_operations_propagate_output_caps() {
 
 #[test]
 fn witness_walk_handles_deep_vtrees_without_recursion() {
-    let tree = Arc::new(Vtree::linear(8192));
+    let tree = Home::new(Vtree::linear(8192));
     let eng = Engine::new();
-    let f = eng.literal(&tree, 8192).unwrap();
+    let f = eng.cube(&tree, (1..8192).map(|v| -v).chain([8192])).unwrap();
     let model = eng.satisfying_assignment(&f).unwrap().unwrap();
     assert_eq!(model.len(), 8192);
     assert!(model[..8191].iter().all(|lit| !lit.sign));
@@ -503,7 +504,7 @@ fn renaming_changes_the_function_without_renaming_its_weight_table() {
         },
     ]);
     let weights = Weights::new(weights, Arithmetic::ExactRational);
-    let tree = Arc::new(Vtree::balanced(2).with_weights(weights).unwrap());
+    let tree = Home::new(Vtree::balanced(2).with_weights(weights).unwrap());
     let f = eng.literal(&tree, 1).unwrap();
     assert_eq!(
         eng.weighted_value(&f).unwrap().unwrap().into_rational(),
@@ -522,7 +523,7 @@ fn renaming_changes_the_function_without_renaming_its_weight_table() {
 #[test]
 fn renaming_and_literal_substitution_agree_for_all_three_variable_maps() {
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(3));
+    let tree = Home::new(Vtree::balanced(3));
     let f = function(&tree, 0b00110110, false);
     assert_canonical(&f);
     let literals = [1, 2, 3].map(|v| eng.literal(&tree, v).unwrap());
@@ -551,7 +552,7 @@ fn rename_validates_each_entry_before_shortcuts_or_literal_construction() {
         (vec![(VarId(1), VarId(10)), (VarId(1), VarId(1))], OperationError::VariableNotInVtree(VarId(10))),
         (vec![(VarId(9), VarId(10))], OperationError::VariableNotInVtree(VarId(9))),
     ];
-    for f in [eng.one(&tree), eng.zero(&tree), eng.one(home.vtree()), eng.zero(home.vtree())] {
+    for f in [eng.one(&tree), eng.zero(&tree), eng.one(&home), eng.zero(&home)] {
         assert_canonical(&f);
         let _limits = eng.limits().scope(LimitConfig::none().with_output_node_cap(Some(0)));
         for (map, error) in &maps {
@@ -564,7 +565,7 @@ fn rename_validates_each_entry_before_shortcuts_or_literal_construction() {
 #[test]
 fn substitution_refusals_leave_replacements_usable() {
     let weights = Weights::new(RationalWeights::unit(3), Arithmetic::SignedLog);
-    let vtree = Arc::new(Vtree::balanced(3).with_weights(weights).unwrap());
+    let vtree = Home::new(Vtree::balanced(3).with_weights(weights).unwrap());
     let f = Tdd::cube(&vtree, [1, -2, 3]).unwrap();
     let g = Tdd::clause(&vtree, [2, 3]).unwrap();
     let h = Tdd::clause(&vtree, [-1, -3]).unwrap();

@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use crate::vtree::Vtree;
+use crate::vtree::{Home, Vtree};
 
 use crate::apply::apply_and;
 use crate::test_helpers::{check_minimize_soundness, clause_to_tdd, compile_clauses, test_cases, vtree_shapes};
@@ -91,7 +91,7 @@ fn test_determinism_clause_tdd() {
 
 #[test]
 fn test_structure_after_apply() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let f = clause_to_tdd(&vtree, &crate::test_helpers::literals(&[1, 2]));
     let g = clause_to_tdd(&vtree, &crate::test_helpers::literals(&[-3, 4]));
     let product = apply_and(f, g);
@@ -100,7 +100,7 @@ fn test_structure_after_apply() {
 
 #[test]
 fn test_determinism_after_apply() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let f = clause_to_tdd(&vtree, &crate::test_helpers::literals(&[1, 2]));
     let g = clause_to_tdd(&vtree, &crate::test_helpers::literals(&[-3, 4]));
     // Product before minimize is not necessarily deterministic (it has width f_width*g_width),
@@ -112,7 +112,7 @@ fn test_determinism_after_apply() {
 
 #[test]
 fn test_determinism_after_minimize() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let f = clause_to_tdd(&vtree, &crate::test_helpers::literals(&[1, 2]));
     let g = clause_to_tdd(&vtree, &crate::test_helpers::literals(&[-1, 3]));
     let c3 = clause_to_tdd(&vtree, &crate::test_helpers::literals(&[-2, -3, 4]));
@@ -176,7 +176,7 @@ fn test_minimize_soundness_raw_product() {
 fn test_no_false_nodes_after_apply_before_minimize() {
     // The invariant holds for `apply_and` output even before minimize:
     // `apply_and`'s compacting construction never creates false nodes in levels.
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let cases: Vec<(Vec<i32>, Vec<i32>)> = vec![
         (vec![1, 2], vec![-3, 4]),
         (vec![1], vec![-1]),              // contradictory → ZERO output
@@ -198,7 +198,7 @@ fn test_no_false_nodes_after_apply_before_minimize() {
 fn test_no_false_nodes_multi_apply_before_minimize() {
     let eng = &crate::Engine::new();
     // Chain of `apply_and` calls without intermediate minimize.
-    let vtree = Arc::new(Vtree::balanced(5));
+    let vtree = Home::new(Vtree::balanced(5));
     let clauses: Vec<Vec<i32>> = vec![
         vec![-1, 2], vec![-2, 3], vec![-3, 4], vec![-4, 5],
     ];

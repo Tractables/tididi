@@ -57,16 +57,16 @@ impl Engine {
     /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical)).
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Engine, Tdd, Vtree};
     /// use tididi::vtree::VarId;
     ///
     /// // x1 ∨ x2 on (x1 x2); at the root of (x1 x2) the one node.
     /// let engine = Engine::new();
-    /// let pair = Arc::new(Vtree::balanced(2));
+    /// let pair = Home::new(Vtree::balanced(2));
     /// let f = engine.clause(&pair, [1, 2])?;
     /// // Tag it with code 0b10 on x3, x4: x3 false, x4 true.
-    /// let into = Arc::new(Vtree::join(&Vtree::balanced(2), &Vtree::balanced_over(&[VarId(3), VarId(4)])?)?);
+    /// let into = Home::new(Vtree::join(&Vtree::balanced(2), &Vtree::balanced_over(&[VarId(3), VarId(4)])?)?);
     /// let g = engine.tag_level(&f, pair.root(), &into, |v| v, &[Some(0)], &[VarId(3), VarId(4)], &[0b10])?;
     /// let expected = engine.clause(&into, [1, 2])? & engine.cube(&into, [-3, 4])?;
     /// assert!(engine.equivalent(&g, &expected)?);

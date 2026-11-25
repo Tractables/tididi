@@ -115,11 +115,11 @@ fn a_match_by_rank_is_the_match_by_leaf() {
         // A projection of the same home, of another home of the same shape,
         // and the home's root, each under the identity.
         let inside = some_of(&shuffled(into_vars.clone(), &mut rng), 1, &mut rng);
-        let stranger = Home::new((**home.vtree()).clone());
+        let stranger = Home::new(Vtree::clone(&home));
         let mut sources: Vec<(Arc<Vtree>, String)> = vec![
             (Vtree::projection(&home, inside.iter().copied()).unwrap(), "same home".into()),
             (Vtree::projection(&stranger, inside.iter().copied()).unwrap(), "other home".into()),
-            (Arc::clone(home.vtree()), "home root".into()),
+            (Arc::clone(&home), "home root".into()),
         ];
         let over = some_of(&shuffled(all.clone(), &mut rng), 1, &mut rng);
         sources.push((Vtree::projection(&home, over.iter().copied()).unwrap(), format!("same home {over:?}")));

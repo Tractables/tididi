@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
@@ -12,7 +13,7 @@ use crate::vtree::{RotationKind, Vtree};
 fn an_objective_panic_restores_the_rotation_trial() {
     for kind in [RotationKind::Left, RotationKind::Right] {
         let eng = Engine::new();
-        let vtree = Arc::new(Vtree::balanced(4));
+        let vtree = Home::new(Vtree::balanced(4));
         let mut f = Tdd::clause(&vtree, [1, 2]).unwrap() & Tdd::clause(&vtree, [3, 4]).unwrap();
         assert_canonical(&f);
         let before = format!("{f:?}");
@@ -32,7 +33,7 @@ fn an_objective_panic_restores_the_rotation_trial() {
 #[test]
 fn a_rejected_rotation_preserves_the_shared_vtree_and_worklists() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let mut f = Tdd::clause(&vtree, [1, 2]).unwrap() & Tdd::clause(&vtree, [3, 4]).unwrap();
     assert_canonical(&f);
     let before = format!("{f:?}");

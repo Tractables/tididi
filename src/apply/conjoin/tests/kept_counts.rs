@@ -2,8 +2,6 @@
 //! again, a count that reads them is the count that folds, and a
 //! conjunction or any other change to the levels drops them.
 
-use std::sync::Arc;
-
 use super::*;
 use super::relabel::{cases, function_of};
 use crate::Engine;
@@ -50,7 +48,7 @@ fn kept_columns_are_the_folds_columns() {
             let f = function_of(&vtree, &all, &mut rng);
             let kept = counted(&eng, &f);
             // The false diagram keeps no column: its count needs none.
-            let internal = if f.is_zero() { 0 } else { vtree.internal_bottomup().count() };
+            let internal = if f.is_zero() { 0 } else { f.vtree().internal_bottomup().count() };
             assert_eq!(kept_columns_are_folded_counts(&eng, &kept, shape), internal, "{shape}: a level without a column");
             assert_eq!(eng.model_count(&kept).unwrap(), eng.model_count(&f).unwrap(), "{shape}: model count");
         }

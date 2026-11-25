@@ -35,7 +35,7 @@ const CANDIDATE_MASS: usize = (2 * N_TWIN_GROUPS) as usize;
 #[test]
 fn signature_arena_holds_candidate_rows_only() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Arc::clone(&crate::vtree::Home::new(Vtree::balanced(4)));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
 

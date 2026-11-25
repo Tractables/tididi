@@ -6,6 +6,7 @@
 //! only the walk's answers hold there whatever the solver's models, so the
 //! tests that kill nodes on those fixtures run without enumeration.
 
+use crate::vtree::Home;
 use num_bigint::BigUint;
 
 use super::*;
@@ -77,7 +78,7 @@ fn the_enumeration_kills_nothing_on_a_shared_prime_boundary() {
 /// vtree, whose lower level has two nodes that need x1, and the clauses with
 /// `¬x1` added.
 fn prefix_fixture() -> (Tdd, Vec<Vec<i32>>) {
-    let vtree = Arc::new(Vtree::reverse_linear(3));
+    let vtree = Home::new(Vtree::reverse_linear(3));
     let clauses = vec![vec![1, 3], vec![2, -3]];
     let f = compile_clauses(&vtree, &clauses);
     let phi = [clauses, vec![vec![-1]]].concat();
@@ -117,7 +118,7 @@ fn an_empty_prefix_is_neither_probed_nor_killed() {
 
 #[test]
 fn a_false_diagram_has_nothing_to_probe() {
-    let tree = Arc::new(Vtree::balanced(4));
+    let tree = Home::new(Vtree::balanced(4));
     let f = Tdd::zero(&tree);
     let (outcome, _, host) = probe(&f, &[], 0, Witness::NodeLiterals);
     assert_eq!(host.calls, [Call::Poll(ProbePoint::Begin)]);

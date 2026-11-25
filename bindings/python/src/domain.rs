@@ -17,11 +17,11 @@ pub struct PyVtree(pub Arc<Vtree>);
 impl PyVtree {
     /// `vtree` made a home: a circuit built on it is held on the home's projection on the variables
     /// it uses, so it stores no level for any other variable.
-    fn home(vtree: Vtree) -> Self { Self(Arc::clone(Home::new(vtree).vtree())) }
+    fn home(vtree: Vtree) -> Self { Self(Arc::clone(&Home::new(vtree))) }
 }
 
 /// The vtree a circuit was built on: the home of its projection.
-pub fn domain(f: &Tdd) -> Arc<Vtree> { Arc::clone(f.home().expect("a binding circuit is on a home").vtree()) }
+pub fn domain(f: &Tdd) -> Arc<Vtree> { Arc::clone(&f.home().expect("a binding circuit is on a home")) }
 
 #[pymethods]
 impl PyVtree {

@@ -5,10 +5,10 @@
 //! The reference exists where each region stands for one home node whose
 //! leaves the diagram all had, so the cases are built that way.
 
+use std::sync::Arc;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::Arc;
 
 use num_bigint::BigUint;
 
@@ -172,7 +172,7 @@ fn sorted<T: Ord + Clone>(v: &[T]) -> Vec<T> {
 /// One or two home nodes, none under another, each an internal node all of
 /// whose leaves `g` has.
 fn targets(home: &Home, g: &Tdd, rng: &mut Lcg) -> Vec<VtreeIdx> {
-    let h = home.vtree();
+    let h = home;
     let full: Vec<VtreeIdx> = h
         .bottomup()
         .filter(|&t| !h.node(t).is_leaf() && h.subtree(t).filter(|&u| h.node(u).is_leaf()).all(|u| g.vtree().leaf_of(h.leaf_var(u)).is_some()))
@@ -211,7 +211,7 @@ pub(crate) fn region_case_and_source(eng: &Engine, seed: u64, max_leaves: u32) -
         g = reweighted(&g, &home, &weighted);
         home = weighted;
     }
-    let mut f = on_root_copy(&g, home.vtree());
+    let mut f = on_root_copy(&g, &home);
     let hs = targets(&home, &g, &mut rng);
     if hs.is_empty() {
         return None;

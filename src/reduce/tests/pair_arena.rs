@@ -1,7 +1,7 @@
 //! The pair arena after a prune: a dropped node's range is counted dead, and
 //! the arena is swept once enough of it is dead.
 
-use std::sync::Arc;
+use crate::vtree::Home;
 
 use crate::diagram::{ChildPair, Tdd, TddLevel, ZERO};
 use crate::reduce::prune::PruneScope;
@@ -13,7 +13,7 @@ use crate::Engine;
 /// A clause diagram whose root level holds `copies` further nodes, each a
 /// copy of the root node's pair list, all unreachable from the output.
 fn with_unreachable_copies(copies: usize) -> Tdd {
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = Home::new(Vtree::balanced(2));
     let mut tdd = Tdd::clause(&vtree, [1, 2]).unwrap();
     let root = vtree.root().idx();
     let pairs: Vec<ChildPair> = tdd.levels[root].pairs_vec(tdd.output.local.idx()).to_vec();

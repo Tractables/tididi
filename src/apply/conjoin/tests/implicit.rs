@@ -5,6 +5,7 @@
 //! operands are themselves implicit, and over such chains conditioned on a
 //! variable, whose prunes keep some of the implicit levels described.
 
+use crate::vtree::Home;
 use super::*;
 use crate::Engine;
 use crate::limits::{LimitConfig, StopAt, StopRules};
@@ -175,7 +176,7 @@ fn same_both_ways(parts: &[Tdd], pairwise: bool, given: &[(u32, bool)]) -> Descr
 /// complete, though few of their levels are affine. Returns the implicit
 /// levels of the results.
 fn chains_over_classes(n: u32, m: u32, seed: u64, rounds: usize) -> usize {
-    let vtree = Arc::new(Vtree::balanced(n));
+    let vtree = Home::new(Vtree::balanced(n));
     let mut rng = Lcg::new(seed);
     let mut implicit = 0;
     for _ in 0..rounds {
@@ -287,7 +288,7 @@ fn chains_of_tables(
     seed: u64,
     rounds: usize,
 ) -> Described {
-    let vtree = Arc::new(Vtree::balanced(n));
+    let vtree = Home::new(Vtree::balanced(n));
     let eng = Engine::new();
     let mut rng = Lcg::new(seed);
     let mut described = Described::default();
@@ -363,7 +364,7 @@ fn levels_over_grids_with_holes_close_as_they_are_built() {
     use crate::test_helpers::{LOW_FLOOR, with_floor};
     let products = || {
         with_floor(LOW_FLOOR, || {
-            let vtree = Arc::new(Vtree::balanced(16));
+            let vtree = Home::new(Vtree::balanced(16));
             let eng = Engine::new();
             let mut rng = Lcg::new(0x11a7_0021);
             for _ in 0..3 {
@@ -373,7 +374,7 @@ fn levels_over_grids_with_holes_close_as_they_are_built() {
                     .collect();
                 same_both_ways(&parts, false, &[]);
             }
-            let vtree = Arc::new(Vtree::balanced(14));
+            let vtree = Home::new(Vtree::balanced(14));
             let mut rng = Lcg::new(0x11a7_0022);
             for _ in 0..4 {
                 let parts: Vec<Tdd> = (0..3)

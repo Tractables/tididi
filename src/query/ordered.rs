@@ -79,13 +79,12 @@ impl Tdd {
     /// root that holds most of the diagram's pairs is read whole.
     ///
     /// ```
-    /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
-    /// use tididi::vtree::VarId;
+    /// use tididi::vtree::{Home, VarId};
     ///
     /// // A stick over 1, 2, 3 reads every leading run of its leaves
     /// // first: order by (1, 2) descending, then 3 ascending.
-    /// let vtree = Arc::new(Vtree::linear(3));
+    /// let vtree = Home::new(Vtree::linear(3));
     /// let f = Tdd::clause(&vtree, [1, 3])?;
     /// let key: &[VarId] = &[VarId(1), VarId(2)];
     /// let then: &[VarId] = &[VarId(3)];
@@ -134,13 +133,12 @@ impl Tdd {
     /// both values. Each node's stream is kept distinct as it is merged.
     ///
     /// ```
-    /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
-    /// use tididi::vtree::VarId;
+    /// use tididi::vtree::{Home, VarId};
     ///
     /// // x1 ∨ x3 on a stick over 1, 2, 3: the key (1, 2) takes the values
     /// // 3, 2 (x1 set) and 1, 0 (x1 clear, x3 set).
-    /// let vtree = Arc::new(Vtree::linear(3));
+    /// let vtree = Home::new(Vtree::linear(3));
     /// let f = Tdd::clause(&vtree, [1, 3])?;
     /// let key: &[VarId] = &[VarId(1), VarId(2)];
     /// assert_eq!(f.ordered_keys(&[key], &[true], 3)?, Some(vec![vec![3, 2, 1]]));

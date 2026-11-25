@@ -41,9 +41,9 @@ impl Tdd {
     /// structure, or [`OperationError::OverBudget`] if an allocation is refused.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let neither = Tdd::clause(&vtree, [1, 2])?.negate()?;
     /// assert!(neither.equivalent(&Tdd::cube(&vtree, [-1, -2])?)?);
     /// assert_eq!(neither.model_count()?, 2u32.into());
@@ -79,9 +79,9 @@ impl Tdd {
     /// [`OperationError::OverBudget`] if an allocation is refused.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = Tdd::one(&vtree).and_clause([-1, 2])?;
     /// assert_eq!(f.model_count()?, 6u32.into());
     /// # Ok::<(), tididi::OperationError>(())
@@ -120,9 +120,9 @@ impl Tdd {
     /// structure, or [`OperationError::OverBudget`] if an allocation is refused.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let mut f = Tdd::cube(&vtree, [1, 2, 3])?.or_cube([-1, -2, -3])?;
     /// f.minimize()?;
     /// assert_eq!(f.model_count()?, 2u32.into());
@@ -161,9 +161,9 @@ impl Tdd {
     /// [`OperationError::OverBudget`] if an allocation is refused.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{and, literal, Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 2, 3])?;
     /// let cofactor = f.clone().condition([-1, -2])?;
     /// assert!(cofactor.equivalent(&literal(&vtree, 3)?)?);
@@ -197,9 +197,9 @@ impl Tdd {
     /// if an allocation is refused. The operand is also consumed on error.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// let g = f.condition_var(tididi::vtree::VarId(1), false)?;
     /// assert_eq!(g.model_count()?, 4u32.into()); // x2, with x1 and x3 free
@@ -230,9 +230,9 @@ impl Tdd {
     /// The operand is also consumed on error.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// use tididi::vtree::VarId;
     /// let f = Tdd::clause(&vtree, [1, 2, 3])?;
     /// let g = f.condition_vars(&[VarId(1), VarId(2)], false)?;
@@ -262,9 +262,9 @@ impl Tdd {
     /// operand is also consumed on error.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = Tdd::cube(&vtree, [1, 2])?;
     /// let g = f.exists_var(tididi::vtree::VarId(2))?;
     /// assert_eq!(g.model_count()?, 4u32.into()); // x1, with x2 and x3 free
@@ -301,9 +301,9 @@ impl Tdd {
     /// or [`OperationError::OverBudget`] if an allocation is refused.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let vtree = Home::new(Vtree::balanced(2));
     /// use tididi::vtree::VarId;
     /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// let projected = f.exists_vars(&[VarId(1)])?;
@@ -340,10 +340,10 @@ impl Tdd {
     /// structure, or [`OperationError::OverBudget`] if an allocation is refused.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
     /// use tididi::vtree::VarId;
-    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let vtree = Home::new(Vtree::balanced(2));
     /// // x1 ∨ x2 holds for both values of x1 exactly when x2 holds.
     /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// let g = f.forall_vars(&[VarId(1)])?;
@@ -377,9 +377,9 @@ impl Tdd {
     /// All map entries are validated before rebuilding.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let vtree = Home::new(Vtree::balanced(2));
     /// use tididi::vtree::VarId;
     /// let f = Tdd::cube(&vtree, [1, -2])?;
     /// let swapped = f.rename_vars(&[(VarId(1), VarId(2)), (VarId(2), VarId(1))])?;
@@ -412,9 +412,9 @@ impl Tdd {
     /// [`OperationError::OverBudget`] if an allocation is refused.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = Tdd::cube(&vtree, [1, -2])?;
     /// let replacement = Tdd::clause(&vtree, [2, 3])?;
     /// let g = f.substitute(&[(tididi::vtree::VarId(1), &replacement)])?;
@@ -455,9 +455,9 @@ impl Tdd {
     /// 32-bit index, or [`OperationError::OverBudget`] if an allocation is refused.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{and, literal, Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// let care = literal(&vtree, 1)?;
     /// let g = f.clone().restrict_to_care(&care)?.into_tdd();
@@ -500,12 +500,12 @@ impl Tdd {
     /// can address.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{and, literal, or, Tdd, Vtree};
     /// use tididi::apply::FilterOutcome;
     /// use tididi::diagram::{ChildPair, POS_LEAF_IDX};
     ///
-    /// let vtree = Arc::new(Vtree::linear(3));
+    /// let vtree = Home::new(Vtree::linear(3));
     /// let f = or(literal(&vtree, 1)?, and(literal(&vtree, 2)?, literal(&vtree, 3)?)?)?;
     /// assert!(matches!(f.filter_nodes(|_| true)?, FilterOutcome::Unchanged));
     ///
@@ -543,9 +543,9 @@ impl Tdd {
     /// allocation.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{and, literal, or, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let vtree = Home::new(Vtree::balanced(2));
     /// let x = literal(&vtree, 1)?;
     /// let y = literal(&vtree, 2)?;
     /// let absorbed = or(x.clone(), and(x.clone(), y.clone())?)?;
@@ -586,9 +586,9 @@ impl Tdd {
     /// exceeds the output-node cap.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{literal, Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let vtree = Home::new(Vtree::balanced(2));
     /// let both = Tdd::cube(&vtree, [1, 2])?;
     /// let x = literal(&vtree, 1)?;
     /// assert!(both.implies(&x)?);
@@ -613,9 +613,9 @@ impl Tdd {
     /// [`OperationError::OverBudget`] if an allocation is refused.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// assert_eq!(f.support()?, vec![tididi::vtree::VarId(1), tididi::vtree::VarId(2)]);
     /// # Ok::<(), tididi::OperationError>(())
@@ -638,9 +638,9 @@ impl Tdd {
     /// [`OperationError::OverBudget`] if an allocation is refused.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{and, Literal, Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = and(Tdd::clause(&vtree, [1, 2])?, Tdd::clause(&vtree, [1, -2])?)?;
     /// assert_eq!(f.implied_literals()?, vec![Literal::try_from(1)?]);
     /// # Ok::<(), tididi::OperationError>(())
@@ -664,9 +664,9 @@ impl Tdd {
     /// or [`OperationError::OverBudget`] if a buffer allocation is refused.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// assert_eq!(f.model_count()?, 6u32.into()); // three choices for x1,x2; two for x3
     /// # Ok::<(), tididi::OperationError>(())
@@ -695,11 +695,11 @@ impl Tdd {
     /// stores its counts already and keeps no column.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Engine, Tdd, Vtree};
     /// use tididi::vtree::VarId;
     ///
-    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let vtree = Home::new(Vtree::balanced(4));
     /// let mut f = Tdd::clause(&vtree, [1, 2])?;
     /// let g = Tdd::clause(&vtree, [3, 4])?;
     /// f.attach_level_counts()?;
@@ -732,10 +732,10 @@ impl Tdd {
     /// operation changes its levels.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
     ///
-    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let vtree = Home::new(Vtree::balanced(2));
     /// let mut f = Tdd::clause(&vtree, [1, 2])?;
     /// assert!(!f.has_level_counts());
     /// f.attach_level_counts()?;
@@ -766,10 +766,10 @@ impl Tdd {
     /// [`OperationError::OverBudget`] if an allocation is refused.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
     /// use tididi::vtree::VarId;
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// # tididi::test_helpers::assert_canonical(&f);
     /// assert_eq!(f.model_count()?, 6u32.into());
@@ -818,9 +818,9 @@ impl Tdd {
     /// [`OperationError::Stopped`] on cancellation.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{and, Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let vtree = Home::new(Vtree::balanced(2));
     /// let either = Tdd::clause(&vtree, [1, 2])?;
     /// assert!(either.is_sat()?);
     /// let impossible = and(either, Tdd::cube(&vtree, [-1, -2])?)?;
@@ -849,12 +849,14 @@ impl Tdd {
     /// [`OperationError::OverBudget`] if an allocation is refused.
     ///
     /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// use tididi::vtree::Home;
+    /// use tididi::{Literal, Tdd, Vtree};
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = Tdd::cube(&vtree, [1, -2])?;
     /// let model = f.satisfying_assignment()?.unwrap();
+    /// // x3, which `f` ignores, has no leaf on the projection and is assigned false.
     /// assert_eq!(model.len(), 3);
+    /// assert_eq!(model[2], Literal::try_from(-3)?);
     /// assert!(Tdd::cube(&vtree, model)?.implies(&f)?);
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
@@ -903,9 +905,9 @@ impl Tdd {
     /// dependency when using this type in your application.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let vtree = Home::new(Vtree::balanced(2));
     /// use num_rational::BigRational;
     /// use tididi::diagram::{LiteralWeights, RationalWeights};
     /// let f = Tdd::clause(&vtree, [1, 2])?;
@@ -945,7 +947,7 @@ impl Tdd {
     /// Panics from the caller's algebra propagate.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
     /// use tididi::diagram::{ColumnAlgebra, LeafLabel, SlotPairs};
     /// use tididi::vtree::{VarId, VtreeIdx};
@@ -965,7 +967,7 @@ impl Tdd {
     ///     }
     ///     fn read(&self, _: VtreeIdx, col: Vec<u32>, slot: usize) -> u32 { col[slot] }
     /// }
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 2])? & tididi::literal(&vtree, 3)?;
     /// assert_eq!(f.evaluate_columns(&FewestTrue)?, 2);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -1004,7 +1006,7 @@ impl Tdd {
     /// Panics from the caller's algebra propagate.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
     /// use tididi::diagram::{EvalAlgebra, LeafLabel};
     /// use tididi::vtree::VarId;
@@ -1021,7 +1023,7 @@ impl Tdd {
     ///
     /// // (x1 ∨ x2) ∧ x3 on (x1 (x2 x3)): the right child's nodes split the
     /// // assignments of x2, x3 by what they leave of the function.
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 2])? & tididi::literal(&vtree, 3)?;
     /// let (left, right) = vtree.children(vtree.root());
     /// let lefts = f.evaluate_at(left, &Count)?;
@@ -1058,7 +1060,7 @@ impl Tdd {
     /// Panics from the caller's algebra propagate.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
     /// use tididi::diagram::{ColumnAlgebra, LeafLabel, SlotPairs};
     /// use tididi::vtree::{VarId, VtreeIdx};
@@ -1080,7 +1082,7 @@ impl Tdd {
     ///
     /// // (x1 ∨ x2) ∧ x3 on (x1 (x2 x3)): the children's columns, combined
     /// // through the output's pairs, give the model count.
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 2])? & tididi::literal(&vtree, 3)?;
     /// let (left, right) = vtree.children(vtree.root());
     /// let lefts = f.evaluate_columns_at(left, &Counts)?;
@@ -1108,7 +1110,7 @@ impl Tdd {
     /// Returns [`OperationError::OverBudget`] if a scratch allocation is refused.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
     /// use num_rational::BigRational;
     /// use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
@@ -1116,7 +1118,7 @@ impl Tdd {
     /// let weights = RationalWeights::from_literals(&vec![
     ///     LiteralWeights { negative: half.clone(), positive: half }; 2
     /// ]);
-    /// let vtree = Arc::new(Vtree::balanced(2).with_weights(Weights::new(weights, Arithmetic::ExactRational))?);
+    /// let vtree = Home::new(Vtree::balanced(2).with_weights(Weights::new(weights, Arithmetic::ExactRational))?);
     /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// assert_eq!(f.weighted_value()?.unwrap().into_rational(),
     ///            BigRational::new(3.into(), 4.into()));
@@ -1166,9 +1168,9 @@ impl Tdd {
     /// The vtree is then unchanged.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{and, literal, Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let mut f = and(Tdd::clause(&vtree, [1, 2])?, literal(&vtree, 3)?)?;
     /// let before = f.model_count()?;
     /// f.minimize()?;
@@ -1267,9 +1269,9 @@ impl Tdd {
     /// It can still be queried or retried, and its vtree is unchanged.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{and, literal, Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// use tididi::reduce::ReductionPlan;
     /// let mut f = and(Tdd::clause(&vtree, [1, 2])?, literal(&vtree, 3)?)?;
     /// let before = f.model_count()?;
@@ -1424,9 +1426,9 @@ impl Tdd {
     /// earlier accepted rotations remain committed.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{and, literal, Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let vtree = Home::new(Vtree::balanced(4));
     /// use tididi::restructure::search::{MinimizePairs, RotationSearchConfig};
     /// let mut f = and(Tdd::clause(&vtree, [1, 2])?, Tdd::clause(&vtree, [3, 4])?)?;
     /// let before = f.model_count()?;

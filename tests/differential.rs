@@ -89,7 +89,7 @@ use tididi::test_helpers::{
     assert_canonical, assert_restrict_ok, assert_same_shape, brute_force_count,
     compile_clauses_pairwise, eval, rand_cnf, truth_table, weighted_sum, CnfShape, Lcg,
 };
-use tididi::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
+use tididi::vtree::{Home, VarId, Vtree, VtreeIdx, VtreeNode};
 use tididi::{and, Engine, OperationError, Tdd};
 
 // ── The case ────────────────────────────────────────────────────────────────
@@ -1283,7 +1283,7 @@ fn a_log_domain_weighted_count_is_a_number() {
 /// variables shows it.
 #[test]
 fn conditioning_leaves_no_node_computing_false() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = Tdd::clause(&vtree, [1, 2]).unwrap();
     let mut c = (f).clone().condition_var(VarId(2), false).unwrap();
     c.minimize().unwrap();
@@ -1302,7 +1302,7 @@ fn conditioning_leaves_no_node_computing_false() {
 /// accumulator therefore loses models silently.
 #[test]
 fn a_clause_naming_one_variable_twice_is_the_clause_it_spells() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let count = |clause: &[i32]| Tdd::clause(&vtree, clause).unwrap().model_count().unwrap();
     assert_eq!(count(&[1, -1]), BigUint::from(8u32), "x1 ∨ ¬x1 holds everywhere");
     assert_eq!(count(&[-1, 1]), BigUint::from(8u32), "¬x1 ∨ x1 holds everywhere");

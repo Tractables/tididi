@@ -47,13 +47,13 @@ fn text(e: &(dyn std::any::Any + Send)) -> String {
 fn and_clause_after_a_sum_out_answers() {
     quiet();
     let home = Home::new(Vtree::balanced(4));
-    let (left, _) = home.vtree().children(home.vtree().root());
+    let (left, _) = home.children(home.root());
     let mut outcomes = Vec::new();
     for (name, vars, clause, target) in [
         ("true, a node with no own leaf", &[1u32, 2, 3][..], &[1, -1][..], left),
         ("x3, the node over x1 and x2", &[1, 2, 3], &[3], left),
         ("x1 or x2, the node over them", &[1, 2, 3], &[1, 2], left),
-        ("x1 or x3, the root", &[1, 2, 3], &[1, 3], home.vtree().root()),
+        ("x1 or x3, the root", &[1, 2, 3], &[1, 3], home.root()),
     ] {
         let own = Vtree::projection(&home, vars.iter().map(|&v| VarId(v))).unwrap();
         let mut f = Tdd::clause(&own, clause.to_vec()).unwrap();
@@ -109,7 +109,7 @@ fn a_refused_marginalize_keeps_the_count() {
 fn with_a_region() -> (Home, Tdd) {
     let home = Home::new(Vtree::balanced(4));
     let mut f = Tdd::clause(&Vtree::projection(&home, [1, 2, 3, 4].map(VarId)).unwrap(), [1, 2, 3, 4]).unwrap();
-    let (left, _) = home.vtree().children(home.vtree().root());
+    let (left, _) = home.children(home.root());
     f.marginalize(under(&home, &[left])).unwrap();
     assert!(f.vtree().bottomup().any(|t| f.vtree().node(t).is_region()), "the diagram has a region");
     (home, f)
@@ -237,7 +237,7 @@ fn sum_outs_between_other_operations_agree_with_the_home() {
             continue;
         }
         let own = Vtree::projection(&home, vars.iter().copied()).unwrap();
-        let (mut f, mut twin) = (Tdd::one(&own), Tdd::one(home.vtree()));
+        let (mut f, mut twin) = (Tdd::one(&own), Tdd::one(&home));
         let clause = |rng: &mut Rng| -> Vec<i32> {
             (0..1 + rng.below(3)).map(|_| vars[rng.below(vars.len() as u64) as usize].0 as i32 * if rng.coin() { 1 } else { -1 }).collect()
         };
@@ -250,7 +250,7 @@ fn sum_outs_between_other_operations_agree_with_the_home() {
         let mut note = |what: String, trace: &str| seen.entry(what).or_insert((0, trace.to_string())).0 += 1;
         for _ in 0..2 + rng.below(4) {
             let var = VarId(1 + rng.below(u64::from(n)) as u32);
-            let targets: Vec<VtreeIdx> = (0..1 + rng.below(2)).map(|_| VtreeIdx(rng.below(home.vtree().num_nodes() as u64) as u32)).collect();
+            let targets: Vec<VtreeIdx> = (0..1 + rng.below(2)).map(|_| VtreeIdx(rng.below(home.num_nodes() as u64) as u32)).collect();
             let (sign, c) = (rng.coin(), clause(&mut rng));
             let kind = rng.below(8);
             let name = ["marginalize", "marginalize", "marginalize", "condition", "exists", "and_clause", "minimize", "trim"][kind as usize];

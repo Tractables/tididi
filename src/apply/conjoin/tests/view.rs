@@ -18,7 +18,7 @@ const BORROWS: [(bool, bool); 4] = [(false, false), (true, false), (false, true)
 /// An operand on `home`: on its vtree, or on its projection on a random
 /// set of its variables.
 fn operand(eng: &Engine, rng: &mut Lcg, home: &Home) -> Tdd {
-    let n = home.vtree().num_vars();
+    let n = home.num_vars();
     let kept: Vec<u32> = match rng.below(4) {
         0 => (1..=n).collect(),
         _ => {
@@ -30,7 +30,7 @@ fn operand(eng: &Engine, rng: &mut Lcg, home: &Home) -> Tdd {
         }
     };
     let vtree = match kept.len() as u32 == n {
-        true => Arc::clone(home.vtree()),
+        true => Arc::clone(home),
         false => Vtree::projection(home, kept.iter().map(|&v| VarId(v))).unwrap(),
     };
     let k = kept.len() as u32;
@@ -124,7 +124,7 @@ fn a_view_reads_as_the_placed_operand() {
     let (mut viewed, mut owing) = (0, 0);
     for case in 0..300u64 {
         let home = Home::new(Vtree::random(3 + rng.below(8) as u32, case));
-        let u = Arc::clone(home.vtree());
+        let u = Arc::clone(&home);
         let f = operand(&eng, &mut rng, &home);
         if Arc::ptr_eq(f.vtree(), &u) || f.is_zero() {
             continue;
@@ -153,7 +153,7 @@ fn views_conjoin_onto_as_placed_operands_do() {
     let (mut refusals, mut viewed) = (0, 0);
     for case in 0..120u64 {
         let home = Home::new(Vtree::random(3 + rng.below(8) as u32, case));
-        let u = Arc::clone(home.vtree());
+        let u = Arc::clone(&home);
         let f = operand(&eng, &mut rng, &home);
         let g = operand(&eng, &mut rng, &home);
         let c: Case<'_> = (&f, &g, &u);

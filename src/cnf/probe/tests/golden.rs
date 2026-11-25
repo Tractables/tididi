@@ -7,6 +7,7 @@
 //! walk's order by dead sides and counts, the propagation, the witness
 //! skips, and the polls.
 
+use crate::vtree::Home;
 use super::*;
 use crate::diagram::{ChildPair, NEG_LEAF_IDX, POS_LEAF_IDX};
 
@@ -324,7 +325,7 @@ fn an_output_whose_pairs_all_have_dead_sides_dies_without_a_solve() {
     // `x2 ¬x3` and `¬x2 ¬x3`, and the output joins x1 with the first and
     // ¬x1 with the second.
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::linear(3));
+    let vtree = Home::new(Vtree::linear(3));
     let root = vtree.root();
     let a = vtree.children(root).1;
     let mut builder = Tdd::builder(&eng, &vtree).unwrap();

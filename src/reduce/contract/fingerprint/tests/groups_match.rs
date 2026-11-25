@@ -103,7 +103,7 @@ fn random_classes(rng: &mut Lcg, width: u32, max_span: u64) -> Vec<Vec<u32>> {
 #[test]
 fn the_twin_groups_are_the_nodes_with_equal_contexts() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Arc::clone(&crate::vtree::Home::new(Vtree::balanced(4)));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
     let mut rng = Lcg::new(11);
@@ -220,7 +220,7 @@ fn check_marks(child: &TddLevel, scratch: &ContractScratch, marks: Marks) {
 #[test]
 fn a_wrapped_stamp_reads_no_older_cell() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Arc::clone(&crate::vtree::Home::new(Vtree::balanced(4)));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
     // Wider than the nodes the test sorts, so that it files them.
@@ -254,7 +254,7 @@ fn a_wrapped_stamp_reads_no_older_cell() {
 #[test]
 fn a_doubled_table_keeps_the_siblings_filed_before() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Arc::clone(&crate::vtree::Home::new(Vtree::balanced(4)));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
     let width = 3 * TWIN_TABLE_START_CELLS as u32;
@@ -289,7 +289,7 @@ fn a_doubled_table_keeps_the_siblings_filed_before() {
 #[test]
 fn single_entry_levels_are_grouped_by_sorting() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Arc::clone(&crate::vtree::Home::new(Vtree::balanced(4)));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
     let mut rng = Lcg::new(23);
@@ -370,7 +370,7 @@ fn single_entry_levels_are_grouped_by_sorting() {
 #[test]
 fn wide_levels_with_planted_twins_find_every_twin() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Arc::clone(&crate::vtree::Home::new(Vtree::balanced(4)));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
     let mut rng = Lcg::new(31);
@@ -504,7 +504,7 @@ fn classes_are_split_by_later_contexts() {
 #[test]
 fn nested_wide_nodes_are_split_by_degree() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Arc::clone(&crate::vtree::Home::new(Vtree::balanced(4)));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
     let mut rng = Lcg::new(59);
@@ -581,7 +581,7 @@ fn nested_wide_nodes_are_split_by_degree() {
 #[test]
 fn wide_nodes_of_mostly_lone_nodes_are_split_by_the_rest() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Arc::clone(&crate::vtree::Home::new(Vtree::balanced(4)));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
     let mut rng = Lcg::new(71);
@@ -659,7 +659,7 @@ fn wide_nodes_of_mostly_lone_nodes_are_split_by_the_rest() {
 #[test]
 fn scattered_wide_nodes_of_few_siblings_are_split_by_codes() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Arc::clone(&crate::vtree::Home::new(Vtree::balanced(4)));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
     let mut rng = Lcg::new(71);
@@ -748,7 +748,7 @@ fn scattered_wide_nodes_of_few_siblings_are_split_by_codes() {
 #[test]
 fn few_pair_parent_nodes_of_two_nodes_split_as_their_contexts_say() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Arc::clone(&crate::vtree::Home::new(Vtree::balanced(4)));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
     let mut rng = Lcg::new(83);
@@ -829,7 +829,7 @@ fn few_pair_parent_nodes_of_two_nodes_split_as_their_contexts_say() {
 #[cfg_attr(miri, ignore = "the hand-off takes no path the smaller fixtures miss, at a size Miri takes hours to interpret")]
 fn a_large_scattered_parent_node_leaves_the_level_to_the_fingerprints() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Arc::clone(&crate::vtree::Home::new(Vtree::balanced(4)));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
     let mut rng = Lcg::new(29);
@@ -890,7 +890,7 @@ fn a_large_scattered_parent_node_leaves_the_level_to_the_fingerprints() {
 #[test]
 fn wide_nodes_split_by_the_siblings_of_their_nodes_not_alone() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Arc::clone(&crate::vtree::Home::new(Vtree::balanced(4)));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
     let mut rng = Lcg::new(83);
@@ -1000,7 +1000,7 @@ fn wide_nodes_split_by_the_siblings_of_their_nodes_not_alone() {
 #[test]
 fn the_screen_marks_the_named_nodes_of_a_level_with_no_two_alike() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Arc::clone(&crate::vtree::Home::new(Vtree::balanced(4)));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
     let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
@@ -1106,7 +1106,7 @@ fn the_screen_marks_the_named_nodes_of_a_level_with_no_two_alike() {
 #[cfg_attr(miri, ignore = "the screened route starts at a width Miri takes long to interpret")]
 fn a_screened_twin_free_level_lists_its_unnamed_nodes() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Arc::clone(&crate::vtree::Home::new(Vtree::balanced(4)));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
     let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));

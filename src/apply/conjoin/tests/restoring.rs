@@ -107,7 +107,7 @@ fn refuse_at_every_point(
 
 /// [`operands`] on one balanced vtree over 12.
 fn on_one_vtree(eng: &Engine) -> (Tdd, Tdd) {
-    operands(eng, &Arc::new(Vtree::balanced(12)))
+    operands(eng, &Home::new(Vtree::balanced(12)))
 }
 
 /// The variables `vars` as a projection of `home`.
@@ -271,7 +271,7 @@ fn a_summed_out_conjunction_refused_at_each_reserve_gives_the_operands_back() {
 #[test]
 fn a_granted_conjunction_matches_and() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(12));
+    let vtree = Home::new(Vtree::balanced(12));
     let (f, g) = operands(&eng, &vtree);
     let mut restored = eng.and_restoring(f.clone(), g.clone()).map_err(|r| r.error).unwrap();
     let mut plain = eng.and(f, g).unwrap();

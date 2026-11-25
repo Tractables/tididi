@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use super::*;
 use crate::diagram::{Arithmetic, RationalWeights, Weights};
 use crate::test_helpers::{assert_canonical, eval};
@@ -28,7 +29,7 @@ fn assert_expected_count_or_weight(f: &Tdd, weighted: bool, expected: u32) {
 #[test]
 fn mixed_assignments_match_the_truth_table_and_sequential_conditioning() {
     for n in 2..=7 {
-        let tree = Arc::new(Vtree::balanced(n));
+        let tree = Home::new(Vtree::balanced(n));
         let f = Tdd::clause(&tree, [1, -2]).unwrap() & Tdd::clause(&tree, [-1, n as i32]).unwrap();
         assert_canonical(&f);
         let eng = Engine::new();
@@ -59,7 +60,7 @@ fn mixed_assignments_match_the_truth_table_and_sequential_conditioning() {
 
 #[test]
 fn assignment_duplicates_and_errors_are_decided_before_rewriting() {
-    let tree = Arc::new(Vtree::balanced(2));
+    let tree = Home::new(Vtree::balanced(2));
     let eng = Engine::new();
     let f = Tdd::clause(&tree, [1, 2]).unwrap();
     assert_canonical(&f);

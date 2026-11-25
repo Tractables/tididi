@@ -6,6 +6,7 @@ use super::*;
 use crate::diagram::ChildSide;
 
 use crate::Engine;
+use crate::vtree::Home;
 
 #[test]
 fn restrict_single_variable_reports_contradictions() {
@@ -48,7 +49,7 @@ fn restrict_single_variable_reports_contradictions() {
 fn restrict_tautological_care_is_identity() {
     let eng = Engine::new();
     // c = ⊤ pins g everywhere → g must equal f (no don't-cares).
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let x2 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(3, true)]));
     let f = apply_or(and2(&clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true)])),
                            &clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(2, true)]))),
@@ -87,7 +88,7 @@ fn restrict_of_false_is_false() {
 fn restrict_of_true_is_sound_and_valid() {
     let eng = Engine::new();
     // f = ⊤: g∧c must = c. g = ⊤ is the smallest sound answer.
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = constant_one(&eng, &vtree);
     let c = apply_or(clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true), (2, true)])),
                      clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(3, true)])));

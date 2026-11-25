@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use crate::vtree::Home;
 
 use super::*;
 use crate::reduce::ReductionPlan;
@@ -50,7 +51,7 @@ fn keep_is_asked_about_every_stored_node_bottom_up() {
 
 #[test]
 fn a_false_operand_is_unchanged_without_a_callback() {
-    let tree = Arc::new(Vtree::balanced(4));
+    let tree = Home::new(Vtree::balanced(4));
     let f = Tdd::zero(&tree);
     assert_canonical(&f);
     assert!(matches!(f.filter_nodes(|_| panic!("a false operand has no node to ask about")).unwrap(), FilterOutcome::Unchanged));
@@ -151,7 +152,7 @@ fn renumbering_is_monotone_and_pair_lists_keep_their_order() {
 #[test]
 fn filtering_nodes_only_removes_models_and_pairs() {
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(6));
+    let tree = Home::new(Vtree::balanced(6));
     let f = eng.clause(&tree, [1, 2, 3, 4, 5, 6]).unwrap();
     assert_canonical(&f);
     for divisor in 2..7 {
@@ -168,7 +169,7 @@ fn filtering_nodes_only_removes_models_and_pairs() {
 
 #[test]
 fn node_filter_honors_cancellation_before_the_callback() {
-    let tree = Arc::new(Vtree::balanced(4));
+    let tree = Home::new(Vtree::balanced(4));
     let f = Tdd::clause(&tree, [1, 2]).unwrap();
     assert_canonical(&f);
     let eng = Engine::new();
@@ -180,7 +181,7 @@ fn node_filter_honors_cancellation_before_the_callback() {
 
 #[test]
 fn filter_respects_memory_refusal_and_the_output_cap() {
-    let tree = Arc::new(Vtree::balanced(4));
+    let tree = Home::new(Vtree::balanced(4));
     let f = Tdd::clause(&tree, [1, 2, 3, 4]).unwrap();
     assert_canonical(&f);
     let eng = Engine::new();
@@ -195,7 +196,7 @@ fn filter_respects_memory_refusal_and_the_output_cap() {
 
 #[test]
 fn a_refused_allocation_leaves_the_operand_intact() {
-    let tree = Arc::new(Vtree::balanced(8));
+    let tree = Home::new(Vtree::balanced(8));
     let f = compile_clauses(&tree, &[vec![1, 2, -5], vec![-2, 3, 6], vec![4, -7, 8], vec![-1, 5, -8], vec![3, -4, 7]]);
     assert_canonical(&f);
     let (before, output) = (storage(&f), f.output());

@@ -32,7 +32,7 @@ fn cases(seed: u64, count: usize, vars: std::ops::Range<u32>) -> Vec<Case> {
             },
         );
         let set = &phi[..1 + rng.below(phi.len() as u64) as usize];
-        let shapes = vtree_shapes(n);
+        let shapes = bare_roots(vtree_shapes(n));
         for _ in 0..2 {
             let vtree = &shapes[rng.below(shapes.len() as u64) as usize].1;
             let eng = Engine::new();

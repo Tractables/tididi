@@ -1,12 +1,13 @@
 //! Replay the same operation traces as the Python and C consumers.
 
-use std::sync::Arc;
+
+use tididi::vtree::Home;
 use tididi::{and, or, xor, ite, literal, Tdd, Vtree};
 use tididi::vtree::VarId;
 
 #[test]
 fn shared_behavioral_traces() {
-    let mut vtree = Arc::new(Vtree::balanced(1));
+    let mut vtree = Home::new(Vtree::balanced(1));
     let mut circuits = Vec::<Tdd>::new();
     let mut n = 1;
     for (line_number, line) in include_str!("../fixtures/conformance.txt").lines().enumerate() {
@@ -16,7 +17,7 @@ fn shared_behavioral_traces() {
         let [a, b, c] = [1, 2, 3].map(|i| fields[i].parse::<i32>().unwrap());
         if fields[0] == "case" {
             n = a as u32;
-            vtree = Arc::new(if b == 0 { Vtree::balanced(n) } else { Vtree::linear(n) });
+            vtree = Home::new(if b == 0 { Vtree::balanced(n) } else { Vtree::linear(n) });
             circuits.clear();
             continue;
         }
@@ -103,7 +104,7 @@ fn shared_stateful_sessions() {
     use tididi::diagram::{LiteralWeights, RationalWeights};
     let engine = Engine::new();
     let stopped = || LimitConfig::none().with_stop_callback(Some(StopCallback::new(|_, _| StopDecision::Stop)));
-    let mut vtree = Arc::new(Vtree::balanced(1));
+    let mut vtree = Home::new(Vtree::balanced(1));
     let mut circuit: Option<Tdd> = None;
     let mut saved: Option<Tdd> = None;
     let mut query: Option<Cached> = None;
@@ -118,7 +119,7 @@ fn shared_stateful_sessions() {
         let pins: Vec<_> = [a, b].into_iter().filter(|v| *v != 0).collect();
         match fields[0] {
             "case" => {
-                vtree = Arc::new(if b == 0 { Vtree::balanced(a as u32) } else { Vtree::linear(a as u32) });
+                vtree = Home::new(if b == 0 { Vtree::balanced(a as u32) } else { Vtree::linear(a as u32) });
                 circuit = Some(Tdd::clause(&vtree, [1, 2]).unwrap());
                 saved = None; query = None; weighted = c != 0; original_truth = expected;
                 continue;

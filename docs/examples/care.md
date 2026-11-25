@@ -23,10 +23,10 @@ Build both functions on the same vtree. `|` does not minimize its result, so
 minimize the rule; its size is compared with the simplified rule's below:
 
 ```rust,ignore,{class=tested-example}
-use std::sync::Arc;
+use tididi::vtree::Home;
 use tididi::{literal, Vtree};
 
-let vtree = Arc::new(Vtree::balanced(2));
+let vtree = Home::new(Vtree::balanced(2));
 let local = literal(&vtree, 1)?;
 let remote = literal(&vtree, 2)?;
 let mut rule = local.clone() | remote.clone();
@@ -55,8 +55,11 @@ println!("Pairs before: {}; after: {}", rule.pair_count(), simplified.pair_count
 Output:
 
 ```text
-Pairs before: 3; after: 1
+Pairs before: 3; after: 0
 ```
+
+On a home the simplified rule L lives on the projection of the vtree on L
+alone: the leaf of L decides it, so it stores no pair.
 
 [`RestrictionOutcome`](crate::apply::RestrictionOutcome) also tells a caller
 whether restriction changed the diagram; this example only needs the circuit.

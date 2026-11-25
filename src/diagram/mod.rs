@@ -53,13 +53,13 @@
 //! ask each level for its live nodes:
 //!
 //! ```
-//! use std::sync::Arc;
+//! use tididi::vtree::Home;
 //! use tididi::{Tdd, Vtree};
 //!
-//! let vtree = Arc::new(Vtree::balanced(3));
+//! let vtree = Home::new(Vtree::balanced(3));
 //! let f = Tdd::clause(&vtree, [1, 2])?;
 //! let mut total = 0;
-//! for t in vtree.bottomup() {
+//! for t in f.vtree().bottomup() {
 //!     for (_node, pairs) in f.level(t).internal_inputs_iter() {
 //!         total += pairs.len();
 //!     }

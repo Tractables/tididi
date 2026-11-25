@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use super::*;
 use crate::test_helpers::assert_canonical;
 
@@ -34,8 +35,9 @@ fn summaries_follow_consuming_edits_clones_and_marginalization() {
 
 #[test]
 fn mutable_iteration_and_indexing_invalidate_cached_summaries() {
-    let tree = Arc::new(Vtree::balanced(4));
-    let mut f = Tdd::one(&tree);
+    let tree = Home::new(Vtree::balanced(4));
+    // A clause of every variable, so the diagram has the home's levels.
+    let mut f = Tdd::clause(&tree, [1, 2, 3, 4]).unwrap();
     check(&f);
     // Mutable access alone must forget a snapshot, even if a caller restores
     // identical levels before returning the diagram.

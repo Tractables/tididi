@@ -99,13 +99,13 @@ impl Tdd {
     /// context; use [`Engine::expand_variables`] inside a bounded batch.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Literal, Tdd, Vtree};
     /// use tididi::restructure::VariableExpansion;
     /// use tididi::vtree::VarId;
     ///
     /// // x1 ∨ x2 over a simplified formula.
-    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let vtree = Home::new(Vtree::balanced(2));
     /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// // Original 1 is x1, original 3 is ¬x1, original 2 is x2, original 4 is
     /// // forced true and original 5 is free.

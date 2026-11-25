@@ -2,6 +2,7 @@
 //!
 //! Sibling of `content_twin_forking.rs`.
 
+use crate::vtree::Home;
 use crate::Engine;
 use crate::diagram::{ValueRef, NodeIdx};
 use crate::diagram::*;
@@ -208,7 +209,7 @@ fn contract_merge_scratch_buffers_are_budget_charged() {
     let eng = Engine::new();
     let lim = eng.limits();
     use crate::limits::OperationError;
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let width = 64usize;
 
     // Warm-up: same width, no twins. Sizes the width-keyed fingerprint scratch

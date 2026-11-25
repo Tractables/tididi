@@ -1,6 +1,6 @@
 //! `RationalWeights::restated`: a weight table in a component's own numbering.
 
-use std::sync::Arc;
+use crate::vtree::Home;
 
 use super::*;
 use crate::test_helpers::assert_canonical;
@@ -55,11 +55,11 @@ fn a_component_evaluates_as_it_does_in_the_global_numbering() {
     let local_to_global = [VarId(5), VarId(2), VarId(4)];
     let local = global.restated(&local_to_global).unwrap();
 
-    let local_vtree = Arc::new(Vtree::balanced(3));
+    let local_vtree = Home::new(Vtree::balanced(3));
     let component = Tdd::clause(&local_vtree, [1, -2, 3]).unwrap();
     assert_canonical(&component);
 
-    let global_vtree = Arc::new(Vtree::balanced_over(&local_to_global).unwrap());
+    let global_vtree = Home::new(Vtree::balanced_over(&local_to_global).unwrap());
     let same = Tdd::clause(&global_vtree, [5, -2, 4]).unwrap();
     assert_canonical(&same);
 

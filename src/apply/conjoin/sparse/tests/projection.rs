@@ -14,8 +14,9 @@ use crate::apply::conjoin::tests::{
     ahead_after, levels_ahead, levels_built, seeded_with, without_ahead,
 };
 use crate::diagram::Tdd;
-use crate::test_helpers::assert_same_shape;
+use crate::test_helpers::{assert_same_shape, on_one};
 use crate::vtree::{VarId, Vtree, VtreeIdx};
+use crate::vtree::Home;
 
 /// The blocks `a`, `b`, `c` of the join below.
 fn blocks() -> (Vec<VarId>, Vec<VarId>, Vec<VarId>) {
@@ -23,14 +24,14 @@ fn blocks() -> (Vec<VarId>, Vec<VarId>, Vec<VarId>) {
 }
 
 /// The vtree `((a b) c)`, every block a balanced subtree.
-fn vtree() -> Arc<Vtree> {
+fn vtree() -> Home {
     let (a, b, c) = blocks();
     let ab = Vtree::join(
         &Vtree::balanced_over(&a).unwrap(),
         &Vtree::balanced_over(&b).unwrap(),
     )
     .unwrap();
-    Arc::new(Vtree::join(&ab, &Vtree::balanced_over(&c).unwrap()).unwrap())
+    Home::new(Vtree::join(&ab, &Vtree::balanced_over(&c).unwrap()).unwrap())
 }
 
 /// `f(a, b, c) ∧ g(a, b)` on `((a b) c)`, each level's route and arena
@@ -41,7 +42,7 @@ fn crossed_join(
     eng: &Engine,
     vtree: &Arc<Vtree>,
     thresholds: SparseThresholds,
-) -> (Tdd, Vec<(VtreeIdx, Route, u64)>) {
+) -> (Tdd, Vec<(VtreeIdx, Route, u64)>, VtreeIdx) {
     let (a, b, c) = blocks();
     let mut f_rows = Vec::new();
     for z in 0..64u64 {
@@ -64,9 +65,10 @@ fn crossed_join(
     let (gv, gr) = pack(&[&a, &b], &g_rows);
     let f = eng.from_models(vtree, &fv, &fr).unwrap();
     let g = eng.from_models(vtree, &gv, &gr).unwrap();
-    let ab = vtree.children(vtree.root()).0.idx();
+    let (f, g) = on_one(eng, f, g);
+    let ab = f.vtree().children(f.vtree().root()).0;
     assert_eq!(
-        (f.levels[ab].node_count(), f.levels[ab].pairs.len()),
+        (f.level(ab).node_count(), f.level(ab).pairs.len()),
         (64, 512)
     );
 
@@ -74,10 +76,11 @@ fn crossed_join(
     // hold no room past their pairs: each level starts at its seed.
     eng.clear_scratch();
     let _forced = ForcedThresholds::install(thresholds);
-    levels_built(|| {
+    let (out, levels) = levels_built(|| {
         eng.and(f.clone(), g.clone())
             .expect("an unarmed engine refuses nothing")
-    })
+    });
+    (out, levels, ab)
 }
 
 fn sparse_and_dense_thresholds() -> (SparseThresholds, SparseThresholds) {
@@ -98,13 +101,13 @@ fn sparse_and_dense_thresholds() -> (SparseThresholds, SparseThresholds) {
 fn a_level_of_many_more_candidates_than_pairs_grows_its_arena_once() {
     let (sparse, dense) = sparse_and_dense_thresholds();
     let vtree = vtree();
-    let ab = vtree.children(vtree.root()).0;
-    let (from_sparse, levels) = crossed_join(&Engine::new(), &vtree, sparse);
-    let (from_dense, _) = crossed_join(&Engine::new(), &vtree, dense);
+    let (from_sparse, levels, ab) = crossed_join(&Engine::new(), &vtree, sparse);
+    let (from_dense, ..) = crossed_join(&Engine::new(), &vtree, dense);
     assert!(from_sparse.equivalent(&from_dense).unwrap());
     // Eight pairs a node against a seed of f's 512 pairs: doubling would
     // grow the arena three times, the projection grows it once.
-    assert_eq!(from_sparse.levels[ab.idx()].live_pairs(), 64 * 63);
+    let out = from_sparse.vtree();
+    assert_eq!(from_sparse.level(out.children(out.root()).0).live_pairs(), 64 * 63);
     assert!(
         levels.contains(&(ab, Route::Sparse, 1)),
         "the level's arena grew more than once: {levels:?}"
@@ -120,7 +123,7 @@ fn root_join(
     eng: &Engine,
     vtree: &Arc<Vtree>,
     thresholds: SparseThresholds,
-) -> (Tdd, Vec<(VtreeIdx, Route, u64)>) {
+) -> (Tdd, Vec<(VtreeIdx, Route, u64)>, VtreeIdx) {
     let (a, b, c) = blocks();
     let mut f_rows = Vec::new();
     let mut g_rows = Vec::new();
@@ -140,32 +143,33 @@ fn root_join(
     let (gv, gr) = pack(&[&a, &b, &c], &g_rows);
     let f = eng.from_models(vtree, &fv, &fr).unwrap();
     let g = eng.from_models(vtree, &gv, &gr).unwrap();
-    let root = vtree.root().idx();
+    let (f, g) = on_one(eng, f, g);
+    let root = f.vtree().root();
     assert_eq!(
-        (f.levels[root].pairs.len(), g.levels[root].pairs.len()),
+        (f.level(root).pairs.len(), g.level(root).pairs.len()),
         (4032, 4032)
     );
 
     eng.clear_scratch();
     let _forced = ForcedThresholds::install(thresholds);
-    levels_built(|| {
+    let (out, levels) = levels_built(|| {
         eng.and(f.clone(), g.clone())
             .expect("an unarmed engine refuses nothing")
-    })
+    });
+    (out, levels, root)
 }
 
 #[test]
 fn a_root_of_many_more_candidates_than_pairs_grows_its_arena_once() {
     let (sparse, dense) = sparse_and_dense_thresholds();
     let vtree = vtree();
-    let root = vtree.root();
-    let (from_sparse, levels) = root_join(&Engine::new(), &vtree, sparse);
-    let (from_dense, _) = root_join(&Engine::new(), &vtree, dense);
+    let (from_sparse, levels, root) = root_join(&Engine::new(), &vtree, sparse);
+    let (from_dense, ..) = root_join(&Engine::new(), &vtree, dense);
     assert!(from_sparse.equivalent(&from_dense).unwrap());
     // About 63 candidates an f pair against a seed of 4,032 pairs: doubling
     // would grow the arena six times, a projection held to eight times the
     // arena's capacity twice.
-    assert_eq!(from_sparse.levels[root.idx()].live_pairs(), 254_016);
+    assert_eq!(from_sparse.level(from_sparse.vtree().root()).live_pairs(), 254_016);
     assert!(
         levels.contains(&(root, Route::Sparse, 1)),
         "the root's arena grew more than once: {levels:?}"
