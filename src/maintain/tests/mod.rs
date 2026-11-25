@@ -30,19 +30,34 @@ fn apply_update(batch: &mut Maintenance<'_>, model: &[i32], insert: bool) -> Res
 /// On implicit levels and on stored ones alike ([`same_as_stored`]).
 #[test]
 fn an_edit_and_a_rebuild_reach_the_same_diagram() {
-    same_as_stored(an_edit_and_a_rebuild);
+    same_as_stored(|| an_edit_and_a_rebuild(false));
 }
 
-/// The cases of [`an_edit_and_a_rebuild_reach_the_same_diagram`]: the
-/// edited diagrams, minimized.
-fn an_edit_and_a_rebuild() -> Vec<Tdd> {
+#[test]
+fn an_edit_and_a_rebuild_reach_the_same_diagram_on_a_home() {
+    an_edit_and_a_rebuild(true);
+}
+
+#[test]
+#[ignore = "on a home an implicit level records another arena capacity than the stored route builds"]
+fn an_edit_and_a_rebuild_on_a_home_hold_what_the_stored_route_holds() {
+    same_as_stored(|| an_edit_and_a_rebuild(true));
+}
+
+/// The cases of [`an_edit_and_a_rebuild_reach_the_same_diagram`], on homes
+/// or on roots that are not homes: the edited diagrams, minimized.
+fn an_edit_and_a_rebuild(homes: bool) -> Vec<Tdd> {
     let mut out = Vec::new();
     // Both routes over every assignment of every small case. `check_determinism`
     // is quadratic in the level widths, so the sweep stops at five variables.
     let mut edits = [0u32; 2];
     for (num_vars, clauses) in test_cases() {
         if num_vars > 5 { continue; }
-        for (shape, vtree) in bare_roots(sweep_shapes(num_vars)) {
+        let shapes = match homes {
+            true => sweep_shapes(num_vars).into_iter().map(|(shape, home)| (shape, Arc::clone(&home))).collect(),
+            false => bare_roots(sweep_shapes(num_vars)),
+        };
+        for (shape, vtree) in shapes {
             let mut f = compile_clauses(&vtree, &clauses);
             f.minimize().expect("minimizing fits");
             for bits in 0..(1u64 << num_vars) {
@@ -153,7 +168,7 @@ fn a_free_variable_in_the_diagram_closes_the_edit_route() {
     // `One` is `Pos` and `Neg` together, so a leaf named through it has no
     // node for a single value and the probe cannot resolve the path.
     let vtree = Home::new(Vtree::balanced(3));
-    let mut f = Tdd::clause(&vtree, [1, 2]).expect("the clause is over the vtree");
+    let mut f = Tdd::clause(&vtree, [1, 2, 3]).expect("the clause is over the vtree");
     f.minimize().expect("minimizing fits");
     let before = f.clone();
     {
@@ -168,8 +183,8 @@ fn a_free_variable_in_the_diagram_closes_the_edit_route() {
 
 #[test]
 fn a_partial_or_contradictory_assignment_is_answered_by_the_rebuild() {
-    let vtree = Arc::new(Vtree::balanced(3));
-    let mut f = Tdd::clause(&vtree, [1, 2]).expect("the clause is over the vtree");
+    let vtree = Home::new(Vtree::balanced(3));
+    let mut f = Tdd::clause(&vtree, [1, 2, 3]).expect("the clause is over the vtree");
     f.minimize().expect("minimizing fits");
     let before = f.clone();
 

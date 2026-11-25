@@ -162,7 +162,7 @@ pub(crate) fn same_levels(out: &Tdd, oracle: &Tdd) {
             }
         }
         assert_eq!(a.pairs.len(), b.pairs.len(), "the implicit route holds another arena length");
-        assert_eq!(a.pairs.capacity(), b.pairs.capacity(), "the implicit route holds another capacity");
+        assert_eq!(a.pairs.capacity(), b.pairs.capacity(), "level {t}: the implicit route holds another capacity, {} pairs, implicit {}", a.pairs.len(), a.pairs.implicit().is_some());
         assert_eq!(a.dead_pairs, b.dead_pairs, "the implicit route counts other dead slots");
         assert_eq!(
             a.node_capacity(),

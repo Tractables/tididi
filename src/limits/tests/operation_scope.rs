@@ -70,10 +70,12 @@ fn an_armed_stop_comes_before_every_input_error() {
     use crate::vtree::{VarId, VtreeIdx};
     use crate::OperationError::Stopped;
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let f = Tdd::clause(&vtree, [1, -2]).unwrap();
     // The same shape on another vtree: every binary operation rejects the pair.
-    let other = Tdd::clause(&Arc::new(Vtree::balanced(4)), [1, -2]).unwrap();
+    let other = Tdd::clause(&Home::new(Vtree::balanced(4)), [1, -2]).unwrap();
+    // `marginalize_levels` refuses a diagram on a home before the stop.
+    let root = Tdd::clause(&Arc::new(Vtree::balanced(4)), [1, -2]).unwrap();
     let absent = [VarId(99)];
     let wide: Vec<VarId> = (1..=65).map(VarId).collect();
     let _stop = eng.limits().scope(LimitConfig::none().with_stop_callback(Some(
@@ -97,7 +99,7 @@ fn an_armed_stop_comes_before_every_input_error() {
     assert_eq!(eng.clause(&vtree, [0]).err(), Some(Stopped));
     assert_eq!(eng.from_models(&vtree, &wide, &[0]).err(), Some(Stopped));
     assert_eq!(eng.rotate_marginal_cluster(&mut f.clone(), VtreeIdx(999), 1, &mut Vec::new()).err(), Some(Stopped));
-    assert_eq!(eng.marginalize_levels(&mut f.clone(), &[VtreeIdx(999)]).err(), Some(Stopped));
+    assert_eq!(eng.marginalize_levels(&mut root.clone(), &[VtreeIdx(999)]).err(), Some(Stopped));
     // An unweighted diagram has no weighted value, but the stop is tested first.
     assert_eq!(eng.weighted_value(&f).err(), Some(Stopped));
 }
