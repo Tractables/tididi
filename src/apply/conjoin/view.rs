@@ -199,7 +199,15 @@ impl View {
         }
         tops.sort_unstable();
         match copied_dirty(eng, &tdd.dirty, tdd.vtree(), into, plan, &tops) {
-            Ok(dirty) => {
+            Ok(mut dirty) => {
+                // A pass over a leaf has a node for each of the leaf's labels,
+                // of which its reader may name some only.
+                let all: u8 = (1 << crate::diagram::LEAF_WIDTH) - 1;
+                for &t in plan.cone_nodes() {
+                    if passes[t.idx()] && view.literals(tdd, t.idx()).is_some_and(|rows| rows != all) {
+                        dirty.add_loose(t.0);
+                    }
+                }
                 view.dirty = dirty;
                 Ok(view)
             }
