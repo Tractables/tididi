@@ -40,12 +40,6 @@ impl Embedding {
 pub struct GraftLayout {
     /// One map per subtree, in input order.
     parts: Vec<Embedding>,
-    /// Final `VtreeIdx` of each spine join, in build order. Pieces are
-    /// `[subtree 0, …, subtree k-1, spine_var 0 leaf, …, spine_var m-1 leaf]`
-    /// and `chain_internals[j]` is the join whose left child is the running
-    /// chain root and whose right child is piece `j+1`; empty for a single
-    /// piece.
-    pub(crate) chain_internals: Vec<VtreeIdx>,
 }
 
 impl GraftLayout {
@@ -178,11 +172,9 @@ impl Vtree {
             pieces.push(push_leaf(&mut nodes, var));
         }
 
-        let mut chain_pre: Vec<VtreeIdx> = Vec::with_capacity(pieces.len() - 1);
         let mut root = pieces[0];
         for &next in &pieces[1..] {
             root = push_internal(&mut nodes, root, next);
-            chain_pre.push(root);
         }
 
         let (mut vtree, old_to_new) = Self::from_nodes_with_map(nodes, root, num_vars)?;
@@ -199,8 +191,6 @@ impl Vtree {
                 levels: (0..sub.num_nodes()).map(|c| old_to_new[offset as usize + c]).collect(),
             })
             .collect();
-        let chain_internals: Vec<VtreeIdx> =
-            chain_pre.iter().map(|p| old_to_new[p.idx()]).collect();
-        Ok((vtree, GraftLayout { parts, chain_internals }))
+        Ok((vtree, GraftLayout { parts }))
     }
 }

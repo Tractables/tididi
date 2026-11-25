@@ -26,9 +26,7 @@ use super::*;
 
 /// The producers whose results name a leaf `One` today, with the reason. A
 /// line marked `unpredicted` was found by this test, not by an audit.
-const EXPECTED_OPEN: &[(&str, &str)] = &[
-    ("expand_variables", "a plain root, on which a class of one literal the operand does not read is a leaf named One"),
-];
+const EXPECTED_OPEN: &[(&str, &str)] = &[];
 
 // Predicted open, but no result named One on these inputs, so the audit
 // holds them to I1: `and, weighted`, `marginalize_levels`,

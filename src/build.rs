@@ -26,16 +26,11 @@ fn constant_vtree(vtree: &Arc<Vtree>) -> std::borrow::Cow<'_, Arc<Vtree>> {
 ///
 /// The output points at the `ZERO` sentinel, so no node is stored.
 pub(crate) fn constant_zero(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
-    constant_zero_padded(eng, &constant_vtree(vtree))
-}
-
-/// [`constant_zero`] on `vtree` itself, for an operand that what follows
-/// reads on `vtree`.
-pub(crate) fn constant_zero_padded(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
+    let vtree = constant_vtree(vtree);
     if vtree.num_nodes() == 0 {
-        return constant_without_leaf(vtree, false);
+        return constant_without_leaf(&vtree, false);
     }
-    seat_canonical(eng, vtree, diagram::take_levels(eng, vtree.num_nodes()), TddNodeId { vtree: vtree.root(), local: ZERO })
+    seat_canonical(eng, &vtree, diagram::take_levels(eng, vtree.num_nodes()), TddNodeId { vtree: vtree.root(), local: ZERO })
 }
 
 /// The constant-true diagram over `vtree`, built outside the limits: off a

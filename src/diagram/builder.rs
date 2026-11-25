@@ -193,9 +193,8 @@ impl Tdd {
 }
 
 impl TddBuilder {
-    /// [`Tdd::builder`] without the home check, for an operation's output:
-    /// its vtree comes from the operands', except `expand_variables`' class
-    /// vtree, still a plain root.
+    /// [`Tdd::builder`] without the home check, for an operation's output,
+    /// whose vtree comes from its operands' homes.
     pub(crate) fn empty(eng: &Engine, vtree: &Arc<Vtree>) -> Result<Self, OperationError> {
         Ok(Self::from_levels(Arc::clone(vtree), try_take_levels(eng, vtree.num_nodes())?))
     }

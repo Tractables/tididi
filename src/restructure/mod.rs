@@ -14,7 +14,6 @@ pub(crate) mod scratch;
 pub mod search;
 pub(crate) mod embed;
 pub(crate) mod expand;
-pub(crate) mod graft;
 mod distinct;
 pub(crate) mod placement;
 mod tag;

@@ -166,14 +166,6 @@ impl<'a> MarginalStorage<'a> {
         }
     }
 
-    /// Move the source's structure or values to this level. The source is
-    /// left with what this level held, an empty level with its arenas where
-    /// the destination was taken from the pool, so that they go back to it
-    /// with the source's levels.
-    pub(crate) fn move_from(&mut self, source: &mut TddLevel) {
-        self.level.swap_with(source);
-    }
-
     pub(crate) fn push_weight(&mut self, eng: &crate::Engine, value: WeightValue) -> Result<u32, crate::OperationError> {
         let values = self.level.weight_values_mut().expect("weighted level has a column");
         let slot = eng.limits().next_slot(values.len())?;

@@ -1,5 +1,5 @@
-//! `Tdd::expand_variables`: each variable becomes a signed class, with
-//! constants and free variables grafted on.
+//! `Tdd::expand_variables`: each variable becomes a signed class, on a home
+//! grafted with the constants and the free variables.
 use std::sync::Arc;
 use crate::vtree::Home;
 
@@ -88,13 +88,17 @@ fn random_expansion(rng: &mut Lcg, n: u32) -> VariableExpansion {
 fn a_negative_singleton_exchanges_the_literals_and_keeps_true() {
     let eng = Engine::new();
     let expansion = VariableExpansion { classes: vec![vec![neg(1)]], num_vars: 1, ..VariableExpansion::default() };
-    for (local, expected) in [(POS_LEAF_IDX, NEG_LEAF_IDX), (NEG_LEAF_IDX, POS_LEAF_IDX), (ONE_LEAF_IDX, ONE_LEAF_IDX)] {
+    for (local, expected) in [(POS_LEAF_IDX, NEG_LEAF_IDX), (NEG_LEAF_IDX, POS_LEAF_IDX)] {
         let f = leaf_diagram(&eng, local);
         assert_canonical(&f);
         let g = eng.expand_variables(&f, &expansion).unwrap();
         assert_canonical(&g);
         assert_eq!(g.output().local, expected);
     }
+    // True on a home is the constant on its empty projection, and stays so.
+    let g = eng.expand_variables(&leaf_diagram(&eng, ONE_LEAF_IDX), &expansion).unwrap();
+    assert_canonical(&g);
+    assert!(g.is_one() && g.vtree().num_nodes() == 0);
 }
 
 #[test]
@@ -140,10 +144,11 @@ fn a_class_with_constants_and_a_free_variable_reconstructs_the_count() {
         assert_canonical(&f);
         let g = eng.expand_variables(&f, &expansion).unwrap();
         assert_canonical(&g);
-        let mut vars: Vec<u32> = g.vtree().leaf_bottomup().map(|(_, var)| var.0).collect();
+        let mut vars: Vec<u32> = g.home().leaf_bottomup().map(|(_, var)| var.0).collect();
         vars.sort_unstable();
         assert_eq!(vars, [1, 2, 3, 4, 5, 6]);
         assert_eq!(g.vtree().num_vars(), 6);
+        assert!(g.vtree().home().is_some() && g.vtree().leaf_of(VarId(6)).is_none(), "the free variable is on no projection");
         assert_eq!(g.model_count().unwrap(), count.into());
     }
 }
@@ -184,7 +189,7 @@ fn the_constants_false_and_true_diagrams_expand() {
     let zero = eng.expand_variables(&Tdd::zero(&vtree), &expansion).unwrap();
     assert_canonical(&zero);
     assert!(zero.is_zero());
-    assert_eq!(zero.vtree().num_leaves(), 5);
+    assert_eq!((zero.home().num_leaves(), zero.vtree().num_leaves()), (5, 0));
     // True over the reduced variables: each class agrees, the constant holds
     // and variable 4 is free.
     let one = eng.expand_variables(&Tdd::one(&vtree), &expansion).unwrap();
@@ -195,7 +200,7 @@ fn the_constants_false_and_true_diagrams_expand() {
 /// The expansion follows the diagram's own vtree, rotated or not, and keeps
 /// its shape above the classes.
 #[test]
-fn the_result_vtree_is_the_expanded_leaves_grafted_with_constants_and_free_variables() {
+fn the_result_home_is_the_expanded_leaves_grafted_with_constants_and_free_variables() {
     let eng = Engine::new();
     let vtree = Home::new(Vtree::random(3, 7));
     let f = compile_clauses_on(&eng, &vtree, &[vec![1, -2], vec![2, 3]]);
@@ -211,7 +216,7 @@ fn the_result_vtree_is_the_expanded_leaves_grafted_with_constants_and_free_varia
     let classes = vtree.expand_leaves(|v| expansion.classes[v.idx()].iter().map(|l| l.var), 7).unwrap();
     let constants = Vtree::balanced_over(&[VarId(5), VarId(6)]).unwrap();
     let expected = Vtree::graft(&[classes, constants], &[VarId(7)]).unwrap();
-    assert_eq!(g.vtree().to_text(), expected.to_text());
+    assert_eq!(g.home().to_text(), expected.to_text());
 }
 
 /// A diagram on a home lives on the projection of the variables it uses, so
@@ -251,7 +256,7 @@ fn an_identity_expansion_keeps_the_function() {
         assert_canonical(&f);
         let g = eng.expand_variables(&f, &identity(&vtree)).unwrap();
         assert_canonical(&g);
-        assert_eq!(g.vtree().to_text(), vtree.to_text(), "{shape}");
+        assert_eq!(g.home().to_text(), vtree.to_text(), "{shape}");
         assert_eq!(models(&g, 4), truth_table(4, &clauses), "{shape}");
     }
 }
@@ -322,7 +327,7 @@ fn an_armed_stop_comes_before_the_expansion_is_checked() {
 }
 
 /// A stop at a poll of the expansion, in the class rebuild, the constants'
-/// cube or the graft, is reported as refused work, and the same engine then
+/// cube or their conjunction, is reported as refused work, and the same engine then
 /// expands the diagram in full.
 #[test]
 fn a_stop_at_a_poll_is_refused_work_and_a_retry_expands() {
@@ -367,8 +372,8 @@ fn a_stop_at_a_poll_is_refused_work_and_a_retry_expands() {
             }
         }
     }
-    // The entry, the step to the constants and the step to the graft each
-    // test the stop.
+    // The entry, the step to the constants and the conjunction each test the
+    // stop.
     assert!(stopped >= 3, "{stopped} of {total} polls stopped the expansion");
     let retry = eng.expand_variables(&f, &expansion).unwrap();
     assert_canonical(&retry);

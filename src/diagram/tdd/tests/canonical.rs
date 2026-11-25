@@ -125,48 +125,12 @@ mod producers {
     use super::*;
     use crate::reduce::ReductionPlan;
     use crate::test_helpers::check::check_certified;
-    use crate::test_helpers::{rand_conj, rand_conj_over};
+    use crate::test_helpers::rand_conj;
     use crate::vtree::rng::Lcg;
-    use crate::vtree::VarId;
 
     fn certified(t: &Tdd, what: &str) {
         assert!(t.is_canonical(), "{what}: not certified");
         check_certified(t).unwrap_or_else(|e| panic!("{what}: {e}"));
-    }
-
-    /// A minimized diagram on `vtree` over `vars`: a literal one time in
-    /// four, else a random CNF.
-    fn source(vtree: &Arc<Vtree>, vars: &[u32], rng: &mut Lcg) -> Tdd {
-        let mut f = match rng.below(4) {
-            0 => {
-                let v = vars[rng.below(vars.len() as u64) as usize] as i32;
-                Tdd::clause(&crate::vtree::Home::unchecked(vtree), [if rng.coin() { v } else { -v }]).unwrap()
-            }
-            _ => rand_conj_over(vtree, vars, 4, 3, false, rng),
-        };
-        Engine::new().minimize(&mut f).unwrap();
-        f
-    }
-
-    #[test]
-    fn grafts_of_certified_parts_are_certified() {
-        for seed in 0..200u64 {
-            let mut rng = Lcg::new(seed ^ 0x6a7);
-            let mut next = 1u32;
-            let mut parts = Vec::new();
-            for _ in 0..1 + rng.below(3) {
-                let vars: Vec<u32> = (next..next + 1 + rng.below(3) as u32).collect();
-                next += vars.len() as u32;
-                let order: Vec<VarId> = vars.iter().map(|&v| VarId(v)).collect();
-                let vtree = Arc::new(Vtree::balanced_over(&order).unwrap());
-                parts.push(source(&vtree, &vars, &mut rng));
-            }
-            let spine: Vec<VarId> = (0..rng.below(3) as u32).map(|i| VarId(next + i)).collect();
-            let count = parts.iter().map(|p| p.model_count().unwrap()).product::<num_bigint::BigUint>() << spine.len();
-            let Ok(g) = crate::restructure::graft::graft(&Engine::new(), parts, &spine) else { continue };
-            certified(&g, &format!("seed {seed}: graft"));
-            assert_eq!(g.model_count().unwrap(), count, "seed {seed}");
-        }
     }
 
     #[test]

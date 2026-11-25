@@ -6,8 +6,9 @@
 //! value there: the class's variables all agreeing with the value, positive
 //! or negative, or for the constant-true leaf, with each other. Only the
 //! nodes some reference needs are built, in one pass over each class subtree.
-//! The constants are then added as one cube on a balanced tree of their own,
-//! and the free variables by grafting both parts with them.
+//! The result's home grafts the class tree with a balanced tree over the
+//! constants and with the free variables; the classes are built on their
+//! projection of it, and the constants conjoined as one cube.
 
 use std::sync::Arc;
 
@@ -19,7 +20,7 @@ use crate::diagram::{
     NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, ZERO,
 };
 use crate::limits::OperationError;
-use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
+use crate::vtree::{Home, VarId, Vtree, VtreeIdx, VtreeNode};
 
 /// How each variable of a diagram expands into a larger variable space.
 ///
@@ -82,19 +83,21 @@ impl Tdd {
     /// and every class must belong to a variable of this vtree or, on a home,
     /// of the home; each expanded variable is named once.
     ///
-    /// On a home, the diagram is first copied onto the projection of the home
-    /// over its variables and those with a class, which then stands for this
-    /// vtree below. The result's vtree is [`Vtree::expand_leaves`] on this
-    /// vtree, with each class's variables in the order given, joined as by [`Vtree::graft`]
-    /// with a balanced tree over the constants and then with the free
-    /// variables. It has the id space `1..=expansion.num_vars` and this
-    /// vtree's execution context. No apply runs: the levels above the classes
-    /// are copied, and each level of a class subtree gets at most three nodes,
-    /// one for each value of the class's leaf that the levels above reference;
-    /// where they reference true and a literal of one class, each reference to
-    /// true becomes two pairs, one per literal, and no node for true is built.
-    /// The result is not certified canonical
-    /// ([`is_canonical`](Self::is_canonical)). Weights are not carried,
+    /// The diagram is first copied onto the projection of its home over its
+    /// variables and those with a class, which then stands for this vtree
+    /// below. The result is on a new home: [`Vtree::expand_leaves`] on this
+    /// vtree, with each class's variables in the order given, joined as by
+    /// [`Vtree::graft`] with a balanced tree over the constants and then with
+    /// the free variables. The home has the id space `1..=expansion.num_vars`
+    /// and this vtree's execution context; a free variable is a leaf of the
+    /// home and of no projection, so a count over the home doubles for it.
+    /// The levels above the classes are copied, and each level of a class
+    /// subtree gets at most three nodes, one for each value of the class's
+    /// leaf that the levels above reference; where they reference true and a
+    /// literal of one class, each reference to true becomes two pairs, one per
+    /// literal, and no node for true is built. The constants are conjoined as
+    /// one cube on the home. The result need not be certified
+    /// canonical ([`is_canonical`](Self::is_canonical)). Weights are not carried,
     /// and a diagram with summed-out levels is refused. Runs on this diagram's
     /// context; use [`Engine::expand_variables`] inside a bounded batch.
     ///
@@ -116,7 +119,7 @@ impl Tdd {
     ///     num_vars: 5,
     /// };
     /// let g = f.expand_variables(&expansion)?;
-    /// assert_eq!(g.vtree().num_leaves(), 5);
+    /// assert_eq!((g.home().num_leaves(), g.vtree().num_leaves()), (5, 4));
     /// assert_eq!(g.model_count()?, 6u32.into()); // 3 · 2 (x5 is free)
     /// # tididi::test_helpers::assert_canonical(&g);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -142,9 +145,9 @@ impl Tdd {
 impl Engine {
     /// [`Tdd::expand_variables`] using this batch's scratch and resource limits.
     ///
-    /// Checks cancellation at entry and before the constants and the graft
-    /// are added; each of those steps, and the rebuild of the classes before
-    /// them, is charged to the byte budget as an operation of its own.
+    /// Checks cancellation at entry and before the constants are conjoined;
+    /// the rebuild of the classes and the conjunction are each charged to the
+    /// byte budget as an operation of its own.
     ///
     /// # Errors
     ///
@@ -158,27 +161,54 @@ impl Engine {
         let tdd = widened.as_ref().unwrap_or(tdd);
         expansion.check(self, tdd.vtree())?;
         let classes = &expansion.classes;
-        let class_vtree = Arc::new(tdd.vtree().expand_leaves(
+        let class_tree = tdd.vtree().expand_leaves(
             move |var| classes[var.idx()].iter().map(|literal| literal.var),
             expansion.num_vars,
-        )?);
-        let expanded = expand_classes(self, tdd, &class_vtree, classes)?;
-        if expansion.constants.is_empty() && expansion.free.is_empty() {
-            return Ok(expanded);
+        )?;
+        let home = expanded_home(tdd.vtree().context(), class_tree, expansion)?;
+        if tdd.is_zero() {
+            return Ok(crate::build::constant_zero(self, &home));
         }
-        let context = Arc::clone(expanded.context());
-        let mut parts = vec![expanded];
-        // One balanced tree for every constant: a tree per constant would size
-        // each one's variable table by its id, quadratic in their number.
+        let mut expanded = match tdd.vtree().num_nodes() {
+            0 => crate::build::constant_on(self, &home, true)?,
+            _ => {
+                let class_vars = tdd.vtree().leaf_bottomup().flat_map(|(_, var)| classes[var.idx()].iter().map(|literal| literal.var));
+                let class_vtree = match expansion.constants.is_empty() && expansion.free.is_empty() {
+                    true => Arc::clone(&home),
+                    false => Vtree::projection(&home, class_vars)?,
+                };
+                let (mut expanded, padded) = expand_classes(self, tdd, &class_vtree, classes)?;
+                if padded {
+                    crate::reduce::trim(self, &mut expanded, &home, None, &[])?;
+                }
+                expanded
+            }
+        };
         if !expansion.constants.is_empty() {
             lim.next_phase()?;
-            let order: Vec<VarId> = expansion.constants.iter().map(|literal| literal.var).collect();
-            let vtree = context.bind(Vtree::balanced_over(&order)?);
-            parts.push(self.cube_on(&vtree, expansion.constants.iter().copied())?);
+            let cube = self.cube(&home, expansion.constants.iter().copied())?;
+            expanded = self.and(expanded, cube)?;
         }
-        lim.next_phase()?;
-        super::graft::graft(self, parts, &expansion.free)
+        Ok(expanded)
     }
+}
+
+/// The home of an expansion: [`Vtree::graft`] of `class_tree`, a balanced
+/// tree over the constants and the free variables, on `context`.
+fn expanded_home(context: &Arc<crate::Context>, class_tree: Vtree, expansion: &VariableExpansion) -> Result<Home, ExpandError> {
+    if class_tree.num_nodes() > 0 && expansion.constants.is_empty() && expansion.free.is_empty() {
+        return Ok(Home::new(context.bind(class_tree)));
+    }
+    // One balanced tree for every constant: a tree per constant would size
+    // each one's variable table by its id, quadratic in their number.
+    let order: Vec<VarId> = expansion.constants.iter().map(|literal| literal.var).collect();
+    let constants = match order.is_empty() {
+        true => None,
+        false => Some(Vtree::balanced_over(&order)?),
+    };
+    let parts: Vec<&Vtree> = (class_tree.num_nodes() > 0).then_some(&class_tree).into_iter().chain(&constants).collect();
+    let (grafted, _) = Vtree::graft_over(&parts, |_, var| var, &expansion.free, expansion.num_vars)?;
+    Ok(Home::new(context.bind(grafted)))
 }
 
 /// `tdd` copied onto the projection of its home over its own variables and
@@ -209,8 +239,9 @@ fn leaf_node(level: &TddLevel, side: EncodedChildRef) -> usize {
 }
 
 /// `tdd` on `class_vtree`, its vtree with each leaf replaced by the leaf's
-/// class, before the constants and free variables are added.
-fn expand_classes(eng: &Engine, tdd: &Tdd, class_vtree: &Arc<Vtree>, classes: &[Vec<Literal>]) -> Result<Tdd, OperationError> {
+/// class, before the constants are added; and whether it names a leaf
+/// `One`, which a class of one literal keeps.
+fn expand_classes(eng: &Engine, tdd: &Tdd, class_vtree: &Arc<Vtree>, classes: &[Vec<Literal>]) -> Result<(Tdd, bool), OperationError> {
     let lim = eng.limits();
     let reduced = tdd.vtree();
     let idx_map = lockstep_map(reduced, class_vtree);
@@ -219,13 +250,11 @@ fn expand_classes(eng: &Engine, tdd: &Tdd, class_vtree: &Arc<Vtree>, classes: &[
     // Which of a class leaf's three nodes the levels above reference. Only
     // those are built, which keeps the result free of unreachable nodes, and
     // a diagram whose output is itself a leaf builds just the output's node.
-    // A class of one positive literal renames its leaf and needs nothing.
+    // A class of one positive literal renames its leaf and builds nothing.
     let mut used: Vec<Option<[bool; 3]>> = Vec::new();
     lim.try_resize(&mut used, reduced.num_nodes(), None)?;
-    for (leaf, var) in reduced.leaf_bottomup() {
-        if !matches!(classes[var.idx()][..], [Literal { sign: true, .. }]) {
-            used[leaf.idx()] = Some([false; 3]);
-        }
+    for (leaf, _) in reduced.leaf_bottomup() {
+        used[leaf.idx()] = Some([false; 3]);
     }
     let output = tdd.output();
     if let Some(used) = &mut used[output.vtree.idx()]
@@ -248,6 +277,8 @@ fn expand_classes(eng: &Engine, tdd: &Tdd, class_vtree: &Arc<Vtree>, classes: &[
         }
     }
 
+    let padded = reduced.leaf_bottomup().any(|(leaf, var)| classes[var.idx()].len() == 1 && used[leaf.idx()].is_some_and(|used| used[ONE_LEAF_IDX.idx()]));
+
     // The true node of a class subtree holds the pairs of its positive and
     // negative nodes, so beside either of them it would repeat that node's
     // pair in the class root's level. Where the levels above reference both,
@@ -269,7 +300,9 @@ fn expand_classes(eng: &Engine, tdd: &Tdd, class_vtree: &Arc<Vtree>, classes: &[
     let mut remap: Vec<Option<[Option<NodeIdx>; 3]>> = Vec::new();
     lim.try_resize(&mut remap, reduced.num_nodes(), None)?;
     for (leaf, var) in reduced.leaf_bottomup() {
-        if let Some(needed) = used[leaf.idx()] {
+        if let Some(needed) = used[leaf.idx()]
+            && !matches!(classes[var.idx()][..], [Literal { sign: true, .. }])
+        {
             remap[leaf.idx()] = Some(build_class(eng, class_vtree, idx_map[leaf.idx()], &classes[var.idx()], needed, &mut out)?);
         }
     }
@@ -316,7 +349,7 @@ fn expand_classes(eng: &Engine, tdd: &Tdd, class_vtree: &Arc<Vtree>, classes: &[
     };
     let output = TddNodeId { vtree: idx_map[reduced.root().idx()], local };
     debug_assert!(out.check_pairs(output).is_ok(), "an expansion repeated a pair in a level");
-    Ok(out.finish_trusting_pairs(output)?)
+    Ok((out.finish_trusting_pairs(output)?, padded))
 }
 
 /// Map each node of `reduced` to the node at the same position of
