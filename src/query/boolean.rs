@@ -144,12 +144,11 @@ impl Engine {
         if f.is_zero() {
             return Ok(None);
         }
-        if f.is_one() {
-            return Ok(Some(Vec::new()));
-        }
         let mut pending = Vec::new();
         let mut result = Vec::new();
-        lim.try_push(&mut pending, f.output())?;
+        if !f.is_one() {
+            lim.try_push(&mut pending, f.output())?;
+        }
         let mut gate = lim.gate();
         while let Some(id) = pending.pop() {
             gate.poll(1)?;
@@ -178,6 +177,15 @@ impl Engine {
                             local: NodeIdx(pair.left.raw()),
                         },
                     )?;
+                }
+            }
+        }
+        // The home variables a projection lacks are free.
+        if let Some(home) = f.vtree().link_home() {
+            for (_, var) in home.vtree().leaf_bottomup() {
+                gate.poll(1)?;
+                if f.vtree().leaf_of(var).is_none() {
+                    lim.try_push(&mut result, Literal::neg(var))?;
                 }
             }
         }

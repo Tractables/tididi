@@ -58,10 +58,10 @@ fn ffi_transformation_results_satisfy_diagram_invariants() {
 
 /// Every circuit a C entry returns holds every diagram invariant, and is
 /// certified when `TididiLimits.canonical` asks for it. A C vtree
-/// is a plain root, so a circuit stores a level for each of its variables;
-/// after `minimize` the leaves it names `One` are exactly the variables
-/// outside its support. The formulas are random clause sets over a few
-/// variables scattered across a random vtree of many.
+/// is a home, so a circuit is on its projection on the variables it names,
+/// with no pass-through level; after `minimize` those are its support. The
+/// formulas are random clause sets over a few variables scattered across a
+/// random vtree of many.
 #[test]
 fn every_c_producer_stores_only_used_levels() {
     struct Rng(u64);
@@ -106,9 +106,15 @@ fn every_c_producer_stores_only_used_levels() {
             }
         }));
         assert!(checked.is_ok(), "{what}: the result breaks an invariant");
+        assert!(f.home().is_some(), "{what}: not on a home");
+        if let Err(e) = tididi::test_helpers::check::check_trimmed(&f, false) {
+            panic!("{what}: {e}");
+        }
         let mut minimized = f.clone();
         minimized.minimize().unwrap();
-        if let Err(e) = tididi::test_helpers::check::check_padded_support(&minimized) {
+        let checked = tididi::test_helpers::check::check_trimmed(&minimized, true)
+            .and_then(|()| tididi::test_helpers::check::check_no_true_node(&minimized));
+        if let Err(e) = checked {
             panic!("{what}: minimized: {e}");
         }
         drop(f);
@@ -203,5 +209,35 @@ fn every_c_producer_stores_only_used_levels() {
             }
             tididi_vtree_free(vtree);
         }
+    }
+}
+
+/// A file written from a circuit on a plain root, which stores a level for
+/// every vtree variable, reads onto a C vtree of the same text as the
+/// projection on the variables it uses, with the same count.
+#[test]
+fn padded_file_reads_onto_the_projection() {
+    use std::sync::Arc;
+    let text = tididi::Vtree::balanced(8).to_text();
+    let plain = Arc::new(tididi::Vtree::from_text(&text).unwrap());
+    let padded = tididi::Tdd::clause(&plain, [2, -7]).unwrap();
+    assert!(padded.home().is_none());
+    let mut bytes = Vec::new();
+    tididi::io::write_tdd(&mut bytes, &padded).unwrap();
+    unsafe {
+        let (mut vtree, mut out, mut count) = (std::ptr::null_mut(), std::ptr::null_mut(), 0u64);
+        let text = std::ffi::CString::new(text).unwrap();
+        assert!(tididi_vtree_from_text(text.as_ptr(), &mut vtree).is_null());
+        assert!(tididi_from_bytes(vtree, bytes.as_ptr(), bytes.len(), &mut out).is_null());
+        {
+            let f = borrow(out).unwrap();
+            let leaves: Vec<u32> = f.vtree().leaf_bottomup().map(|(_, var)| var.0).collect();
+            assert_eq!((leaves, f.vtree().num_nodes()), (vec![2, 7], 3));
+            tididi::test_helpers::check::check_trimmed(&f, false).unwrap();
+        }
+        assert!(tididi_model_count(out, &mut count, std::ptr::null()).is_null());
+        assert_eq!(count, padded.model_count().unwrap().try_into().unwrap());
+        assert!(tididi_circuit_free(out).is_null());
+        tididi_vtree_free(vtree);
     }
 }

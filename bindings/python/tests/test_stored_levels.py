@@ -1,11 +1,10 @@
 """Every circuit a public entry returns stores a level for a variable only
-when it reads it, once minimized.
+when it reads it.
 
-A vtree built here is a plain root, so a circuit keeps a leaf for each of its
-variables. After `minimize` the leaves it names true are exactly the variables
-outside its support: no other level only passes a child through. The
-formulas are random clause sets over a few variables scattered across a
-random vtree of many.
+A vtree built here is a home, so a circuit sits on the home's projection on
+the variables its pairs name: no leaf is named true, and after `minimize`
+the leaves are exactly the support. The formulas are random clause sets over
+a few variables scattered across a random vtree of many.
 """
 import random
 import re
@@ -31,18 +30,16 @@ def random_formula(rng, vtree, variables):
     return f
 
 
-def leaves_named_true(c):
-    # `to_dot` labels a reached leaf node named true `1` with its variable in
+def leaves(c, label):
+    # `to_dot` labels a leaf node `X`, `¬X` or `1` with its variable in
     # subscript.
-    return {int(m.group(1).translate(SUBSCRIPTS)) for m in re.finditer(r'label="1([\u2080-\u2089]+)"', c.to_dot())}
+    return {int(m.group(1).translate(SUBSCRIPTS)) for m in re.finditer(label + r'([\u2080-\u2089]+)"', c.to_dot())}
 
 
 def check(c, what):
+    assert not leaves(c, 'label="1'), f"{what}: a leaf is named true"
     minimized = c.copy().minimize()
-    if not minimized.is_sat() or minimized.equivalent(td.one(minimized.vtree)):
-        return
-    ignored = set(minimized.vtree.variables) - set(minimized.support())
-    assert leaves_named_true(minimized) == ignored, f"{what}: leaves named true are not the variables the circuit ignores"
+    assert leaves(minimized, 'label="\u00ac?X') == set(minimized.support()), f"{what}: minimized: the leaves are not the support"
 
 
 def test_every_producer_stores_only_used_levels(tmp_path):

@@ -834,13 +834,14 @@ impl Tdd {
     /// Return a complete satisfying assignment, or `None` if the function is false.
     ///
     /// The assignment contains one literal per vtree variable, sorted by identifier,
-    /// including free variables. The current traversal assigns false to free leaves;
+    /// including free variables; on a projection, one per variable of its home. The
+    /// current traversal assigns false to free variables;
     /// the chosen model may change after minimization or restructuring. The diagram
     /// must be structural but need not be minimized. It is borrowed and unchanged;
     /// attached weights are ignored.
     ///
-    /// The walk and temporary space are linear in the vtree size. Sorting the
-    /// returned literals takes O(n log n) for n variables.
+    /// The walk and temporary space are linear in the vtree size, on a projection its
+    /// home's. Sorting the returned literals takes O(n log n) for n variables.
     ///
     /// # Errors
     ///

@@ -27,9 +27,9 @@ pub(crate) unsafe fn take_many(values: &[*mut TididiCircuit], validate: impl FnO
     for &value in values {
         handles.push(unsafe { required(value)? }.0.try_borrow_mut().map_err(|_| busy())?);
     }
-    let vtree = Arc::clone(handles[0].as_ref().ok_or_else(consumed)?.vtree());
+    let vtree = domain(handles[0].as_ref().ok_or_else(consumed)?);
     for handle in &handles {
-        if !Arc::ptr_eq(handle.as_ref().ok_or_else(consumed)?.vtree(), &vtree) {
+        if !Arc::ptr_eq(&domain(handle.as_ref().ok_or_else(consumed)?), &vtree) {
             return Err(invalid("circuits must share one vtree"));
         }
     }

@@ -41,7 +41,7 @@ impl PyCircuit {
     fn quantify(&mut self, py: Python<'_>, variables: Vec<u32>, canonical: bool, limits: Option<&PyLimits>,
         operation: fn(&Engine, Tdd, &[tididi::vtree::VarId]) -> Result<Tdd, OperationError>) -> PyResult<Self> {
         let vars = domain::variable_ids(&variables)?;
-        domain::check_variables(self.get()?.vtree(), vars.iter().copied())?;
+        domain::check_variables(&domain::domain(self.get()?), vars.iter().copied())?;
         self.transform(py, canonical, limits, move |e, f| operation(e, f, &vars))
     }
 }
@@ -58,7 +58,7 @@ impl PyCircuit {
 
     /// The shared vtree. Circuits built on this value can be combined with this circuit.
     #[getter]
-    fn vtree(&self) -> PyResult<PyVtree> { Ok(PyVtree(Arc::clone(self.get()?.vtree()))) }
+    fn vtree(&self) -> PyResult<PyVtree> { Ok(PyVtree(domain::domain(self.get()?))) }
 
     /// Duplicate diagram storage, leaving the original usable. The vtree is shared.
     /// The copy is minimized when this circuit is.
@@ -104,7 +104,7 @@ impl PyCircuit {
     #[pyo3(signature = (literals, *, canonical=false, limits=None))]
     fn condition(&mut self, py: Python<'_>, literals: &Bound<'_, PyAny>, canonical: bool, limits: Option<&PyLimits>) -> PyResult<Self> {
         let literals = domain::read_literals(literals)?;
-        domain::check_variables(self.get()?.vtree(), literals.iter().map(|l| l.var))?;
+        domain::check_variables(&domain::domain(self.get()?), literals.iter().map(|l| l.var))?;
         self.transform(py, canonical, limits, move |e, f| e.condition(f, literals))
     }
 
@@ -132,7 +132,7 @@ impl PyCircuit {
     fn rename(&mut self, py: Python<'_>, mapping: &Bound<'_, PyDict>, canonical: bool, limits: Option<&PyLimits>) -> PyResult<Self> {
         let pairs = mapping.iter().map(|(a, b)| Ok((domain::variable_id(a.extract()?)?, domain::variable_id(b.extract()?)?)))
             .collect::<PyResult<Vec<_>>>()?;
-        domain::check_variables(self.get()?.vtree(), pairs.iter().flat_map(|&(a, b)| [a, b]))?;
+        domain::check_variables(&domain::domain(self.get()?), pairs.iter().flat_map(|&(a, b)| [a, b]))?;
         self.transform(py, canonical, limits, move |e, f| e.rename_vars(f, &pairs))
     }
 
@@ -154,7 +154,7 @@ impl PyCircuit {
         };
         let insert = read(insert)?;
         let remove = read(remove)?;
-        domain::check_variables(self.get()?.vtree(), insert.iter().chain(&remove).flatten().map(|l| l.var))?;
+        domain::check_variables(&domain::domain(self.get()?), insert.iter().chain(&remove).flatten().map(|l| l.var))?;
         self.transform(py, canonical, limits, move |e, mut f| {
             {
                 let mut batch = e.maintain(&mut f)?;
@@ -177,7 +177,7 @@ impl PyCircuit {
     fn projected_model_count(&self, py: Python<'_>, variables: Vec<u32>, limits: Option<&PyLimits>) -> PyResult<BigUint> {
         let f = self.get()?;
         let vars = domain::variable_ids(&variables)?;
-        domain::check_variables(f.vtree(), vars.iter().copied())?;
+        domain::check_variables(&domain::domain(f), vars.iter().copied())?;
         operations::run(py, f.vtree(), domain::config(limits)?, |e| e.projected_model_count(f, &vars))
     }
 
@@ -261,8 +261,9 @@ impl PyCircuit {
     /// Storage IDs are local to this circuit and may change after transformation.
     fn node_sizes(&self) -> PyResult<Vec<(u32, usize, usize)>> {
         let f = self.get()?;
-        Ok(f.vtree().bottomup().flat_map(|v| f.level(v).internal_inputs_iter()
-            .map(move |(i, pairs)| (v.0, i, pairs.len()))).collect())
+        let vtree = f.vtree();
+        Ok(vtree.bottomup().flat_map(|v| f.level(v).internal_inputs_iter()
+            .map(move |(i, pairs)| (vtree.home_node(v).0, i, pairs.len()))).collect())
     }
 
     /// Serialize to bytes. Save the vtree too; related circuits must reload onto one shared vtree.
