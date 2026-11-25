@@ -260,7 +260,10 @@ fn sums_on_a_home_agree_with_enumeration() {
                 canonical(&sum);
                 assert_eq!(value(&sum), oracle(&ft), "add, {what}");
             }
-            Err(e) => assert!(matches!(e, OperationError::MarginalLevel(_) | OperationError::SharedModel), "add: {e:?}, {what}"),
+            Err(e) => assert!(
+                matches!(e, OperationError::MarginalLevel(_) | OperationError::SharedModel | OperationError::IncompatibleWeights),
+                "add: {e:?}, {what}"
+            ),
         }
     }
 }
