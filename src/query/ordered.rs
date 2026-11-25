@@ -222,6 +222,11 @@ impl Engine {
         if limit == 0 || tdd.is_zero() {
             return Ok(Some(walk.out));
         }
+        if vtree.num_nodes() == 0 {
+            // True on the empty projection, no variable listed: one row of zero codes.
+            push_row(&mut walk.out, &walk.cur);
+            return Ok(Some(walk.out));
+        }
         let root = tdd.output().local.idx() as u32;
         if key_bits.is_empty() {
             walk.cells.push(Cell {
@@ -373,7 +378,7 @@ impl<'a> KeyLayout<'a> {
             down[v.0 as usize] = descending[j as usize];
         }
         // Left to right, the listed leaves begin with the key bits in order.
-        let mut stack = vec![vtree.root()];
+        let mut stack: Vec<VtreeIdx> = (vtree.num_nodes() > 0).then(|| vtree.root()).into_iter().collect();
         let mut seen = 0usize;
         while let Some(t) = stack.pop() {
             match *vtree.node(t) {

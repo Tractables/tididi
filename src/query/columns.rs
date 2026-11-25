@@ -168,7 +168,7 @@ fn level_touches(
 /// under which the fixed order can be the rows' ascending order.
 fn is_lexicographic(vtree: &Vtree, role: &[Option<(u32, u32)>], widths: &[u32]) -> bool {
     let mut in_order = Vec::new();
-    let mut stack = vec![vtree.root()];
+    let mut stack: Vec<VtreeIdx> = (vtree.num_nodes() > 0).then(|| vtree.root()).into_iter().collect();
     while let Some(t) = stack.pop() {
         match *vtree.node(t) {
             VtreeNode::Leaf { var: crate::vtree::REGION_VAR, .. } => crate::vtree::region_unsupported("a column query"),
@@ -364,6 +364,14 @@ impl Engine {
             lexicographic,
         };
         if tdd.is_zero() {
+            return Ok(table);
+        }
+        if vtree.num_nodes() == 0 {
+            // True on the empty projection, no variable listed: one row of zero codes.
+            table.nodes.push(Node { count: 1, level: 0, kind: Kind::Const, a: 0, b: 0, refs: 0 });
+            table.rows = 1;
+            table.root = 0;
+            table.memo_of = vec![NONE];
             return Ok(table);
         }
 
