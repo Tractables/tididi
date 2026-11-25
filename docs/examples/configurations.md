@@ -50,7 +50,8 @@ Notifications remain optional because neither rule constrains them.
 
 Boolean operators consume their operands. Cloning supplies a copy to the
 operation, leaving the original `remote` or `encrypted` available for later use.
-Queries borrow the circuit. All these diagrams share one vtree.
+Queries borrow the circuit. All these diagrams are on one home, each on the
+projection on its own variables.
 
 ## Count configurations
 

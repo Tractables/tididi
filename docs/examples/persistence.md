@@ -29,7 +29,7 @@ let destination = local | remote.clone();
 let encryption_rule = !remote | encrypted;
 ```
 
-Save their shared vtree once alongside the two diagrams.
+Save their home once alongside the two diagrams.
 
 ## Write the structure
 

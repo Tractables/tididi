@@ -101,7 +101,7 @@ impl Tdd {
     /// # Errors
     ///
     /// [`OperationError::VariableNotInVtree`] for a listed variable the home
-    /// lacks (off a home, the vtree), [`OperationError::DuplicateVariable`]
+    /// lacks, [`OperationError::DuplicateVariable`]
     /// for one listed twice,
     /// [`OperationError::ColumnTooWide`] for a column of more than
     /// [`MAX_COLUMN_BITS`] variables, [`OperationError::UnlistedLiteral`] when a

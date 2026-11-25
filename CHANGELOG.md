@@ -27,6 +27,27 @@ Breaking changes:
   targets.
 - `Tdd::splice_subtree_unchecked` and `Tdd::reseat_vtree_unchecked` are
   removed.
+- Every diagram is on a home: its vtree is a `Home`'s root or a
+  projection of one. The constructors and readers take `&Home` in place of
+  `&Arc<Vtree>` and return a diagram on the projection of the variables
+  they use: `literal`, `Tdd::cube`, `Tdd::one`, `Tdd::zero`,
+  `Tdd::clause`, `Tdd::from_models`, `Tdd::from_cubes`,
+  `Tdd::from_columns`, the same methods on `Engine` (`Engine::literal`
+  included), `load_tdd`, `read_tdd`, `load_tdd_binary` and
+  `read_tdd_binary`. Make the home with `Home::new(vtree)`.
+- `Home::vtree` is removed: `Home` dereferences to its root
+  `Arc<Vtree>`.
+- `Tdd::home` returns `Home` in place of `Option<Home>`.
+- `Tdd::builder`, the `into` vtree of `Engine::tag_level` and the target
+  of `Tdd::restructure_to` and `Engine::restructure_to` refuse a vtree
+  that is neither a home's root nor a projection, with the new variant
+  `OperationError::NotOnHome`.
+- `Tdd::expand_variables` and `Engine::expand_variables` return a diagram
+  on a new home: the class tree grafted over a tree of the constants and
+  the free variables. A free variable is a leaf of the home and of no
+  projection.
+- `Engine::tag_level` refuses a code that sets a bit past the code
+  variables (`TagError::Tags`); such codes collided before.
 - No operation minimizes its result by default. Each one ends with its own
   kernel and the close it needs (levels in closed form, a constant on the
   empty projection, the leaves it named true dropped); its documentation
@@ -141,6 +162,10 @@ Added:
 
 Fixed:
 
+- `Tdd::restructure_to` on a diagram on a home's root left it, when the
+  move was refused, on a plain copy of that root part way between the two
+  vtrees. It now moves such a diagram as a copy, as it does one on a
+  projection, so an error leaves the diagram as it was.
 - `Vtree::same_tree` panicked on the empty projection. It now answers
   whether both vtrees are empty.
 - `Tdd::marginalize_levels` and `Engine::marginalize_levels` on the root

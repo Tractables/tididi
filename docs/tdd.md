@@ -13,9 +13,10 @@ internal node splits its variables into a left group and a right group. For
 example, a balanced vtree over four variables groups `{x1, x2}` on one side
 of the root and `{x3, x4}` on the other.
 
-[`Vtree`] determines both this decomposition and the universe of assignments:
-a variable is still part of that universe when a function does not depend on
-it.
+A vtree made a [`Home`] determines both this decomposition and the universe
+of assignments. A diagram sits on the home's **projection** on the variables
+it uses: the same tree with the other leaves removed. A variable of the home
+is still part of the universe when the diagram has no leaf for it.
 The [grouping walkthrough](crate::guide::examples::vtrees) compares two vtrees
 for the same function and explains their different storage requirements.
 
@@ -48,8 +49,8 @@ disjoint.
 
 The factors in a pair use disjoint variable sets, and the pairs of a node
 describe disjoint assignments. Counting therefore multiplies the two child
-counts for each pair, then adds the results. A literal contributes one;
-a free leaf contributes two. The exclusive-disjunction example has count
+counts for each pair, then adds the results. A literal contributes one, and
+each home variable the diagram has no leaf for doubles the count. The exclusive-disjunction example has count
 `1 × 1 + 1 × 1 = 2`.
 
 ## Minimization and equality
@@ -57,9 +58,11 @@ a free leaf contributes two. The exclusive-disjunction example has count
 [`minimize`] removes unreachable nodes and merges twins: nodes used with
 exactly the same siblings in every parent context. Their functions need not
 be equal; their union can replace them because the rest of the diagram
-uses them identically. For example, leaf twins `x` and `¬x` merge into `true`.
+uses them identically. For example, leaf twins `x` and `¬x` merge into `true`,
+and the diagram then drops the leaf `x`: it moves to the projection without
+it.
 
-The resulting structural TDD is minimal and canonical for the fixed vtree,
+The resulting structural TDD is minimal and canonical for the fixed home,
 up to node numbering and pair order. This is the minimization result of
 [the TDD paper, Section 5]; the [invariants] reference states the form
 exactly, with what holds before minimization. Changing the vtree can give a
@@ -70,7 +73,7 @@ different size;
 ## When only a value is needed
 
 [`marginalize`] replaces a subtree's structure with per-node counts,
-or with weighted values if the diagram's vtree carries [`Weights`].
+or with weighted values if the diagram's home carries [`Weights`].
 This preserves the chosen evaluation but discards the assignments behind it:
 keep the structure if you will need to recover assignments or change weights
 later. The [marginalization walkthrough](crate::guide::examples::marginalization)
@@ -91,7 +94,7 @@ indices, so array order is not a traversal order.
 must also establish the determinism contract documented on that type.
 
 [the TDD paper, Section 5]: https://arxiv.org/html/2604.05537v1#S5
-[`Vtree`]: crate::Vtree
+[`Home`]: crate::vtree::Home
 [`Tdd`]: crate::Tdd
 [`minimize`]: crate::Tdd::minimize
 [`Tdd::rotation_search`]: crate::Tdd::rotation_search

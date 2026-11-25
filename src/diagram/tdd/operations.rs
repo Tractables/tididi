@@ -1161,10 +1161,9 @@ impl Tdd {
     /// certificate of [`is_canonical`](Self::is_canonical); a caller that
     /// wants a canonical result calls this method on it.
     ///
-    /// On a [`Home`](crate::vtree::Home) or one of its projections, with no
-    /// summed-out level, a variable the minimization finds the diagram does
-    /// not depend on leaves its vtree: the result is on the projection of the
-    /// remaining variables. Off a home the vtree is kept.
+    /// With no summed-out level, a variable the minimization finds the
+    /// diagram does not depend on leaves its vtree: the result is on the
+    /// projection of its home on the remaining variables.
     ///
     /// # Errors
     ///
@@ -1298,8 +1297,7 @@ impl Tdd {
     /// each such node not under another becomes one childless node, a region
     /// ([`VtreeNode::is_region`](crate::vtree::VtreeNode::is_region)), whose
     /// level holds per node the count or weighted value of the variables
-    /// summed there, a lone variable leaf a region of its one variable; on a
-    /// root vtree its level holds those values in place.
+    /// summed there, a lone variable leaf a region of its one variable.
     ///
     /// The summed structure cannot be recovered: later operations cannot
     /// constrain its variables or recover their assignments, and structural

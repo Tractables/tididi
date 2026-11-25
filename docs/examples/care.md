@@ -19,7 +19,7 @@ Run `cargo run --example care`.
 
 ## Express the rule and the assumption
 
-Build both functions on the same vtree. `|` does not minimize its result, so
+Build both functions on the same home. `|` does not minimize its result, so
 minimize the rule; its size is compared with the simplified rule's below:
 
 ```rust,ignore,{class=tested-example}

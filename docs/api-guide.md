@@ -9,8 +9,10 @@ own contract and examples.
 
 ## Build and transform circuits
 
-Create a [`Vtree`](crate::Vtree) and share one `Arc<Vtree>` among circuits you
-intend to combine. [`literal`](crate::literal) builds an atom,
+Create a [`Vtree`](crate::Vtree), make it a [`Home`](crate::vtree::Home)
+with `Home::new`, and build every circuit you intend to combine on that home;
+each sits on the home's projection on the variables it uses.
+[`literal`](crate::literal) builds an atom,
 [`Tdd::clause`](crate::Tdd::clause) an OR of literals,
 [`Tdd::cube`](crate::Tdd::cube) an AND of literals, and
 [`Tdd::one`](crate::Tdd::one) and [`Tdd::zero`](crate::Tdd::zero) the

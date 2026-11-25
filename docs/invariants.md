@@ -27,7 +27,11 @@ reference] explains the passes named here.
   internal nodes, the home's nodes that have one of them under each child
   ([`Vtree::projection`]). A diagram is **on a home** when its vtree is a
   home's root or one of its projections ([`Vtree::home`] is `Some`), and **on
-  a plain root** otherwise: a root vtree no `Home` was made of.
+  a plain root** otherwise: a root vtree no `Home` was made of. Every diagram
+  a public constructor, reader or operation returns is on a home, and
+  [`Tdd::builder`], [`Tdd::restructure_to`] and [`Engine::tag_level`] refuse a
+  plain root; a diagram is on a plain root only inside an operation, as its
+  working form, and in the crate's own test fixtures.
 - A diagram is **certified** when [`Tdd::is_canonical`] is true.
 
 The two kinds of vtree give two layouts. On a plain root a diagram stores a
@@ -212,9 +216,9 @@ the pass that establishes them, and together at the end of a full reduction:
 | `check::check_certified` | on a certified diagram items 4, 19, 20, and that a copy with every level put back on the worklists minimizes to as many nodes and pairs (item 18) | `assert_canonical` |
 | `check::check_canonicity` | items 4, 19, 20, then 3, or 7 to 10, 24 and 12 on a diagram with a summed-out level | `check_all_fast` on a certified diagram; `test_helpers::assert_marginal_canonical` after `minimize` |
 | `check::check_determinism` | items 1 and 14 by pairwise conjunction; diagrams of a few variables with no summed-out level | the operation tests on small inputs; the randomized differential suite |
-| `check::check_trimmed` | item 15; on a home 22 and 23; 17; on a certified diagram 4 and 20; with its `minimized` argument and no summed-out level 21 | `check_all_fast` on a home; the tests of the trim, the close, the moves and the readers |
+| `check::check_trimmed` | that the vtree is a home's root or a projection; item 15; on a home 22 and 23; 17; on a certified diagram 4 and 20; with its `minimized` argument and no summed-out level 21 | `check_all_fast` on a home; the tests of the trim, the close, the moves and the readers |
 | `check::check_no_true_node` | the last sentence of item 21: no node of an internal level over at most 126 variables denotes every assignment of them; no summed-out level | `check_all_fast` on a certified diagram on a home; the producer audit after `minimize` |
-| `check::check_padded_support` | on a plain root with no summed-out level, a leaf is named `One` exactly when its variable is outside the support: item 20 at the leaves, and step 4 of the proof | `check_all_fast` on a certified diagram on a plain root; the C and Python producer tests after `minimize` |
+| `check::check_padded_support` | on a plain root with no summed-out level, a leaf is named `One` exactly when its variable is outside the support: item 20 at the leaves, and step 4 of the proof | `check_all_fast` on a certified diagram on a plain root (a test fixture) |
 | `check::check_loose_levels` | item 17 | `check_trimmed`; the conjunction tests |
 | `check::marginal` | items 7 to 12 and 24, one function each; `check_marginal_canonical_form` runs 7 to 10 and 24 | the tests of marginalization and of each reduction pass |
 | the tests `reduce::tests::canonicity` and `test_helpers::check::tests::same_function_same_diagram` | uniqueness: one function reached by several routes minimizes to one diagram; `reduce::tests::close` compares a minimized result on a home with a rebuild on the support | the test suite |
@@ -238,15 +242,18 @@ What the checkers leave open:
 [the TDD paper, Section 5]: https://arxiv.org/html/2604.05537v1#S5
 [`ChildDecoder`]: crate::diagram::ChildDecoder
 [`ContentTwinPolicy`]: crate::reduce::ContentTwinPolicy
+[`Engine::tag_level`]: crate::Engine::tag_level
 [`Home`]: crate::vtree::Home
 [`ImplicitLevel`]: crate::diagram::ImplicitLevel
 [`ReductionPlan`]: crate::reduce::ReductionPlan
 [`Tdd`]: crate::Tdd
 [`Tdd::equivalent`]: crate::Tdd::equivalent
+[`Tdd::builder`]: crate::Tdd::builder
 [`Tdd::is_canonical`]: crate::Tdd::is_canonical
 [`Tdd::marginalize`]: crate::Tdd::marginalize
 [`Tdd::minimize`]: crate::Tdd::minimize
 [`Tdd::reduce`]: crate::Tdd::reduce
+[`Tdd::restructure_to`]: crate::Tdd::restructure_to
 [`Tdd::trim`]: crate::Tdd::trim
 [`TddBuildError::RepeatedPair`]: crate::diagram::TddBuildError::RepeatedPair
 [`TddBuilder`]: crate::diagram::TddBuilder

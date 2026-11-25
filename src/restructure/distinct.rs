@@ -57,14 +57,14 @@ impl Engine {
     /// the result; no level off that path is read.
     ///
     /// `key` is a [`DistinctKey`]: a `VtreeIdx`, or the `&[VarId]` under the
-    /// node. On a diagram with a [home](Vtree::home), the node is one of the
-    /// home, not of the diagram's own vtree: an own index is read as a home
+    /// node. The node is one of the diagram's [home](Vtree::home), not of
+    /// its own vtree: an own index is read as a home
     /// node without an error, while variables name the same node whichever
     /// vtree the diagram is on. `s` ranges over every home variable under
     /// the sibling, those the diagram has no leaf for included, and the
     /// result is on the projection of the same home on the diagram's leaves
     /// under `key` ([`Vtree::sub_projection`]): a constant when it has none
-    /// there. On a root vtree, `key` is a node of that vtree.
+    /// there.
     ///
     /// The result is certified
     /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical)).
@@ -94,17 +94,12 @@ impl Engine {
     ///
     /// # Errors
     ///
-    /// [`DistinctError::Root`] when `key` is the root (of the home, on a
-    /// home), which has no sibling;
+    /// [`DistinctError::Root`] when `key` is the home's root, which has no
+    /// sibling;
     /// [`DistinctError::Key`] for variables that are not exactly the leaves
     /// of one node;
-    /// [`DistinctError::Vtree`] with
-    /// [`VtreeError::VariableSpaceTooLarge`](crate::vtree::VtreeError::VariableSpaceTooLarge)
-    /// when the diagram, on a root, has variable ids too wide for a vtree of
-    /// `key`'s subtree to declare;
     /// [`DistinctError::Operation`] with [`OperationError::LevelNotInVtree`]
-    /// for a `key` that is not a node of the home, or of the diagram's vtree
-    /// on a root,
+    /// for a `key` that is not a node of the home,
     /// [`OperationError::MarginalLevel`] for a diagram that has discarded the
     /// structure at a level, and for a refused allocation or an armed stop.
     pub fn at_least_distinct<'k>(

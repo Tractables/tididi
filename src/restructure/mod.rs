@@ -318,14 +318,14 @@ impl From<OperationError> for TagError {
 /// key on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DistinctKey<'a> {
-    /// A node of the diagram's [home](crate::Vtree::home), or of its vtree
-    /// on a root. Any index below the home's node count is a home node, so
+    /// A node of the diagram's [home](crate::Vtree::home). Any index below
+    /// the home's node count is a home node, so
     /// an index of the diagram's own vtree is read as the home node with
     /// that number, without an error.
     Node(VtreeIdx),
-    /// The node whose leaves are exactly these variables, in any order: a
-    /// node of the home, or of the diagram's vtree on a root. The same
-    /// variables name the same node whichever vtree the diagram is on.
+    /// The node of the home whose leaves are exactly these variables, in any
+    /// order. The same variables name the same node whichever projection the
+    /// diagram is on.
     Vars(&'a [VarId]),
 }
 

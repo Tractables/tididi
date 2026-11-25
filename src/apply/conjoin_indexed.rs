@@ -858,8 +858,8 @@ impl Engine {
     /// # Errors
     ///
     /// [`OperationError::VtreeMismatch`] when `g` and the index do not share
-    /// one vtree, or `f` is on another home than `g` (off a home, on another
-    /// vtree), [`OperationError::IndexMismatch`] when the index was
+    /// one vtree, or `f` is on another home than `g`,
+    /// [`OperationError::IndexMismatch`] when the index was
     /// built from another diagram than `g`, [`OperationError::MarginalLevel`]
     /// when either operand has a marginal level,
     /// [`OperationError::InertOption`] when either is weighted,
