@@ -25,16 +25,15 @@ pub(super) fn conjoin_projections<'a>(eng: &Engine, mut f: Cow<'a, Tdd>, mut g: 
     if f.vtree().num_nodes() == 0 || g.vtree().num_nodes() == 0 {
         return conjoin_constant(eng, f, g);
     }
-    let g_larger = g.vtree().num_leaves() > f.vtree().num_leaves();
-    if matches!(g, Cow::Owned(_)) && (g_larger || !matches!(f, Cow::Owned(_))) {
+    // The order is by leaf count alone, so that an owned and a borrowed
+    // operand take the same route.
+    if g.vtree().num_leaves() > f.vtree().num_leaves() {
         std::mem::swap(&mut f, &mut g);
     }
-    if let Cow::Owned(owned) = f {
-        (f, g) = match conjoin_nested(eng, owned, g)? {
-            Ok(out) => return Ok(out),
-            Err(operands) => operands,
-        };
-    }
+    (f, g) = match conjoin_nested(eng, f, g)? {
+        Ok(out) => return Ok(out),
+        Err(operands) => operands,
+    };
     let mut reader = (union::readable(&f) && union::readable(&g)).then(|| union::Reader::new(eng, (f.vtree(), g.vtree())));
     let sets = match reader.as_mut() {
         Some(reader) => Vtree::leaf_sets_reading(f.vtree(), g.vtree(), Some(reader))?,
@@ -74,19 +73,24 @@ pub(super) fn conjoin_projections<'a>(eng: &Engine, mut f: Cow<'a, Tdd>, mut g: 
 /// Operands [`conjoin_nested`] does not take, as given.
 type NotNested<'a> = (Cow<'a, Tdd>, Cow<'a, Tdd>);
 
-/// `f ∧ g` where `f` is owned, both are plain (no summed level, no region,
-/// not false) and the leaves of `g` are among fewer than
-/// all of `f`'s: the sweep reads `g` through a view of the nodes of `f`'s
-/// vtree with a leaf of `g` under them, found from `g`'s leaves upward, and
-/// the result takes `f`'s level array, every other level left as `f` has
-/// it. Other operands come back, as given.
-fn conjoin_nested<'a>(eng: &Engine, f: Tdd, g: Cow<'a, Tdd>) -> Result<Result<Tdd, NotNested<'a>>, OperationError> {
+/// `f ∧ g` where both are plain (no summed level, no region, not false) and
+/// the leaves of `g` are among fewer than all of `f`'s: the sweep reads `g`
+/// through a view of the nodes of `f`'s vtree with a leaf of `g` under them,
+/// found from `g`'s leaves upward, and the result takes `f`'s level array,
+/// every other level left as `f` has it. A borrowed `f` is copied first,
+/// which charges the memory budget and not the work clock. Other operands
+/// come back, as given.
+fn conjoin_nested<'a>(eng: &Engine, f: Cow<'a, Tdd>, g: Cow<'a, Tdd>) -> Result<Result<Tdd, NotNested<'a>>, OperationError> {
     let plain = |t: &Tdd| !t.is_zero() && !t.vtree().has_regions() && !t.has_marginal_level();
     let lim = eng.limits();
     let mut leaves = eng.scratch.apply.cone_leaves.checkout(eng);
     if !plain(&f) || !plain(&g) || !f.vtree().nested_leaves(g.vtree(), &mut leaves) {
-        return Ok(Err((Cow::Owned(f), g)));
+        return Ok(Err((f, g)));
     }
+    let f = match f {
+        Cow::Owned(f) => f,
+        Cow::Borrowed(f) => f.try_clone_on(eng)?,
+    };
     let into = Arc::clone(f.vtree());
     let mut targets = eng.scratch.apply.cone_targets.checkout_preserving(eng);
     let plan = match Plan::cone(lim, g.vtree(), &into, &leaves, std::mem::take(&mut *targets)) {
@@ -124,9 +128,10 @@ fn conjoin_nested<'a>(eng: &Engine, f: Tdd, g: Cow<'a, Tdd>) -> Result<Result<Td
 }
 
 /// [`Engine::and_restoring`] of operands not on one vtree allocation, or on
-/// the empty projection. A plain operand, with no summed level, goes through
-/// as given where the leaf sets are equal or one holds the other, as those
-/// paths hand it back unchanged; otherwise both are read borrowed.
+/// the empty projection. Plain operands, with no summed level, go through
+/// as given where the leaf sets are equal; where one holds the other, the
+/// other is read borrowed, as an owned one placed would come back placed;
+/// otherwise both are read borrowed.
 #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
 pub(super) fn conjoin_projections_kept<'a>(eng: &Engine, f: Cow<'a, Tdd>, g: Cow<'a, Tdd>) -> Result<Tdd, AndRefused<'a>> {
     let plain = |t: &Tdd| !t.has_marginal_level();
@@ -140,12 +145,39 @@ pub(super) fn conjoin_projections_kept<'a>(eng: &Engine, f: Cow<'a, Tdd>, g: Cow
         };
         let mut out = match into {
             None => conjoin_kept(eng, f, g, Operands::default(), Operands::default(), Operands::default(), Operands::default())?,
-            Some(into) => conjoin_onto(eng, f, g, &into, true)?,
+            Some(into) => conjoin_onto_kept(eng, f, g, &into)?,
         };
         crate::reduce::close_constant(eng, &mut out);
         return Ok(out);
     }
     conjoin_borrowing(eng, f, g)
+}
+
+/// [`conjoin_onto`] `into`, the vtree of one operand, with the other read
+/// borrowed; a refusal hands back both as given.
+#[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
+fn conjoin_onto_kept<'a>(eng: &Engine, f: Cow<'a, Tdd>, g: Cow<'a, Tdd>, into: &Arc<Vtree>) -> Result<Tdd, AndRefused<'a>> {
+    let f_on_into = Arc::ptr_eq(f.vtree(), into);
+    let (kept, read) = if f_on_into { (f, g) } else { (g, f) };
+    let kept_given = match &kept {
+        Cow::Borrowed(t) => Some(*t),
+        Cow::Owned(_) => None,
+    };
+    let read_borrow = Cow::Borrowed(&*read);
+    let out = match f_on_into {
+        true => conjoin_onto(eng, kept, read_borrow, into, true).map_err(|r| (r.error, r.f)),
+        false => conjoin_onto(eng, read_borrow, kept, into, true).map_err(|r| (r.error, r.g)),
+    };
+    let (error, kept) = match out {
+        Ok(out) => {
+            recycle(eng, read);
+            return Ok(out);
+        }
+        Err((error, Cow::Owned(kept))) => (error, Cow::Owned(kept)),
+        Err((error, Cow::Borrowed(_))) => (error, Cow::Borrowed(kept_given.expect("a borrowed operand comes back as the borrow"))),
+    };
+    let (f, g) = if f_on_into { (kept, read) } else { (read, kept) };
+    Err(AndRefused { error, f, g })
 }
 
 /// [`conjoin_projections`] of borrows of `f` and `g`, which a refusal hands

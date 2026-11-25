@@ -59,15 +59,25 @@ impl Engine {
         let mut gate = lim.gate();
         let mut by_leaf = Vec::new();
         lim.try_resize(&mut by_leaf, f.vtree().num_nodes(), None)?;
+        // By home rank, the variables named that have no leaf here: f does
+        // not depend on them, and their entries are checked as a leaf's are.
+        let mut off_leaf = Vec::new();
         for (var, replacement) in replacements {
             gate.poll(1)?;
-            let Some(leaf) = f.vtree().leaf_of(var) else {
-                if f.vtree().home_has(var) {
-                    continue;
+            let seen = match f.vtree().leaf_of(var) {
+                Some(leaf) => by_leaf[leaf.idx()].replace(replacement).is_some(),
+                None => {
+                    let home = f.vtree().link_home().filter(|_| f.vtree().home_has(var));
+                    let Some((home, rank)) = home.and_then(|home| Some((home, home.rank(var)?))) else {
+                        return Err(f.vtree().no_leaf_for(var));
+                    };
+                    if off_leaf.is_empty() {
+                        lim.try_resize(&mut off_leaf, home.num_leaves() as usize, false)?;
+                    }
+                    std::mem::replace(&mut off_leaf[rank as usize], true)
                 }
-                return Err(f.vtree().no_leaf_for(var));
             };
-            if by_leaf[leaf.idx()].replace(replacement).is_some() {
+            if seen {
                 return Err(OperationError::DuplicateVariable(var));
             }
             match replacement {
