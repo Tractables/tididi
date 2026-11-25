@@ -124,8 +124,8 @@ impl Engine {
             }));
         }
         let (mut left, mut right) = into.children(into.root());
-        // On a home the projection's order decides the side of the code.
-        let swapped = into.on_home() && {
+        // The projection's order decides the side of the code.
+        let swapped = {
             let mut first = at;
             while !source.node(first).is_leaf() {
                 first = source.children(first).0;

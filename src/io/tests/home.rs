@@ -204,23 +204,19 @@ fn sealed(body: &[u8]) -> Vec<u8> {
 fn a_pair_repeated_in_a_level_is_refused() {
     // ((x1 x2) x3): the level (x1 x2) holds ¬x1 ∧ x2 twice; the root reads
     // the second copy, or both.
-    let vtree = Arc::new(Vtree::from_text("vtree 5\nL 0 1\nL 1 2\nI 2 0 1\nL 3 3\nI 4 2 3\n").unwrap());
-    let home = Home::new(Vtree::clone(&vtree));
+    let home = Home::new(Vtree::from_text("vtree 5\nL 0 1\nL 1 2\nI 2 0 1\nL 3 3\nI 4 2 3\n").unwrap());
     let texts = ["I 4 2 3 1 1\n", "I 4 2 3 0 1 1 1\n"].map(|root| format!("p tdd 1 3 5 4 0\nL 0 1\nL 1 2\nI 2 0 1 2 1\nI 2 0 1 2 1\nL 3 3\n{root}"));
     // The postorder 1 2 0 3 0, the output, the level (x1 x2): two one-pair
     // nodes, each (2, 1) in two bits a side; the root: one node.
     let lower = [2, 0, 2, 1, 2 | 1 << 2 | 2 << 4 | 1 << 6];
     let roots: [&[u8]; 2] = [&[1, 0, 1, 1, 1 | 1 << 1], &[1, 1, 2, 1, 1, 0, 1 << 3 | 1 << 5 | 1 << 6]];
     for (file, root) in texts.iter().zip(roots) {
-        for vtree in [&vtree, &home] {
-            match read_tdd(&mut file.as_bytes(), &crate::vtree::Home::unchecked(vtree)) {
-                Err(IoError::Format(m)) => assert!(m.contains("twice"), "{m}"),
-                other => panic!("{:?}", other.map(|_| ())),
-            }
+        match read_tdd(&mut file.as_bytes(), &home) {
+            Err(IoError::Format(m)) => assert!(m.contains("twice"), "{m}"),
+            other => panic!("{:?}", other.map(|_| ())),
         }
         let body: Vec<u8> = [3, 5, 1, 2, 0, 3, 0, 1].iter().chain(&lower).chain(root).copied().collect();
         let bytes = sealed(&body);
-        assert!(crate::io::read_tdd_binary(&mut bytes.as_slice(), &crate::vtree::Home::unchecked(&vtree)).is_ok(), "trusted over a root");
         match crate::io::read_tdd_binary(&mut bytes.as_slice(), &home) {
             Err(IoError::Format(m)) => assert!(m.contains("twice"), "{m}"),
             other => panic!("{:?}", other.map(|_| ())),

@@ -362,19 +362,20 @@ fn a_pair_repeated_in_a_level_is_refused() {
         crate::io::write_tdd(&mut text, &f).unwrap();
         crate::io::write_tdd_binary(&mut binary, &f).unwrap();
         let pruned = root.len() == 1 && inner.len() == 2;
-        let r = crate::io::read_tdd(&mut text.as_slice(), &crate::vtree::Home::unchecked(&tree));
+        let home = crate::vtree::Home::new(Vtree::clone(&tree));
+        let r = crate::io::read_tdd(&mut text.as_slice(), &home);
         if pruned != r.as_ref().is_ok() && !r.as_ref().is_err_and(|e| e.to_string().contains("twice")) {
             wrong.push(format!("{inner:?} {root:?}: text reader {:?}", r.map(|g| g.model_count().unwrap())));
         }
-        // The binary reader trusts its levels: it gives back what was written.
-        match crate::io::read_tdd_binary(&mut binary.as_slice(), &crate::vtree::Home::unchecked(&tree)) {
-            Ok(g) if g.model_count().unwrap() == f.model_count().unwrap() => {}
+        match crate::io::read_tdd_binary(&mut binary.as_slice(), &home) {
+            Ok(g) if pruned && g.model_count().unwrap() == f.model_count().unwrap() => {}
+            Err(e) if e.to_string().contains("twice") => {}
             r => wrong.push(format!("{inner:?} {root:?}: binary reader {:?}", r.map(|g| g.model_count().unwrap()))),
         }
     }
     let text = "p tdd 1 3 5 4 0\nL 0 1\nL 1 2\nL 3 3\nI 2 0 1 2 1\nI 2 0 1 2 1\nI 4 2 3 1 1\n";
     let tree = Arc::new(Vtree::from_text("vtree 5\nL 0 1\nL 1 2\nI 2 0 1\nL 3 3\nI 4 2 3\n").unwrap());
-    match crate::io::read_tdd(&mut text.as_bytes(), &crate::vtree::Home::unchecked(&tree)) {
+    match crate::io::read_tdd(&mut text.as_bytes(), &crate::vtree::Home::new(Vtree::clone(&tree))) {
         Err(e) if e.to_string().contains("twice") => {}
         r => wrong.push(format!("first case by hand: text reader {:?}", r.map(|g| g.model_count().unwrap()))),
     }

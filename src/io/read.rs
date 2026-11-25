@@ -43,23 +43,17 @@ pub fn load_tdd(path: impl AsRef<Path>, vtree: &crate::vtree::Home) -> Result<Td
     read_tdd(&mut BufReader::new(file), vtree)
 }
 
-/// Read a diagram in `.tdd` format from any reader, over `vtree`.
+/// Read a diagram in `.tdd` format from any reader, on the home `vtree`.
 ///
-/// Supply the vtree saved alongside the diagram: the reader validates counts,
-/// leaf labels, and child relationships against it. File-local vtree IDs need not
-/// equal the supplied vtree's in-memory indices. The false diagram
-/// has no node records from which to check its shape.
-/// The result shares the supplied `Arc<Vtree>` and its weights, and
-/// preserves the file's node order; reading does not minimize.
-///
-/// On a vtree on a home ([`Vtree::projection`](crate::Vtree::projection)),
-/// the supplied vtree names only the home. The file's leaves and child
-/// relationships must form the projection of the home on the variables it
-/// declares, and the result is moved by the trim of
+/// The file's leaves and child relationships must form the projection of
+/// `vtree` on the variables it declares ([`Vtree::projection`](crate::Vtree::projection));
+/// file-local vtree IDs need not equal the projection's in-memory indices.
+/// The result is moved by the trim of
 /// [`TddBuilder::finish`](crate::diagram::TddBuilder::finish) to the
-/// projection on the leaves its pairs use. A file without node records, with
-/// counts `0 0` or those of the supplied vtree, is a constant on the empty
-/// projection.
+/// projection on the leaves its pairs use, carries the home's weights and
+/// preserves the file's node order; reading does not minimize. A file
+/// without node records, with counts `0 0` or those of `vtree`, is a
+/// constant on the empty projection.
 ///
 /// The reader validates the encoding, and of semantic determinism only what
 /// [`TddBuilder::finish`](crate::diagram::TddBuilder::finish) checks: no pair
@@ -76,7 +70,7 @@ pub fn load_tdd(path: impl AsRef<Path>, vtree: &crate::vtree::Home) -> Result<Td
 ///
 /// Returns [`IoError::Format`] for unsupported versions, malformed records,
 /// missing or duplicate declarations, references outside the stored diagram,
-/// or declarations inconsistent with `vtree`. See the [text format](crate::io#text-format)
+/// or declarations that do not form a projection of `vtree`. See the [text format](crate::io#text-format)
 /// for the record requirements. Error messages identify the affected line.
 /// Returns [`IoError::Io`] if reading fails.
 ///
@@ -110,8 +104,8 @@ pub fn load_tdd(path: impl AsRef<Path>, vtree: &crate::vtree::Home) -> Result<Td
 /// assert!(matches!(result, Err(IoError::Format(_))));
 /// ```
 pub fn read_tdd<R: BufRead>(r: &mut R, vtree: &crate::vtree::Home) -> Result<Tdd, IoError> {
-    let home = vtree.home();
-    if home.is_some() && vtree.has_regions() {
+    let home = vtree.home().expect("a home is on itself");
+    if vtree.has_regions() {
         return Err(IoError::Format(format!("tdd: {}", super::REGION_REFUSED)));
     }
     let mut levels = Vec::new();
@@ -127,10 +121,7 @@ pub fn read_tdd<R: BufRead>(r: &mut R, vtree: &crate::vtree::Home) -> Result<Tdd
             Some("p") => {
                 if header.is_some() { return Err(malformed(n, "duplicate problem line")); }
                 let h = parse_problem_line(&mut tok, n)?;
-                match &home {
-                    None => check_problem_line(&h, vtree, n)?,
-                    Some(home) => bound_problem_line(&h, home, n)?,
-                }
+                bound_problem_line(&h, &home, n)?;
                 levels = vec![FileLevel::default(); h.num_vtree_nodes];
                 header = Some(h);
             }
@@ -149,10 +140,7 @@ pub fn read_tdd<R: BufRead>(r: &mut R, vtree: &crate::vtree::Home) -> Result<Tdd
         }
     }
     let header = header.ok_or_else(|| IoError::Format("tdd: no `p tdd` problem line".into()))?;
-    match home {
-        None => build_diagram(header, levels, vtree),
-        Some(home) => read_onto_home(header, levels, vtree, &home),
-    }
+    read_onto_home(header, levels, vtree, &home)
 }
 
 /// The records read onto the projection of `home` on the leaves they
@@ -312,32 +300,6 @@ fn parse_problem_line<'a>(
 /// Reject fields after a fixed-length record.
 fn end_of_record<'a>(tok: &mut impl Iterator<Item = &'a str>, line: usize) -> Result<(), IoError> {
     if let Some(extra) = tok.next() { return Err(malformed(line, format!("unexpected trailing field {extra:?}"))); }
-    Ok(())
-}
-
-/// The header describes the same tree the caller passed, or the file is not
-/// this diagram's.
-fn check_problem_line(h: &ProblemLine, vtree: &Vtree, line: usize) -> Result<(), IoError> {
-    if h.num_vtree_nodes != vtree.num_nodes() {
-        return Err(malformed(
-            line,
-            format!(
-                "file has {} vtree nodes, the vtree read against has {}",
-                h.num_vtree_nodes,
-                vtree.num_nodes()
-            ),
-        ));
-    }
-    if h.num_leaves != vtree.num_leaves() {
-        return Err(malformed(
-            line,
-            format!(
-                "file has {} leaves, the vtree read against carries {}",
-                h.num_leaves,
-                vtree.num_leaves()
-            ),
-        ));
-    }
     Ok(())
 }
 

@@ -683,10 +683,7 @@ pub(crate) fn conjoin_onto<'a>(
     };
     let (f_given, g_given) = (given(&f), given(&g));
     let back = |tdd: Cow<'a, Tdd>, given: Option<&'a Tdd>| given.map_or(tdd, Cow::Borrowed);
-    // Off projections a summed-out operand is never placed, so it is on
-    // `into` already, where the conjunction leaves this check to the caller.
-    if (f.vtree().on_home() || g.vtree().on_home())
-        && !Arc::ptr_eq(f.vtree(), g.vtree())
+    if !Arc::ptr_eq(f.vtree(), g.vtree())
         && let Err(error) = projected::check_summed_leaves(&f, &g)
     {
         return Err(AndRefused { error, f, g });

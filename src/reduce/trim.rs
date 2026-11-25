@@ -121,10 +121,7 @@ fn close_constant_cold(eng: &Engine, f: &mut Tdd) {
 #[cold]
 #[inline(never)]
 fn settle_cold(eng: &Engine, f: &mut Tdd, dropped: &mut Vec<VtreeIdx>) -> Result<(), OperationError> {
-    let Some(home) = f.vtree.home() else {
-        close_constant(eng, f);
-        return Ok(());
-    };
+    let home = f.vtree.home().expect("settle passes on a diagram on a home");
     if f.has_marginal_level() {
         if f.vtree.bottomup().any(|t| !f.vtree.node(t).is_leaf() && f.levels[t.idx()].is_marginal()) {
             return Ok(());

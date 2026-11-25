@@ -350,7 +350,6 @@ fn joined_store(
 fn refuse_unshared_sums(f: &Tdd, g: &Tdd) -> Result<(), OperationError> {
     for (a, b) in [(f, g), (g, f)] {
         let (av, bv) = (a.vtree(), b.vtree());
-        let (true, true) = (av.on_home(), bv.on_home()) else { continue };
         let lacks = |t: VtreeIdx| match av.node(t).is_region() {
             true => !bv.regions().any(|u| bv.region_at(u) == av.region_at(t)),
             false => bv.node_at_home(av.home_node(t)).is_none_or(|u| !summed(b, u)),

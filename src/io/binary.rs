@@ -148,12 +148,11 @@ pub fn load_tdd_binary(path: impl AsRef<Path>, vtree: &crate::vtree::Home) -> Re
 /// Read one diagram in the binary format from any reader, over `vtree`.
 ///
 /// Reads exactly the diagram's bytes, so several diagrams can follow each
-/// other in one stream. Supply the vtree the diagram was written over: the
-/// file stores that vtree's structure, and the reader compares it with
-/// `vtree`'s, leaf variables included, regardless of either's in-memory
-/// numbering. The result shares the supplied `Arc<Vtree>`, has no attached
-/// weights, keeps the level counts a version 2 file holds, and has the
-/// nodes, node order and pair order that
+/// other in one stream. The file stores the structure of the vtree it was
+/// written over, which must be the projection of `vtree`'s home on the
+/// variables it declares, leaf variables included, regardless of in-memory
+/// numbering. The result has no attached weights, keeps the level counts a
+/// version 2 file holds, and has the nodes, node order and pair order that
 /// [`read_tdd`](super::read_tdd) gives for the same diagram's text; reading
 /// does not minimize.
 ///
@@ -166,17 +165,13 @@ pub fn load_tdd_binary(path: impl AsRef<Path>, vtree: &crate::vtree::Home) -> Re
 /// levels, and are checked while the levels are read, not again after.
 /// The reader validates the encoding, not semantic determinism; it
 /// relies on determinism only to refuse more than one pair in a level over
-/// two one-node levels, whose pairs take no bits. Unlike the text reader, it
-/// does not look for a pair repeated in a level: it trusts the levels, as a
-/// library writer emits them, since that check costs several times the
-/// decode. The level counts of a version 2 file are bounded, not recomputed,
-/// and are trusted from there on ([format](crate::io#binary-format)).
+/// two one-node levels, whose pairs take no bits. The level counts of a
+/// version 2 file are bounded, not recomputed, and are trusted from there on
+/// ([format](crate::io#binary-format)).
 ///
-/// On a vtree on a home ([`Vtree::projection`](crate::Vtree::projection)),
-/// the supplied vtree names only the home: the file's vtree must be the
-/// projection of the home on the variables it declares. The reader seats the
-/// levels and their counts over that projection, refuses a pair repeated in
-/// a level, as the text reader does, and moves the result by the trim of
+/// The reader seats the levels and their counts over the projection the
+/// file declares, refuses a pair repeated in a level, as the text reader
+/// does, and moves the result by the trim of
 /// [`TddBuilder::finish`](crate::diagram::TddBuilder::finish) to the
 /// projection on the leaves its pairs use, the counts with it.
 ///
@@ -188,7 +183,7 @@ pub fn load_tdd_binary(path: impl AsRef<Path>, vtree: &crate::vtree::Home) -> Re
 ///
 /// Returns [`IoError::Format`] for a file that is not in this format, an
 /// unsupported version, a truncated file, a checksum mismatch, a vtree that is
-/// not `vtree` (on a home, not a projection of the home), or a malformed or
+/// not a projection of `vtree`'s home, or a malformed or
 /// out-of-range record. Returns [`IoError::Io`]
 /// if reading fails.
 ///
@@ -274,19 +269,6 @@ fn check_header(bytes: &[u8]) -> Result<(usize, u32), IoError> {
     Ok((total, version))
 }
 
-// The vtree with no node is told apart here rather than in `parse_body`:
-// any test there changes the code of the level reader inlined into it.
-#[inline(always)]
-fn decode(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
-    if vtree.on_home() {
-        return decode_on_home(bytes, vtree);
-    }
-    match vtree.num_nodes() {
-        0 => decode_without_leaf(bytes, vtree),
-        _ => decode_levels(bytes, vtree),
-    }
-}
-
 /// [`decode_levels`] onto the projection of `vtree`'s home on the leaves the
 /// file declares; the seated diagram, its counts attached, is checked for a
 /// repeated pair and then trimmed, which rescales the counts.
@@ -294,9 +276,8 @@ fn decode(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
 // with `decode_levels`: a second caller of anything inlined there changes
 // the code of the level reader, by about 1% of a query that reads its
 // diagrams from binary files.
-#[cold]
 #[inline(never)]
-fn decode_on_home(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
+fn decode(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
     if vtree.has_regions() {
         return Err(malformed(super::REGION_REFUSED));
     }
