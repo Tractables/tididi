@@ -1,10 +1,10 @@
 // scenario: docs/scenarios.md#care-sets
 
 fn main() -> Result<(), tididi::OperationError> {
-    use std::sync::Arc;
+    use tididi::vtree::Home;
     use tididi::{literal, Vtree};
 
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = Home::new(Vtree::balanced(2));
     let local = literal(&vtree, 1)?;
     let remote = literal(&vtree, 2)?;
     let mut rule = local.clone() | remote.clone();

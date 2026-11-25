@@ -104,8 +104,8 @@ It omits the witness, replacement observation and minimization demonstrations.
 
 ### Instances
 
-- [Rust walkthrough](examples/configurations.md) <!-- reviewed: 94e453000d7f09f72939054dd10f7dfebb738ae280e645219d2b5ed28b022fbc -->
-- [Rust program](../examples/configurations.rs) <!-- reviewed: 79ec2d3fa05da95e1360b51129c1de3d8090c146a1a6aead105ef16c08c11dd4 -->
+- [Rust walkthrough](examples/configurations.md) <!-- reviewed: 385e8d2c3bfb4c824925a9376d2ce44f6cc08cea0b8e4e46de2b99da3f2d70d8 -->
+- [Rust program](../examples/configurations.rs) <!-- reviewed: 7fdacbb62eab3fe20f71a031b2e3cf15800f7c576be3232dd8f2e0c7d9ec294a -->
 - [Python walkthrough and program](../bindings/python/examples/01_configurations.py) <!-- reviewed: 6a369c0d5f4dd63db5fe776ae2f5699ac0d370d32925b2a9bc6a9e9c6ae67006 -->
 - [C configurations](../bindings/c/docs/configurations.rst) <!-- reviewed: ac03abce92815601a4e6410435e1724f471e5ffcd9be87a436fae77a9fd2e392 -->
 - [C program configurations](../bindings/c/examples/configurations.c) <!-- reviewed: 2030cee871c5dd5621f1f7e144c0319450e8bab6709470e436581bba30702e19 -->
@@ -351,13 +351,13 @@ comparison remains in the Rust and Python lessons.
 
 Construct x₁ XOR x₂ over a balanced four-variable vtree and compare it with
 literal x₁. Find the stored internal node with the most pairs: XOR has a
-maximum of 2. On a plain vtree a literal stores one node of 1 pair; on a home
-it stores no internal node. Distinguish per-node width, total pair count,
+maximum of 2 and totals 2 pairs, one node on the projection on x₁ and x₂; a
+literal stores no internal node. Distinguish per-node width, total pair count,
 and model count (8 for XOR with the other two variables free).
 
 Rust traverses level storage directly and uses (root,0) for an empty traversal.
-Python traverses a `node_sizes()` snapshot and uses None when it is empty,
-which it is for the literal, because a Python vtree is a home.
+Python traverses a `node_sizes()` snapshot and uses None when it is empty.
+Both traversals are empty for the literal.
 Storage IDs and the chosen maximum on ties are not semantic identities.
 Use the direct XOR operation to construct the circuit. Rust passes a copy
 of x₁ to XOR so the original stays available for its literal comparison;
@@ -368,11 +368,11 @@ omits the literal comparison and represents an empty maximum by zero pairs.
 
 ### Instances
 
-- [Rust walkthrough](examples/statistics.md) <!-- reviewed: a083881c0ed0cf653f750bfef0f7d2584c47c5ccfba53274a2cbf91161cc226f -->
-- [Rust program](../examples/statistics.rs) <!-- reviewed: 67f086410454aba59e59fd1cf08faae45738bc58b1593595d543f4a26992b879 -->
-- [Python walkthrough and program](../bindings/python/examples/09_statistics.py) <!-- reviewed: 10a3585a97f1e7b9da6d56c6448fc3bf3c39b21fd2922224b2b40b1a45663af2 -->
-- [C statistics](../bindings/c/docs/statistics.rst) <!-- reviewed: 8922f2f9b27daec2539e8d647404fdcbe401472a86bf0f98a1e9d7bcb4ddc866 -->
-- [C program statistics](../bindings/c/examples/statistics.c) <!-- reviewed: 6eeee3ec8dce779d687740d4936a6dff07bb458860245301f7800d6c38a5172a -->
+- [Rust walkthrough](examples/statistics.md) <!-- reviewed: 83f546e652782043e8d4aae33f55f79c06cca7c9e602664c351f01281fe82833 -->
+- [Rust program](../examples/statistics.rs) <!-- reviewed: e46465727044ad20fe4c0a51fe68359ec68b594b937252a26c411ebf3419b0cb -->
+- [Python walkthrough and program](../bindings/python/examples/09_statistics.py) <!-- reviewed: 6e698a9fc070124582a1d120b54adc47adfe8ca812f2567d1c6423e7baf85578 -->
+- [C statistics](../bindings/c/docs/statistics.rst) <!-- reviewed: 702bd323188f7b67b0b5b6f1d92cfd1e5cef84c7fef8d136f2696344ccb22f75 -->
+- [C program statistics](../bindings/c/examples/statistics.c) <!-- reviewed: bcedbebe74d8d60727651dba9d5501b92b810deaf8c210c5d599a6ac5812bc23 -->
 
 ## Ownership
 
@@ -510,7 +510,8 @@ Do not invent a language counterpart that rebuilds the rule instead of reusing i
 A backup rule F=L∨R has three models. The deployment guarantees
 C=(R→L)=¬R∨L. Under this assumption the rule simplifies to L. Build F and C
 on the same two-leaf vtree and minimize F, since the union does not. Restrict a
-copy of F, extract the result and minimize. The example reduces three pairs to one. Compare G∧C with F∧C: equivalent,
+copy of F, extract the result and minimize. The example reduces three pairs to
+none: on a home, L is decided by its leaf and stores no pair. Compare G∧C with F∧C: equivalent,
 with two models (local only and both). Compare F and G without C: not equivalent.
 The remote-only assignment (L=false,R=true) satisfies F but not G.
 
@@ -523,8 +524,8 @@ care-set restriction yet.
 
 ### Instances
 
-- [Rust walkthrough](examples/care.md) <!-- reviewed: cc3a993e5ec7f5c229c009c6bbe8dfdbb566dc2c7b28f9859b7399d8b108ad09 -->
-- [Rust program](../examples/care.rs) <!-- reviewed: 69180e17226ffdb71884b07735bc5aa1086cf2f3e1bcc09be6e88dedf6623449 -->
+- [Rust walkthrough](examples/care.md) <!-- reviewed: ef5cb054b9f2f51df8c7430fa215e8de6ccc3c0ea9105a24c75cd1a0d0a1647e -->
+- [Rust program](../examples/care.rs) <!-- reviewed: 2ad5fd3442c8462746d5592f630c06c3865d87ba4e602158acb5c6eb3cfb42fc -->
 
 ## Keeping values
 

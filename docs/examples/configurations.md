@@ -16,11 +16,11 @@ over four variables. Name the literals so we can use them both to build option
 diagrams and to record user choices:
 
 ```rust,ignore,{class=tested-example}
-use std::sync::Arc;
+use tididi::vtree::Home;
 
 use tididi::{literal, Literal, Tdd, Vtree};
 
-let vtree = Arc::new(Vtree::balanced(4));
+let vtree = Home::new(Vtree::balanced(4));
 let names = ["local backups", "remote backups", "encryption", "notifications"];
 let local_choice = Literal::try_from(1)?;
 let remote_choice = Literal::try_from(2)?;

@@ -5,11 +5,11 @@
 
 /// Build the backup rules and query the configurations they permit.
 fn main() -> Result<(), tididi::OperationError> {
-    use std::sync::Arc;
+    use tididi::vtree::Home;
 
     use tididi::{literal, Literal, Tdd, Vtree};
 
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let names = ["local backups", "remote backups", "encryption", "notifications"];
     let local_choice = Literal::try_from(1)?;
     let remote_choice = Literal::try_from(2)?;
