@@ -84,16 +84,17 @@ impl Tdd {
     /// path), so an error leaves it as it was.
     ///
     /// ```
+    /// use tididi::vtree::Home;
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
     /// use tididi::vtree::VarId;
     ///
     /// let order = [VarId(1), VarId(2), VarId(3), VarId(4)];
-    /// let stick = Arc::new(Vtree::linear_from_order(&order)?);
+    /// let stick = Home::new(Vtree::linear_from_order(&order)?);
     /// let f = Tdd::clause(&stick, [1, -3])? & Tdd::clause(&stick, [2, 4])?;
     /// let before = f.model_count()?;
     ///
-    /// let balanced = Arc::new(Vtree::balanced_over(&[VarId(3), VarId(1), VarId(4), VarId(2)])?);
+    /// let balanced = Home::new(Vtree::balanced_over(&[VarId(3), VarId(1), VarId(4), VarId(2)])?);
     /// let mut g = f.clone();
     /// let stats = g.restructure_to(&balanced, usize::MAX)?;
     /// assert!(Arc::ptr_eq(g.vtree(), &balanced));

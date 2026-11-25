@@ -1,5 +1,7 @@
 //! `Tdd::expand_variables`: each variable becomes a signed class, with
 //! constants and free variables grafted on.
+use std::sync::Arc;
+use crate::vtree::Home;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -20,7 +22,7 @@ fn neg(v: u32) -> Literal {
 
 /// A diagram over one variable whose output is that leaf's node `local`.
 fn leaf_diagram(eng: &Engine, local: NodeIdx) -> Tdd {
-    let vtree = Arc::new(Vtree::balanced(1));
+    let vtree = Home::new(Vtree::balanced(1));
     Tdd::builder(eng, &vtree).unwrap().finish(TddNodeId { vtree: vtree.root(), local }).unwrap()
 }
 
@@ -100,7 +102,7 @@ fn a_class_referenced_as_true_and_as_a_literal_repeats_no_pair() {
     // (x1 ∧ x2 ∧ x3) ∨ (¬x1 ∧ ¬x3) over (x1, (x2, x3)): the level over x2
     // references x2's positive node and its true node.
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let root = vtree.root();
     let (x1, inner) = vtree.children(root);
     assert_eq!(vtree.leaf_of(VarId(1)), Some(x1));
@@ -172,7 +174,7 @@ fn random_expansions_hold_exactly_on_the_expanded_models() {
 #[test]
 fn the_constants_false_and_true_diagrams_expand() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = Home::new(Vtree::balanced(2));
     let expansion = VariableExpansion {
         classes: vec![vec![pos(2), pos(5)], vec![neg(1)]],
         constants: vec![neg(3)],
@@ -195,7 +197,7 @@ fn the_constants_false_and_true_diagrams_expand() {
 #[test]
 fn the_result_vtree_is_the_expanded_leaves_grafted_with_constants_and_free_variables() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::random(3, 7));
+    let vtree = Home::new(Vtree::random(3, 7));
     let f = compile_clauses_on(&eng, &vtree, &[vec![1, -2], vec![2, 3]]);
     assert_canonical(&f);
     let expansion = VariableExpansion {
@@ -259,7 +261,7 @@ fn a_weighted_diagram_expands_without_its_weights() {
     use crate::diagram::{Arithmetic, RationalWeights, Weights};
     let eng = Engine::new();
     let weights = Weights::new(RationalWeights::unit(2), Arithmetic::ExactRational);
-    let vtree = Arc::new(Vtree::balanced(2).with_weights(weights).unwrap());
+    let vtree = Home::new(Vtree::balanced(2).with_weights(weights).unwrap());
     let f = Tdd::clause(&vtree, [1, 2]).unwrap();
     let expansion = VariableExpansion { classes: vec![vec![pos(3)], vec![pos(1), pos(2)]], num_vars: 3, ..VariableExpansion::default() };
     let g = eng.expand_variables(&f, &expansion).unwrap();
@@ -280,7 +282,7 @@ fn a_diagram_with_summed_out_levels_is_refused() {
 #[test]
 fn expansions_that_do_not_fit_the_diagram_are_refused() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = Home::new(Vtree::balanced(2));
     let f = Tdd::clause(&vtree, [1, -2]).unwrap();
     assert_canonical(&f);
     let refused = |expansion: VariableExpansion| eng.expand_variables(&f, &expansion).unwrap_err();
@@ -311,7 +313,7 @@ fn expansions_that_do_not_fit_the_diagram_are_refused() {
 #[test]
 fn an_armed_stop_comes_before_the_expansion_is_checked() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = Home::new(Vtree::balanced(2));
     let f = Tdd::clause(&vtree, [1, 2]).unwrap();
     assert_canonical(&f);
     let _stop = eng.limits().scope(LimitConfig::none().with_stop_callback(Some(StopCallback::new(|_, _| StopDecision::Stop))));
@@ -325,7 +327,7 @@ fn an_armed_stop_comes_before_the_expansion_is_checked() {
 #[test]
 fn a_stop_at_a_poll_is_refused_work_and_a_retry_expands() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = compile_clauses_on(&eng, &vtree, &[vec![1, 2], vec![-2, 3]]);
     assert_canonical(&f);
     let expansion = VariableExpansion {

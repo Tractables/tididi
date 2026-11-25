@@ -183,11 +183,11 @@ impl Tdd {
     /// armed byte budget, with the diagram at its pre-probe state.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{and, Tdd, Vtree};
     /// use tididi::restructure::search::RotationMove;
     /// use tididi::vtree::RotationKind;
-    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let vtree = Home::new(Vtree::balanced(4));
     /// let mut f = and(Tdd::clause(&vtree, [1, 2])?, Tdd::clause(&vtree, [3, 4])?)?;
     /// f.minimize()?;
     /// let before = f.pair_count();

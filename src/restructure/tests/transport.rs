@@ -208,7 +208,7 @@ fn a_map_that_breaks_the_shape_rotates_as_restructure_to_then_renames() {
     for seed in 0..300 {
         let n = 3 + rng.below(8) as u32;
         let dest = Home::new(Vtree::random(n, seed));
-        let source = Arc::new(Vtree::random(n, seed ^ 0xffff));
+        let source = Home::new(Vtree::random(n, seed ^ 0xffff));
         let f = diagram(&eng, &source, false, &mut rng);
         let perm = permutation(n, &mut rng);
         let map = |v: VarId| perm[v.idx()];

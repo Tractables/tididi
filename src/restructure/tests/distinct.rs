@@ -1,6 +1,4 @@
-use crate::test_helpers::bare_roots;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 
 use crate::restructure::DistinctError;
 use crate::test_helpers::{assert_canonical, compile_clauses, eval, rand_conj, random_diagrams, test_cases, under, vtree_shapes};
@@ -20,7 +18,10 @@ fn vars_under(vtree: &Vtree, t: VtreeIdx) -> Vec<VarId> {
 /// Every count of `f` keyed on each node [`keys`] gives, for `m` up to
 /// four, against enumerating its truth table.
 fn check(eng: &Engine, f: &Tdd) {
-    let vtree = f.vtree();
+    // On a home the key is a node of the home and the counted values range
+    // over the home's variables.
+    let home = f.vtree().home();
+    let vtree = home.as_deref().map_or(f.vtree(), |h| h);
     let n = vtree.num_vars() as usize;
     let truth: Vec<Vec<bool>> = (0..1u64 << n)
         .map(|bits| (0..n).map(|i| bits >> i & 1 == 1).collect::<Vec<bool>>())
@@ -38,7 +39,7 @@ fn check(eng: &Engine, f: &Tdd) {
         for m in 0..=4u64 {
             let g = eng.at_least_distinct(f, key, m).unwrap();
             assert_canonical(&g);
-            assert_eq!(g.vtree().num_leaves() as usize, kv.len());
+            assert!(g.vtree().leaf_bottomup().all(|(_, v)| kv.contains(&v)), "on a home the result keeps the key variables it depends on");
             for bits in 0..1u64 << kv.len() {
                 let mut asn = vec![false; n];
                 for (i, v) in kv.iter().enumerate() {
@@ -55,7 +56,7 @@ fn check(eng: &Engine, f: &Tdd) {
 #[test]
 fn the_threshold_counts_the_distinct_values_of_the_sibling() {
     for (num_vars, clauses) in test_cases() {
-        for (_, vtree) in bare_roots(vtree_shapes(num_vars)) {
+        for (_, vtree) in vtree_shapes(num_vars) {
             let f = compile_clauses(&vtree, &clauses);
             check(&Engine::new(), &f);
         }
@@ -89,25 +90,30 @@ fn a_projection_onto_a_subtree_is_the_quantified_diagram() {
 #[test]
 fn false_counts_nothing_and_zero_is_true() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let f = compile_clauses(&vtree, &[vec![1], vec![-1]]);
     let left = vtree.children(vtree.root()).0;
     assert!(eng.at_least_distinct(&f, left, 1).unwrap().is_zero());
     let all = eng.at_least_distinct(&f, left, 0).unwrap();
-    assert_eq!(eng.model_count(&all).unwrap(), 4u32.into());
+    assert_canonical(&all);
+    assert!(all.is_one());
+    // Counted over the home's four variables, not the key's two.
+    assert_eq!(eng.model_count(&all).unwrap(), 16u32.into());
 }
 
 #[test]
 fn the_root_is_refused_as_a_key() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::linear(4));
+    let vtree = Home::new(Vtree::linear(4));
     let f = compile_clauses(&vtree, &[vec![1, 2, 3, 4]]);
     assert!(matches!(eng.at_least_distinct(&f, vtree.root(), 1), Err(DistinctError::Root)));
     // x4 sits three levels down a linear vtree of four variables: a key
     // there reads the levels on its path only.
     let deep = vtree.leaf_of(VarId(4)).unwrap();
     let g = eng.project_to_subtree(&f, deep).unwrap();
-    assert_eq!(eng.model_count(&g).unwrap(), 2u32.into());
+    assert_canonical(&g);
+    assert!(g.is_one());
+    assert_eq!(eng.model_count(&g).unwrap(), 16u32.into());
 }
 
 /// A distinct count and a subtree projection refused at each reserve in

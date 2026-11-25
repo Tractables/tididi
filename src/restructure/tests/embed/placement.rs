@@ -1,3 +1,5 @@
+use crate::test_helpers::bare_roots;
+use crate::vtree::Home;
 use std::sync::Arc;
 
 use crate::diagram::LEAF_WIDTH;
@@ -172,7 +174,7 @@ fn a_one_variable_diagram_embeds() {
 
 #[test]
 fn a_constant_true_diagram_embeds() {
-    let small = Arc::new(Vtree::balanced(3));
+    let small = Home::new(Vtree::balanced(3));
     let f = Tdd::one(&small);
     let big = Arc::new(
         Vtree::join(
@@ -200,7 +202,7 @@ fn every_shape_embeds_beside_the_variables_it_leaves_free() {
             .collect();
         let free: Vec<VarId> = (1..=num_vars).map(VarId).collect();
 
-        for (label, small) in vtree_shapes(num_vars) {
+        for (label, small) in bare_roots(vtree_shapes(num_vars)) {
             let mut f = compile_clauses(&small, &clauses);
             f.minimize().unwrap();
             assert_canonical(&f);
