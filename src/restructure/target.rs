@@ -86,10 +86,10 @@ impl Tdd {
     /// more than `bound` pairs, and [`RestructureError::Operation`] with
     /// [`OperationError::MarginalLevel`] when it would turn a summed-out
     /// level or either vtree has a region, or with a refused allocation or an
-    /// armed stop. After an error a diagram on a root vtree denotes the same
-    /// function on its own copy of a vtree between the two. A diagram on a projection is moved as a copy on
-    /// private trees over its own leaves ([`Engine::transport`]'s rotation
-    /// path), so an error leaves it as it was.
+    /// armed stop. The diagram is moved as a copy on private trees over its
+    /// own leaves ([`Engine::transport`]'s rotation path), so an error leaves
+    /// it as it was; the copy costs one pass over the diagram's pairs and
+    /// holds them a second time while the rotations run.
     ///
     /// ```
     /// use tididi::vtree::Home;
@@ -175,19 +175,18 @@ impl Engine {
             *tdd = crate::build::constant_zero(self, target);
             return Ok(TransportStats::default());
         }
-        if tdd.vtree.link_home().is_some() {
-            return self.restructure_projection(tdd, target, bound);
+        if tdd.vtree.on_home() {
+            return self.restructure_on_twin(tdd, target, bound);
         }
         self.move_to(tdd, target, bound)
     }
 
-    /// [`restructure_to`](Self::restructure_to) of a diagram on a
-    /// projection: a copy on its own tree with each leaf named by its
-    /// target's place in `target`'s leaf order, moved onto `target`'s tree
-    /// named the same way.
-    #[cold]
-    #[inline(never)]
-    fn restructure_projection(&self, tdd: &mut Tdd, target: &Arc<Vtree>, bound: usize) -> Result<TransportStats, RestructureError> {
+    /// [`restructure_to`](Self::restructure_to) of a diagram on a home: a
+    /// copy on its own tree with each leaf named by its target's place in
+    /// `target`'s leaf order, moved onto `target`'s tree named the same way.
+    /// Moving in place would turn the levels of a diagram on a home's root
+    /// on a plain copy of that root, which an error would leave behind.
+    fn restructure_on_twin(&self, tdd: &mut Tdd, target: &Arc<Vtree>, bound: usize) -> Result<TransportStats, RestructureError> {
         let k = target.num_leaves();
         let mut name = Transient::new(self.limits(), Vec::new());
         self.limits().try_resize(&mut name, target.num_nodes(), VarId(0))?;

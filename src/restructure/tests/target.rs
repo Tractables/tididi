@@ -110,19 +110,24 @@ fn a_mirrored_target_costs_no_rotation() {
     assert!(f.equivalent(&compile_clauses(&mirror, &clauses)).unwrap());
 }
 
+/// The diagram reads every variable, so it is on its home's root; refused,
+/// it stays there.
 #[test]
 fn a_move_past_its_bound_keeps_the_function() {
     let vars: Vec<VarId> = (1..=8).map(VarId).collect();
-    let mut rng = Lcg::new(3);
-    let clauses = rand_cnf(&mut rng, 8, CnfShape { clauses: 10, width: 3 });
     let source = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::linear_from_order(&vars).unwrap()));
     let target = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::balanced_over(&[VarId(1), VarId(8), VarId(2), VarId(7), VarId(3), VarId(6), VarId(4), VarId(5)]).unwrap()));
-    let mut f = compile_clauses(&source, &clauses);
+    let mut rng = Lcg::new(3);
+    let mut f = std::iter::repeat_with(|| compile_clauses(&source, &rand_cnf(&mut rng, 8, CnfShape { clauses: 10, width: 3 })))
+        .find(|f| f.vtree().num_leaves() == 8)
+        .unwrap();
     let count = f.model_count().unwrap();
+    assert!(Arc::ptr_eq(f.vtree(), &source));
     match f.restructure_to(&target, 1) {
         Err(RestructureError::Bound { .. }) => {}
         other => panic!("a bound of one pair refuses the first rotation: {other:?}"),
     }
+    assert!(Arc::ptr_eq(f.vtree(), &source));
     assert_eq!(f.model_count().unwrap(), count);
     assert_canonical(&f);
 }
