@@ -992,7 +992,10 @@ impl Tdd {
     /// read as [`evaluate`](Self::evaluate) reads it. The borrowed diagram is
     /// unchanged. On a projection the subtree is that of `at`'s node in the
     /// home, its variables the projection lacks valued by
-    /// [`EvalAlgebra::free`](crate::diagram::EvalAlgebra::free).
+    /// [`EvalAlgebra::free`](crate::diagram::EvalAlgebra::free). A summed
+    /// region's variables are not lacked: the region's counts value all of
+    /// them at the level that holds the region, also those outside that
+    /// level's node in the home.
     ///
     /// # Errors
     ///
@@ -1045,7 +1048,7 @@ impl Tdd {
     /// none above it, and no slot for the counts `at`'s parent carries
     /// inline. The borrowed diagram is unchanged. On a projection
     /// [`ColumnAlgebra::free`] values the variables under `at`'s node in the
-    /// home that the projection lacks.
+    /// home that the projection lacks, a summed region's not among them.
     ///
     /// # Errors
     ///

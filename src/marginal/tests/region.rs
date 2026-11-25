@@ -477,3 +477,185 @@ fn a_literal_beside_a_region_conjoins_with_a_pass_through() {
     assert_eq!(conjoined_value(&eng, &f, &care), "Ok(3) Ok(None)");
     assert_eq!(conjoined_value(&eng, &r, &care), "Ok(3) Ok(None)");
 }
+
+/// Model counts as columns, the projection's free variables valued by
+/// their number alone.
+struct CountColumns;
+
+impl crate::diagram::ColumnAlgebra for CountColumns {
+    type Column = Vec<BigUint>;
+    type Value = BigUint;
+    fn zero(&self) -> BigUint {
+        BigUint::ZERO
+    }
+    fn column(&self, _: VtreeIdx, width: usize) -> Vec<BigUint> {
+        vec![BigUint::ZERO; width]
+    }
+    fn leaf(&self, _: VtreeIdx, _: VarId, label: LeafLabel, col: &mut Vec<BigUint>) {
+        col[label as usize] = BigUint::from(if label == LeafLabel::One { 2u32 } else { 1 });
+    }
+    fn fold(&self, _: VtreeIdx, slot: usize, pairs: crate::diagram::SlotPairs<'_>, left: &Vec<BigUint>, right: &Vec<BigUint>, out: &mut Vec<BigUint>) {
+        out[slot] = pairs.map(|(l, r)| &left[l] * &right[r]).sum();
+    }
+    fn read(&self, _: VtreeIdx, col: Vec<BigUint>, slot: usize) -> BigUint {
+        col[slot].clone()
+    }
+    fn count(&self, _: VtreeIdx, slot: usize, n: &BigUint, col: &mut Vec<BigUint>) -> bool {
+        col[slot] = n.clone();
+        true
+    }
+    fn free(&self, _: VtreeIdx, free: &crate::vtree::FreeVars<'_>, col: &mut Vec<BigUint>) -> bool {
+        col.iter_mut().for_each(|v| *v <<= free.len());
+        true
+    }
+}
+
+/// `algebra`'s value of every home variable at a rank of `ranks` that `f`
+/// has neither as a leaf nor in a region's extent; `one` when there is none.
+fn lacked<A: EvalAlgebra>(f: &Tdd, algebra: &A, ranks: impl Iterator<Item = u32>) -> A::Value {
+    let vtree = f.vtree();
+    let home = vtree.home().expect("on a home");
+    let extents: Vec<(u32, u32)> = vtree.regions().flat_map(|t| vtree.region_at(t).1.into_vec()).collect();
+    let var_at = |r: u32| (1..=home.vtree().num_leaves()).map(VarId).find(|&v| home.rank(v) == Some(r)).expect("a rank of the home");
+    ranks
+        .filter(|&r| !extents.iter().any(|&(lo, hi)| (lo..hi).contains(&r)))
+        .map(var_at)
+        .filter(|&v| vtree.leaf_of(v).is_none())
+        .fold(algebra.one(), |acc, v| algebra.mul(&acc, &algebra.leaf(v, LeafLabel::One)))
+}
+
+/// [`Tdd::evaluate_at`] at every level of `f`, a diagram on a home,
+/// against the composition: each node of an internal level is the sum over
+/// its pairs of its children's values, times the variables the projection
+/// lacks between the level's home node and its children's; the output's
+/// value times those it lacks outside the root's home node is
+/// [`Tdd::evaluate`]. Returns whether a region was beside a lacked variable.
+fn check_composes<A: EvalAlgebra>(f: &Tdd, algebra: &A, what: &str) -> bool
+where
+    A::Value: PartialEq + std::fmt::Debug,
+{
+    use crate::diagram::{ChildRef, ValueRef};
+    let vtree = f.vtree();
+    if f.is_zero() || f.is_one() || vtree.num_nodes() == 0 {
+        return false;
+    }
+    let home = vtree.home().expect("on a home");
+    let values: Vec<Vec<A::Value>> = (0..vtree.num_nodes())
+        .map(|t| f.evaluate_at(VtreeIdx(t as u32), algebra).unwrap_or_else(|e| panic!("{what}: evaluate_at {t}: {e:?}")))
+        .collect();
+    let range = |t: VtreeIdx| home.rank_range(vtree.home_node(t));
+    for t in vtree.bottomup().filter(|&t| vtree.node(t).is_region()) {
+        assert!(f.level(t).is_marginal(), "{what}: region {} has a structural level", t.0);
+    }
+    for (t, l, r) in vtree.internal_bottomup() {
+        let at = format!("{what}: level {}", t.0);
+        assert!(!f.level(t).is_marginal(), "{at}: an internal summed level");
+        let (rl, rr) = (range(l), range(r));
+        let between = lacked(f, algebra, range(t).filter(|x| !rl.contains(x) && !rr.contains(x)));
+        let child = |c: VtreeIdx, side| match f.level(c).child_decoder().child(side) {
+            ChildRef::Node(n) => values[c.idx()][n.idx()].clone(),
+            ChildRef::Value(ValueRef::Slot(i)) => values[c.idx()][i as usize].clone(),
+            ChildRef::Value(ValueRef::Inline(n)) => algebra.count(&BigUint::from(n)).expect("the algebra values counts"),
+        };
+        for (n, pairs) in f.level(t).internal_inputs_iter() {
+            let mut sum = algebra.zero();
+            for pair in pairs {
+                algebra.add_assign(&mut sum, &algebra.mul(&child(l, pair.left), &child(r, pair.right)));
+            }
+            assert_eq!(values[t.idx()][n], algebra.mul(&sum, &between), "{at}, node {n}");
+        }
+    }
+    let root = vtree.root();
+    let outside = lacked(f, algebra, (0..home.vtree().num_leaves()).filter(|x| !range(root).contains(x)));
+    let out = &values[root.idx()][f.output().local.idx()];
+    assert_eq!(algebra.mul(out, &outside), f.evaluate(algebra).unwrap(), "{what}: the output");
+    vtree.regions().next().is_some() && vtree.free_leaves() > 0
+}
+
+/// The counts over own leaves and regions, without the lacked variables:
+/// [`Tdd::node_counts_u128`] against the exact oracle and against its own
+/// composition over each level's pairs, its output's count times the lacked
+/// variables against [`Tdd::model_count`], which kept level counts do not
+/// change.
+fn check_own_counts(f: &Tdd, what: &str) {
+    use crate::diagram::{ChildRef, ValueRef};
+    let vtree = f.vtree();
+    if f.is_zero() || f.is_one() || vtree.num_nodes() == 0 {
+        return;
+    }
+    let counts = f.node_counts_u128().unwrap();
+    let exact = crate::test_helpers::node_counts(f);
+    for (t, (got, want)) in counts.iter().zip(&exact).enumerate() {
+        let want: Vec<u128> = want.iter().map(crate::test_helpers::big_to_u128).collect();
+        assert_eq!(got, &want, "{what}: node counts at {t}");
+    }
+    let child = |c: VtreeIdx, side| match f.level(c).child_decoder().child(side) {
+        ChildRef::Node(n) => counts[c.idx()][n.idx()],
+        ChildRef::Value(ValueRef::Slot(i)) => counts[c.idx()][i as usize],
+        ChildRef::Value(ValueRef::Inline(n)) => u128::from(n),
+    };
+    for (t, l, r) in vtree.internal_bottomup() {
+        for (n, pairs) in f.level(t).internal_inputs_iter() {
+            let sum: u128 = pairs.map(|pair| child(l, pair.left) * child(r, pair.right)).sum();
+            assert_eq!(counts[t.idx()][n], sum, "{what}: node counts at {}, node {n}", t.0);
+        }
+    }
+    let total = BigUint::from(counts[vtree.root().idx()][f.output().local.idx()]) << vtree.free_leaves();
+    assert_eq!(f.model_count().unwrap(), total, "{what}: model count");
+    let mut kept = f.clone();
+    kept.attach_level_counts().unwrap();
+    assert_eq!(kept.model_count().unwrap(), total, "{what}: model count from kept counts");
+}
+
+/// Home `((x1, x2), (x3, x4))` and `x1 ∨ x3` on the projection on `x1` and
+/// `x3`, `x1` summed into a region beside the lacked `x2` and `x4`: the
+/// region's level reads its counts, `x2` and `x4` once each.
+#[test]
+fn a_level_beside_a_region_and_a_lacked_variable_composes_to_the_root() {
+    let home = Home::new(Vtree::balanced(4));
+    let own = Vtree::projection(&home, [VarId(1), VarId(3)]).unwrap();
+    let mut f = Tdd::clause(&own, [1, 3]).unwrap();
+    f.marginalize(|v| v == VarId(1)).unwrap();
+    let region = f.vtree().regions().next().expect("a region");
+    assert_eq!(f.evaluate(&Counting).unwrap(), BigUint::from(12u32));
+    let counts: Vec<BigUint> = f.level(region).marginal_counts().unwrap().iter().map(|&c| BigUint::from(c)).collect();
+    assert_eq!(f.evaluate_at(region, &Counting).unwrap(), counts);
+    assert!(check_composes(&f, &Counting, "x1 summed"));
+}
+
+/// [`Tdd::evaluate_at`] and [`Tdd::evaluate_columns_at`] on random
+/// projections with regions and lacked variables compose to
+/// [`Tdd::evaluate`] at the root, which answers as the smooth form on the
+/// home; under weights, on projections that lack variables. The own counts
+/// compose to the model count.
+#[test]
+fn evaluating_at_every_level_composes_to_the_root_beside_regions() {
+    let eng = Engine::new();
+    let mut rng = Lcg::new(0x6a95_2026_1125);
+    let (mut beside, mut weighted) = (0, 0);
+    for case in 0..300u64 {
+        let n = 2 + rng.below(14) as u32;
+        let home = Home::new(Vtree::random(n, case));
+        let used: Vec<VarId> = (1..=n).map(VarId).filter(|_| rng.below(4) != 0).collect();
+        let mut f = operand(&eng, &home, &used, &mut rng);
+        let ws = weights(n, &mut rng);
+        check_composes(&f, &ws, &format!("case {case} weighted"));
+        weighted += usize::from(!f.is_zero() && !f.is_one() && f.vtree().free_leaves() > 0);
+        let home_vtree = Arc::clone(home.vtree());
+        let mut g = on_root_copy(&f, &home_vtree);
+        let hs = targets(&home_vtree, &[], &mut rng);
+        eng.marginalize(&mut f, under(&home, &hs)).unwrap();
+        eng.marginalize_levels(&mut g, &hs).unwrap();
+        let what = format!("case {case} targets {hs:?}");
+        check_values(&f, &g, n, None, &what);
+        beside += usize::from(check_composes(&f, &Counting, &what));
+        check_own_counts(&f, &what);
+        if f.vtree().num_nodes() > 0 && !f.is_zero() {
+            for t in (0..f.vtree().num_nodes()).map(|t| VtreeIdx(t as u32)) {
+                let column = f.evaluate_columns_at(t, &CountColumns).unwrap();
+                assert_eq!(column, f.evaluate_at(t, &Counting).unwrap(), "{what}: columns at {}", t.0);
+            }
+        }
+    }
+    assert!(beside > 60 && weighted > 100, "{beside} cases had a region beside a lacked variable, {weighted} weighted");
+}
