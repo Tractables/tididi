@@ -15,11 +15,11 @@ fn e9c() -> (Tdd, Tdd) {
     let e = join(&join(&leaf(2), &leaf(3)), &leaf(4));
     let home = Home::new(join(&leaf(1), &join(&e, &leaf(5))));
     let own = Vtree::projection(&home, [1, 2, 3, 4].map(VarId)).unwrap();
-    let mut phi1 = Tdd::one(&own);
+    let mut phi1 = Tdd::one(&crate::vtree::Home::unchecked(&own));
     for clause in [&[-1, 2, 3, 4][..], &[1, 2, 3, -4], &[1, 2, -3, 4], &[-2, -3]] {
         phi1 = phi1.and_clause(clause).unwrap();
     }
-    let z = Tdd::clause(&Vtree::projection(&home, [VarId(5)]).unwrap(), [5]).unwrap();
+    let z = Tdd::clause(&crate::vtree::Home::unchecked(&Vtree::projection(&home, [VarId(5)]).unwrap()), [5]).unwrap();
     (phi1, z)
 }
 

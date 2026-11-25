@@ -44,11 +44,11 @@ fn check(
     rows: RowSelection<'_>,
     what: &str,
 ) {
-    let got = Tdd::from_columns(vtree, columns, codes, rows).unwrap();
+    let got = Tdd::from_columns(&crate::vtree::Home::unchecked(vtree), columns, codes, rows).unwrap();
     assert_canonical(&got);
     let vars: Vec<VarId> = columns.iter().flat_map(|c| c.iter().copied()).collect();
     let len = codes.first().map_or(0, |c| c.len());
-    let want = Tdd::from_models(vtree, &vars, &packed(columns, codes, &chosen(rows, len))).unwrap();
+    let want = Tdd::from_models(&crate::vtree::Home::unchecked(vtree), &vars, &packed(columns, codes, &chosen(rows, len))).unwrap();
     assert!(got.equivalent(&want).unwrap(), "{what}");
     assert_same_shape(&got, &want, what);
 }

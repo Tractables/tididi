@@ -55,8 +55,7 @@ fn clause_on_a_projection_of_a_million_leaves() {
     let k = vars.len();
 
     COUNTING.store(true, Ordering::Relaxed);
-    let own = Vtree::projection(&home, vars).unwrap();
-    let f = Tdd::clause(&own, vars.map(Literal::pos)).unwrap();
+    let f = Tdd::clause(&home, vars.map(Literal::pos)).unwrap();
     COUNTING.store(false, Ordering::Relaxed);
     // The count is over the home, an integer of about N bits.
     let count = f.model_count().unwrap();

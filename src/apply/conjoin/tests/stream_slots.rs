@@ -10,9 +10,9 @@ use crate::vtree::{Vtree, VtreeIdx};
 
 /// The conjunction of `clauses` over `tree`.
 fn conjoin_all(eng: &Engine, tree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
-    let mut d = eng.one(tree);
+    let mut d = eng.one(&crate::vtree::Home::unchecked(tree));
     for clause in clauses {
-        let c = eng.clause(tree, clause.iter().copied()).unwrap();
+        let c = eng.clause(&crate::vtree::Home::unchecked(tree), clause.iter().copied()).unwrap();
         d = eng.and(d, c).unwrap();
     }
     d

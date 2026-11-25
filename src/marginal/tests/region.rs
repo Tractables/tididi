@@ -18,10 +18,10 @@ use crate::{Engine, OperationError, Tdd};
 pub(crate) fn operand(eng: &Engine, home: &Home, vars: &[VarId], rng: &mut Lcg) -> Tdd {
     if vars.is_empty() {
         let empty = Vtree::empty_projection(home);
-        return if rng.below(4) == 0 { Tdd::zero(&empty) } else { Tdd::one(&empty) };
+        return if rng.below(4) == 0 { Tdd::zero(&crate::vtree::Home::unchecked(&empty)) } else { Tdd::one(&crate::vtree::Home::unchecked(&empty)) };
     }
     let vtree = Vtree::projection(home, vars.iter().copied()).unwrap();
-    let mut f = crate::test_helpers::padded(Tdd::one(&vtree), &vtree);
+    let mut f = crate::test_helpers::padded(Tdd::one(&crate::vtree::Home::unchecked(&vtree)), &vtree);
     for _ in 0..1 + rng.below(vars.len().min(12) as u64) {
         let clause: Vec<i32> = (0..1 + rng.below(3))
             .map(|_| {
@@ -276,7 +276,7 @@ fn marginalize_refuses_a_summed_out_internal_level_that_is_not_a_region() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(4));
     let own = Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)]).unwrap();
-    let mut f = Tdd::clause(&own, [1, 2, 3]).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&own), [1, 2, 3]).unwrap();
     let (left, _) = own.children(own.root());
     crate::marginal::marginalize_levels(&eng, &mut f, &[left]).unwrap();
     assert_eq!(f.marginalize(|_| true), Err(OperationError::MarginalLevel(left)));
@@ -287,7 +287,7 @@ fn marginalize_refuses_a_summed_out_internal_level_that_is_not_a_region() {
 fn marginalize_levels_refuses_a_projection() {
     let home = Home::new(Vtree::balanced(4));
     let own = Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)]).unwrap();
-    let mut f = Tdd::clause(&own, [1, 2, 3]).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&own), [1, 2, 3]).unwrap();
     let before = f.clone();
     let (left, _) = home.children(home.root());
     assert!(matches!(f.marginalize_levels(&[left]), Err(OperationError::InertOption { .. })));
@@ -301,7 +301,7 @@ fn marginalize_levels_refuses_a_projection() {
 fn a_lone_summable_leaf_becomes_a_region() {
     let home = Home::new(Vtree::balanced(4));
     let own = Vtree::projection(&home, [VarId(1), VarId(3)]).unwrap();
-    let mut f = Tdd::clause(&own, [1, 3]).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&own), [1, 3]).unwrap();
     f.marginalize(|v| v == VarId(1)).unwrap();
     check_form(&f, "sum of 1");
     assert_eq!(f.vtree().regions().count(), 1);
@@ -336,7 +336,7 @@ fn a_refused_marginalize_leaves_the_count_as_it_was() {
     let xuz = join(&join(&leaf(2), &leaf(3)), &leaf(4));
     let home = Home::new(join(&leaf(1), &join(&xuz, &leaf(5))));
     let own = Vtree::projection(&home, [1, 2, 4, 5].map(VarId)).unwrap();
-    let mut f = Tdd::one(&own);
+    let mut f = Tdd::one(&crate::vtree::Home::unchecked(&own));
     for clause in [&[1, 2][..], &[2, 4], &[5]] {
         f = f.and_clause(clause).unwrap();
     }
@@ -354,7 +354,7 @@ fn a_refused_marginalize_leaves_the_count_as_it_was() {
 fn every_refused_reserve_of_a_region_sum_out_leaves_the_count() {
     let home = Home::new(Vtree::balanced(6));
     let own = Vtree::projection(&home, [1, 2, 4, 5].map(VarId)).unwrap();
-    let mut f = Tdd::one(&own);
+    let mut f = Tdd::one(&crate::vtree::Home::unchecked(&own));
     for clause in [[1, -2], [2, 4], [-4, 5]] {
         f = f.and_clause(clause).unwrap();
     }
@@ -467,12 +467,12 @@ fn a_literal_beside_a_region_conjoins_with_a_pass_through() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(4));
     let own = Vtree::projection(&home, [1, 3, 4].map(VarId)).unwrap();
-    let mut f = Tdd::one(&own);
+    let mut f = Tdd::one(&crate::vtree::Home::unchecked(&own));
     for clause in [&[1][..], &[3, 4]] {
         f = eng.and_clause(f, clause).unwrap();
     }
     eng.marginalize(&mut f, |v| v.0 >= 3).unwrap();
-    let care = Tdd::clause(&Vtree::projection(&home, [VarId(2)]).unwrap(), [2]).unwrap();
+    let care = Tdd::clause(&crate::vtree::Home::unchecked(&Vtree::projection(&home, [VarId(2)]).unwrap()), [2]).unwrap();
     let r = eng.restrict_to_care(f.clone(), &care).unwrap().into_tdd();
     assert_eq!(conjoined_value(&eng, &f, &care), "Ok(3) Ok(None)");
     assert_eq!(conjoined_value(&eng, &r, &care), "Ok(3) Ok(None)");

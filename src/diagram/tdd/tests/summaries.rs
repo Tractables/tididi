@@ -17,7 +17,7 @@ fn check(f: &Tdd) {
 fn summaries_follow_consuming_edits_clones_and_marginalization() {
     let tree = Arc::new(Vtree::balanced(8));
     let eng = crate::Engine::new();
-    let mut f = eng.clause(&tree, [1, 2, 3]).unwrap();
+    let mut f = eng.clause(&crate::vtree::Home::unchecked(&tree), [1, 2, 3]).unwrap();
     check(&f);
     let original = f.clone();
     f = eng.and_clause(f, &[-1, 4]).unwrap();
@@ -30,7 +30,7 @@ fn summaries_follow_consuming_edits_clones_and_marginalization() {
     eng.minimize(&mut f).unwrap();
     check(&f);
     assert!(f.has_marginal_level());
-    check(&eng.zero(&tree));
+    check(&eng.zero(&crate::vtree::Home::unchecked(&tree)));
 }
 
 #[test]

@@ -37,8 +37,8 @@ fn the_bit_per_bucket_keeps_every_candidate_of_a_wide_level() {
         for vtree in vtrees(&a, &b, &c) {
             let (_, right) = vtree.children(vtree.root());
             for ((fv, fr), (gv, gr)) in &joins {
-                let f = eng.from_models(&vtree, fv, fr).unwrap();
-                let g = eng.from_models(&vtree, gv, gr).unwrap();
+                let f = eng.from_models(&crate::vtree::Home::unchecked(&vtree), fv, fr).unwrap();
+                let g = eng.from_models(&crate::vtree::Home::unchecked(&vtree), gv, gr).unwrap();
                 for (l, r) in [(&f, &g), (&g, &f)] {
                     let run = |thresholds: SparseThresholds| {
                         let _thresholds = ForcedThresholds::install(thresholds);

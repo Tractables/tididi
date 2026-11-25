@@ -10,7 +10,7 @@ use crate::test_helpers::assert_canonical;
 
 /// A clause with a free variable, built before any resource limit is armed.
 fn fixture() -> Tdd {
-    let f = Tdd::clause(&Arc::new(Vtree::balanced(8)), [1, 3, -5]).unwrap();
+    let f = Tdd::clause(&crate::vtree::Home::unchecked(&Arc::new(Vtree::balanced(8))), [1, 3, -5]).unwrap();
     assert_canonical(&f);
     f
 }
@@ -164,7 +164,7 @@ impl EvalAlgebra for TrackedBoolean<'_> {
 fn algebra_columns_use_less_memory_than_allocating_every_level() {
     for tree in [Vtree::balanced(128), Vtree::linear(128)] {
         let eng = Engine::new();
-        let f = Tdd::one(&Arc::new(tree));
+        let f = Tdd::one(&crate::vtree::Home::unchecked(&Arc::new(tree)));
         assert_canonical(&f);
         let usage = Rc::new(Usage::default());
         let algebra = TrackedBoolean { eng: &eng, usage: usage.clone() };
@@ -241,7 +241,7 @@ fn an_overriding_sum_of_products_is_used_and_agrees_with_the_default() {
             let rows: Vec<u64> = (0..200 + 150 * round)
                 .map(|_| (rng.next_u64() & 0x3ff) | (rng.next_u64() % 3) << 10)
                 .collect();
-            let f = eng.from_models(&vtree, &vars, &rows).unwrap();
+            let f = eng.from_models(&crate::vtree::Home::unchecked(&vtree), &vars, &rows).unwrap();
             assert_canonical(&f);
             let regrouped = Regrouped { pairs: Cell::new(0), products: Cell::new(0) };
             let value = eng.evaluate(&f, &regrouped).unwrap();
@@ -283,7 +283,7 @@ fn an_overriding_mul_add_is_used_and_agrees_with_the_default() {
     let eng = Engine::new();
     for tree in [Vtree::balanced(8), Vtree::linear(8)] {
         let vtree = Arc::new(tree);
-        let f = Tdd::clause(&vtree, [1, 3, -5]).unwrap() & Tdd::clause(&vtree, [-2, 6]).unwrap();
+        let f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 3, -5]).unwrap() & Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [-2, 6]).unwrap();
         assert_canonical(&f);
         let fused = Counts { fused: Cell::new(0) };
         let value = eng.evaluate(&f, &fused).unwrap();
@@ -387,7 +387,7 @@ fn column_evaluation_agrees_with_evaluate_and_folds_every_node() {
             let rows: Vec<u64> = (0..100 + 200 * round)
                 .map(|_| (rng.next_u64() & 0x3ff) | (rng.next_u64() % 3) << 10)
                 .collect();
-            let f = eng.from_models(&vtree, &vars, &rows).unwrap();
+            let f = eng.from_models(&crate::vtree::Home::unchecked(&vtree), &vars, &rows).unwrap();
             assert_canonical(&f);
             let counts = ColumnCounts { leaves: Cell::new(0), folds: Cell::new(0) };
             assert_eq!(f.evaluate_columns(&counts).unwrap(), eng.evaluate(&f, &PlainCounts).unwrap(), "round {round}");
@@ -399,7 +399,7 @@ fn column_evaluation_agrees_with_evaluate_and_folds_every_node() {
             assert_eq!(counts.folds.get(), internal, "every internal node is folded once");
         }
         // The constants, and a literal whose output is a leaf level.
-        for f in [Tdd::zero(&vtree), Tdd::one(&vtree), crate::literal(&vtree, -3).unwrap(), crate::literal(&vtree, 7).unwrap()] {
+        for f in [Tdd::zero(&crate::vtree::Home::unchecked(&vtree)), Tdd::one(&crate::vtree::Home::unchecked(&vtree)), crate::literal(&crate::vtree::Home::unchecked(&vtree), -3).unwrap(), crate::literal(&crate::vtree::Home::unchecked(&vtree), 7).unwrap()] {
             assert_canonical(&f);
             let counts = ColumnCounts { leaves: Cell::new(0), folds: Cell::new(0) };
             assert_eq!(eng.evaluate_columns(&f, &counts).unwrap(), eng.evaluate(&f, &PlainCounts).unwrap());
@@ -422,7 +422,7 @@ fn column_evaluation_stops_refuses_and_rejects_marginal_levels() {
     }
     assert_eq!(eng.evaluate_columns(&f, &counts()).unwrap(), expected);
     let tree = Arc::new(Vtree::balanced(4));
-    let mut marginal = Tdd::clause(&tree, [1, 2]).unwrap();
+    let mut marginal = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 2]).unwrap();
     assert_canonical(&marginal);
     eng.marginalize_levels(&mut marginal, &[tree.root()]).unwrap();
     assert!(matches!(eng.evaluate_columns(&marginal, &counts()), Err(OperationError::MarginalLevel(_))));
@@ -469,7 +469,7 @@ fn evaluating_at_a_level_values_each_node_over_its_subtree() {
         let vtree = Arc::new(tree);
         for round in 0..4u64 {
             let rows: Vec<u64> = (0..20 + 40 * round).map(|_| rng.next_u64() & 0x1ff).collect();
-            let f = eng.from_models(&vtree, &vars, &rows).unwrap();
+            let f = eng.from_models(&crate::vtree::Home::unchecked(&vtree), &vars, &rows).unwrap();
             assert_canonical(&f);
             for t in (0..vtree.num_nodes()).map(|t| VtreeIdx(t as u32)) {
                 let values = f.evaluate_at(t, &PlainCounts).unwrap();
@@ -512,14 +512,14 @@ fn evaluating_at_a_level_values_each_node_over_its_subtree() {
 fn evaluating_at_a_level_refuses_a_foreign_level_and_marginal_structure() {
     let eng = Engine::new();
     let tree = Arc::new(Vtree::balanced(4));
-    let f = Tdd::clause(&tree, [1, 2]).unwrap();
+    let f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 2]).unwrap();
     assert_canonical(&f);
     let outside = VtreeIdx(tree.num_nodes() as u32);
     assert_eq!(f.evaluate_at(outside, &PlainCounts), Err(OperationError::LevelNotInVtree(outside)));
     let counts = ColumnCounts { leaves: Cell::new(0), folds: Cell::new(0) };
     assert!(matches!(f.evaluate_columns_at(outside, &counts), Err(OperationError::LevelNotInVtree(_))));
     // The constant false: its internal levels have no slot.
-    let zero = Tdd::zero(&tree);
+    let zero = Tdd::zero(&crate::vtree::Home::unchecked(&tree));
     assert!(zero.evaluate_at(tree.root(), &PlainCounts).unwrap().is_empty());
     let mut marginal = f.clone();
     eng.marginalize_levels(&mut marginal, &[tree.root()]).unwrap();

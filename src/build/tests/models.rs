@@ -92,14 +92,14 @@ fn blocking_clauses(table: &[Vec<bool>], width: u32) -> Vec<Vec<i32>> {
 /// of one cube per row. Row-driven rather than truth-table driven, so a
 /// relation over seventy variables is as cheap as its row count.
 fn table_function(vtree: &Arc<Vtree>, constrained: &[VarId], table: &[Vec<bool>]) -> Tdd {
-    let mut f = Tdd::zero(vtree);
+    let mut f = Tdd::zero(&crate::vtree::Home::unchecked(vtree));
     for bits in table {
         let cube: Vec<i32> = bits
             .iter()
             .zip(constrained)
             .map(|(&b, v)| if b { v.0 as i32 } else { -(v.0 as i32) })
             .collect();
-        f = crate::or(f, Tdd::cube(vtree, cube).unwrap()).unwrap();
+        f = crate::or(f, Tdd::cube(&crate::vtree::Home::unchecked(vtree), cube).unwrap()).unwrap();
     }
     f.minimize().unwrap();
     f

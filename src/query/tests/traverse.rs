@@ -89,7 +89,7 @@ fn a_hand_written_traversal_agrees_with_the_model_counter() {
     let eng = Engine::new();
     // 1. A structural diagram: (x1 ∨ x2) ∧ (x3 ∨ ¬x4) has 3 · 3 = 9 models.
     let vtree = Arc::new(Vtree::balanced(4));
-    let mut f = Tdd::clause(&vtree, [1, 2]).unwrap() & Tdd::clause(&vtree, [3, -4]).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap() & Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [3, -4]).unwrap();
     assert_eq!(count(&f), BigUint::from(9u32));
     assert_eq!(count(&f), f.model_count().unwrap());
 

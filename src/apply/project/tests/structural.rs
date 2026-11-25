@@ -57,7 +57,7 @@ fn regrouping_polls_inside_a_level() {
 #[test]
 fn freeing_a_whole_subtree_matches_one_variable_at_a_time() {
     let tree = Arc::new(Vtree::balanced(6));
-    let f = Tdd::clause(&tree, [1, -2, 3]).unwrap() & Tdd::clause(&tree, [-4, 5, 6]).unwrap();
+    let f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, -2, 3]).unwrap() & Tdd::clause(&crate::vtree::Home::unchecked(&tree), [-4, 5, 6]).unwrap();
     let mut f = f;
     f.minimize().unwrap();
     assert_canonical(&f);
@@ -217,9 +217,9 @@ fn a_quantification_under_contract_leaves_every_node_reached() {
 fn a_root_union_under_contract_is_the_root_alone() {
     let eng = Engine::new();
     let tree = Arc::new(Vtree::balanced(6));
-    let mut f = Tdd::clause(&tree, [1, -2, 3]).unwrap()
-        & Tdd::clause(&tree, [-1, 4, 5]).unwrap()
-        & Tdd::clause(&tree, [2, -4, 6]).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, -2, 3]).unwrap()
+        & Tdd::clause(&crate::vtree::Home::unchecked(&tree), [-1, 4, 5]).unwrap()
+        & Tdd::clause(&crate::vtree::Home::unchecked(&tree), [2, -4, 6]).unwrap();
     f.minimize().unwrap();
     let vars = [VarId(1), VarId(4)];
     let mut canonical = eng.exists_vars(f.clone(), &vars).unwrap();
@@ -766,7 +766,7 @@ fn a_wide_level_of_one_node_is_written_by_rows_as_the_owner_set_rule_says() {
     let mut rng = Lcg::new(20260928);
     let eng = Engine::new();
     let tree = Arc::new(Vtree::balanced(4));
-    let host = Tdd::clause(&tree, [1, -2, 3]).unwrap();
+    let host = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, -2, 3]).unwrap();
     let parent = tree.root();
     for (keys, cells, width, count) in [(3usize, 2u32, 1u32 << 13, 40usize), (50, 30, 1 << 19, 2000), (400, 5, 1 << 20, 6000)] {
         let mut pairs: Vec<ChildPair> = (0..count)

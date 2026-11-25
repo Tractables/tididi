@@ -21,11 +21,11 @@ fn requested_targets_are_completed_after_identity_and_self_conjunction() {
                 tree = tree.with_weights(Weights::new(weights, arithmetic)).unwrap();
             }
             let tree = Arc::new(tree);
-            let f = eng.clause(&tree, [1, 2]).unwrap();
-            let disjoint = eng.clause(&tree, [3, 4]).unwrap();
+            let f = eng.clause(&crate::vtree::Home::unchecked(&tree), [1, 2]).unwrap();
+            let disjoint = eng.clause(&crate::vtree::Home::unchecked(&tree), [3, 4]).unwrap();
             assert_canonical(&f);
             assert_canonical(&disjoint);
-            for g in [f.clone(), eng.one(&tree), disjoint] {
+            for g in [f.clone(), eng.one(&crate::vtree::Home::unchecked(&tree)), disjoint] {
                 assert_canonical(&g);
                 for targets in [vec![left], vec![tree.root()], vec![leaf, left, left], vec![tree.root(), leaf, left]] {
                     let mut expected = eng.and(f.clone(), g.clone()).unwrap();
@@ -61,9 +61,9 @@ fn requested_targets_are_completed_after_identity_and_self_conjunction() {
 fn target_completion_preserves_false_and_empty_requests() {
     let eng = Engine::new();
     let tree = Arc::new(Vtree::balanced(4));
-    let f = eng.clause(&tree, [1, 2]).unwrap();
+    let f = eng.clause(&crate::vtree::Home::unchecked(&tree), [1, 2]).unwrap();
     assert_canonical(&f);
-    let zero = Tdd::zero(&tree);
+    let zero = Tdd::zero(&crate::vtree::Home::unchecked(&tree));
     assert_canonical(&zero);
     let result = eng.and_marginalizing(f.clone(), zero, &[tree.root()]).unwrap();
     assert!(result.is_zero());
@@ -79,11 +79,11 @@ fn collapse_operands(eng: &Engine) -> (Tdd, Tdd, Arc<Vtree>) {
     let tree = Arc::new(Vtree::balanced(8));
     let (left, _) = tree.children(tree.root());
     let (ll, lr) = tree.children(left);
-    let mut f = eng.clause(&tree, [1, 2, 3, 4]).unwrap();
-    f = eng.and(f, eng.clause(&tree, [-1, -3, 5, 6]).unwrap()).unwrap();
-    f = eng.and(f, eng.clause(&tree, [2, -4, 7, 8]).unwrap()).unwrap();
-    let mut g = eng.clause(&tree, [3, 5, 7]).unwrap();
-    g = eng.and(g, eng.clause(&tree, [-4, -6, 8]).unwrap()).unwrap();
+    let mut f = eng.clause(&crate::vtree::Home::unchecked(&tree), [1, 2, 3, 4]).unwrap();
+    f = eng.and(f, eng.clause(&crate::vtree::Home::unchecked(&tree), [-1, -3, 5, 6]).unwrap()).unwrap();
+    f = eng.and(f, eng.clause(&crate::vtree::Home::unchecked(&tree), [2, -4, 7, 8]).unwrap()).unwrap();
+    let mut g = eng.clause(&crate::vtree::Home::unchecked(&tree), [3, 5, 7]).unwrap();
+    g = eng.and(g, eng.clause(&crate::vtree::Home::unchecked(&tree), [-4, -6, 8]).unwrap()).unwrap();
     eng.marginalize_levels(&mut f, &[ll]).unwrap();
     assert!(f.level(ll).is_marginal() && !f.level(lr).is_marginal());
     (f, g, tree)

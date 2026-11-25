@@ -1,25 +1,22 @@
 //! Conjoin random 3-literal clauses on a balanced vtree of `n` variables,
-//! each diagram either on the projection of the vtree on its variables or
-//! on the whole vtree.
+//! each diagram on the projection of the vtree on its variables.
 //!
 //! The first half of the clauses are built as diagrams and conjoined in
 //! pairs; the second half are folded into the pairs by `and_clause`, two to
 //! a pair. Clauses on random variables of a balanced vtree cross its root,
 //! so a pair's width doubles with each clause folded in. Prints the sum
-//! over the results of the fraction of their models, in units of 2^-20,
-//! which both modes agree on.
+//! over the results of the fraction of their models, in units of 2^-20.
 //!
 //! ```text
-//! cargo bench --bench projected_and -- <n> <projected|smooth> [clauses]
+//! cargo bench --bench projected_and -- <n> projected [clauses]
 //! ```
 //!
 //! Without arguments, as `cargo test` runs it: `64 projected 40`.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 
-use tididi::vtree::{Home, VarId, Vtree};
+use tididi::vtree::{Home, Vtree};
 use tididi::{Engine, Tdd};
 
 /// The system allocator, counting allocations.
@@ -51,14 +48,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.is_empty() {
         args = ["64", "projected", "40"].map(String::from).to_vec();
     }
-    let usage = "usage: projected_and <n> <projected|smooth> [clauses] | <n> nested <k> <calls> [balanced|linear|alternate] | <n> union <shared> <calls>";
+    let usage = "usage: projected_and <n> projected [clauses] | <n> nested <k> <calls> [balanced|linear|alternate] | <n> union <shared> <calls>";
     let n: u32 = args.first().ok_or(usage)?.parse()?;
-    let projected = match args.get(1).map(String::as_str) {
-        Some("projected") => true,
-        Some("smooth") => false,
-        Some("nested" | "union") => true,
-        _ => return Err(usage.into()),
-    };
+    if !matches!(args.get(1).map(String::as_str), Some("projected" | "nested" | "union")) {
+        return Err(usage.into());
+    }
     match args[1].as_str() {
         "nested" => return nested(n, &args[2..]),
         "union" => return union(n, &args[2..]),
@@ -70,12 +64,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let home = Home::new(Vtree::balanced(n));
-    let vtree_of = |vars: &[u32]| -> Result<Arc<Vtree>, Box<dyn std::error::Error>> {
-        Ok(match projected {
-            true => Vtree::projection(&home, vars.iter().map(|&v| VarId(v)))?,
-            false => Arc::clone(&home),
-        })
-    };
 
     let mut state = 0x9e37_79b9_7f4a_7c15u64;
     let mut next = move |below: u32| {
@@ -103,8 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for pair in built.chunks(2) {
         let mut acc: Option<Tdd> = None;
         for lits in pair {
-            let vars = lits.map(|l| l.unsigned_abs());
-            let c = eng.clause(&vtree_of(&vars)?, lits)?;
+            let c = eng.clause(&home, lits)?;
             acc = Some(match acc {
                 Some(acc) => eng.and(acc, c)?,
                 None => c,
@@ -166,8 +153,7 @@ fn nested(n: u32, args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let eng = Engine::new();
     let spread = |k: u32| (0..k).map(|i| 1 + i * (n / k)).collect::<Vec<u32>>();
     let chain = |vars: &[u32]| -> Result<Tdd, Box<dyn std::error::Error>> {
-        let own = Vtree::projection(&home, vars.iter().map(|&v| VarId(v)))?;
-        let mut f = eng.cube(&own, std::iter::empty::<i32>())?;
+        let mut f = eng.cube(&home, std::iter::empty::<i32>())?;
         for w in vars.windows(2) {
             f = eng.and_clause(f, &[held(w[0]), -held(w[1])])?;
         }
@@ -186,7 +172,7 @@ fn nested(n: u32, args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         };
         let (a, b) = (small[j], small[j + 1]);
         let second = if next(2) == 0 { held(b) } else { -held(b) };
-        gs.push(eng.clause(&Vtree::projection(&home, [VarId(a), VarId(b)])?, [held(a), second])?);
+        gs.push(eng.clause(&home, [held(a), second])?);
     }
     for i in 0..calls {
         let at = i % fs.len();
@@ -222,8 +208,7 @@ fn union(n: u32, args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let held = |v: u32| if v.is_multiple_of(3) { -(v as i32) } else { v as i32 };
     let eng = Engine::new();
     let chain = |vars: &[u32]| -> Result<Tdd, Box<dyn std::error::Error>> {
-        let own = Vtree::projection(&home, vars.iter().map(|&v| VarId(v)))?;
-        let mut f = eng.cube(&own, std::iter::empty::<i32>())?;
+        let mut f = eng.cube(&home, std::iter::empty::<i32>())?;
         for w in vars.windows(2) {
             f = eng.and_clause(f, &[held(w[0]), -held(w[1])])?;
         }

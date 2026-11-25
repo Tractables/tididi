@@ -141,7 +141,7 @@ pub fn write_tdd_binary<W: Write>(w: &mut W, tdd: &Tdd) -> Result<(), IoError> {
 ///
 /// Returns [`IoError::Io`] if the file cannot be read, or the format errors
 /// from [`read_tdd_binary`].
-pub fn load_tdd_binary(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
+pub fn load_tdd_binary(path: impl AsRef<Path>, vtree: &crate::vtree::Home) -> Result<Tdd, IoError> {
     decode(&std::fs::read(path.as_ref())?, vtree)
 }
 
@@ -210,7 +210,7 @@ pub fn load_tdd_binary(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd
 /// # tididi::test_helpers::assert_canonical(&f);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn read_tdd_binary<R: Read>(r: &mut R, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
+pub fn read_tdd_binary<R: Read>(r: &mut R, vtree: &crate::vtree::Home) -> Result<Tdd, IoError> {
     let mut bytes = vec![0u8; HEADER_BYTES];
     read_full(r, &mut bytes)?;
     let (total, _) = check_header(&bytes)?;
@@ -317,7 +317,11 @@ fn decode_on_home(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
     }
     let mut tdd = decode_levels(bytes, &own)?;
     let built = |e: crate::diagram::TddBuildError| malformed(format!("the records do not form a diagram: {e}"));
-    crate::diagram::check_seated_pairs(&tdd).map_err(built)?;
+    match tdd.weights() {
+        None => crate::diagram::check_seated_pairs(&tdd),
+        Some(_) => crate::diagram::check_seated_weighted(&tdd),
+    }
+    .map_err(built)?;
     crate::diagram::trim_on_home(&mut tdd).map_err(|e| super::build_error(e, built))?;
     Ok(tdd)
 }

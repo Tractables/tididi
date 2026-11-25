@@ -23,9 +23,9 @@ const G_CLAUSES: &[&[i32]] = &[&[7, 8, -9], &[-8, 10], &[9, -10, 11], &[-11, 12,
 
 /// The conjunction of `clauses` on `vtree`, minimized.
 fn build(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[&[i32]]) -> Tdd {
-    let mut f = eng.cube(vtree, std::iter::empty::<i32>()).unwrap();
+    let mut f = eng.cube(&crate::vtree::Home::unchecked(vtree), std::iter::empty::<i32>()).unwrap();
     for c in clauses {
-        let c = eng.clause(vtree, c.iter().copied()).unwrap();
+        let c = eng.clause(&crate::vtree::Home::unchecked(vtree), c.iter().copied()).unwrap();
         f = eng.and(f, c).unwrap();
     }
     eng.minimize(&mut f).unwrap();

@@ -139,7 +139,7 @@ fn a_refused_restructure_of_a_projection_leaves_it_as_it_was() {
     // Parity reads every variable, so the diagram is on `own`. Minimized,
     // because the restructure reduces its operand before it can be refused.
     let eng = crate::Engine::new();
-    let mut f = kept.iter().map(|&v| eng.literal(&own, v as i32).unwrap()).reduce(|a, b| eng.xor(a, b).unwrap()).unwrap();
+    let mut f = kept.iter().map(|&v| eng.literal(&crate::vtree::Home::unchecked(&own), v as i32).unwrap()).reduce(|a, b| eng.xor(a, b).unwrap()).unwrap();
     f.minimize().unwrap();
     let count = f.model_count().unwrap();
     let order = [1, 10, 2, 9, 3, 8, 4, 7, 5, 6].map(VarId);
@@ -175,7 +175,7 @@ fn a_refused_restructure_of_a_projection_leaves_it_as_it_was() {
 
 #[test]
 fn other_variables_are_refused() {
-    let f = Tdd::clause(&Arc::new(Vtree::balanced(3)), [1, 2]).unwrap();
+    let f = Tdd::clause(&crate::vtree::Home::unchecked(&Arc::new(Vtree::balanced(3))), [1, 2]).unwrap();
     let wider = Arc::new(Vtree::balanced(4));
     let mut g = f.clone();
     assert_eq!(g.restructure_to(&wider, usize::MAX), Err(RestructureError::Variables { variable: VarId(4) }));
@@ -203,7 +203,7 @@ fn summed_out_blocks_move_as_units() {
     let f = compile_clauses(&ab_c, &clauses);
     let summed = f.vtree().leaf_of(VarId(3)).and_then(|leaf| f.vtree().node(leaf).parent()).unwrap();
     let eng = crate::Engine::new();
-    let g = eng.and_marginalizing(f.clone(), crate::Tdd::one(&ab_c), &[summed]).unwrap();
+    let g = eng.and_marginalizing(f.clone(), crate::Tdd::one(&crate::vtree::Home::unchecked(&ab_c)), &[summed]).unwrap();
     let count = g.model_count().unwrap();
     let mut moved = g.clone();
     moved.restructure_to(&ac_b, usize::MAX).unwrap();
@@ -217,7 +217,7 @@ fn a_rotation_at_a_summed_out_level_is_refused() {
     let source = Arc::new(Vtree::linear_from_order(&vars).unwrap());
     let f = compile_clauses(&source, &[vec![1, 2], vec![-3, 4]]);
     let eng = crate::Engine::new();
-    let g = eng.and_marginalizing(f, crate::Tdd::one(&source), &[source.root()]).unwrap();
+    let g = eng.and_marginalizing(f, crate::Tdd::one(&crate::vtree::Home::unchecked(&source)), &[source.root()]).unwrap();
     let mut moved = g;
     let target = Arc::new(Vtree::balanced(4));
     match moved.restructure_to(&target, usize::MAX) {

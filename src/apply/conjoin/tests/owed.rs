@@ -88,9 +88,9 @@ fn contracted_unpruned_operands_owe_the_contraction_their_twins() {
 fn halves(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<i32>], settled: bool) -> (Tdd, Tdd) {
     let (a, b) = clauses.split_at(clauses.len() / 2);
     let half = |part: &[Vec<i32>]| {
-        let mut f = eng.cube(vtree, std::iter::empty::<i32>()).unwrap();
+        let mut f = eng.cube(&crate::vtree::Home::unchecked(vtree), std::iter::empty::<i32>()).unwrap();
         for c in part {
-            f = eng.and(f, eng.clause(vtree, c.iter().copied()).unwrap()).unwrap();
+            f = eng.and(f, eng.clause(&crate::vtree::Home::unchecked(vtree), c.iter().copied()).unwrap()).unwrap();
         }
         if settled {
             eng.minimize(&mut f).unwrap();
@@ -209,8 +209,8 @@ fn built_operands_give_their_conjunction_its_loose_levels() {
             for round in 0..4 {
                 let mut rows = |width: usize| -> Vec<u64> { (0..1u64 << width).filter(|_| rng.below(3) != 0).collect() };
                 let (f_rows, g_rows) = (rows(fv.len()), rows(gv.len()));
-                let f = eng.from_models(vtree, &fv, &f_rows).unwrap();
-                let g = eng.from_models(vtree, &gv, &g_rows).unwrap();
+                let f = eng.from_models(&crate::vtree::Home::unchecked(vtree), &fv, &f_rows).unwrap();
+                let g = eng.from_models(&crate::vtree::Home::unchecked(vtree), &gv, &g_rows).unwrap();
                 assert!(f.dirty.loose().is_some_and(|l| l.is_empty()), "{label}");
                 assert!(g.dirty.loose().is_some_and(|l| l.is_empty()), "{label}");
                 let out = eng.and(f, g).unwrap();

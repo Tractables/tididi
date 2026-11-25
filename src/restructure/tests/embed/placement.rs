@@ -36,8 +36,8 @@ pub(super) fn renamed_shape(
 /// `(x1 ∨ x2) ∧ (¬x3 ∨ x4)` renamed through `names`, on `vtree`.
 fn fixture(vtree: &Arc<Vtree>, names: [i32; 4]) -> Tdd {
     let mut f = and(
-        Tdd::clause(vtree, [names[0], names[1]]).unwrap(),
-        Tdd::clause(vtree, [-names[2], names[3]]).unwrap(),
+        Tdd::clause(&crate::vtree::Home::unchecked(vtree), [names[0], names[1]]).unwrap(),
+        Tdd::clause(&crate::vtree::Home::unchecked(vtree), [-names[2], names[3]]).unwrap(),
     )
     .unwrap();
     f.minimize().unwrap();
@@ -122,7 +122,7 @@ fn leaves_spread_along_a_spine_match_a_direct_build() {
 #[test]
 fn two_placements_of_one_relation_conjoin() {
     let pair = Arc::new(Vtree::linear(2));
-    let mut r = Tdd::clause(&pair, [1, 2]).unwrap();
+    let mut r = Tdd::clause(&crate::vtree::Home::unchecked(&pair), [1, 2]).unwrap();
     r.minimize().unwrap();
 
     let big = Arc::new(Vtree::linear(3));
@@ -142,7 +142,7 @@ fn two_placements_of_one_relation_conjoin() {
 #[test]
 fn a_false_diagram_embeds_to_false() {
     let small = Arc::new(Vtree::balanced(2));
-    let f = Tdd::zero(&small);
+    let f = Tdd::zero(&crate::vtree::Home::unchecked(&small));
     let big = Arc::new(Vtree::balanced(6));
     let (embedded, levels) = crate::test_helpers::embedded(&f, &big, |v| VarId(v.0 + 2)).unwrap();
     assert_canonical(&embedded);
@@ -155,14 +155,14 @@ fn a_false_diagram_embeds_to_false() {
 #[test]
 fn a_one_variable_diagram_embeds() {
     let small = Arc::new(Vtree::leaf(VarId(1)));
-    let f = crate::literal(&small, -1).unwrap();
+    let f = crate::literal(&crate::vtree::Home::unchecked(&small), -1).unwrap();
     assert_canonical(&f);
     let big = Arc::new(Vtree::linear(4));
     let (embedded, levels) = crate::test_helpers::embedded(&f, &big, |_| VarId(3)).unwrap();
     assert_at_fixpoint(&embedded);
     assert!(
         embedded
-            .equivalent(&crate::literal(&big, -3).unwrap())
+            .equivalent(&crate::literal(&crate::vtree::Home::unchecked(&big), -3).unwrap())
             .unwrap()
     );
     assert_eq!(

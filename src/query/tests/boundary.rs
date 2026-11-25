@@ -72,7 +72,7 @@ fn weighted_leaf_outputs_are_satisfiable_unless_false() {
                 LiteralWeights { negative: weight.clone(), positive: weight.clone() }
             ]), arithmetic);
             let tree = Arc::new(Vtree::balanced(1).with_weights(weights).unwrap());
-            let mut f = eng.literal(&tree, 1).unwrap();
+            let mut f = eng.literal(&crate::vtree::Home::unchecked(&tree), 1).unwrap();
             assert_canonical(&f);
             eng.marginalize_levels(&mut f, &[tree.root()]).unwrap();
             assert!(f.level(tree.root()).is_weight_marginal());
@@ -87,7 +87,7 @@ fn weighted_leaf_outputs_are_satisfiable_unless_false() {
 fn structural_and_count_marginal_leaf_outputs_remain_satisfiable() {
     let eng = Engine::new();
     let tree = Arc::new(Vtree::balanced(1));
-    for mut f in [eng.one(&tree), eng.literal(&tree, 1).unwrap(), eng.literal(&tree, -1).unwrap()] {
+    for mut f in [eng.one(&crate::vtree::Home::unchecked(&tree)), eng.literal(&crate::vtree::Home::unchecked(&tree), 1).unwrap(), eng.literal(&crate::vtree::Home::unchecked(&tree), -1).unwrap()] {
         assert_canonical(&f);
         assert!(f.is_sat().unwrap());
         eng.marginalize_levels(&mut f, &[tree.root()]).unwrap();

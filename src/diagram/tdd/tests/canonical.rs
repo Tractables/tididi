@@ -5,7 +5,7 @@ use crate::vtree::Home;
 #[test]
 fn canonical_guarantee_follows_storage_and_output() {
     let vtree = Arc::new(Vtree::balanced(3));
-    let mut f = Tdd::clause(&vtree, [1, 2]).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap();
     f.minimize().unwrap();
     assert!(f.levels.is_canonical(f.output));
     assert!(f.clone().levels.is_canonical(f.output));
@@ -28,7 +28,7 @@ fn canonical_guarantee_follows_storage_and_output() {
 #[test]
 fn builder_and_marginal_storage_are_not_certified() {
     let vtree = Arc::new(Vtree::balanced(3));
-    let mut f = Tdd::clause(&vtree, [1, 2]).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap();
     f.minimize().unwrap();
     let mut rebuilt = Tdd::from_levels_unchecked(vtree.clone(), f.levels.clone().into_vec(), f.output);
     assert!(!rebuilt.levels.is_canonical(rebuilt.output));
@@ -43,7 +43,7 @@ fn certified_leaf_queries_borrow_and_still_honor_cancellation() {
     use crate::OperationError;
     use crate::limits::LimitConfig;
     let vtree = Arc::new(Vtree::balanced(4));
-    let mut f = Tdd::one(&vtree);
+    let mut f = Tdd::one(&crate::vtree::Home::unchecked(&vtree));
     f.minimize().unwrap();
     let unproven = Tdd::from_levels_unchecked(vtree, f.levels.clone().into_vec(), f.output);
     let eng = Engine::new();
@@ -65,7 +65,7 @@ fn certified_leaf_queries_borrow_and_still_honor_cancellation() {
 #[test]
 fn refused_minimization_does_not_certify_partial_work() {
     let vtree = Arc::new(Vtree::balanced(4));
-    let source = Tdd::clause(&vtree, [1, 2, 3]).unwrap();
+    let source = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 2, 3]).unwrap();
     let mut f = Tdd::from_levels_unchecked(vtree, source.levels.clone().into_vec(), source.output);
     let eng = Engine::new();
     eng.refuse_nth_reserve(0);
@@ -139,7 +139,7 @@ mod producers {
         let mut f = match rng.below(4) {
             0 => {
                 let v = vars[rng.below(vars.len() as u64) as usize] as i32;
-                Tdd::clause(vtree, [if rng.coin() { v } else { -v }]).unwrap()
+                Tdd::clause(&crate::vtree::Home::unchecked(vtree), [if rng.coin() { v } else { -v }]).unwrap()
             }
             _ => rand_conj_over(vtree, vars, 4, 3, false, rng),
         };
@@ -206,8 +206,8 @@ mod producers {
     fn constants_without_a_node_are_certified() {
         let home = crate::vtree::Home::new(Vtree::random(3, 1));
         let empty = Vtree::empty_projection(&home);
-        assert!(Tdd::one(&empty).is_canonical());
-        assert!(Tdd::zero(&empty).is_canonical());
+        assert!(Tdd::one(&crate::vtree::Home::unchecked(&empty)).is_canonical());
+        assert!(Tdd::zero(&crate::vtree::Home::unchecked(&empty)).is_canonical());
     }
 
     /// Prune and contraction keep a certificate with nothing owed; a

@@ -125,10 +125,6 @@ fn subset(n: u32, rng: &mut Lcg) -> Vec<u32> {
     if s.is_empty() { vec![1 + rng.below(u64::from(n)) as u32] } else { s }
 }
 
-fn projection(home: &Home, vars: &[u32]) -> Arc<Vtree> {
-    Vtree::projection(home, vars.iter().map(|&v| VarId(v))).unwrap()
-}
-
 /// A diagram of a random function in a random form, and what the form is.
 fn operand(eng: &Engine, homes: &[Home], n: u32, rng: &mut Lcg) -> (Tdd, String) {
     let (f, name, _) = operand_and_twin(eng, homes, n, rng);
@@ -144,26 +140,9 @@ fn operand_and_twin(eng: &Engine, homes: &[Home], n: u32, rng: &mut Lcg) -> (Tdd
     match kind {
         0 => return (Tdd::one(root), "one on the home".into(), Tdd::one(root)),
         1 => return (Tdd::zero(root), "zero on the home".into(), Tdd::zero(root)),
-        2 => return (Tdd::one(&Vtree::empty_projection(home)), "one on no leaf".into(), Tdd::one(root)),
-        3 => return (Tdd::zero(&Vtree::empty_projection(home)), "zero on no leaf".into(), Tdd::zero(root)),
-        4 => return (Tdd::one(&projection(home, &s)), format!("one on {s:?}"), Tdd::one(root)),
-        5 => return (Tdd::zero(&projection(home, &s)), format!("zero on {s:?}"), Tdd::zero(root)),
         _ => {}
     }
-    let form = rng.below(5);
-    let (vtree, name) = match form {
-        0 => (Arc::clone(root), "home".to_string()),
-        1 => (Arc::clone(root), "home trimmed".to_string()),
-        2 => (projection(home, &s), format!("on {s:?}")),
-        3 => {
-            let mut wide = s.clone();
-            wide.extend(subset(n, rng));
-            wide.sort_unstable();
-            wide.dedup();
-            (projection(home, &wide), format!("on {wide:?}"))
-        }
-        _ => (projection(home, &(1..=n).collect::<Vec<_>>()), "on every leaf".to_string()),
-    };
+    let trimmed = rng.coin();
     let mut clauses = Vec::new();
     for _ in 0..1 + rng.below(3) {
         let width = 1 + rng.below(3);
@@ -179,16 +158,16 @@ fn operand_and_twin(eng: &Engine, homes: &[Home], n: u32, rng: &mut Lcg) -> (Tdd
     for clause in &clauses {
         twin = eng.and_clause(twin, clause).unwrap();
     }
-    let mut f = Tdd::one(&vtree);
+    let mut f = Tdd::one(home);
     for clause in &clauses {
-        f = if rng.coin() { eng.and_clause(f, clause).unwrap() } else { eng.and(f, Tdd::clause(&vtree, clause).unwrap()).unwrap() };
+        f = if rng.coin() { eng.and_clause(f, clause).unwrap() } else { eng.and(f, Tdd::clause(home, clause).unwrap()).unwrap() };
     }
-    let mut name = format!("{clauses:?} {name}");
+    let mut name = format!("{clauses:?}");
     if rng.coin() {
         f.minimize().unwrap();
         name += " minimized";
     }
-    if form == 1 || rng.below(4) == 0 {
+    if trimmed {
         eng.trim(&mut f, home).unwrap();
         name += " trimmed";
     }
@@ -527,7 +506,7 @@ fn unary(log: &mut Log, eng: &Engine, home: &Home, n: u32, f: &Tdd, hf: &Tdd, rn
             if tididi::io::write_tdd_binary(&mut bytes, &t).is_err() {
                 return Ok(popcount(&tf));
             }
-            tididi::io::read_tdd_binary(&mut bytes.as_slice(), t.vtree()).map_err(|_| OperationError::VtreeMismatch)?.model_count()
+            tididi::io::read_tdd_binary(&mut bytes.as_slice(), &t.home()).map_err(|_| OperationError::VtreeMismatch)?.model_count()
         },
         popcount(&tf),
     );
@@ -583,12 +562,12 @@ fn unary(log: &mut Log, eng: &Engine, home: &Home, n: u32, f: &Tdd, hf: &Tdd, rn
     log.any(n, "text", || {
         let mut text = Vec::new();
         tididi::io::write_tdd(&mut text, f)?;
-        tididi::io::read_tdd(&mut text.as_slice(), f.vtree())
+        tididi::io::read_tdd(&mut text.as_slice(), &f.home())
     }, &tf);
     log.any(n, "binary", || {
         let mut bytes = Vec::new();
         tididi::io::write_tdd_binary(&mut bytes, f)?;
-        tididi::io::read_tdd_binary(&mut bytes.as_slice(), f.vtree())
+        tididi::io::read_tdd_binary(&mut bytes.as_slice(), &f.home())
     }, &tf);
 
     // Moves.
@@ -794,7 +773,7 @@ fn pools_in_every_form() {
             log.tdd(n, "and with a diagram outside a search that kept nothing", || eng.and(&members[0].0, &outsider), &zip(&tables[0], &t_out, |x, y| x && y));
         } else {
             kept += 1;
-            let new_home = members[0].0.home().expect("a member after a kept search is on a home");
+            let new_home = members[0].0.home();
             log.same(
                 "and with a diagram left on the old home answers or refuses",
                 || Ok::<_, ()>(eng.and(&members[0].0, &outsider).map_or(true, |t| table(&t, n) == zip(&tables[0], &t_out, |x, y| x && y))),

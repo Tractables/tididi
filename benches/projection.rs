@@ -139,8 +139,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let clauses: Vec<(Tdd, Vec<i32>)> = (0..POOL)
         .map(|_| {
             let both = rng.vars(h, k + m);
-            let own = Vtree::projection(&home, both[..k].iter().copied())?;
-            let f = Tdd::clause(&own, both[..k].iter().map(|v| v.0 as i32))?;
+            let f = Tdd::clause(&home, both[..k].iter().map(|v| v.0 as i32))?;
             Ok((f, both[k..].iter().map(|v| v.0 as i32).collect()))
         })
         .collect::<Result<_, Box<dyn std::error::Error>>>()?;

@@ -1,6 +1,5 @@
 //! Vtrees, literal values and per-operation limits.
 
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use pyo3::prelude::*;
 use pyo3::exceptions::{PyTypeError, PyValueError};
@@ -12,16 +11,16 @@ use tididi::vtree::{Home, VarId};
 /// A shared variable decomposition. Reuse one vtree for circuits you will combine.
 #[pyclass(name = "Vtree", module = "tididi", skip_from_py_object, frozen)]
 #[derive(Clone)]
-pub struct PyVtree(pub Arc<Vtree>);
+pub struct PyVtree(pub Home);
 
 impl PyVtree {
     /// `vtree` made a home: a circuit built on it is held on the home's projection on the variables
     /// it uses, so it stores no level for any other variable.
-    fn home(vtree: Vtree) -> Self { Self(Arc::clone(&Home::new(vtree))) }
+    fn home(vtree: Vtree) -> Self { Self(Home::new(vtree)) }
 }
 
 /// The vtree a circuit was built on: the home of its projection.
-pub fn domain(f: &Tdd) -> Arc<Vtree> { Arc::clone(&f.home().expect("a binding circuit is on a home")) }
+pub fn domain(f: &Tdd) -> Home { f.home() }
 
 #[pymethods]
 impl PyVtree {

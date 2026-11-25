@@ -68,9 +68,9 @@ fn a_contraction_leaves_none_of_its_merges_on_its_own_worklist() {
         let num_vars = 6 + (round % 5) as u32;
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 12, width: 3 });
         for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
-            let mut f = eng.clause(&vtree, clauses[0].iter().copied()).unwrap();
+            let mut f = eng.clause(&crate::vtree::Home::unchecked(&vtree), clauses[0].iter().copied()).unwrap();
             for clause in &clauses[1..] {
-                let g = eng.clause(&vtree, clause.iter().copied()).unwrap();
+                let g = eng.clause(&crate::vtree::Home::unchecked(&vtree), clause.iter().copied()).unwrap();
                 f = eng.and(f, g).unwrap();
                 let before = f.levels.node_count();
                 eng.reduce(&mut f, ReductionPlan::Contract).unwrap();

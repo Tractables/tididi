@@ -80,7 +80,7 @@ fn conjoin_free_literal(eng: &Engine, g: &Tdd, k: usize) -> Option<(Tdd, i32)> {
     let vars: Vec<usize> = (0..free.len()).filter(|&v| free[v]).collect();
     let v = *vars.get(k % vars.len().max(1))? as i32 + 1;
     let literal = if k.is_multiple_of(2) { v } else { -v };
-    let mut h = eng.and(g.clone(), eng.literal(g.vtree(), literal).unwrap()).unwrap();
+    let mut h = eng.and(g.clone(), eng.literal(&crate::vtree::Home::unchecked(g.vtree()), literal).unwrap()).unwrap();
     eng.minimize(&mut h).unwrap();
     Some((h, literal))
 }

@@ -11,10 +11,10 @@ fn checked_satisfiability_agrees_with_every_three_variable_truth_table() {
     for tree in [Vtree::balanced(3), Vtree::linear(3)] {
         let tree = Arc::new(tree);
         for truth in 0u16..256 {
-            let mut f = engine.zero(&tree);
+            let mut f = engine.zero(&crate::vtree::Home::unchecked(&tree));
             for assignment in 0..8 {
                 if truth & (1 << assignment) == 0 { continue; }
-                let cube = engine.cube(&tree, (0..3).map(|var| {
+                let cube = engine.cube(&crate::vtree::Home::unchecked(&tree), (0..3).map(|var| {
                     Literal::new(VarId(var + 1), assignment & (1 << var) != 0)
                 })).unwrap();
                 assert_canonical(&cube);
@@ -22,7 +22,7 @@ fn checked_satisfiability_agrees_with_every_three_variable_truth_table() {
             }
             assert_canonical(&f);
             assert_eq!(engine.is_sat(&f), Ok(truth != 0), "truth table {truth}");
-            let not_third = engine.literal(&tree, -3).unwrap();
+            let not_third = engine.literal(&crate::vtree::Home::unchecked(&tree), -3).unwrap();
             assert_canonical(&not_third);
             let mut constrained = engine.and(f, not_third).unwrap();
             assert_eq!(engine.is_sat(&constrained), Ok(truth & 0x0f != 0));
@@ -39,7 +39,7 @@ fn checked_satisfiability_ignores_weights_and_reads_marginal_counts() {
         LiteralWeights { negative: rat(0, 1), positive: rat(0, 1) }; 3
     ]);
     let weighted = Arc::new(Vtree::balanced(3).with_weights(Weights::new(weights, Arithmetic::ExactRational)).unwrap());
-    let mut f = engine.cube(&weighted, [1, -2]).unwrap();
+    let mut f = engine.cube(&crate::vtree::Home::unchecked(&weighted), [1, -2]).unwrap();
     assert_canonical(&f);
     assert_eq!(engine.is_sat(&f), Ok(true));
     assert_eq!(engine.implied_literals(&f), Ok(vec![1.try_into().unwrap(), (-2).try_into().unwrap()]));
@@ -48,7 +48,7 @@ fn checked_satisfiability_ignores_weights_and_reads_marginal_counts() {
     assert_eq!(engine.is_sat(&f), Ok(true));
     assert!(matches!(engine.implied_literals(&f), Err(OperationError::MarginalLevel(_))));
     let tree = Arc::new(Vtree::balanced(3));
-    let mut counts = engine.one(&tree);
+    let mut counts = engine.one(&crate::vtree::Home::unchecked(&tree));
     assert_canonical(&counts);
     engine.marginalize_levels(&mut counts, &[tree.root()]).unwrap();
     assert_eq!(engine.is_sat(&counts), Ok(true));
@@ -81,7 +81,7 @@ fn checked_satisfiability_returns_refusals_without_changing_the_input() {
 /// A count-marginal diagram with its reduction still pending.
 fn edited_marginal_fixture(engine: &Engine) -> Tdd {
     let tree = Arc::new(Vtree::balanced(8));
-    let mut g = engine.clause(&tree, [1, 5]).unwrap();
+    let mut g = engine.clause(&crate::vtree::Home::unchecked(&tree), [1, 5]).unwrap();
     assert_canonical(&g);
     let mut under_left = vec![false; tree.num_nodes()];
     let mut stack = vec![tree.children(tree.root()).0];
@@ -92,7 +92,7 @@ fn edited_marginal_fixture(engine: &Engine) -> Tdd {
     let summed: Vec<VtreeIdx> = tree.internal_bottomup_slice().iter().copied()
         .filter(|&t| under_left[t.idx()]).collect();
     engine.marginalize_levels(&mut g, &summed).unwrap();
-    let f = engine.and(g, engine.literal(&tree, 8).unwrap()).unwrap();
+    let f = engine.and(g, engine.literal(&crate::vtree::Home::unchecked(&tree), 8).unwrap()).unwrap();
     assert!(f.has_marginal_level() && !f.dirty.is_empty());
     f
 }
@@ -103,11 +103,11 @@ fn edited_weighted_fixture(engine: &Engine) -> Tdd {
         LiteralWeights { negative: rat(0, 1), positive: rat(1, 2) }; 4
     ]);
     let tree = Arc::new(Vtree::balanced(4).with_weights(Weights::new(weights, Arithmetic::ExactRational)).unwrap());
-    let mut g = engine.clause(&tree, [1, 3]).unwrap();
+    let mut g = engine.clause(&crate::vtree::Home::unchecked(&tree), [1, 3]).unwrap();
     assert_canonical(&g);
     let (left, _) = tree.children(tree.root());
     engine.marginalize_levels(&mut g, &[left]).unwrap();
-    let f = engine.and(g, engine.literal(&tree, 4).unwrap()).unwrap();
+    let f = engine.and(g, engine.literal(&crate::vtree::Home::unchecked(&tree), 4).unwrap()).unwrap();
     assert!(f.has_marginal_level() && !f.dirty.is_empty());
     f
 }

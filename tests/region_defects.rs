@@ -49,14 +49,13 @@ fn and_clause_after_a_sum_out_answers() {
     let home = Home::new(Vtree::balanced(4));
     let (left, _) = home.children(home.root());
     let mut outcomes = Vec::new();
-    for (name, vars, clause, target) in [
+    for (name, _, clause, target) in [
         ("true, a node with no own leaf", &[1u32, 2, 3][..], &[1, -1][..], left),
         ("x3, the node over x1 and x2", &[1, 2, 3], &[3], left),
         ("x1 or x2, the node over them", &[1, 2, 3], &[1, 2], left),
         ("x1 or x3, the root", &[1, 2, 3], &[1, 3], home.root()),
     ] {
-        let own = Vtree::projection(&home, vars.iter().map(|&v| VarId(v))).unwrap();
-        let mut f = Tdd::clause(&own, clause.to_vec()).unwrap();
+        let mut f = Tdd::clause(&home, clause.to_vec()).unwrap();
         f.marginalize(under(&home, &[target])).unwrap();
         let count = f.model_count().unwrap();
         for c in [[3, 3], [4, 4], [1, 1], [-3, 4]] {
@@ -91,8 +90,7 @@ fn join(l: &Vtree, r: &Vtree) -> Vtree {
 fn a_refused_marginalize_keeps_the_count() {
     let (m, x, u, z, y) = (1, 2, 3, 4, 5);
     let home = Home::new(join(&leaf(m), &join(&join(&join(&leaf(x), &leaf(u)), &leaf(z)), &leaf(y))));
-    let own = Vtree::projection(&home, [m, x, z, y].map(VarId)).unwrap();
-    let mut f = Tdd::one(&own);
+    let mut f = Tdd::one(&home);
     for clause in [[m as i32, x as i32], [x as i32, z as i32], [y as i32, y as i32]] {
         f = f.and_clause(clause).unwrap();
     }
@@ -108,7 +106,7 @@ fn a_refused_marginalize_keeps_the_count() {
 /// out: a region beside the leaves of x3 and x4.
 fn with_a_region() -> (Home, Tdd) {
     let home = Home::new(Vtree::balanced(4));
-    let mut f = Tdd::clause(&Vtree::projection(&home, [1, 2, 3, 4].map(VarId)).unwrap(), [1, 2, 3, 4]).unwrap();
+    let mut f = Tdd::clause(&home, [1, 2, 3, 4]).unwrap();
     let (left, _) = home.children(home.root());
     f.marginalize(under(&home, &[left])).unwrap();
     assert!(f.vtree().bottomup().any(|t| f.vtree().node(t).is_region()), "the diagram has a region");
@@ -142,7 +140,7 @@ fn entries_on_a_diagram_with_a_region_do_not_panic() {
     let eng = Engine::new();
     let (home, f) = with_a_region();
     let other = Vtree::projection(&Home::new(Vtree::linear(4)), [3, 4].map(VarId)).unwrap();
-    let x3 = Tdd::clause(&Vtree::projection(&home, [VarId(3)]).unwrap(), [3]).unwrap();
+    let x3 = Tdd::clause(&home, [3]).unwrap();
     let mut panics = Vec::new();
     let mut run = |name: &str, call: &mut dyn FnMut()| {
         if let Err(e) = catch_unwind(AssertUnwindSafe(call)) {
@@ -196,7 +194,7 @@ fn a_conjunction_with_a_variable_a_region_summed_out_commutes() {
     quiet();
     let eng = Engine::new();
     let (home, f) = with_a_region();
-    let x3 = Tdd::clause(&Vtree::projection(&home, [VarId(3)]).unwrap(), [3]).unwrap();
+    let x3 = Tdd::clause(&home, [3]).unwrap();
     let both = eng.and(&x3, &f).unwrap();
     assert_eq!(both.model_count().unwrap(), eng.and(&f, &x3).unwrap().model_count().unwrap());
 }
@@ -236,8 +234,7 @@ fn sum_outs_between_other_operations_agree_with_the_home() {
         if vars.is_empty() {
             continue;
         }
-        let own = Vtree::projection(&home, vars.iter().copied()).unwrap();
-        let (mut f, mut twin) = (Tdd::one(&own), Tdd::one(&home));
+        let (mut f, mut twin) = (Tdd::one(&home), Tdd::one(&home));
         let clause = |rng: &mut Rng| -> Vec<i32> {
             (0..1 + rng.below(3)).map(|_| vars[rng.below(vars.len() as u64) as usize].0 as i32 * if rng.coin() { 1 } else { -1 }).collect()
         };

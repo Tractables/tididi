@@ -11,7 +11,6 @@ const EDGES: &[(usize, usize)] = &[
 ];
 
 fn main() -> Result<(), tididi::OperationError> {
-    use std::sync::Arc;
     use tididi::vtree::Home;
 
     use tididi::vtree::VarId;
@@ -21,7 +20,7 @@ fn main() -> Result<(), tididi::OperationError> {
     let current_vars: Vec<_> = (1..=NODES as u32).map(VarId).collect();
     let next_vars: Vec<_> = (NODES as u32 + 1..=2 * NODES as u32).map(VarId).collect();
 
-    fn state(vtree: &Arc<Vtree>, indicators: &[VarId], node: usize)
+    fn state(vtree: &Home, indicators: &[VarId], node: usize)
         -> Result<Tdd, OperationError> {
         Tdd::cube(vtree, indicators.iter().enumerate()
             .map(|(i, &var)| Literal::new(var, i == node)))

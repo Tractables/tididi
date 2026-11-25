@@ -64,7 +64,7 @@ fn the_counts_cover_every_kept_node() {
     // at the middle level that use them, and the output loses its x1 pair.
     let (g, stats) = filtered(f.filter_nodes(|id| id.vtree != b || id.local.0 == 2).unwrap());
     assert_eq!(stats, FilterStats { pairs_dropped: 4, emptied_nodes: 2 });
-    assert!(g.equivalent(&Tdd::cube(f.vtree(), [-1, -2, -3, 4]).unwrap()).unwrap());
+    assert!(g.equivalent(&Tdd::cube(&crate::vtree::Home::unchecked(f.vtree()), [-1, -2, -3, 4]).unwrap()).unwrap());
     // Rejecting only an unreachable node still rebuilds, and empties the
     // unreachable node above it.
     let (g, stats) = filtered(f.filter_nodes(|id| id != node(b, 3)).unwrap());
@@ -234,7 +234,7 @@ fn weighted_operands_keep_their_weights_on_every_outcome() {
     let weights = vec![LiteralWeights { negative: rat(2, 1), positive: rat(3, 1) }; 8];
     let weights = Weights::new(RationalWeights::from_literals(&weights), Arithmetic::ExactRational);
     let tree = Arc::new(Vtree::balanced(8).with_weights(weights).unwrap());
-    let mut f = Tdd::clause(&tree, [1, 3, 5, 7]).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 3, 5, 7]).unwrap();
     let forgotten = tree.children(tree.root()).0;
     eng.marginalize_levels(&mut f, &[forgotten]).unwrap();
     assert_canonical(&f);

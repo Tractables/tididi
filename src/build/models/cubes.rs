@@ -29,14 +29,13 @@
 //! intervals and pairwise disjoint, or fix every bit, are the pieces
 //! already.
 
-use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
 use crate::Engine;
 use crate::diagram::{NEG_LEAF_IDX, NodeIdx, ONE_LEAF_IDX, POS_LEAF_IDX, Tdd};
 use crate::limits::{Charged, Limits, OperationError};
-use crate::vtree::{VarId, Vtree};
+use crate::vtree::{Home, VarId};
 
 use super::filled;
 use super::layout::Layout;
@@ -102,7 +101,7 @@ impl Tdd {
     /// outgrow the index that addresses it, and [`OperationError::Stopped`]
     /// when an armed stop fires.
     pub fn from_cubes(
-        vtree: &Arc<Vtree>,
+        vtree: &Home,
         vars: &[VarId],
         cubes: &[u64],
     ) -> Result<Tdd, OperationError> {
@@ -120,7 +119,7 @@ impl Engine {
     /// As [`Tdd::from_cubes`].
     pub fn from_cubes(
         &self,
-        vtree: &Arc<Vtree>,
+        vtree: &Home,
         vars: &[VarId],
         cubes: &[u64],
     ) -> Result<Tdd, OperationError> {

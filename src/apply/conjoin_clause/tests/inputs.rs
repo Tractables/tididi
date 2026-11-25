@@ -116,6 +116,6 @@ fn empty_clause_gives_a_canonical_false() {
 #[should_panic(expected = "the clause walk needs the output at the root level")]
 fn an_operand_rooted_below_the_root_is_caught() {
     let vtree = Arc::new(Vtree::balanced(8));
-    let low = crate::test_helpers::reroot_to_child(&Tdd::clause(&vtree, [1, 2]).unwrap(), crate::diagram::ChildSide::Left);
+    let low = crate::test_helpers::reroot_to_child(&Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap(), crate::diagram::ChildSide::Left);
     let _ = Engine::new().and_clause(low, &[Literal::try_from(5).unwrap()]);
 }

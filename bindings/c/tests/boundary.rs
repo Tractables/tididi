@@ -106,7 +106,6 @@ fn every_c_producer_stores_only_used_levels() {
             }
         }));
         assert!(checked.is_ok(), "{what}: the result breaks an invariant");
-        assert!(f.home().is_some(), "{what}: not on a home");
         if let Err(e) = tididi::test_helpers::check::check_trimmed(&f, false) {
             panic!("{what}: {e}");
         }
@@ -217,13 +216,11 @@ fn every_c_producer_stores_only_used_levels() {
 /// projection on the variables it uses, with the same count.
 #[test]
 fn padded_file_reads_onto_the_projection() {
-    use std::sync::Arc;
     let text = tididi::Vtree::balanced(8).to_text();
-    let plain = Arc::new(tididi::Vtree::from_text(&text).unwrap());
-    let padded = tididi::Tdd::clause(&plain, [2, -7]).unwrap();
-    assert!(padded.home().is_none());
-    let mut bytes = Vec::new();
-    tididi::io::write_tdd(&mut bytes, &padded).unwrap();
+    // x2 or not x7 as a root vtree stores it, every other leaf named true.
+    let bytes = b"p tdd 1 8 15 14 0\nL 0 1\nL 1 2\nL 2 3\nL 3 4\nL 4 5\nL 5 6\nL 6 7\nL 7 8\n\
+        I 8 0 1 0 1\nI 8 0 1 0 2\nI 9 2 3 0 0\nI 10 4 5 0 0\nI 11 6 7 2 0\nI 11 6 7 1 0\n\
+        I 12 8 9 0 0\nI 12 8 9 1 0\nI 13 10 11 0 0\nI 13 10 11 0 1\nI 14 12 13 0 0 0 1 1 0\n";
     unsafe {
         let (mut vtree, mut out, mut count) = (std::ptr::null_mut(), std::ptr::null_mut(), 0u64);
         let text = std::ffi::CString::new(text).unwrap();
@@ -236,7 +233,7 @@ fn padded_file_reads_onto_the_projection() {
             tididi::test_helpers::check::check_trimmed(&f, false).unwrap();
         }
         assert!(tididi_model_count(out, &mut count, std::ptr::null()).is_null());
-        assert_eq!(count, padded.model_count().unwrap().try_into().unwrap());
+        assert_eq!(count, 192);
         assert!(tididi_circuit_free(out).is_null());
         tididi_vtree_free(vtree);
     }

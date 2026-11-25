@@ -18,9 +18,9 @@ use crate::vtree::{Home, Vtree};
 pub(super) fn read_tdd<R: BufRead>(r: &mut R, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
     let mut bytes = Vec::new();
     r.read_to_end(&mut bytes)?;
-    let read = crate::io::read_tdd(&mut bytes.as_slice(), vtree);
+    let read = crate::io::read_tdd(&mut bytes.as_slice(), &crate::vtree::Home::unchecked(vtree));
     if let Ok(f) = &read {
-        also_on_home(f, vtree, |home| crate::io::read_tdd(&mut bytes.as_slice(), home));
+        also_on_home(f, vtree, |home| crate::io::read_tdd(&mut bytes.as_slice(), &crate::vtree::Home::unchecked(home)));
     }
     read
 }
@@ -29,10 +29,10 @@ pub(super) fn read_tdd<R: BufRead>(r: &mut R, vtree: &Arc<Vtree>) -> Result<Tdd,
 /// bytes the read took.
 pub(super) fn read_tdd_binary<R: Read>(r: &mut R, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
     let mut tee = Tee { inner: r, seen: Vec::new() };
-    let read = crate::io::read_tdd_binary(&mut tee, vtree);
+    let read = crate::io::read_tdd_binary(&mut tee, &crate::vtree::Home::unchecked(vtree));
     if let Ok(f) = &read {
         let bytes = tee.seen;
-        also_on_home(f, vtree, |home| crate::io::read_tdd_binary(&mut bytes.as_slice(), home));
+        also_on_home(f, vtree, |home| crate::io::read_tdd_binary(&mut bytes.as_slice(), &crate::vtree::Home::unchecked(home)));
     }
     read
 }

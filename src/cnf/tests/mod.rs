@@ -102,7 +102,7 @@ fn a_weight_marginal_level_is_refused_before_the_sink_is_called() {
     let weights = vec![LiteralWeights { negative: rat(2, 1), positive: rat(3, 1) }; 8];
     let weights = Weights::new(RationalWeights::from_literals(&weights), Arithmetic::ExactRational);
     let tree = Arc::new(Vtree::balanced(8).with_weights(weights).unwrap());
-    let mut f = Tdd::clause(&tree, [1, 3, 5, 7]).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 3, 5, 7]).unwrap();
     let forgotten = tree.children(tree.root()).0;
     f.marginalize_levels(&[forgotten]).unwrap();
     assert_canonical(&f);

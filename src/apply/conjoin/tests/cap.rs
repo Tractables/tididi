@@ -94,10 +94,10 @@ fn function_of(vtree: &Arc<Vtree>, vars: &[u32], rng: &mut Lcg) -> Tdd {
 /// `x_a ↔ x_b` for each pair of `pairs`.
 fn equalities(vtree: &Arc<Vtree>, pairs: &[(i32, i32)]) -> Tdd {
     let eng = Engine::new();
-    let mut f = Tdd::one(vtree);
+    let mut f = Tdd::one(&crate::vtree::Home::unchecked(vtree));
     for &(a, b) in pairs {
-        f = eng.and(f, Tdd::clause(vtree, [-a, b]).unwrap()).unwrap();
-        f = eng.and(f, Tdd::clause(vtree, [a, -b]).unwrap()).unwrap();
+        f = eng.and(f, Tdd::clause(&crate::vtree::Home::unchecked(vtree), [-a, b]).unwrap()).unwrap();
+        f = eng.and(f, Tdd::clause(&crate::vtree::Home::unchecked(vtree), [a, -b]).unwrap()).unwrap();
     }
     f
 }

@@ -7,7 +7,7 @@ mod deadline;
 fn invalid_root_preserves_diagram_and_attempts() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(2));
-    let mut tdd = eng.one(&vtree);
+    let mut tdd = eng.one(&crate::vtree::Home::unchecked(&vtree));
     let before = tdd.model_count().unwrap();
     let invalid = VtreeIdx(vtree.num_nodes() as u32);
     let mut tried = vec![1];
@@ -23,7 +23,7 @@ fn invalid_root_preserves_diagram_and_attempts() {
 fn short_attempt_storage_grows_without_losing_prior_entries() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(2));
-    let mut tdd = eng.one(&vtree);
+    let mut tdd = eng.one(&crate::vtree::Home::unchecked(&vtree));
     let mut tried = vec![1];
     assert_eq!(eng.rotate_marginal_cluster(&mut tdd, vtree.root(), 8, &mut tried), Ok(0));
     assert_eq!(tried, [1, 0, 0]);

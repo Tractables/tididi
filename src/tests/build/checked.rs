@@ -84,10 +84,10 @@ fn an_empty_cube_polls_during_node_construction() {
         let _scope = eng.limits().scope(LimitConfig::none().with_stop_rules(StopRules {
             unconditional: Some(StopAt::WorkUnits(2)), ..StopRules::default()
         }));
-        assert_eq!(eng.cube(&vtree, std::iter::empty::<Literal>()).err(), Some(OperationError::Stopped));
+        assert_eq!(eng.cube(&crate::vtree::Home::unchecked(&vtree), std::iter::empty::<Literal>()).err(), Some(OperationError::Stopped));
         assert_eq!(eng.limits().work_units(), 2);
     }
-    let result = eng.cube(&vtree, std::iter::empty::<Literal>()).unwrap();
+    let result = eng.cube(&crate::vtree::Home::unchecked(&vtree), std::iter::empty::<Literal>()).unwrap();
     assert_canonical(&result);
     assert_eq!(result.model_count().unwrap(), 256u32.into());
 }
@@ -152,9 +152,9 @@ fn a_constant_built_inside_an_operation_observes_the_stop_rules() {
             unconditional: Some(StopAt::WorkUnits(2)), ..StopRules::default()
         }));
         // No constrained variable: the relation is the constant-true diagram.
-        assert_eq!(eng.from_models(&vtree, &[], &[0]).err(), Some(OperationError::Stopped));
+        assert_eq!(eng.from_models(&crate::vtree::Home::unchecked(&vtree), &[], &[0]).err(), Some(OperationError::Stopped));
     }
-    let all = eng.from_models(&vtree, &[], &[0]).unwrap();
+    let all = eng.from_models(&crate::vtree::Home::unchecked(&vtree), &[], &[0]).unwrap();
     assert_canonical(&all);
     assert_eq!(all.model_count().unwrap(), 256u32.into());
 }

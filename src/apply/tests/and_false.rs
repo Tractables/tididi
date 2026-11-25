@@ -33,9 +33,9 @@ fn random_clauses(rng: &mut Lcg) -> Vec<Vec<i32>> {
 }
 
 fn conjunction(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
-    let mut f = eng.cube(vtree, std::iter::empty::<i32>()).unwrap();
+    let mut f = eng.cube(&crate::vtree::Home::unchecked(vtree), std::iter::empty::<i32>()).unwrap();
     for clause in clauses {
-        f = eng.and(f, eng.clause(vtree, clause.as_slice()).unwrap()).unwrap();
+        f = eng.and(f, eng.clause(&crate::vtree::Home::unchecked(vtree), clause.as_slice()).unwrap()).unwrap();
     }
     f
 }

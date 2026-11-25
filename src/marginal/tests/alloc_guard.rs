@@ -70,7 +70,7 @@ fn marginal_refusals(weighted: bool, overflow: bool) {
     let vtree = Vtree::balanced(n);
     let vtree = Arc::new(if weighted { vtree.with_weights(Weights::new(weights.clone(), Arithmetic::ExactRational)).unwrap() } else { vtree });
     let original = if overflow {
-        Tdd::one(&vtree)
+        Tdd::one(&crate::vtree::Home::unchecked(&vtree))
     } else {
         compile_clauses(&vtree, &[
             vec![1, 2, -5], vec![-2, 3, 6], vec![4, -7, 8], vec![-1, 5, -8],

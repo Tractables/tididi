@@ -30,7 +30,7 @@ fn summing_out_a_root_of_several_nodes_follows_the_output() {
     // Three root nodes with 1, 1 and 2 models, the output the second: the
     // first two values merge when the root is summed out.
     let eng = Engine::new();
-    let vtree = std::sync::Arc::new(Vtree::balanced(2));
+    let vtree = Home::new(Vtree::balanced(2));
     let root = vtree.root();
     let mut b = Tdd::builder(&eng, &vtree).unwrap();
     b.push(&eng, root, &[ChildPair::new(POS_LEAF_IDX, POS_LEAF_IDX)]).unwrap();
@@ -38,6 +38,6 @@ fn summing_out_a_root_of_several_nodes_follows_the_output() {
     b.push(&eng, root, &[ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX), ChildPair::new(NEG_LEAF_IDX, NEG_LEAF_IDX)]).unwrap();
     let mut f = b.finish(TddNodeId { vtree: root, local: second }).unwrap();
     assert_eq!(f.model_count().unwrap(), 1u32.into());
-    f.marginalize_levels(&[root]).unwrap();
+    f.marginalize(|_| true).unwrap();
     assert_eq!(f.model_count().unwrap(), 1u32.into());
 }

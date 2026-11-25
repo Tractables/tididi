@@ -4,7 +4,6 @@
 //! Run with `cargo run --example vtrees`.
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    use std::sync::Arc;
     use tididi::vtree::Home;
 
     use tididi::{literal, xor, OperationError, Tdd, Vtree};
@@ -15,7 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ])?);
     let split_vtree = Home::new(Vtree::balanced(4));
 
-    fn equal_pairs(vtree: &Arc<Vtree>) -> Result<Tdd, OperationError> {
+    fn equal_pairs(vtree: &Home) -> Result<Tdd, OperationError> {
         let x1 = literal(vtree, 1)?;
         let x2 = literal(vtree, 2)?;
         let x3 = literal(vtree, 3)?;

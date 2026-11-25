@@ -13,7 +13,7 @@ use crate::vtree::VarId;
 /// through a compiled cube diagram, and `f ∧ ¬M` through the clause walk.
 fn rebuilt(vtree: &Arc<Vtree>, f: &Tdd, model: &[i32], insert: bool) -> Tdd {
     let mut out = if insert {
-        let cube = Tdd::cube(vtree, model).expect("the cube is over the vtree");
+        let cube = Tdd::cube(&crate::vtree::Home::unchecked(vtree), model).expect("the cube is over the vtree");
         crate::or(f.clone(), cube).expect("the disjunction fits")
     } else {
         let clause: Vec<i32> = model.iter().map(|lit| -lit).collect();
@@ -492,7 +492,7 @@ fn a_batch_on_a_projection_follows_the_diagram_across_projections() {
     let home = Home::new(Vtree::join(&Vtree::join(&Vtree::leaf(VarId(1)), &Vtree::leaf(VarId(2))).unwrap(), &Vtree::leaf(VarId(3))).unwrap());
     let all = Arc::clone(&home);
     let on_home = |f: &Tdd| crate::test_helpers::embedded(f, &all, |v| v).unwrap().0;
-    let mut f = eng.literal(&all, 2).unwrap();
+    let mut f = eng.literal(&crate::vtree::Home::unchecked(&all), 2).unwrap();
     f.trim(&home).unwrap();
     let mut expected = on_home(&f);
     let steps: [(&[i32], bool); 6] = [(&[1, 3], true), (&[1, -2, 3], true), (&[2], false), (&[1, 2, 3], true), (&[-1], true), (&[3], false)];

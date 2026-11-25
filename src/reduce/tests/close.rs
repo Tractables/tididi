@@ -216,12 +216,12 @@ fn a_constructor_given_the_root_or_a_projection_returns_the_same_vtree() {
     let own = Vtree::projection(&home, [1, 2, 4, 5].map(VarId)).unwrap();
     for vtree in [&home, &own] {
         let built = [
-            eng.literal(vtree, -2).unwrap(),
-            eng.cube(vtree, [1, -6]).unwrap(),
-            eng.clause(vtree, [3, -5]).unwrap(),
-            eng.one(vtree),
-            eng.zero(vtree),
-            Tdd::from_models(vtree, &[VarId(1), VarId(5)], &[0b01, 0b11]).unwrap(),
+            eng.literal(&crate::vtree::Home::unchecked(vtree), -2).unwrap(),
+            eng.cube(&crate::vtree::Home::unchecked(vtree), [1, -6]).unwrap(),
+            eng.clause(&crate::vtree::Home::unchecked(vtree), [3, -5]).unwrap(),
+            eng.one(&crate::vtree::Home::unchecked(vtree)),
+            eng.zero(&crate::vtree::Home::unchecked(vtree)),
+            Tdd::from_models(&crate::vtree::Home::unchecked(vtree), &[VarId(1), VarId(5)], &[0b01, 0b11]).unwrap(),
         ];
         let expected: [&[u32]; 6] = [&[2], &[1, 6], &[3, 5], &[], &[], &[1]];
         for (t, vars) in built.iter().zip(expected) {
@@ -249,7 +249,7 @@ fn a_rename_onto_a_home_variable_answers_as_on_a_bare_root() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(4));
     let bare = Home::new(Vtree::balanced(4));
-    let f_on = |vtree: &Arc<Vtree>| eng.or(eng.literal(vtree, 1).unwrap(), eng.literal(vtree, 2).unwrap()).unwrap();
+    let f_on = |vtree: &Arc<Vtree>| eng.or(eng.literal(&crate::vtree::Home::unchecked(vtree), 1).unwrap(), eng.literal(&crate::vtree::Home::unchecked(vtree), 2).unwrap()).unwrap();
     let f = f_on(&home);
     assert_eq!(leaf_vars(&f), [VarId(1), VarId(2)]);
     let v = VarId;

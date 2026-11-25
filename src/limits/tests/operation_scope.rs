@@ -75,7 +75,7 @@ fn an_armed_stop_comes_before_every_input_error() {
     // The same shape on another vtree: every binary operation rejects the pair.
     let other = Tdd::clause(&Home::new(Vtree::balanced(4)), [1, -2]).unwrap();
     // `marginalize_levels` refuses a diagram on a home before the stop.
-    let root = Tdd::clause(&Arc::new(Vtree::balanced(4)), [1, -2]).unwrap();
+    let root = Tdd::clause(&crate::vtree::Home::unchecked(&Arc::new(Vtree::balanced(4))), [1, -2]).unwrap();
     let absent = [VarId(99)];
     let wide: Vec<VarId> = (1..=65).map(VarId).collect();
     let _stop = eng.limits().scope(LimitConfig::none().with_stop_callback(Some(

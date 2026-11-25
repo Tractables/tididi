@@ -38,7 +38,7 @@ fn exists_on_a_summed_diagram_is_refused() {
     // count 6 for ∃x where Σe ∃x gives 4.
     let leaf = |v: u32| Vtree::leaf(VarId(v));
     let vtree = Arc::new(Vtree::join(&leaf(1), &Vtree::join(&leaf(2), &leaf(3)).unwrap()).unwrap());
-    let mut f = eng.and(Tdd::cube(&vtree, [-3]).unwrap(), Tdd::clause(&vtree, [-1, 2]).unwrap()).unwrap();
+    let mut f = eng.and(Tdd::cube(&crate::vtree::Home::unchecked(&vtree), [-3]).unwrap(), Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [-1, 2]).unwrap()).unwrap();
     f.marginalize_levels(&[vtree.leaf_of(VarId(1)).unwrap()]).unwrap();
     assert!(f.has_marginal_level());
     assert!(matches!(f.exists_var(VarId(2)), Err(OperationError::MarginalLevel(_))));
@@ -72,7 +72,7 @@ fn operations_on_regions_answer_as_the_smooth_form_on_homes_of_up_to_64_leaves()
             assert!(same(&got, &expected), "{what}: condition {x:?}");
             assert!(matches!(g.clone().exists_var(x), Err(OperationError::MarginalLevel(_))), "{what}: exists {x:?}");
             assert!(matches!(f.clone().exists_var(x), Err(OperationError::MarginalLevel(_))), "{what}: exists {x:?}");
-            let literal = crate::literal(g.vtree(), i32::try_from(x.0).unwrap()).unwrap();
+            let literal = crate::literal(&crate::vtree::Home::unchecked(g.vtree()), i32::try_from(x.0).unwrap()).unwrap();
             assert!(matches!(g.clone().substitute(&[(x, &literal)]), Err(OperationError::MarginalLevel(_))), "{what}: substitute");
         }
         let moved = eng.transport(&g, &home, |v| v, 0).map_err(|r| r.error).unwrap().0;
@@ -97,7 +97,7 @@ fn operations_on_regions_answer_as_the_smooth_form_on_homes_of_up_to_64_leaves()
             let mut c = g.clone();
             eng.rotate_marginal_cluster(&mut c, t, 8, &mut Vec::new()).unwrap();
             check_form(&c, &what);
-            assert!(Arc::ptr_eq(&c.vtree().home().unwrap(), &home), "{what}: the home rotated");
+            assert!(Arc::ptr_eq(&c.home(), &home), "{what}: the home rotated");
             assert!(same(&c, &f), "{what}: cluster at {t:?}");
         }
     }
@@ -113,9 +113,9 @@ fn sibling_regions(eng: &Engine) -> (Home, Tdd) {
     let four = join(&join(&leaf(1), &leaf(2)), &join(&leaf(3), &leaf(4)));
     let home = Home::new(join(&join(&four, &leaf(5)), &leaf(6)));
     let on = |vars: [u32; 3]| Vtree::projection(&home, vars.map(VarId)).unwrap();
-    let mut a = Tdd::clause(&on([1, 2, 5]), [1, 2, 5]).unwrap();
+    let mut a = Tdd::clause(&crate::vtree::Home::unchecked(&on([1, 2, 5])), [1, 2, 5]).unwrap();
     a.marginalize(|v| v.0 <= 2).unwrap();
-    let mut b = Tdd::clause(&on([3, 4, 6]), [-3, 4, -6]).unwrap();
+    let mut b = Tdd::clause(&crate::vtree::Home::unchecked(&on([3, 4, 6])), [-3, 4, -6]).unwrap();
     b.marginalize(|v| (3..=4).contains(&v.0)).unwrap();
     (home, eng.and(&a, &b).unwrap())
 }
@@ -135,7 +135,7 @@ fn two_sibling_regions_merge_into_one_and_the_home_stays() {
     assert_eq!(region.len(), 1);
     let (_, extent) = merged.vtree().region_vars(region[0]);
     assert_eq!(extent, [1, 2, 3, 4].map(VarId));
-    assert!(Arc::ptr_eq(&merged.vtree().home().unwrap(), &home));
+    assert!(Arc::ptr_eq(&merged.home(), &home));
     assert_eq!(merged.model_count().unwrap(), g.model_count().unwrap());
 }
 
@@ -145,7 +145,7 @@ fn two_sibling_regions_merge_into_one_and_the_home_stays() {
 fn trim_drops_a_region_that_holds_every_assignment_of_its_extent() {
     let leaf = |v: u32| Vtree::leaf(VarId(v));
     let home = Home::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap());
-    let mut g = Tdd::clause(&Vtree::projection(&home, [1, 2, 3].map(VarId)).unwrap(), [1, 2, 3]).unwrap();
+    let mut g = Tdd::clause(&crate::vtree::Home::unchecked(&Vtree::projection(&home, [1, 2, 3].map(VarId)).unwrap()), [1, 2, 3]).unwrap();
     g.marginalize(|v| v.0 <= 2).unwrap();
     assert_eq!(g.vtree().regions().count(), 1);
     assert!(matches!(g.clone().and_clause([1]), Err(OperationError::MarginalLevel(_))));

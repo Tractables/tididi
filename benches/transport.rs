@@ -52,8 +52,7 @@ fn rotate(h: u32, reps: usize) -> Result<(), Box<dyn std::error::Error>> {
     }
     let homes = [balanced.clone(), Home::new(Vtree::balanced_over(&order)?)];
     let eng = Engine::new();
-    let own = Vtree::projection(&balanced, (1..=4).map(VarId))?;
-    let mut f = eng.and_clause(eng.clause(&own, [1, 3])?, &[2, 4])?;
+    let mut f = eng.and_clause(eng.clause(&balanced, [1, 3])?, &[2, 4])?;
     let mut rotations = 0;
     for r in 0..reps {
         let (g, stats) = eng.transport(f, &homes[(r + 1) % 2], |v| v, usize::MAX).map_err(|r| r.error)?;
@@ -109,8 +108,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let first = 1 + b * stride;
         let x = |i: u32| first + i;
         let y = |i: u32| first + width / 2 + i;
-        let vars = (0..p).flat_map(|i| [VarId(x(i)), VarId(y(i))]);
-        let mut block = Tdd::one(&Vtree::projection(&home, vars)?);
+        let mut block = Tdd::one(&home);
         for i in 0..p {
             let (x, y) = (x(i) as i32, y(i) as i32);
             block = eng.and_clause(block, &[x, -y])?;

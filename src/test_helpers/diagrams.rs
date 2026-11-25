@@ -140,7 +140,7 @@ pub fn slot_side(slot: u32) -> EncodedChildRef {
 
 /// Give `builder` a summed-out leaf at `leaf`, whose sides are all inline.
 pub fn sum_out_leaf(eng: &Engine, vtree: &Arc<Vtree>, builder: &mut TddBuilder, leaf: VtreeIdx) {
-    let mut donor = eng.cube(vtree, std::iter::empty::<i32>()).unwrap();
+    let mut donor = eng.cube(&crate::vtree::Home::unchecked(vtree), std::iter::empty::<i32>()).unwrap();
     eng.marginalize_levels(&mut donor, &[leaf]).unwrap();
     assert_eq!(donor.level(leaf).marginal_counts(), Some([].as_slice()));
     builder.replace_level(eng, leaf, donor.level_view(leaf)).unwrap();

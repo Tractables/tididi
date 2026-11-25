@@ -171,7 +171,7 @@ impl Engine {
                             SharedCircuit::default()
                         } else {
                             let value = if slot == 0 {
-                                self.cube(&vtree, std::iter::empty::<Literal>())?
+                                self.cube_on(&vtree, std::iter::empty::<Literal>())?
                             } else {
                                 match replacement {
                                     Replacement::Diagram(diagram) => {
@@ -182,13 +182,13 @@ impl Engine {
                                             value
                                         }
                                     }
-                                    Replacement::Literal(literal) => self.literal(
+                                    Replacement::Literal(literal) => self.cube_on(
                                         &vtree,
-                                        if slot == 2 {
+                                        [if slot == 2 {
                                             literal.negated()
                                         } else {
                                             literal
-                                        },
+                                        }],
                                     )?,
                                 }
                             };

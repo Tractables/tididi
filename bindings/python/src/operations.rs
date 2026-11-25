@@ -28,7 +28,7 @@ pub fn produce(py: Python<'_>, vtree: &Arc<Vtree>, limits: LimitConfig, canonica
 /// Validate all handles while holding their mutable borrows, then move every operand.
 /// Duplicate handles are rejected before anything is taken, including aliases in a list.
 pub fn take_operands(py: Python<'_>, operands: &[Py<PyCircuit>],
-    validate: impl FnOnce(&Vtree) -> PyResult<()>) -> PyResult<(Arc<Vtree>, Vec<Tdd>)> {
+    validate: impl FnOnce(&Vtree) -> PyResult<()>) -> PyResult<(tididi::vtree::Home, Vec<Tdd>)> {
     if operands.is_empty() { return Err(PyValueError::new_err("at least one circuit is required")); }
     let mut seen = HashSet::new();
     for operand in operands {

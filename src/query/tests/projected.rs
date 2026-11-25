@@ -9,10 +9,10 @@ fn projected_counts_match_all_three_variable_truth_tables() {
     for vtree in [Vtree::balanced_over(&vars).unwrap(), Vtree::linear_from_order(&vars).unwrap()] {
         let vtree = Arc::new(vtree);
         for bits in 0..256u16 {
-            let mut f = Tdd::zero(&vtree);
+            let mut f = Tdd::zero(&crate::vtree::Home::unchecked(&vtree));
             for row in 0..8 {
                 if bits & (1 << row) != 0 {
-                    let cube = Tdd::cube(&vtree, vars.iter().enumerate().map(|(i, &var)| {
+                    let cube = Tdd::cube(&crate::vtree::Home::unchecked(&vtree), vars.iter().enumerate().map(|(i, &var)| {
                         Literal::new(var, row & (1 << i) != 0)
                     })).unwrap();
                     assert_canonical(&cube);
@@ -63,7 +63,7 @@ fn projected_counts_ignore_weights_and_reject_marginal_structure() {
     let weights = vec![LiteralWeights { negative: rat(0, 1), positive: rat(0, 1) }; 3];
     let weighted = Arc::new(Vtree::balanced(3)
         .with_weights(Weights::new(RationalWeights::from_literals(&weights), Arithmetic::ExactRational)).unwrap());
-    let mut f = Tdd::clause(&weighted, [1, 2]).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&weighted), [1, 2]).unwrap();
     assert_canonical(&f);
     assert_eq!(f.projected_model_count(&[VarId(1)]).unwrap(), 2u32.into());
     assert_eq!(f.model_count().unwrap(), 6u32.into());
@@ -74,7 +74,7 @@ fn projected_counts_ignore_weights_and_reject_marginal_structure() {
         assert!(matches!(f.projected_model_count(&selected), Err(OperationError::MarginalLevel(_))));
     }
     let vtree = Arc::new(Vtree::balanced(3));
-    let mut f = Tdd::clause(&vtree, [1, 2]).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap();
     f.marginalize_levels(&[vtree.root()]).unwrap();
     assert_canonical(&f);
     assert!(matches!(f.projected_model_count(&[VarId(1)]), Err(OperationError::MarginalLevel(_))));

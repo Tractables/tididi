@@ -52,7 +52,7 @@ pub struct ConjunctionProgress {
 /// let bits = |base: u32| (base..base + 7).map(VarId).collect::<Vec<_>>();
 /// let (x, y, z) = (bits(1), bits(8), bits(15));
 /// let xy = Vtree::join(&Vtree::balanced_over(&x)?, &Vtree::balanced_over(&y)?)?;
-/// let vtree = Arc::new(Vtree::join(&xy, &Vtree::balanced_over(&z)?)?);
+/// let vtree = tididi::vtree::Home::new(Vtree::join(&xy, &Vtree::balanced_over(&z)?)?);
 /// let equal = |other: &[VarId]| {
 ///     let vars: Vec<VarId> = z.iter().chain(other).copied().collect();
 ///     let rows: Vec<u64> = (0..128u64).map(|k| k | k << 7).collect();

@@ -167,7 +167,7 @@ pub(crate) fn seat_canonical(eng: &Engine, vtree: &Arc<Vtree>, levels: Vec<TddLe
 /// # tididi::test_helpers::assert_canonical(&f);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn literal(vtree: &Arc<Vtree>, literal: impl TryInto<Literal, Error: Into<OperationError>>) -> Result<Tdd, OperationError> {
+pub fn literal(vtree: &Home, literal: impl TryInto<Literal, Error: Into<OperationError>>) -> Result<Tdd, OperationError> {
     vtree.context().run(|eng| eng.literal(vtree, literal))
 }
 
@@ -198,7 +198,7 @@ impl Tdd {
     /// # tididi::test_helpers::assert_canonical(&f);
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
-    pub fn cube(vtree: &Arc<Vtree>, literals: impl IntoIterator<Item = impl TryInto<Literal, Error: Into<OperationError>>>) -> Result<Tdd, OperationError> {
+    pub fn cube(vtree: &Home, literals: impl IntoIterator<Item = impl TryInto<Literal, Error: Into<OperationError>>>) -> Result<Tdd, OperationError> {
         vtree.context().run(|eng| eng.cube(vtree, literals))
     }
 
@@ -225,7 +225,7 @@ impl Tdd {
     /// # tididi::test_helpers::assert_canonical(&none);
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
-    pub fn one(vtree: &Arc<Vtree>) -> Tdd {
+    pub fn one(vtree: &Home) -> Tdd {
         vtree.context().run(|eng| eng.one(vtree))
     }
 
@@ -237,7 +237,7 @@ impl Tdd {
     /// built in a caller's engine.
     ///
     /// The result is certified ([`is_canonical`](Self::is_canonical)).
-    pub fn zero(vtree: &Arc<Vtree>) -> Tdd {
+    pub fn zero(vtree: &Home) -> Tdd {
         vtree.context().run(|eng| eng.zero(vtree))
     }
 }
@@ -252,7 +252,7 @@ impl crate::Engine {
     /// on cancellation. Allocation refusals return
     /// [`OperationError::OverBudget`]. An exceeded output-node cap returns
     /// [`OperationError::OutputCap`].
-    pub fn literal(&self, vtree: &Arc<Vtree>, literal: impl TryInto<Literal, Error: Into<OperationError>>) -> Result<Tdd, OperationError> {
+    pub fn literal(&self, vtree: &Home, literal: impl TryInto<Literal, Error: Into<OperationError>>) -> Result<Tdd, OperationError> {
         self.cube(vtree, [literal])
     }
 
@@ -263,7 +263,7 @@ impl crate::Engine {
     /// The result is certified
     /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical)).
     #[must_use]
-    pub fn one(&self, vtree: &Arc<Vtree>) -> Tdd {
+    pub fn one(&self, vtree: &Home) -> Tdd {
         crate::build::constant_one(self, vtree)
     }
 
@@ -274,7 +274,7 @@ impl crate::Engine {
     /// The result is certified
     /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical)).
     #[must_use]
-    pub fn zero(&self, vtree: &Arc<Vtree>) -> Tdd {
+    pub fn zero(&self, vtree: &Home) -> Tdd {
         crate::build::constant_zero(self, vtree)
     }
 
@@ -287,6 +287,17 @@ impl crate::Engine {
     /// [`OperationError::OverBudget`]. An exceeded output-node cap returns
     /// [`OperationError::OutputCap`].
     pub fn cube(
+        &self,
+        vtree: &Home,
+        literals: impl IntoIterator<Item = impl TryInto<Literal, Error: Into<OperationError>>>,
+    ) -> Result<Tdd, OperationError> {
+        self.cube_on(vtree, literals)
+    }
+
+    /// [`Engine::cube`] on any vtree: on a home or a projection, the cube on
+    /// the projection of its variables; on any other vtree, on that vtree
+    /// with every leaf it does not name labelled `One`.
+    pub(crate) fn cube_on(
         &self,
         vtree: &Arc<Vtree>,
         literals: impl IntoIterator<Item = impl TryInto<Literal, Error: Into<OperationError>>>,

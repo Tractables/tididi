@@ -168,17 +168,17 @@ fn a_listed_block_left_free_yields_every_code() {
 #[test]
 fn constants_and_degenerate_tables() {
     let vtree = Arc::new(Vtree::balanced(3));
-    let mut zero = Tdd::zero(&vtree).model_columns(&[&[VarId(1)]]).unwrap();
+    let mut zero = Tdd::zero(&crate::vtree::Home::unchecked(&vtree)).model_columns(&[&[VarId(1)]]).unwrap();
     assert_eq!(zero.rows(), 0);
     assert_eq!(zero.to_columns(), vec![Vec::<u32>::new()]);
-    let mut one = Tdd::one(&vtree).model_columns(&[]).unwrap();
+    let mut one = Tdd::one(&crate::vtree::Home::unchecked(&vtree)).model_columns(&[]).unwrap();
     assert_eq!((one.rows(), one.width()), (1, 0));
     assert!(one.to_columns().is_empty());
-    let mut one = Tdd::one(&vtree).model_columns(&[&[], &[VarId(2)]]).unwrap();
+    let mut one = Tdd::one(&crate::vtree::Home::unchecked(&vtree)).model_columns(&[&[], &[VarId(2)]]).unwrap();
     assert_eq!(one.to_columns(), vec![vec![0, 0], vec![0, 1]]);
     // A one-variable vtree: the output is a leaf node.
     let leaf = Arc::new(Vtree::leaf(VarId(5)));
-    for (f, want) in [(Tdd::one(&leaf), vec![0, 1]), (crate::literal(&leaf, -5).unwrap(), vec![0])] {
+    for (f, want) in [(Tdd::one(&crate::vtree::Home::unchecked(&leaf)), vec![0, 1]), (crate::literal(&crate::vtree::Home::unchecked(&leaf), -5).unwrap(), vec![0])] {
         assert_eq!(f.model_columns(&[&[VarId(5)]]).unwrap().to_columns(), vec![want]);
     }
 }

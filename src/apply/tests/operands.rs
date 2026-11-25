@@ -37,8 +37,8 @@ fn mismatched_vtrees_are_rejected_before_shortcuts_or_allocation() {
     let b = Arc::new(Vtree::balanced(2));
     let _limits = engine.limits().scope(crate::limits::LimitConfig::none().with_memory_budget_bytes(Some(0)));
     for zero in [false, true] {
-        let f = if zero { Tdd::zero(&a) } else { Tdd::one(&a) };
-        let g = Tdd::one(&b);
+        let f = if zero { Tdd::zero(&crate::vtree::Home::unchecked(&a)) } else { Tdd::one(&crate::vtree::Home::unchecked(&a)) };
+        let g = Tdd::one(&crate::vtree::Home::unchecked(&b));
         assert_canonical(&f);
         assert_canonical(&g);
         assert_eq!(engine.and(f.clone(), g.clone()).unwrap_err(), OperationError::VtreeMismatch);

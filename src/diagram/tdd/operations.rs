@@ -1118,7 +1118,7 @@ impl Tdd {
     /// let weights = RationalWeights::from_literals(&vec![
     ///     LiteralWeights { negative: half.clone(), positive: half }; 2
     /// ]);
-    /// let vtree = Home::new(Vtree::balanced(2).with_weights(Weights::new(weights, Arithmetic::ExactRational))?);
+    /// let vtree = Home::weighted(Vtree::balanced(2), Weights::new(weights, Arithmetic::ExactRational))?;
     /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// assert_eq!(f.weighted_value()?.unwrap().into_rational(),
     ///            BigRational::new(3.into(), 4.into()));
@@ -1231,7 +1231,7 @@ impl Tdd {
     /// use tididi::vtree::Home;
     ///
     /// // On a bare root a diagram keeps every leaf; transport keeps them.
-    /// let x2 = Tdd::clause(&Arc::new(Vtree::balanced(4)), [2])?;
+    /// let x2 = Tdd::clause(&Home::new(Vtree::balanced(4)), [2])?;
     /// let home = Home::new(Vtree::balanced(4));
     /// let (mut f, _) = Engine::new().transport(&x2, &home, |v| v, 0).map_err(|r| r.error)?;
     /// assert_eq!(f.vtree().num_leaves(), 4);
@@ -1318,9 +1318,10 @@ impl Tdd {
     /// and cleanup.
     ///
     /// ```
+    /// # use tididi::vtree::Home;
     /// use std::sync::Arc;
     /// use tididi::{and, Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let vtree = Home::new(Vtree::balanced(4));
     /// let (left, _) = vtree.children(vtree.root());
     /// let mut f = and(Tdd::clause(&vtree, [1, 2])?, Tdd::clause(&vtree, [3, 4])?)?;
     /// let before = f.model_count()?;
@@ -1383,8 +1384,7 @@ impl Tdd {
     /// use tididi::vtree::{Home, VarId, Vtree};
     ///
     /// let home = Home::new(Vtree::balanced(4));
-    /// let own = Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)])?;
-    /// let mut f = Tdd::clause(&own, [1, 2, 3])?;
+    /// let mut f = Tdd::clause(&home, [1, 2, 3])?;
     /// let before = f.model_count()?;
     /// f.marginalize(|v| v != VarId(3))?;
     /// assert_eq!(f.vtree().num_leaves(), 1);
@@ -1434,7 +1434,7 @@ impl Tdd {
     /// let before = f.model_count()?;
     /// f.rotation_search(&mut MinimizePairs, &RotationSearchConfig::default())?;
     /// assert_eq!(f.model_count()?, before);
-    /// let extra = literal(f.vtree(), 1)?;
+    /// let extra = literal(&f.home(), 1)?;
     /// let constrained = and(f, extra)?;
     /// assert!(constrained.is_sat()?);
     /// # Ok::<(), tididi::OperationError>(())

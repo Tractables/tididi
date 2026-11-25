@@ -42,7 +42,7 @@ fn marginalize_root_of_deep_spine() {
     on_small_stack(|| {
         let engine = Engine::new();
         let vtree = Arc::new(Vtree::linear(DEPTH));
-        let mut f = engine.clause(&vtree, 1..=DEPTH as i32).unwrap();
+        let mut f = engine.clause(&crate::vtree::Home::unchecked(&vtree), 1..=DEPTH as i32).unwrap();
         engine.marginalize_levels(&mut f, &[vtree.root()]).unwrap();
         assert!(f.level(vtree.root()).is_marginal());
         assert_eq!(engine.model_count(&f).unwrap(), pow2(DEPTH) - 1u32);
@@ -58,8 +58,8 @@ fn and_marginalizing_over_deep_unbuilt_spine() {
         let engine = Engine::new();
         let vtree = Arc::new(Vtree::linear(DEPTH));
         // (x2 ∨ … ∨ xn) ∧ (x1 ∨ x2)
-        let f = engine.clause(&vtree, 2..=DEPTH as i32).unwrap();
-        let g = engine.clause(&vtree, [1, 2]).unwrap();
+        let f = engine.clause(&crate::vtree::Home::unchecked(&vtree), 2..=DEPTH as i32).unwrap();
+        let g = engine.clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap();
         let targets: Vec<VtreeIdx> = vtree.internal_bottomup().map(|(t, _, _)| t).collect();
         let counted = engine.and_marginalizing(&f, &g, &targets).unwrap();
         assert!(counted.level(vtree.root()).is_marginal());

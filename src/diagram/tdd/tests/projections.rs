@@ -203,8 +203,8 @@ fn weights(n: u32, rng: &mut Lcg) -> Weights {
 /// and minimization; one in six is a constant.
 fn diagram(home: &Arc<Vtree>, n: u32, rng: &mut Lcg) -> Tdd {
     match rng.below(12) {
-        0 => return crate::test_helpers::padded(Tdd::one(home), home),
-        1 => return crate::test_helpers::padded(Tdd::zero(home), home),
+        0 => return crate::test_helpers::padded(Tdd::one(&crate::vtree::Home::unchecked(home)), home),
+        1 => return crate::test_helpers::padded(Tdd::zero(&crate::vtree::Home::unchecked(home)), home),
         _ => {}
     }
     let mut f = rand_conj(home, n, 4, 3, false, rng);
@@ -242,7 +242,7 @@ fn reseated(t: &Tdd, onto: &Home) -> Tdd {
 
 fn on_home(g: &Tdd, home: &Arc<Vtree>) -> Tdd {
     if g.vtree().num_nodes() == 0 {
-        return if g.is_one() { Tdd::one(home) } else { Tdd::zero(home) };
+        return if g.is_one() { Tdd::one(&crate::vtree::Home::unchecked(home)) } else { Tdd::zero(&crate::vtree::Home::unchecked(home)) };
     }
     if Arc::ptr_eq(g.vtree(), home) {
         return g.clone();
@@ -462,7 +462,7 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
         _ => Vec::new(),
     };
     a.check("rename_vars", || g.clone().rename_vars(&rename), || f.clone().rename_vars(&rename), closed);
-    let literal_x = crate::literal(home, i32::try_from(x.0).unwrap()).unwrap();
+    let literal_x = crate::literal(&crate::vtree::Home::unchecked(home), i32::try_from(x.0).unwrap()).unwrap();
     let y = var(rng);
     a.check("substitute", || g.clone().substitute(&[(y, &literal_x)]), || f.clone().substitute(&[(y, &literal_x)]), closed);
 
@@ -483,7 +483,7 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
         "write_tdd and read_tdd",
         || {
             crate::io::write_tdd(&mut text, g)?;
-            crate::io::read_tdd(&mut text.as_slice(), g.vtree())
+            crate::io::read_tdd(&mut text.as_slice(), &crate::vtree::Home::unchecked(g.vtree()))
         },
         || Ok::<_, crate::io::IoError>(f.clone()),
         same_tdd,
@@ -493,7 +493,7 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
         "binary",
         || {
             crate::io::write_tdd_binary(&mut bytes, g)?;
-            crate::io::read_tdd_binary(&mut bytes.as_slice(), g.vtree())
+            crate::io::read_tdd_binary(&mut bytes.as_slice(), &crate::vtree::Home::unchecked(g.vtree()))
         },
         || Ok::<_, crate::io::IoError>(f.clone()),
         same_tdd,
@@ -533,7 +533,7 @@ fn every_entry_point_answers_on_a_projection_as_on_the_home() {
 fn x1_not_x3(eng: &Engine) -> (Arc<Vtree>, Tdd, Tdd) {
     let home = Arc::clone(&Home::new(Vtree::balanced(4)));
     let lit = |v: u32, sign: bool| Literal { var: VarId(v), sign };
-    let f = crate::test_helpers::padded(eng.cube(&home, [lit(1, true), lit(3, false)]).unwrap(), &home);
+    let f = crate::test_helpers::padded(eng.cube(&crate::vtree::Home::unchecked(&home), [lit(1, true), lit(3, false)]).unwrap(), &home);
     let mut g = f.clone();
     assert!(g.trim(&Home::new(Arc::clone(&home))).unwrap());
     assert_eq!(g.vtree().free_set().unwrap().vars().collect::<Vec<_>>(), [VarId(2), VarId(4)]);
@@ -556,13 +556,13 @@ fn column_evaluation_values_the_free_variables_or_refuses() {
     assert_eq!(sum(&g, root), sum(&f, home_root));
     assert_eq!(eng.sum_indexed(&g, &g, &PairIndex::new(&g).unwrap(), root, &Counts { free: false }), Err(OperationError::VariableNotInVtree(VarId(2))));
 
-    let hm = &g.vtree().home().unwrap();
-    let mut one = Tdd::one(&home);
+    let hm = &g.home();
+    let mut one = Tdd::one(&crate::vtree::Home::unchecked(&home));
     one.trim(hm).unwrap();
     assert_eq!(one.vtree().num_nodes(), 0);
     assert_eq!(one.evaluate_columns(&counts).unwrap(), BigUint::from(16u32));
     assert_eq!(one.evaluate_columns(&Counts { free: false }), Err(OperationError::VariableNotInVtree(VarId(2))));
-    let mut zero = Tdd::zero(&home);
+    let mut zero = Tdd::zero(&crate::vtree::Home::unchecked(&home));
     zero.trim(hm).unwrap();
     assert_eq!(zero.evaluate_columns(&Counts { free: false }).unwrap(), BigUint::ZERO);
 }
@@ -591,9 +591,9 @@ fn pins_on_free_variables_count_as_on_the_home() {
 fn diagrams_on_projections_are_written_and_read() {
     let eng = Engine::new();
     let (home, f, g) = x1_not_x3(&eng);
-    let mut one = Tdd::one(&home);
-    let mut zero = Tdd::zero(&home);
-    let hm = &g.vtree().home().unwrap();
+    let mut one = Tdd::one(&crate::vtree::Home::unchecked(&home));
+    let mut zero = Tdd::zero(&crate::vtree::Home::unchecked(&home));
+    let hm = &g.home();
     one.trim(hm).unwrap();
     zero.trim(hm).unwrap();
     let same_leaves = Vtree::projection(hm, [VarId(3), VarId(1)]).unwrap();
@@ -601,10 +601,10 @@ fn diagrams_on_projections_are_written_and_read() {
     for (t, vtree) in cases {
         let mut text = Vec::new();
         crate::io::write_tdd(&mut text, t).unwrap();
-        let read = crate::io::read_tdd(&mut text.as_slice(), &vtree).unwrap();
+        let read = crate::io::read_tdd(&mut text.as_slice(), &crate::vtree::Home::unchecked(&vtree)).unwrap();
         let mut bytes = Vec::new();
         crate::io::write_tdd_binary(&mut bytes, t).unwrap();
-        let binary = crate::io::read_tdd_binary(&mut bytes.as_slice(), &vtree).unwrap();
+        let binary = crate::io::read_tdd_binary(&mut bytes.as_slice(), &crate::vtree::Home::unchecked(&vtree)).unwrap();
         for back in [read, binary] {
             assert!(back.vtree().is_on(hm));
             // f pads x2 and x4 with `One`; read onto the home it is on g's leaves.
@@ -618,7 +618,7 @@ fn diagrams_on_projections_are_written_and_read() {
     }
     let mut text = Vec::new();
     crate::io::write_tdd(&mut text, &one).unwrap();
-    let back = crate::io::read_tdd(&mut text.as_slice(), g.vtree()).unwrap();
+    let back = crate::io::read_tdd(&mut text.as_slice(), &crate::vtree::Home::unchecked(g.vtree())).unwrap();
     assert!(back.is_one() && back.vtree().num_nodes() == 0 && back.vtree().is_on(hm));
 }
 

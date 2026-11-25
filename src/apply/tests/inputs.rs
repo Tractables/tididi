@@ -8,7 +8,7 @@ use crate::vtree::VtreeIdx;
 fn invalid_targets_are_rejected_before_work_or_mutation() {
     let tree = Arc::new(Vtree::balanced(4));
     let eng = Engine::new();
-    let original = Tdd::clause(&tree, [1, 3]).unwrap();
+    let original = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 3]).unwrap();
     assert_canonical(&original);
     let before = normalized_levels(&original);
     for bad in [VtreeIdx(tree.num_nodes() as u32), VtreeIdx(u32::MAX)] {
@@ -27,14 +27,14 @@ fn invalid_targets_are_rejected_before_work_or_mutation() {
 fn negation_and_disjunction_reject_summed_out_structure() {
     let tree = Arc::new(Vtree::balanced(4));
     let eng = Engine::new();
-    let mut f = Tdd::clause(&tree, [1, 3]).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 3]).unwrap();
     eng.marginalize_levels(&mut f, &[tree.children(tree.root()).0]).unwrap();
     assert_canonical(&f);
     let first = f.levels.iter().position(|level| level.is_marginal()).unwrap();
     let error = OperationError::MarginalLevel(VtreeIdx(first as u32));
     let _limit = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
     assert_eq!(eng.negate(f.clone()).unwrap_err(), error);
-    for other in [Tdd::zero(&tree), Tdd::one(&tree)] {
+    for other in [Tdd::zero(&crate::vtree::Home::unchecked(&tree)), Tdd::one(&crate::vtree::Home::unchecked(&tree))] {
         assert_canonical(&other);
         assert_eq!(eng.or(f.clone(), other.clone()).unwrap_err(), error);
         assert_eq!(eng.or(other, f.clone()).unwrap_err(), error);
@@ -55,7 +55,7 @@ fn a_clause_rejects_unknown_variables_even_on_false_input() {
 fn a_clause_rejects_marginal_leaf_labels() {
     let tree = Arc::new(Vtree::balanced(2));
     let eng = Engine::new();
-    let mut f = Tdd::clause(&tree, [1, 2]).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 2]).unwrap();
     let leaf = tree.leaf_of(VarId(1)).unwrap();
     eng.marginalize_levels(&mut f, &[leaf]).unwrap();
     assert_canonical(&f);
@@ -66,7 +66,7 @@ fn a_clause_rejects_marginal_leaf_labels() {
 fn projection_rejects_a_marginal_ancestor() {
     let tree = Arc::new(Vtree::balanced(4));
     let eng = Engine::new();
-    let mut f = Tdd::clause(&tree, [1, 3]).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 3]).unwrap();
     let left = tree.children(tree.root()).0;
     eng.marginalize_levels(&mut f, &[left]).unwrap();
     assert_canonical(&f);
@@ -77,7 +77,7 @@ fn projection_rejects_a_marginal_ancestor() {
 fn projection_rejects_a_marginal_target_leaf() {
     let tree = Arc::new(Vtree::balanced(2));
     let eng = Engine::new();
-    let mut f = Tdd::clause(&tree, [1, 2]).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 2]).unwrap();
     let leaf = tree.leaf_of(VarId(1)).unwrap();
     eng.marginalize_levels(&mut f, &[leaf]).unwrap();
     assert_canonical(&f);
@@ -88,7 +88,7 @@ fn projection_rejects_a_marginal_target_leaf() {
 fn projection_rejects_a_rewritten_ancestors_marginal_grandchild() {
     let tree = Arc::new(Vtree::balanced(8));
     let eng = Engine::new();
-    let mut f = Tdd::clause(&tree, [1, 5]).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 5]).unwrap();
     let left = tree.children(tree.root()).0;
     let grandchild = tree.children(left).0;
     eng.marginalize_levels(&mut f, &[grandchild]).unwrap();
@@ -101,7 +101,7 @@ fn projection_rejects_a_rewritten_ancestors_marginal_grandchild() {
 fn a_clause_rejects_a_marginal_spine() {
     let tree = Arc::new(Vtree::balanced(4));
     let eng = Engine::new();
-    let mut f = Tdd::clause(&tree, [1, 3]).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 3]).unwrap();
     let left = tree.children(tree.root()).0;
     eng.marginalize_levels(&mut f, &[left]).unwrap();
     assert_canonical(&f);

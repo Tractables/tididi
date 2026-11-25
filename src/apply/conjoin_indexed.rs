@@ -841,7 +841,7 @@ impl Engine {
     ///
     /// let engine = Engine::new();
     /// // A two-bit value (x1, x2) above a three-bit key (x3, x4, x5), on a spine.
-    /// let vtree = Arc::new(Vtree::linear(5));
+    /// let vtree = tididi::vtree::Home::new(Vtree::linear(5));
     /// let vars: Vec<VarId> = (1..=5).map(VarId).collect();
     /// // g: one value per key, bit i of a row assigning vars[i].
     /// let rows: Vec<u64> = (0..8u64).map(|key| key << 2 | (key * 3) % 4).collect();
@@ -895,6 +895,7 @@ impl Engine {
     /// [`ColumnAlgebra`]'s, each level's column has one slot per product.
     ///
     /// ```
+    /// # use tididi::vtree::Home;
     /// use std::sync::Arc;
     /// use tididi::{Engine, Tdd, Vtree};
     /// use tididi::diagram::{ColumnAlgebra, LeafLabel, PairIndex, SlotPairs};
@@ -918,7 +919,7 @@ impl Engine {
     ///
     /// let engine = Engine::new();
     /// // A group bit x1 above a two-bit value (x2, x3) and a two-bit key (x4, x5).
-    /// let vtree = Arc::new(Vtree::linear(5));
+    /// let vtree = Home::new(Vtree::linear(5));
     /// let (_, under) = vtree.children(vtree.root());
     /// let vars: Vec<VarId> = (2..=5).map(VarId).collect();
     /// // g: the value of each key; bit i of a row assigns vars[i].

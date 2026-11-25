@@ -24,13 +24,13 @@ use std::sync::Arc;
 /// pass.
 fn edited_marginal_diagram(eng: &Engine) -> crate::Tdd {
     let vtree = Arc::new(Vtree::balanced(8));
-    let mut g = eng.clause(&vtree, [1, 5]).unwrap();
+    let mut g = eng.clause(&crate::vtree::Home::unchecked(&vtree), [1, 5]).unwrap();
     let (left, _) = vtree.children(vtree.root());
     let summed: Vec<VtreeIdx> = vtree.internal_bottomup_slice().iter().copied()
         .filter(|&t| vtree.in_subtree(t, left))
         .collect();
     eng.marginalize_levels(&mut g, &summed).unwrap();
-    let f = eng.and(g, eng.literal(&vtree, 8).unwrap()).unwrap();
+    let f = eng.and(g, eng.literal(&crate::vtree::Home::unchecked(&vtree), 8).unwrap()).unwrap();
     assert!(f.has_marginal_level() && !f.dirty.is_empty());
     f
 }

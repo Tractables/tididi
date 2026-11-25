@@ -149,6 +149,7 @@ pub trait EvalAlgebra {
     /// marginal level is refused.
     ///
     /// ```
+    /// # use tididi::vtree::Home;
     /// use std::sync::Arc;
     /// use num_bigint::BigUint;
     /// use tididi::{Engine, Vtree};
@@ -169,12 +170,11 @@ pub trait EvalAlgebra {
     ///
     /// // (x1 ∨ x2) ∧ (x3 ∨ x4), the subtree over x1 and x2 summed out.
     /// let engine = Engine::new();
-    /// let vtree = Arc::new(Vtree::balanced(4));
-    /// let (left, _) = vtree.children(vtree.root());
+    /// let vtree = Home::new(Vtree::balanced(4));
     /// let f = engine.clause(&vtree, [1, 2])?;
     /// let g = engine.clause(&vtree, [3, 4])?;
-    /// let counted = engine.and_marginalizing(f, g, &[left])?;
-    /// assert!(counted.level(left).is_marginal());
+    /// let counted = engine.and_marginalizing_where(f, g, |v| v.0 <= 2)?;
+    /// assert!(counted.has_marginal_level());
     /// assert_eq!(counted.evaluate(&Count)?, 9);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -247,9 +247,9 @@ pub trait EvalAlgebra {
 ///     }
 ///     fn read(&self, _: VtreeIdx, col: Vec<u128>, slot: usize) -> u128 { col[slot] }
 /// }
-/// let vtree = Arc::new(Vtree::balanced(3));
+/// let vtree = tididi::vtree::Home::new(Vtree::balanced(2));
 /// let f = Tdd::clause(&vtree, [1, -2])?;
-/// assert_eq!(f.evaluate_columns(&Counts)?, 6);
+/// assert_eq!(f.evaluate_columns(&Counts)?, 3);
 /// # Ok::<(), tididi::OperationError>(())
 /// ```
 pub trait ColumnAlgebra {
@@ -293,6 +293,7 @@ pub trait ColumnAlgebra {
     /// diagram with a marginal level is refused.
     ///
     /// ```
+    /// # use tididi::vtree::Home;
     /// use std::sync::Arc;
     /// use num_bigint::BigUint;
     /// use tididi::{Engine, Vtree};
@@ -320,11 +321,10 @@ pub trait ColumnAlgebra {
     ///
     /// // (x1 ∨ x2) ∧ (x3 ∨ x4), the subtree over x1 and x2 summed out.
     /// let engine = Engine::new();
-    /// let vtree = Arc::new(Vtree::balanced(4));
-    /// let (left, _) = vtree.children(vtree.root());
+    /// let vtree = Home::new(Vtree::balanced(4));
     /// let f = engine.clause(&vtree, [1, 2])?;
     /// let g = engine.clause(&vtree, [3, 4])?;
-    /// let counted = engine.and_marginalizing(f, g, &[left])?;
+    /// let counted = engine.and_marginalizing_where(f, g, |v| v.0 <= 2)?;
     /// assert_eq!(counted.evaluate_columns(&Counts)?, 9);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```

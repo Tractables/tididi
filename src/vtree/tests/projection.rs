@@ -182,7 +182,7 @@ fn an_extension_is_the_projection_on_both() {
 #[should_panic(expected = "region")]
 fn an_extension_with_a_region_is_refused() {
     let home = Home::new(Vtree::balanced(4));
-    let mut g = crate::Tdd::clause(&Vtree::projection(&home, [1, 2, 3].map(VarId)).unwrap(), [1, 2, 3]).unwrap();
+    let mut g = crate::Tdd::clause(&crate::vtree::Home::unchecked(&Vtree::projection(&home, [1, 2, 3].map(VarId)).unwrap()), [1, 2, 3]).unwrap();
     g.marginalize(|v| v.0 <= 2).unwrap();
     assert!(g.vtree().has_regions());
     let rank = home.rank(VarId(4)).unwrap();

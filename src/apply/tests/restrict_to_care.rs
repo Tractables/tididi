@@ -19,8 +19,8 @@ fn restrict_single_variable_reports_contradictions() {
             vtree = vtree.with_weights(Weights::new(RationalWeights::unit(1), Arithmetic::ExactRational)).unwrap();
         }
         let vtree = Arc::new(vtree);
-        let operands = [Tdd::zero(&vtree), Tdd::one(&vtree),
-            Tdd::clause(&vtree, [1]).unwrap(), Tdd::clause(&vtree, [-1]).unwrap()];
+        let operands = [Tdd::zero(&crate::vtree::Home::unchecked(&vtree)), Tdd::one(&crate::vtree::Home::unchecked(&vtree)),
+            Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1]).unwrap(), Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [-1]).unwrap()];
         for f in &operands {
             for care in &operands {
                 let f = f.clone();
@@ -1106,11 +1106,11 @@ fn has_implicit(t: &Tdd, p: impl Fn(&crate::diagram::TddLevel) -> bool) -> bool 
 fn alternating_operands(k: u32) -> (Tdd, Tdd) {
     let engine = Engine::new();
     let vtree = Arc::new(Vtree::linear(2 * k));
-    let same = crate::test_helpers::minimized(&engine, engine.or(engine.cube(&vtree, [3, 5]).unwrap(), engine.cube(&vtree, [-3, -5]).unwrap()));
-    let f = crate::test_helpers::minimized(&engine, engine.or(engine.cube(&vtree, [1]).unwrap(), same));
+    let same = crate::test_helpers::minimized(&engine, engine.or(engine.cube(&crate::vtree::Home::unchecked(&vtree), [3, 5]).unwrap(), engine.cube(&crate::vtree::Home::unchecked(&vtree), [-3, -5]).unwrap()));
+    let f = crate::test_helpers::minimized(&engine, engine.or(engine.cube(&crate::vtree::Home::unchecked(&vtree), [1]).unwrap(), same));
     let evens = (1..=k).map(|i| (2 * i) as i32);
-    let all = engine.cube(&vtree, evens.clone()).unwrap();
-    let none = engine.cube(&vtree, evens.map(|x| -x)).unwrap();
+    let all = engine.cube(&crate::vtree::Home::unchecked(&vtree), evens.clone()).unwrap();
+    let none = engine.cube(&crate::vtree::Home::unchecked(&vtree), evens.map(|x| -x)).unwrap();
     (f, crate::test_helpers::minimized(&engine, engine.or(all, none)))
 }
 
@@ -1186,9 +1186,9 @@ fn restriction_to_an_unreduced_care_agrees_on_care_for_every_assignment() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(6));
     for pivot in 1..=6 {
-        let f = eng.clause(&vtree, [pivot, pivot % 6 + 1, (pivot + 1) % 6 + 1]).unwrap();
-        let left = eng.clause(&vtree, [-pivot, (pivot + 2) % 6 + 1]).unwrap();
-        let right = eng.clause(&vtree, [-((pivot + 1) % 6 + 1)]).unwrap();
+        let f = eng.clause(&crate::vtree::Home::unchecked(&vtree), [pivot, pivot % 6 + 1, (pivot + 1) % 6 + 1]).unwrap();
+        let left = eng.clause(&crate::vtree::Home::unchecked(&vtree), [-pivot, (pivot + 2) % 6 + 1]).unwrap();
+        let right = eng.clause(&crate::vtree::Home::unchecked(&vtree), [-((pivot + 1) % 6 + 1)]).unwrap();
         let care = eng.and(left, right).unwrap();
         let care_allocation = care.levels.as_ptr();
         let mut g = eng.restrict_to_care(f.clone(), &care).unwrap().into_tdd();
@@ -1208,8 +1208,8 @@ fn the_walk_polls_the_engine_limits() {
     use crate::limits::{LimitConfig, OperationError, StopAt, StopRules};
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(6));
-    let f = eng.clause(&vtree, [1, 2, 3, 4, 5, 6]).unwrap();
-    let care = eng.clause(&vtree, [-1, -2, -3]).unwrap();
+    let f = eng.clause(&crate::vtree::Home::unchecked(&vtree), [1, 2, 3, 4, 5, 6]).unwrap();
+    let care = eng.clause(&crate::vtree::Home::unchecked(&vtree), [-1, -2, -3]).unwrap();
     for allowance in [0, 1] {
         let limits = LimitConfig::none().with_stop_rules(StopRules {
             unconditional: Some(StopAt::WorkUnits(eng.limits().work_units() + allowance)),

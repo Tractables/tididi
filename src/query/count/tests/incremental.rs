@@ -76,7 +76,7 @@ fn panicking_refresh_keeps_dirty_membership_reusable() {
 #[test]
 fn frontier_evidence_invalidates_without_retaining_a_dirty_worklist() {
     let tree = Arc::new(Vtree::balanced(16));
-    let diagram = Tdd::one(&tree);
+    let diagram = Tdd::one(&crate::vtree::Home::unchecked(&tree));
     assert_canonical(&diagram);
     let engine = Engine::new();
     let mut counter = diagram.counter_with(Retention::Frontier, PinSemantics::Evidence).unwrap();

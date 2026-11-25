@@ -170,16 +170,16 @@ fn no_key_columns_is_any_order_on_any_vtree() {
 fn constants_and_refusals() {
     let vtree = Arc::new(Vtree::linear(3));
     let key: &[VarId] = &[VarId(1), VarId(2)];
-    assert_eq!(Tdd::zero(&vtree).ordered_models(&[key, &[VarId(3)]], &[false, false], 1, 5).unwrap(), Some(vec![vec![], vec![]]));
-    let one = Tdd::one(&vtree).ordered_models(&[key, &[VarId(3)]], &[true, false], 1, 5).unwrap().unwrap();
+    assert_eq!(Tdd::zero(&crate::vtree::Home::unchecked(&vtree)).ordered_models(&[key, &[VarId(3)]], &[false, false], 1, 5).unwrap(), Some(vec![vec![], vec![]]));
+    let one = Tdd::one(&crate::vtree::Home::unchecked(&vtree)).ordered_models(&[key, &[VarId(3)]], &[true, false], 1, 5).unwrap().unwrap();
     assert_eq!(one, vec![vec![3, 3, 2, 2, 1], vec![0, 1, 0, 1, 0]]);
     // A key read least significant bit first is not the spine.
-    assert_eq!(Tdd::one(&vtree).ordered_models(&[&[VarId(2), VarId(1)]], &[false], 1, 5).unwrap(), None);
-    let f = Tdd::clause(&vtree, [1, 3]).unwrap();
+    assert_eq!(Tdd::one(&crate::vtree::Home::unchecked(&vtree)).ordered_models(&[&[VarId(2), VarId(1)]], &[false], 1, 5).unwrap(), None);
+    let f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 3]).unwrap();
     assert_eq!(f.ordered_models(&[key], &[false], 1, 5).unwrap_err(), OperationError::UnlistedLiteral(VarId(3)));
     // No column: one empty model, as `ordered_keys` gives.
-    assert_eq!(Tdd::one(&vtree).ordered_models(&[], &[], 0, 5).unwrap(), Some(vec![]));
-    assert_eq!(Tdd::one(&vtree).ordered_keys(&[], &[], 5).unwrap(), Some(vec![]));
+    assert_eq!(Tdd::one(&crate::vtree::Home::unchecked(&vtree)).ordered_models(&[], &[], 0, 5).unwrap(), Some(vec![]));
+    assert_eq!(Tdd::one(&crate::vtree::Home::unchecked(&vtree)).ordered_keys(&[], &[], 5).unwrap(), Some(vec![]));
 }
 
 #[test]
@@ -383,7 +383,7 @@ fn readers_on_a_home_take_a_dropped_variable_as_free() {
     let home = Home::new(Vtree::linear(4));
     let root = Arc::new(Vtree::linear(4));
     let on_home = Tdd::clause(&home, [1, 3]).unwrap();
-    let on_root = Tdd::clause(&root, [1, 3]).unwrap();
+    let on_root = Tdd::clause(&crate::vtree::Home::unchecked(&root), [1, 3]).unwrap();
     assert!(on_home.vtree().leaf_of(VarId(2)).is_none(), "the projection keeps variable 2");
     let columns: &[&[VarId]] = &[&[VarId(1), VarId(2)], &[VarId(3), VarId(4)]];
     let rows = |f: &Tdd| {

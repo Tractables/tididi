@@ -55,7 +55,7 @@ impl Context {
     /// use tididi::Context;
     /// use tididi::Vtree;
     /// let context = Arc::new(Context::new());
-    /// let vtree = context.bind(Vtree::balanced(3));
+    /// let vtree = tididi::vtree::Home::new(context.bind(Vtree::balanced(3)));
     /// let f = context.run(|operations| {
     ///     let either = operations.clause(&vtree, [1, 2])?;
     ///     operations.and(either, operations.literal(&vtree, 3)?)
@@ -84,7 +84,7 @@ impl Context {
     /// use tididi::limits::LimitConfig;
     /// use tididi::{OperationError, Vtree};
     /// let context = Arc::new(Context::new());
-    /// let vtree = context.bind(Vtree::balanced(3));
+    /// let vtree = tididi::vtree::Home::new(context.bind(Vtree::balanced(3)));
     /// let limit = LimitConfig::none().with_memory_budget_bytes(Some(0));
     /// let result = context.with_limits(limit, |operations| operations.clause(&vtree, [1, 2]));
     /// assert_eq!(result.unwrap_err(), OperationError::OverBudget);

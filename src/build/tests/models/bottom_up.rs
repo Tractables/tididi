@@ -899,7 +899,7 @@ fn rows_for(k: usize, m: usize, style: u64, rng: &mut Lcg) -> Vec<u64> {
 /// Build `rows` both ways and compare the storage.
 fn check(vtree: &Arc<Vtree>, vars: &[VarId], rows: &[u64], what: &str) {
     let eng = Engine::new();
-    let root_down = eng.from_models(vtree, vars, rows).unwrap();
+    let root_down = eng.from_models(&crate::vtree::Home::unchecked(vtree), vars, rows).unwrap();
     let bottom_up = from_models_bottom_up(&eng, vtree, vars, rows).unwrap();
     assert_canonical(&root_down);
     super::assert_same_levels(&root_down, &bottom_up, what);

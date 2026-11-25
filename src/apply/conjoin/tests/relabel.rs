@@ -262,9 +262,9 @@ fn a_refused_conjunction_gives_moved_levels_back() {
     let under = vars_under(&vtree, u);
     let outside: Vec<i32> = (1..=12).filter(|v| !under.contains(v)).map(|v| v as i32).collect();
     let conj = |clauses: &[Vec<i32>]| {
-        let mut f = eng.cube(&vtree, std::iter::empty::<i32>()).unwrap();
+        let mut f = eng.cube(&crate::vtree::Home::unchecked(&vtree), std::iter::empty::<i32>()).unwrap();
         for c in clauses {
-            f = eng.and(f, eng.clause(&vtree, c.iter().copied()).unwrap()).unwrap();
+            f = eng.and(f, eng.clause(&crate::vtree::Home::unchecked(&vtree), c.iter().copied()).unwrap()).unwrap();
         }
         eng.minimize(&mut f).unwrap();
         f
@@ -313,7 +313,7 @@ fn a_summed_root_child_of_one_value_is_counted() {
     // `f` is (x1 ∨ … ∨ x32) ∧ (x33 ∨ x34), its left child summed out to its
     // one count, 2^32 − 1, as the conjunction of its two clauses is built;
     // `g` is x33 ⊕ x34, constant true over that child.
-    let clause = |lits: &[i32]| Tdd::clause(&vtree, lits.iter().copied()).unwrap();
+    let clause = |lits: &[i32]| Tdd::clause(&crate::vtree::Home::unchecked(&vtree), lits.iter().copied()).unwrap();
     let all: Vec<i32> = (1..=32).collect();
     let g = eng.and(clause(&[33, 34]), clause(&[-33, -34])).unwrap();
     let whole = eng.model_count(&eng.and(eng.and(clause(&all), clause(&[33, 34])).unwrap(), g.clone()).unwrap()).unwrap();

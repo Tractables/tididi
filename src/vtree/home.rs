@@ -247,7 +247,7 @@ impl std::fmt::Debug for RootIndex {
 /// # Ok::<(), tididi::vtree::VtreeError>(())
 /// ```
 #[derive(Clone, Debug)]
-pub struct Home(Arc<Vtree>);
+pub struct Home(pub(in crate::vtree) Arc<Vtree>);
 
 impl Home {
     /// The home with root `vtree`, its index built in time and memory linear
@@ -781,8 +781,9 @@ impl Vtree {
     /// let home = Home::new(Vtree::balanced(5));
     /// let empty = Vtree::empty_projection(&home);
     /// assert_eq!(empty.num_nodes(), 0);
-    /// assert!(Tdd::one(&empty).is_one());
-    /// assert_eq!(Tdd::one(&empty).model_count().unwrap(), 32u32.into());
+    /// let one = Tdd::one(&home);
+    /// assert!(one.is_one() && one.vtree().same_tree(&empty));
+    /// assert_eq!(one.model_count().unwrap(), 32u32.into());
     /// ```
     pub fn empty_projection(home: &Home) -> Arc<Vtree> {
         let link = HomeLink { home: home.clone(), slot: Box::default(), regions: Box::default() };
@@ -1488,12 +1489,13 @@ impl Vtree {
     /// store weight values computed under `weights`.
     ///
     /// ```
+    /// # use tididi::vtree::Home;
     /// use std::sync::Arc;
     /// use tididi::{Engine, Vtree};
     /// use tididi::diagram::{Arithmetic, RationalWeights, Weights};
     ///
     /// let weights = Weights::new(RationalWeights::unit(2), Arithmetic::ExactRational);
-    /// let vtree = Arc::new(Vtree::balanced(2).with_weights(weights)?);
+    /// let vtree = Home::weighted(Vtree::balanced(2), weights)?;
     /// let engine = Engine::new();
     /// let f = engine.clause(&vtree, [1, 2])?;
     /// let summed = engine.and_marginalizing(&f, engine.one(&vtree), &[vtree.root()])?;

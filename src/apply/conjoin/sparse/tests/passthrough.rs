@@ -83,9 +83,9 @@ fn star(eng: &Engine, bits: u32, keys: u64, b_first: bool, rows: Rows) -> Star {
     let (kv, kr) = pack(&[a, c], &k_rows);
     let models = (0..keys).filter(|&x| in_e(x) && in_k(x)).count();
     Star {
-        f: eng.from_models(&vtree, &fv, &fr).unwrap(),
-        e: eng.from_models(&vtree, &ev, &er).unwrap(),
-        k: eng.from_models(&vtree, &kv, &kr).unwrap(),
+        f: eng.from_models(&crate::vtree::Home::unchecked(&vtree), &fv, &fr).unwrap(),
+        e: eng.from_models(&crate::vtree::Home::unchecked(&vtree), &ev, &er).unwrap(),
+        k: eng.from_models(&crate::vtree::Home::unchecked(&vtree), &kv, &kr).unwrap(),
         models: BigUint::from(models),
         vtree,
         blocks,

@@ -7,12 +7,12 @@ use tididi::vtree::{Home, VarId};
 use crate::*;
 
 /// A shared vtree handle. Circuits retain the vtree after this handle is freed.
-pub struct TididiVtree(Arc<Vtree>);
+pub struct TididiVtree(Home);
 /// A handle on `vtree` made a home: a circuit built on it is held on the home's projection on the
 /// variables it uses, so it stores no level for any other variable.
-fn domain_handle(vtree: Vtree) -> *mut TididiVtree { Box::into_raw(Box::new(TididiVtree(Arc::clone(&Home::new(vtree))))) }
+fn domain_handle(vtree: Vtree) -> *mut TididiVtree { Box::into_raw(Box::new(TididiVtree(Home::new(vtree)))) }
 /// The vtree a circuit was built on: the home of its projection.
-pub(crate) fn domain(f: &Tdd) -> Arc<Vtree> { Arc::clone(&f.home().expect("a binding circuit is on a home")) }
+pub(crate) fn domain(f: &Tdd) -> Home { f.home() }
 /// Per-operation limits and options. Pass NULL for unlimited work and no options, or initialize with
 /// tididi_limits_default.
 #[repr(C)]
@@ -75,7 +75,7 @@ pub(crate) fn check_variables(vtree: &Vtree, vars: impl IntoIterator<Item = VarI
     for var in vars { if vtree.leaf_of(var).is_none() { return Err(invalid(format!("variable {} is absent from the vtree", var.0))); } }
     Ok(())
 }
-pub(crate) unsafe fn vtree<'a>(value: *const TididiVtree) -> Result<&'a Arc<Vtree>> { Ok(&unsafe { required(value)? }.0) }
+pub(crate) unsafe fn vtree<'a>(value: *const TididiVtree) -> Result<&'a Home> { Ok(&unsafe { required(value)? }.0) }
 
 /// Build a balanced vtree over variables 1 through n; n must be positive. out must point to NULL.
 #[unsafe(no_mangle)]

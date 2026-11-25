@@ -171,8 +171,8 @@ fn boolean_operands_sharing_a_model_are_refused() {
 fn a_level_summed_out_on_one_side_only_is_refused() {
     let vtree = Arc::new(Vtree::balanced(4));
     let (left, right) = vtree.children(vtree.root());
-    let mut f = Tdd::clause(&vtree, [1, 2]).unwrap();
-    let mut g = Tdd::clause(&vtree, [1, 3]).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap();
+    let mut g = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 3]).unwrap();
     f.marginalize_levels(&[left]).unwrap();
     match add(f.clone(), g.clone()) {
         Err(OperationError::MarginalLevel(t)) => assert!(under(&vtree, t, left)),
@@ -187,10 +187,10 @@ fn a_level_summed_out_on_one_side_only_is_refused() {
 fn a_false_operand_returns_the_other() {
     let vtree = Arc::new(Vtree::balanced(4));
     let (left, _) = vtree.children(vtree.root());
-    let mut f = Tdd::clause(&vtree, [1, 3]).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 3]).unwrap();
     f.marginalize_levels(&[left]).unwrap();
-    for sum in [add(f.clone(), Tdd::zero(&vtree)).unwrap(), add(Tdd::zero(&vtree), f.clone()).unwrap()] {
-        assert_sum(&sum, &f, &Tdd::zero(&vtree), 4, "false operand");
+    for sum in [add(f.clone(), Tdd::zero(&crate::vtree::Home::unchecked(&vtree))).unwrap(), add(Tdd::zero(&crate::vtree::Home::unchecked(&vtree)), f.clone()).unwrap()] {
+        assert_sum(&sum, &f, &Tdd::zero(&crate::vtree::Home::unchecked(&vtree)), 4, "false operand");
     }
 }
 
@@ -208,8 +208,8 @@ fn operands_on_different_vtrees_are_refused() {
 fn wholly_summed_out_diagrams_add_their_values() {
     let vtree = Arc::new(Vtree::balanced(4));
     let root = vtree.root();
-    let mut f = Tdd::clause(&vtree, [1, 2]).unwrap();
-    let mut g = Tdd::cube(&vtree, [3, -4]).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap();
+    let mut g = Tdd::cube(&crate::vtree::Home::unchecked(&vtree), [3, -4]).unwrap();
     f.marginalize_levels(&[root]).unwrap();
     g.marginalize_levels(&[root]).unwrap();
     let sum = add(f, g).unwrap();
@@ -223,8 +223,8 @@ fn wholly_summed_out_diagrams_add_their_values() {
 fn counts_past_u128_add_exactly() {
     let vtree = Arc::new(Vtree::balanced(260));
     let (left, _) = vtree.children(vtree.root());
-    let mut f = Tdd::one(&vtree);
-    let mut g = Tdd::cube(&vtree, [1]).unwrap();
+    let mut f = Tdd::one(&crate::vtree::Home::unchecked(&vtree));
+    let mut g = Tdd::cube(&crate::vtree::Home::unchecked(&vtree), [1]).unwrap();
     f.marginalize_levels(&[left]).unwrap();
     g.marginalize_levels(&[left]).unwrap();
     let two = BigUint::from(2u32);
@@ -246,8 +246,8 @@ fn weights_on_summed_out_levels_are_refused() {
         f.marginalize_levels(&[left]).unwrap();
         f
     };
-    let f = weighted(Tdd::clause(&vtree, [1, 2]).unwrap());
-    let g = weighted(Tdd::cube(&vtree, [1, 3]).unwrap());
+    let f = weighted(Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap());
+    let g = weighted(Tdd::cube(&crate::vtree::Home::unchecked(&vtree), [1, 3]).unwrap());
     assert_eq!(add(f, g).unwrap_err(), OperationError::IncompatibleWeights);
 }
 
@@ -265,7 +265,7 @@ fn a_sum_conjoins_with_a_filter_on_its_structural_variables() {
         let sum = eng.add(f, g).unwrap();
         let free = crate::test_helpers::free_vars(&sum);
         let Some(v) = (1..=n).find(|&v| free[v as usize - 1]) else { continue };
-        let kept = eng.and(sum.clone(), Tdd::cube(&vtree, [v as i32]).unwrap()).unwrap();
+        let kept = eng.and(sum.clone(), Tdd::cube(&crate::vtree::Home::unchecked(&vtree), [v as i32]).unwrap()).unwrap();
         for bits in 0..1u64 << n {
             let on = bits >> (v - 1) & 1 == 1;
             let expected = if on { value(&sum, n, bits) } else { BigUint::ZERO };

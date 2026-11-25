@@ -38,7 +38,6 @@
 //! Without arguments, as `cargo test` runs it: `and 1000 64 10`.
 
 use std::hint::black_box;
-use std::sync::Arc;
 
 use tididi::diagram::{EvalAlgebra, LeafLabel};
 use tididi::vtree::{FreeVars, Home, VarId, Vtree};
@@ -159,14 +158,9 @@ impl EvalAlgebra for Count {
     }
 }
 
-fn projection(home: &Home, vars: &[u32]) -> Result<Arc<Vtree>, Error> {
-    Ok(Vtree::projection(home, vars.iter().map(|&v| VarId(v)))?)
-}
-
 fn chain(eng: &Engine, home: &Home, vars: &[u32]) -> Result<Tdd, Error> {
-    let own = projection(home, vars)?;
     let lit = |i: usize| vars[i] as i32 * if i.is_multiple_of(3) { -1 } else { 1 };
-    let mut f = eng.clause(&own, [lit(0), lit(1)])?;
+    let mut f = eng.clause(home, [lit(0), lit(1)])?;
     for i in 1..vars.len() - 1 {
         f = eng.and_clause(f, &[lit(i), -lit(i + 1)])?;
     }
@@ -195,7 +189,7 @@ fn main() -> Result<(), Error> {
     match site {
         "eval" | "unit" | "count" => {
             let lits: Vec<i32> = vars.iter().map(|&v| v as i32).collect();
-            let f = eng.clause(&projection(&home, &vars)?, lits)?;
+            let f = eng.clause(&home, lits)?;
             let weights = Weights((0..n).map(|v| 0.25 + f64::from(v % 7) / 16.0).collect());
             let unit = Unit(weights);
             for _ in 0..calls {
@@ -209,7 +203,7 @@ fn main() -> Result<(), Error> {
         "and" | "restoring" | "clone" => {
             let f = chain(&eng, &home, &vars)?;
             let (a, b) = (vars[k / 3], vars[k / 3 + 1]);
-            let g = eng.clause(&projection(&home, &[a, b])?, [-(a as i32), b as i32])?;
+            let g = eng.clause(&home, [-(a as i32), b as i32])?;
             for _ in 0..calls {
                 let r = match site {
                     "and" => eng.and(black_box(&f).clone(), &g)?,

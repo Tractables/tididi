@@ -37,12 +37,12 @@ pub(super) fn bernoulli(probabilities: &[BigRational]) -> Vec<LiteralWeights<Big
 
 /// The leaves a model count ranges over: the home's, for a diagram on a home.
 fn counted(diagram: &Tdd) -> u32 {
-    diagram.vtree().home().map_or_else(|| diagram.vtree().num_leaves(), |home| home.num_leaves())
+    diagram.home().num_leaves()
 }
 
 /// Check each assignment, the count over covered variables and a complete witness.
 pub(super) fn assert_truth(engine: &Engine, diagram: &Tdd, expected: &[bool], context: &str) {
-    let n = diagram.vtree().num_vars();
+    let n = diagram.home().num_vars();
     assert_eq!(expected.len(), 1 << n);
     for (row, &yes) in expected.iter().enumerate() {
         let weights = bernoulli(

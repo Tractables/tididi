@@ -23,7 +23,7 @@ fn binary(f: &Tdd) -> Vec<u8> {
 
 /// `f` read back from its text and from its binary file over `vtree`.
 fn both_readers(f: &Tdd, vtree: &Arc<Vtree>) -> [Result<Tdd, IoError>; 2] {
-    [read_tdd(&mut text(f).as_slice(), vtree), read_tdd_binary(&mut binary(f).as_slice(), vtree)]
+    [read_tdd(&mut text(f).as_slice(), &crate::vtree::Home::unchecked(vtree)), read_tdd_binary(&mut binary(f).as_slice(), &crate::vtree::Home::unchecked(vtree))]
 }
 
 /// The same leaves, nodes, pairs and output.
@@ -56,10 +56,10 @@ fn x1_x3_padded(eng: &Engine, vtree: &Arc<Vtree>) -> Result<Tdd, crate::diagram:
 fn a_diagram_on_a_projection_reads_back_node_for_node() {
     let home = Home::new(Vtree::balanced(6));
     let own = Vtree::projection(&home, [2, 3, 5].map(VarId)).unwrap();
-    let f = Tdd::clause(&own, [2, -5]).unwrap().and_clause([3, 5]).unwrap();
+    let f = Tdd::clause(&crate::vtree::Home::unchecked(&own), [2, -5]).unwrap().and_clause([3, 5]).unwrap();
     assert!(f.vtree().is_on(&home) && f.vtree().num_leaves() == 3);
     let other = Vtree::projection(&home, [VarId(1)]).unwrap();
-    let first = read_tdd(&mut text(&f).as_slice(), f.vtree()).unwrap();
+    let first = read_tdd(&mut text(&f).as_slice(), &crate::vtree::Home::unchecked(f.vtree())).unwrap();
     check_trimmed(&first, false).unwrap();
     assert_eq!(first.model_count().unwrap(), f.model_count().unwrap());
     for vtree in [f.vtree(), &own, &home, &other] {
@@ -79,7 +79,7 @@ fn a_smooth_file_reads_onto_the_projection_on_its_support() {
     let padded = x1_x3_padded(&eng, &root).unwrap();
     assert!(Arc::ptr_eq(padded.vtree(), &root));
     let own = Vtree::projection(&home, [1, 3].map(VarId)).unwrap();
-    let expected = Tdd::cube(&own, [1, 3]).unwrap();
+    let expected = Tdd::cube(&crate::vtree::Home::unchecked(&own), [1, 3]).unwrap();
     for back in both_readers(&padded, &home) {
         let back = back.unwrap();
         check_trimmed(&back, false).unwrap();
@@ -108,7 +108,7 @@ fn finish_trims_a_summed_out_leaf_to_a_region() {
     let home = Home::new(Vtree::balanced(2));
     let vtree = &home;
     let (x1, x2) = vtree.children(vtree.root());
-    let mut donor = Tdd::cube(&Arc::new(Vtree::clone(vtree)), std::iter::empty::<i32>()).unwrap();
+    let mut donor = Tdd::cube(&crate::vtree::Home::unchecked(&Arc::new(Vtree::clone(vtree))), std::iter::empty::<i32>()).unwrap();
     donor.marginalize_levels(&[x2]).unwrap();
     let mut b = Tdd::builder(&eng, vtree).unwrap();
     b.replace_level(&eng, x2, donor.level_view(x2)).unwrap();
@@ -139,15 +139,15 @@ fn a_false_file_reads_to_the_constant() {
         format!("p tdd 1 {} {} {} ZERO\n", ones.0, ones.1, ones.2),
     ];
     for (written, vtree) in [(&root, &*home), (&own, &own)] {
-        for back in both_readers(&Tdd::zero(written), vtree) {
+        for back in both_readers(&Tdd::zero(&crate::vtree::Home::unchecked(written)), vtree) {
             let back = back.unwrap();
             assert!(back.is_zero() && back.vtree().num_nodes() == 0 && back.vtree().is_on(&home));
         }
-        let one = read_tdd(&mut "p tdd 1 0 0 0 ONE\n".as_bytes(), vtree).unwrap();
+        let one = read_tdd(&mut "p tdd 1 0 0 0 ONE\n".as_bytes(), &crate::vtree::Home::unchecked(vtree)).unwrap();
         assert!(one.is_one() && one.vtree().num_nodes() == 0 && one.vtree().is_on(&home));
     }
     for (file, vtree) in files.iter().zip([&home, &home, &own]) {
-        let back = read_tdd(&mut file.as_bytes(), vtree).unwrap();
+        let back = read_tdd(&mut file.as_bytes(), &crate::vtree::Home::unchecked(vtree)).unwrap();
         assert!(back.is_zero() && back.vtree().num_nodes() == 0 && back.vtree().is_on(&home), "{file}");
     }
     // Counts that are neither 0 0 nor the supplied vtree's.
@@ -160,7 +160,7 @@ fn a_file_of_another_tree_is_a_format_error() {
     let home = Home::new(Vtree::balanced(4));
     let linear = Arc::new(Vtree::linear(4));
     let wider = Arc::new(Vtree::balanced(5));
-    let cases = [Tdd::cube(&linear, [1, 4]).unwrap(), Tdd::cube(&wider, [1, 5]).unwrap()];
+    let cases = [Tdd::cube(&crate::vtree::Home::unchecked(&linear), [1, 4]).unwrap(), Tdd::cube(&crate::vtree::Home::unchecked(&wider), [1, 5]).unwrap()];
     for f in &cases {
         for back in both_readers(f, &home) {
             assert!(matches!(back, Err(IoError::Format(_))), "{:?}", back.map(|_| ()));
@@ -212,14 +212,14 @@ fn a_pair_repeated_in_a_level_is_refused() {
     let roots: [&[u8]; 2] = [&[1, 0, 1, 1, 1 | 1 << 1], &[1, 1, 2, 1, 1, 0, 1 << 3 | 1 << 5 | 1 << 6]];
     for (file, root) in texts.iter().zip(roots) {
         for vtree in [&vtree, &home] {
-            match read_tdd(&mut file.as_bytes(), vtree) {
+            match read_tdd(&mut file.as_bytes(), &crate::vtree::Home::unchecked(vtree)) {
                 Err(IoError::Format(m)) => assert!(m.contains("twice"), "{m}"),
                 other => panic!("{:?}", other.map(|_| ())),
             }
         }
         let body: Vec<u8> = [3, 5, 1, 2, 0, 3, 0, 1].iter().chain(&lower).chain(root).copied().collect();
         let bytes = sealed(&body);
-        assert!(crate::io::read_tdd_binary(&mut bytes.as_slice(), &vtree).is_ok(), "trusted over a root");
+        assert!(crate::io::read_tdd_binary(&mut bytes.as_slice(), &crate::vtree::Home::unchecked(&vtree)).is_ok(), "trusted over a root");
         match crate::io::read_tdd_binary(&mut bytes.as_slice(), &home) {
             Err(IoError::Format(m)) => assert!(m.contains("twice"), "{m}"),
             other => panic!("{:?}", other.map(|_| ())),
@@ -232,7 +232,7 @@ fn a_vtree_with_a_region_is_refused() {
     let home = Home::new(Vtree::balanced(4));
     let own = Vtree::project_regions(&home, vec![0, 1], vec![(2, vec![(2, 4)].into_boxed_slice())]);
     assert!(own.has_regions());
-    let f = Tdd::cube(&Arc::new(Vtree::balanced(4)), [1, 2]).unwrap();
+    let f = Tdd::cube(&crate::vtree::Home::unchecked(&Arc::new(Vtree::balanced(4))), [1, 2]).unwrap();
     for back in both_readers(&f, &own) {
         assert!(matches!(back, Err(IoError::Format(_))), "{:?}", back.map(|_| ()));
     }

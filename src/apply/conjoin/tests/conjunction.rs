@@ -173,10 +173,10 @@ fn conjunction_rejects_a_constrained_marginal_level() {
     let eng = crate::Engine::new();
     let tree = Arc::new(Vtree::balanced(4));
     let left = tree.children(tree.root()).0;
-    let mut marginal = Tdd::clause(&tree, [1, 3]).unwrap();
+    let mut marginal = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 3]).unwrap();
     eng.marginalize_levels(&mut marginal, &[left]).unwrap();
     crate::test_helpers::assert_canonical(&marginal);
-    let structural = Tdd::clause(&tree, [1, 2]).unwrap();
+    let structural = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 2]).unwrap();
     crate::test_helpers::assert_canonical(&structural);
     for (f, g) in [(&marginal, &structural), (&structural, &marginal)] {
         assert_eq!(eng.and(f.clone(), g.clone()).unwrap_err(), OperationError::MarginalLevel(left));

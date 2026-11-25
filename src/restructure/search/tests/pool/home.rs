@@ -41,7 +41,7 @@ fn clauses(vars: &[VarId], rng: &mut Lcg) -> Vec<Vec<i32>> {
 /// The minimized CNF, on `vtree` itself when it depends on every leaf of
 /// `vtree`, else on the projection of its support.
 fn compile(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
-    let mut f = Tdd::one(vtree);
+    let mut f = Tdd::one(&crate::vtree::Home::unchecked(vtree));
     for clause in clauses {
         f = eng.and_clause(f, clause).unwrap();
     }
@@ -125,7 +125,7 @@ fn with_members<R>(members: &mut [Tdd], f: impl FnOnce(&mut [&mut Tdd]) -> R) ->
 /// `after` is the pool `before` after a search that kept a move iff `kept`,
 /// `embedded` the same functions after the search on the home's root.
 fn check_pool(eng: &Engine, before: &[Tdd], after: &[Tdd], embedded: &[Tdd], kept: bool) {
-    let home = after[0].home().expect("a member after a search is on a home");
+    let home = after[0].home();
     for ((b, a), e) in before.iter().zip(after).zip(embedded) {
         check_all_fast(a, "a member after the search");
         assert_eq!(a.vtree().validate(), Ok(()));
@@ -142,17 +142,13 @@ fn check_pool(eng: &Engine, before: &[Tdd], after: &[Tdd], embedded: &[Tdd], kep
         if a.vtree().num_nodes() == 0 {
             continue;
         }
-        match a.vtree().home() {
-            None => assert!(Arc::ptr_eq(a.vtree(), &home)),
-            Some(h) => {
-                assert!(Arc::ptr_eq(&h, &home));
-                let again = Vtree::projection(&home, vars(a.vtree())).unwrap();
-                assert_eq!(again.num_nodes(), a.vtree().num_nodes());
-                for t in (0..again.num_nodes() as u32).map(VtreeIdx) {
-                    assert_eq!(again.node(t), a.vtree().node(t));
-                    assert_eq!(again.home_node(t), a.vtree().home_node(t));
-                }
-            }
+        let h = a.home();
+        assert!(Arc::ptr_eq(&h, &home));
+        let again = Vtree::projection(&home, vars(a.vtree())).unwrap();
+        assert_eq!(again.num_nodes(), a.vtree().num_nodes());
+        for t in (0..again.num_nodes() as u32).map(VtreeIdx) {
+            assert_eq!(again.node(t), a.vtree().node(t));
+            assert_eq!(again.home_node(t), a.vtree().home_node(t));
         }
         let mut expected = b.clone();
         eng.restructure_to(&mut expected, a.vtree(), usize::MAX).unwrap();
@@ -229,7 +225,7 @@ fn members_with_every_leaf_make_the_moves_of_the_search_on_the_root() {
         let kept = stats.accepts > 0;
         check_pool(&eng, &own, &searched, &on_root, kept);
         if kept {
-            let lifted = Arc::clone(&searched[0].home().unwrap());
+            let lifted = Arc::clone(&searched[0].home());
             assert_eq!(shape(&lifted, lifted.root()), shape(on_root[0].vtree(), on_root[0].vtree().root()), "seed {seed}");
         }
     }

@@ -164,10 +164,11 @@ impl PoolSearchConfig {
 /// use std::sync::Arc;
 /// use tididi::restructure::search::{PoolRestarts, PoolSearchConfig};
 /// use tididi::{Engine, Vtree};
+/// use tididi::vtree::Home;
 ///
 /// // Two formulas sharing one right-linear vtree over x1..x6.
 /// let engine = Engine::new();
-/// let vtree = Arc::new(Vtree::linear(6));
+/// let vtree = Home::new(Vtree::linear(6));
 /// let mut f = engine.or(engine.cube(&vtree, [1, 4])?, engine.cube(&vtree, [2, 5])?)?;
 /// let mut g = engine.or(engine.cube(&vtree, [3, 6])?, engine.cube(&vtree, [-1, -4])?)?;
 /// let (f_models, g_models) = (engine.model_count(&f)?, engine.model_count(&g)?);
@@ -178,7 +179,7 @@ impl PoolSearchConfig {
 /// // The descent ran until a sweep kept nothing, so both restarts ran.
 /// assert_eq!(stats.restarts, 2);
 /// assert!(stats.pairs_after <= stats.pairs_before);
-/// assert!(Arc::ptr_eq(f.vtree(), g.vtree()));
+/// assert!(Arc::ptr_eq(&f.home(), &g.home()));
 /// assert_eq!((engine.model_count(&f)?, engine.model_count(&g)?), (f_models, g_models));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```

@@ -243,6 +243,7 @@ impl Engine {
     /// certifies it.
     ///
     /// ```
+    /// # use tididi::vtree::Home;
     /// use std::sync::Arc;
     /// use tididi::{Engine, Tdd, Vtree};
     /// use tididi::apply::{FoldCodes, FoldMonoid, FoldRange};
@@ -261,8 +262,8 @@ impl Engine {
     /// // itself on x4 x5 x6 in the amount's place.
     /// let leaf = |v| Vtree::leaf(VarId(v));
     /// let chain = |low: Vtree| Vtree::join(&leaf(1), &Vtree::join(&leaf(2), &Vtree::join(&leaf(3), &low)?)?);
-    /// let vtree = Arc::new(chain(Vtree::join(&leaf(4), &leaf(5))?)?);
-    /// let into = Arc::new(chain(Vtree::join(&leaf(4), &Vtree::join(&leaf(5), &leaf(6))?)?)?);
+    /// let vtree = Home::new(chain(Vtree::join(&leaf(4), &leaf(5))?)?);
+    /// let into = Home::new(chain(Vtree::join(&leaf(4), &Vtree::join(&leaf(5), &leaf(6))?)?)?);
     /// let row = |store: u64, day: u64, amount: u64| store | (day >> 1) << 1 | (day & 1) << 2 | amount << 3;
     ///
     /// // Store 0 sells 2 on day 0 and 3 on day 2; store 1 sells 1 on days 1 and 3.
@@ -275,7 +276,7 @@ impl Engine {
     /// let engine = Engine::new();
     /// let (order, amount) = ([VarId(2), VarId(3)], [VarId(4), VarId(5)]);
     /// let coding = |totals: &[u64]| FoldCodes {
-    ///     into: into.clone(),
+    ///     into: Arc::clone(&into),
     ///     code_vars: vec![VarId(4), VarId(5), VarId(6)],
     ///     codes: totals.to_vec(),
     /// };
@@ -298,7 +299,7 @@ impl Engine {
     ///     fn count(&self, n: u128) -> Option<u64> { u64::try_from(n).ok() }
     /// }
     /// let coding = |counts: &[u64]| FoldCodes {
-    ///     into: into.clone(),
+    ///     into: Arc::clone(&into),
     ///     code_vars: vec![VarId(4), VarId(5), VarId(6)],
     ///     codes: counts.to_vec(),
     /// };

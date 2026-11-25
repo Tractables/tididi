@@ -78,6 +78,7 @@
 //!
 //! ```
 //! use std::sync::Arc;
+//! use tididi::vtree::Home;
 //! use num_bigint::BigUint;
 //! use tididi::{or, Tdd};
 //! use tididi::diagram::{ChildRef, EncodedChildRef, ChildDecoder, ValueRef};
@@ -137,7 +138,7 @@
 //!
 //! // Sixty-four variables, so the left subtree carries thirty-two of them and
 //! // its node values straddle the width a reference can carry inline.
-//! let vtree = Arc::new(Vtree::balanced(64));
+//! let vtree = Home::new(Vtree::balanced(64));
 //! let mut f = or(Tdd::cube(&vtree, [1, 2, 3])?, Tdd::cube(&vtree, [4, 33])?)?;
 //! f.minimize()?;
 //! let expected = f.model_count()?;
@@ -211,7 +212,7 @@ pub(crate) use pool::LevelPool;
 // tdd
 pub use build_error::TddBuildError;
 pub use builder::{LevelView, TddBuilder};
-pub(crate) use builder::{check_seated_pairs, trim_on_home};
+pub(crate) use builder::{check_seated_pairs, check_seated_weighted, trim_on_home};
 #[cfg(any(test, debug_assertions, feature = "testing"))]
 pub(crate) use builder::check_stored;
 pub use pair_index::PairIndex;

@@ -48,8 +48,8 @@ fn weighted_and_model_count_on_a_home_root() {
     let weights = Weights::new(RationalWeights::from_literals(&vec![LiteralWeights { negative: half(), positive: half() }; 2]), Arithmetic::ExactRational);
     let home = Home::weighted(Vtree::balanced(2), weights).unwrap();
     let count = |vtree: &Arc<Vtree>| {
-        let f = Tdd::cube(vtree, [1, 2]).unwrap();
-        let g = Tdd::clause(vtree, [1, -2]).unwrap();
+        let f = Tdd::cube(&crate::vtree::Home::unchecked(vtree), [1, 2]).unwrap();
+        let g = Tdd::clause(&crate::vtree::Home::unchecked(vtree), [1, -2]).unwrap();
         eng.and_model_count(f, g, &[vtree.root()])
     };
     assert_eq!(count(&home), Err(OperationError::IncompatibleWeights));

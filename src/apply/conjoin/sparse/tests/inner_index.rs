@@ -80,8 +80,8 @@ fn fk_join(
     }
     let (fv, fr) = pack(&[o, p], &fact);
     let (gv, gr) = pack(&[o, c], &dim);
-    let f = eng.from_models(vtree, &fv, &fr).unwrap();
-    let g = eng.from_models(vtree, &gv, &gr).unwrap();
+    let f = eng.from_models(&crate::vtree::Home::unchecked(vtree), &fv, &fr).unwrap();
+    let g = eng.from_models(&crate::vtree::Home::unchecked(vtree), &gv, &gr).unwrap();
 
     let _forced = ForcedThresholds::install(thresholds);
     eng.and(f, g).expect("an unarmed engine refuses nothing")

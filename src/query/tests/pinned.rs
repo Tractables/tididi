@@ -382,7 +382,7 @@ fn interrupted_pin_refresh_recomputes_before_the_next_read() {
     use crate::limits::{LimitConfig, StopCallback, StopDecision};
     let eng = crate::Engine::new();
     let tree = std::sync::Arc::new(crate::vtree::Vtree::balanced(4));
-    let f = crate::Tdd::clause(&tree, [1, 2]).unwrap();
+    let f = crate::Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 2]).unwrap();
     crate::test_helpers::assert_canonical(&f);
     let mut counter = eng.counter_with(&f, Retention::All, PinSemantics::Evidence).unwrap();
     assert_eq!(counter.model_count().unwrap(), 12u32.into());
@@ -402,8 +402,8 @@ fn repeated_pin_updates_cross_integer_storage_boundaries() {
     for tree in [Vtree::balanced(132), Vtree::linear(132)] {
         let tree = Arc::new(tree);
         for exclude_all_false in [false, true] {
-            let f = if exclude_all_false { eng.clause(&tree, 1..=132).unwrap() }
-                else { eng.one(&tree) };
+            let f = if exclude_all_false { eng.clause(&crate::vtree::Home::unchecked(&tree), 1..=132).unwrap() }
+                else { eng.one(&crate::vtree::Home::unchecked(&tree)) };
             crate::test_helpers::assert_canonical(&f);
             for retention in [Retention::All, Retention::Frontier] {
                 let mut counter = eng.counter_with(&f, retention, PinSemantics::Evidence).unwrap();

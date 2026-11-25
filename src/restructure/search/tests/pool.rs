@@ -382,7 +382,7 @@ fn a_stop_before_acceptance_restores_the_pool() {
     use crate::limits::{LimitConfig, StopAt, StopRules};
     let eng = crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(6));
-    let original = Tdd::one(&vtree);
+    let original = Tdd::one(&crate::vtree::Home::unchecked(&vtree));
     let mut f = original.clone();
     let start = eng.limits().work_units();
     let rules = StopRules { unconditional: Some(StopAt::WorkUnits(start + 1)), after_pairs: None };
@@ -401,7 +401,7 @@ fn a_stop_before_acceptance_restores_the_pool() {
 fn search_stops_before_another_applicable_move() {
     let eng = crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(6));
-    let mut f = Tdd::one(&vtree);
+    let mut f = Tdd::one(&crate::vtree::Home::unchecked(&vtree));
     let config = PoolSearchConfig { max_work_units: 1, ..PoolSearchConfig::default() };
     let stats = eng.pool_search(&mut [&mut f], &config).unwrap();
     // The move, and the one member's two levels of a pair each, scored and
@@ -419,7 +419,7 @@ fn search_stops_before_another_applicable_move() {
 fn a_declined_move_puts_every_member_back() {
     let eng = crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(VARS));
-    let mut original = vec![Tdd::one(&vtree), Tdd::one(&vtree), compile_clauses(&vtree, &[vec![-4]])];
+    let mut original = vec![Tdd::one(&crate::vtree::Home::unchecked(&vtree)), Tdd::one(&crate::vtree::Home::unchecked(&vtree)), compile_clauses(&vtree, &[vec![-4]])];
     for m in &mut original {
         m.minimize().unwrap();
     }

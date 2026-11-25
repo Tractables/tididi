@@ -113,7 +113,7 @@ fn without_a_structural_leaf_there_is_no_true_variable() {
     // x1 ∨ x2 with both leaves summed out: one pair of two positive counts,
     // and the output's is the only variable.
     let tree = Arc::new(Vtree::balanced(2));
-    let mut f = Tdd::clause(&tree, [1, 2]).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 2]).unwrap();
     let (left, right) = tree.children(tree.root());
     f.marginalize_levels(&[left, right]).unwrap();
     assert_marginal_canonical(&f);

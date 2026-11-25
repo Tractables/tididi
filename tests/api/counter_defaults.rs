@@ -103,10 +103,10 @@ fn persistent_counter_remains_send() {
 
 #[test]
 fn default_counter_rejects_weighted_marginal_values() {
-    let tree = std::sync::Arc::new(Vtree::balanced(3).with_weights(Weights::new(RationalWeights::unit(3), Arithmetic::ExactRational)).unwrap());
+    let tree = Home::weighted(Vtree::balanced(3), Weights::new(RationalWeights::unit(3), Arithmetic::ExactRational)).unwrap();
     let mut f = Tdd::clause(&tree, [1, -2]).unwrap();
     assert_canonical(&f);
-    f.marginalize_levels(&[tree.root()]).unwrap();
+    f.marginalize(|_| true).unwrap();
     assert_canonical(&f);
     assert_eq!(f.counter().unwrap_err(), OperationError::IncompatibleWeights);
     assert_eq!(Engine::new().counter(&f).unwrap_err(), OperationError::IncompatibleWeights);

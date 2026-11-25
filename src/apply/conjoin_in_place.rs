@@ -872,7 +872,7 @@ impl Engine {
             Item = impl TryInto<crate::diagram::Literal, Error: Into<OperationError>>,
         >,
     ) -> Result<Tdd, OperationError> {
-        let cube = self.cube(f.vtree(), literals)?;
+        let cube = self.cube_on(f.vtree(), literals)?;
         and_in_place_on(self, f, &cube, true)
     }
 }

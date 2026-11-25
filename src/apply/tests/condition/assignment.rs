@@ -88,7 +88,7 @@ fn conditioning_a_weighted_leaf_preserves_the_weight_configuration() {
     let tree = unit_weighted(1);
     let eng = Engine::new();
     for assignment in [vec![1], vec![-1], vec![1, -1]] {
-        let f = Tdd::clause(&tree, [1]).unwrap();
+        let f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1]).unwrap();
         assert_canonical(&f);
         let result = eng.condition(f, assignment.clone()).unwrap();
         assert_canonical(&result);
@@ -101,7 +101,7 @@ fn conditioning_a_weighted_leaf_preserves_the_weight_configuration() {
 fn a_false_cofactor_with_a_weighted_sibling_keeps_its_store_and_no_false_nodes() {
     let tree = unit_weighted(4);
     let eng = Engine::new();
-    let mut f = Tdd::clause(&tree, [1]).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1]).unwrap();
     let (_, right) = tree.children(tree.root());
     eng.marginalize_levels(&mut f, &[right]).unwrap();
     assert_canonical(&f);
@@ -126,11 +126,11 @@ fn sparse_assignments_on_rotated_trees_match_enumeration() {
         let tree = Arc::new(tree);
         let eng = Engine::new();
         let mut f = eng
-            .clause(&tree, [Literal::pos(vars[0]), Literal::neg(vars[1])])
+            .clause(&crate::vtree::Home::unchecked(&tree), [Literal::pos(vars[0]), Literal::neg(vars[1])])
             .unwrap();
         let g = eng
             .clause(
-                &tree,
+                &crate::vtree::Home::unchecked(&tree),
                 [
                     Literal::pos(vars[1]),
                     Literal::pos(vars[2]),
@@ -193,8 +193,8 @@ fn falsity_cascades_preserve_marginal_sibling_values_on_either_side() {
             };
             let mut f = eng
                 .and(
-                    Tdd::clause(&tree, [1, 2]).unwrap(),
-                    Tdd::clause(&tree, [5, 6]).unwrap(),
+                    Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 2]).unwrap(),
+                    Tdd::clause(&crate::vtree::Home::unchecked(&tree), [5, 6]).unwrap(),
                 )
                 .unwrap();
             assert_canonical(&f);
@@ -222,8 +222,8 @@ fn conditioning_recovers_from_each_reservation_refusal() {
         let vtree = if marginal == Some(true) { unit_weighted(8) } else { Arc::new(Vtree::balanced(8)) };
         let mut f = setup
             .and(
-                Tdd::clause(&vtree, [1, 5]).unwrap(),
-                Tdd::clause(&vtree, [8]).unwrap(),
+                Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 5]).unwrap(),
+                Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [8]).unwrap(),
             )
             .unwrap();
         assert_canonical(&f);

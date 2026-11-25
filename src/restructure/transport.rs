@@ -61,8 +61,7 @@ impl Engine {
     ///
     /// let engine = Engine::new();
     /// let home = Home::new(Vtree::balanced(8));
-    /// let own = Vtree::projection(&home, [VarId(1), VarId(2)])?;
-    /// let f = engine.clause(&own, [1, -2])?;
+    /// let f = engine.clause(&home, [1, -2])?;
     /// // x1 ∨ ¬x2 becomes x6 ∨ ¬x5; x6 is right of x5 in `home`.
     /// let (g, stats) = engine.transport(&f, &home, |v| VarId(7 - v.0), 0).map_err(|r| r.error)?;
     /// assert_eq!((stats.rotations, stats.mirrors), (0, 1));
@@ -70,8 +69,7 @@ impl Engine {
     /// assert_eq!(engine.model_count(&g)?, 192u32.into()); // 3/4 of 2^8
     ///
     /// // (x1 x2) and x3 on a balanced home; x1 and (x2 x3) on a linear one.
-    /// let three = Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)])?;
-    /// let h = engine.clause(&three, [1, 2, 3])?;
+    /// let h = engine.clause(&home, [1, 2, 3])?;
     /// let linear = Home::new(Vtree::linear(8));
     /// let (moved, stats) = engine.transport(&h, &linear, |v| v, usize::MAX).map_err(|r| r.error)?;
     /// assert_eq!(stats.rotations, 1);
@@ -153,14 +151,14 @@ impl Engine {
     ///
     /// let engine = Engine::new();
     /// let home = Home::new(Vtree::balanced(8));
-    /// let pair = Arc::new(Vtree::balanced(2));
+    /// let pair = Home::new(Vtree::balanced(2));
     /// let f = engine.clause(&pair, [1, -2])?;
     /// let onto = engine.transport_projection(&f, &home, |v| VarId(v.0 + 4))?;
     /// assert_eq!(onto.num_leaves(), 2);
     /// let none = engine.transport_projection(&Tdd::zero(&pair), &home, |v| VarId(v.0 + 4))?;
     /// assert_eq!(none.num_nodes(), 0);
     /// // (x1 (x2 x3)) onto x1, x3 and x5, whose projection is ((x1 x3) x5).
-    /// let three = engine.clause(&Arc::new(Vtree::balanced(3)), [1, 2, 3])?;
+    /// let three = engine.clause(&Home::new(Vtree::balanced(3)), [1, 2, 3])?;
     /// let skew = |v: VarId| [VarId(1), VarId(3), VarId(5)][v.0 as usize - 1];
     /// assert!(matches!(engine.transport_projection(&three, &home, skew), Err(TransportError::Bound { .. })));
     /// # Ok::<(), Box<dyn std::error::Error>>(())

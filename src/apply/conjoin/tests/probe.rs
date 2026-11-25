@@ -79,8 +79,8 @@ fn shared_block_operands(vtree: &Arc<Vtree>, rng: &mut Lcg) -> (Tdd, Tdd) {
     let [k, a, x] = blocks();
     let (narrow, wide) = shared_block_models(rng);
     let vars = |attr: &[VarId]| k.iter().chain(attr).copied().collect::<Vec<_>>();
-    let mut d = Tdd::from_models(vtree, &vars(&a), &narrow).unwrap();
-    let mut f = Tdd::from_models(vtree, &vars(&x), &wide).unwrap();
+    let mut d = Tdd::from_models(&crate::vtree::Home::unchecked(vtree), &vars(&a), &narrow).unwrap();
+    let mut f = Tdd::from_models(&crate::vtree::Home::unchecked(vtree), &vars(&x), &wide).unwrap();
     d.minimize().unwrap();
     f.minimize().unwrap();
     (f, d)

@@ -2,10 +2,10 @@
 // Dependencies beyond tididi: num-rational = "0.4"
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    use std::sync::Arc;
+    use tididi::vtree::Home;
     use tididi::{Literal, OperationError, Tdd, Vtree};
 
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let local_a = Literal::try_from(1)?;
     let remote_a = Literal::try_from(2)?;
     let local_b = Literal::try_from(3)?;
@@ -14,9 +14,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         & Tdd::clause(&vtree, [local_b, remote_b])?;
     println!("Original configurations: {}", rules.model_count()?);
 
-    let (server_a, _) = vtree.children(vtree.root());
+    let server_a = |v| v == local_a.var || v == remote_a.var;
     let mut counted = rules.clone();
-    counted.marginalize_levels(&[server_a])?;
+    counted.marginalize(server_a)?;
     println!("After summarizing server A: {}", counted.model_count()?);
     println!("Distinct server B choices: {}",
         rules.projected_model_count(&[local_b.var, remote_b.var])?);
@@ -38,11 +38,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let weights = RationalWeights::from_literals(&vec![
         LiteralWeights { negative: half.clone(), positive: half }; 4
     ]);
-    let weighted_vtree = Arc::new(Vtree::balanced(4).with_weights(Weights::new(weights, Arithmetic::ExactRational))?);
+    let weighted_vtree = Home::weighted(Vtree::balanced(4), Weights::new(weights, Arithmetic::ExactRational))?;
     let mut weighted = Tdd::clause(&weighted_vtree, [local_a, remote_a])?
         & Tdd::clause(&weighted_vtree, [local_b, remote_b])?;
     println!("Probability before: {}", weighted.weighted_value()?.unwrap().into_rational());
-    weighted.marginalize_levels(&[server_a])?;
+    weighted.marginalize(server_a)?;
     println!("Probability after: {}", weighted.weighted_value()?.unwrap().into_rational());
 
     let new_weights = RationalWeights::from_literals(&vec![

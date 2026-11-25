@@ -882,11 +882,12 @@ impl crate::Engine {
     /// summed-out level no reduction certifies it.
     ///
     /// ```
+    /// # use tididi::vtree::Home;
     /// use std::sync::Arc;
     /// use tididi::{Engine, Vtree};
     ///
     /// let engine = Engine::new();
-    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let vtree = Home::new(Vtree::balanced(4));
     /// let (left, _) = vtree.children(vtree.root());
     /// let f = engine.clause(&vtree, [1, 2])?;
     /// let g = engine.clause(&vtree, [3, 4])?;
@@ -970,8 +971,8 @@ impl crate::Engine {
     ///
     /// let engine = Engine::new();
     /// let home = Home::new(Vtree::balanced(4));
-    /// let f = Tdd::clause(&Vtree::projection(&home, [VarId(1), VarId(2)])?, [1, 2])?;
-    /// let g = Tdd::clause(&Vtree::projection(&home, [VarId(2), VarId(3)])?, [-2, 3])?;
+    /// let f = Tdd::clause(&home, [1, 2])?;
+    /// let g = Tdd::clause(&home, [-2, 3])?;
     /// let summed = engine.and_marginalizing_where(&f, &g, |v| v != VarId(3))?;
     /// assert_eq!(summed.vtree().num_leaves(), 1);
     /// assert_eq!(summed.model_count()?, engine.and(&f, &g)?.model_count()?);

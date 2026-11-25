@@ -101,7 +101,7 @@ fn a_dead_node_takes_the_pairs_naming_it_and_nothing_else() {
 #[test]
 fn masking_out_every_pair_of_the_output_empties_the_diagram() {
     let tree = Arc::new(Vtree::balanced(4));
-    let f = Tdd::cube(&tree, [1, 2, 3, 4]).unwrap();
+    let f = Tdd::cube(&crate::vtree::Home::unchecked(&tree), [1, 2, 3, 4]).unwrap();
     let eng = Engine::new();
     let marks = all_live_but_the_output_pairs(&eng, &f);
     let g = marks.rebuild(&eng, f).unwrap();
@@ -112,7 +112,7 @@ fn masking_out_every_pair_of_the_output_empties_the_diagram() {
 #[test]
 fn the_rebuild_polls_once_per_pair_it_reads() {
     let tree = Arc::new(Vtree::linear(8));
-    let f = Tdd::one(&tree);
+    let f = Tdd::one(&crate::vtree::Home::unchecked(&tree));
     let eng = Engine::new();
     let marks = all_live(&eng, &f);
     eng.limits().pin_reduce_poll_stride(Some(1));

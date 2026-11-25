@@ -175,28 +175,30 @@ fn rotated_vtrees_and_diagrams_round_trip_together() {
     let engine = Engine::new();
     let mut config = RotationSearchConfig::default();
     config.max_sweeps = Some(1);
-    for (vtree, clause) in [
-        (Vtree::balanced(4), [1, -3]),
-        (Vtree::linear(4), [1, -3]),
-        (Vtree::random(4, 812), [1, -3]),
-        (Vtree::balanced_over(&[VarId(6), VarId(1), VarId(3), VarId(4)]).unwrap(), [1, -3]),
+    for vtree in [
+        Vtree::balanced(4),
+        Vtree::linear(4),
+        Vtree::random(4, 812),
+        Vtree::balanced_over(&[VarId(2), VarId(1), VarId(4), VarId(3)]).unwrap(),
     ] {
         for probe in [1, 2] {
-            let vtree = Arc::new(vtree.clone());
-            let mut f = Tdd::clause(&vtree, clause).unwrap();
+            let vtree = Home::new(vtree.clone());
+            // Two clauses over all four variables: the diagram lies on the
+            // home's root, which has internal nodes to rotate.
+            let mut f = engine.and(Tdd::clause(&vtree, [1, -3]).unwrap(), Tdd::clause(&vtree, [2, 4]).unwrap()).unwrap();
             for _ in 0..3 {
                 let stats = f.rotation_search(&mut AcceptProbe(probe), &config).unwrap();
                 assert_eq!(stats.accepts, 1);
                 assert_canonical(&f);
                 let restored_vtree = Home::new(Vtree::from_text(&f.vtree().to_text()).unwrap());
                 assert!(f.vtree().same_tree(&restored_vtree));
-                let assignments = 1 << f.vtree().num_vars();
-                let truth: Vec<_> = (0..assignments).map(|row| bit(row, 0) || !bit(row, 2)).collect();
+                let assignments = 1 << f.home().num_vars();
+                let truth: Vec<_> = (0..assignments).map(|row| (bit(row, 0) || !bit(row, 2)) && (bit(row, 1) || bit(row, 3))).collect();
                 for (diagram, expected) in [
                     (f.clone(), truth.clone()),
-                    (Tdd::one(f.vtree()), vec![true; assignments]),
-                    (Tdd::zero(f.vtree()), vec![false; assignments]),
-                    (Tdd::clause(f.vtree(), [-1, 4]).unwrap(),
+                    (Tdd::one(&f.home()), vec![true; assignments]),
+                    (Tdd::zero(&f.home()), vec![false; assignments]),
+                    (Tdd::clause(&f.home(), [-1, 4]).unwrap(),
                      (0..assignments).map(|row| !bit(row, 0) || bit(row, 3)).collect()),
                 ] {
                     assert_canonical(&diagram);
@@ -207,17 +209,20 @@ fn rotated_vtrees_and_diagrams_round_trip_together() {
                         let fields: Vec<_> = line.split_whitespace().collect();
                         (fields[1], fields)
                     }).collect();
-                    for line in std::str::from_utf8(&bytes).unwrap().lines() {
+                    // Only a diagram on the home's root numbers its nodes as
+                    // the saved vtree does.
+                    let on_root = diagram.vtree().num_nodes() == f.vtree().num_nodes();
+                    for line in std::str::from_utf8(&bytes).unwrap().lines().filter(|_| on_root) {
                         let fields: Vec<_> = line.split_whitespace().collect();
                         if fields[0] == "L" || fields[0] == "I" {
                             let shape = &declarations[fields[1]];
                             assert_eq!(&fields[..shape.len()], shape);
                         }
                     }
-                    for target in [f.vtree(), &restored_vtree] {
+                    for target in [&f.home(), &restored_vtree] {
                         let loaded = read_tdd(&mut bytes.as_slice(), target).unwrap();
                         assert_canonical(&loaded);
-                        assert!(target.home().map_or_else(|| Arc::ptr_eq(loaded.vtree(), target), |home| loaded.vtree().is_on(&home)));
+                        assert!(loaded.vtree().is_on(target));
                         assert_truth(&engine, &loaded, &expected, "rotated round trip");
                     }
                 }

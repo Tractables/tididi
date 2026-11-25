@@ -7,7 +7,7 @@ use crate::test_helpers::assert_canonical;
 #[test]
 fn checked_assembly_charges_worklists_even_when_levels_are_already_allocated() {
     let tree = Arc::new(Vtree::balanced(4));
-    let source = Tdd::one(&tree);
+    let source = Tdd::one(&crate::vtree::Home::unchecked(&tree));
     assert_canonical(&source);
     let eng = Engine::new();
     let output = source.output;
@@ -38,7 +38,7 @@ fn operation_assembly_reads_the_vtree_weights_and_recycles_refused_results() {
     use crate::diagram::{Assembly, Arithmetic, RationalWeights, Weights};
     let weights = Weights::new(RationalWeights::unit(4), Arithmetic::ExactRational);
     let vtree = Arc::new(Vtree::balanced(4).with_weights(weights).unwrap());
-    let source = Tdd::clause(&vtree, [1, -2]).unwrap();
+    let source = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, -2]).unwrap();
     assert_canonical(&source);
     let output = source.output();
     for refuse in [false, true] {

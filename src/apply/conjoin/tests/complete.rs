@@ -89,10 +89,10 @@ fn disjoint_supports_read_both_sides_by_arithmetic() {
 /// each assignment of the `a`s.
 fn equalities(vtree: &Arc<Vtree>, pairs: &[(i32, i32)]) -> Tdd {
     let eng = Engine::new();
-    let mut f = Tdd::one(vtree);
+    let mut f = Tdd::one(&crate::vtree::Home::unchecked(vtree));
     for &(a, b) in pairs {
-        f = eng.and(f, Tdd::clause(vtree, [-a, b]).unwrap()).unwrap();
-        f = eng.and(f, Tdd::clause(vtree, [a, -b]).unwrap()).unwrap();
+        f = eng.and(f, Tdd::clause(&crate::vtree::Home::unchecked(vtree), [-a, b]).unwrap()).unwrap();
+        f = eng.and(f, Tdd::clause(&crate::vtree::Home::unchecked(vtree), [a, -b]).unwrap()).unwrap();
     }
     f
 }
@@ -357,7 +357,7 @@ fn cross_operands(vtree: &Arc<Vtree>, rng: &mut Lcg) -> (Tdd, Tdd) {
     }
     let f_vars: Vec<_> = c.iter().chain(&m).chain(&x).copied().collect();
     let g_vars: Vec<_> = c.iter().chain(&t).copied().collect();
-    (Tdd::from_models(vtree, &f_vars, &f_rows).unwrap(), Tdd::from_models(vtree, &g_vars, &g_rows).unwrap())
+    (Tdd::from_models(&crate::vtree::Home::unchecked(vtree), &f_vars, &f_rows).unwrap(), Tdd::from_models(&crate::vtree::Home::unchecked(vtree), &g_vars, &g_rows).unwrap())
 }
 
 /// A cross under a shared block: `f` is constant-true over `t` and `g`

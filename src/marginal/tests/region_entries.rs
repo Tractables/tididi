@@ -330,7 +330,7 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Home, f: &Tdd, g: &Tdd, n: u32
         _ => Vec::new(),
     };
     a.runs("rename_vars", || g.clone().rename_vars(&rename));
-    let literal_x = crate::literal(g.vtree(), i32::try_from(x.0).unwrap());
+    let literal_x = crate::literal(&crate::vtree::Home::unchecked(g.vtree()), i32::try_from(x.0).unwrap());
     a.runs("substitute", || literal_x.clone().and_then(|l| g.clone().substitute(&[(var(&mut Lcg::new(x.0.into())), &l)])));
 
     a.check("transport", || eng.transport(g, home, |v| v, 0).map(|(t, _)| t).map_err(|r| r.error), || Ok(f.clone()), same_value);

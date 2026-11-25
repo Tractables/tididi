@@ -1,7 +1,6 @@
 //! Circuit objects expose borrowing queries and explicitly consuming transformations.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use pyo3::prelude::*;
 use pyo3::exceptions::PyTypeError;
 use pyo3::types::{PyBytes, PyDict};
@@ -34,7 +33,7 @@ impl PyCircuit {
         operation: impl FnOnce(&Engine, Tdd) -> Result<Tdd, OperationError> + Send) -> PyResult<Self> {
         let limits = domain::config(limits)?;
         let f = self.take()?;
-        let vtree = Arc::clone(f.vtree());
+        let vtree = f.home();
         operations::produce(py, &vtree, limits, canonical, move |engine| operation(engine, f))
     }
 

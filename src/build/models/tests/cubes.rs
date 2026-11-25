@@ -50,8 +50,8 @@ fn expanded_rows(width: usize, cubes: &[Cube]) -> Vec<u64> {
 
 /// `from_cubes` against `from_models` over the covered assignments.
 fn check(vtree: &Arc<Vtree>, vars: &[VarId], cubes: &[Cube], what: &str) {
-    let built = Tdd::from_cubes(vtree, vars, &packed_cubes(vars.len(), cubes)).unwrap();
-    let oracle = Tdd::from_models(vtree, vars, &expanded_rows(vars.len(), cubes)).unwrap();
+    let built = Tdd::from_cubes(&crate::vtree::Home::unchecked(vtree), vars, &packed_cubes(vars.len(), cubes)).unwrap();
+    let oracle = Tdd::from_models(&crate::vtree::Home::unchecked(vtree), vars, &expanded_rows(vars.len(), cubes)).unwrap();
     assert_canonical(&built);
     assert_same_shape(&built, &oracle, what);
     assert_eq!(built.model_count().unwrap(), oracle.model_count().unwrap(), "{what}");

@@ -84,7 +84,7 @@ impl EvalAlgebra for Tracked {
 #[test]
 fn unchanged_branches_are_cached_and_algebra_panics_are_retryable() {
     let vtree = Arc::new(Vtree::balanced(8));
-    let f = Tdd::one(&vtree);
+    let f = Tdd::one(&crate::vtree::Home::unchecked(&vtree));
     assert_canonical(&f);
     let calls = std::rc::Rc::new(Cell::new(0));
     let panic = std::rc::Rc::new(Cell::new(false));
@@ -158,7 +158,7 @@ fn allocation_refusals_preserve_pins_and_retry_on_the_same_engine() {
 fn constants_marginals_and_batch_limits() {
     use crate::limits::LimitConfig;
     let vtree = Arc::new(Vtree::leaf(VarId(5)));
-    for f in [Tdd::zero(&vtree), Tdd::one(&vtree)] {
+    for f in [Tdd::zero(&crate::vtree::Home::unchecked(&vtree)), Tdd::one(&crate::vtree::Home::unchecked(&vtree))] {
         assert_canonical(&f);
         let engine = Engine::new();
         let mut e = engine.evaluator(&f, RationalWeights::unit(5)).unwrap();
@@ -167,7 +167,7 @@ fn constants_marginals_and_batch_limits() {
         assert_eq!(e.value().unwrap(), original / BigRational::from_integer(2.into()));
     }
     let vtree = Arc::new(Vtree::balanced(4));
-    let mut f = Tdd::one(&vtree);
+    let mut f = Tdd::one(&crate::vtree::Home::unchecked(&vtree));
     assert_canonical(&f);
     {
         let engine = Engine::new();

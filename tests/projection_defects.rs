@@ -1,7 +1,6 @@
 //! Defects of diagrams on projections of a home vtree, one failing test each.
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::Arc;
 
 use num_bigint::BigUint;
 use tididi::diagram::{ChildPair, NodeIdx, TddBuildError, TddNodeId, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
@@ -12,15 +11,14 @@ use tididi::{Engine, Tdd};
 /// linear home of eight variables on x1 to x5: 24 models of five variables,
 /// 192 over the home.
 fn two_clauses(home: &Home) -> Tdd {
-    let own = Vtree::projection(home, [1, 2, 3, 4, 5].map(VarId)).unwrap();
-    Engine::new().and(Tdd::clause(&own, [1, 3, 5]).unwrap(), Tdd::clause(&own, [-2, 4, -5]).unwrap()).unwrap()
+    Engine::new().and(Tdd::clause(home, [1, 3, 5]).unwrap(), Tdd::clause(home, [-2, 4, -5]).unwrap()).unwrap()
 }
 
 #[test]
 fn pair_index_of_true_on_no_leaf_answers() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(4));
-    let one = Tdd::one(&Vtree::empty_projection(&home));
+    let one = Tdd::one(&home);
     let index = catch_unwind(AssertUnwindSafe(|| eng.pair_index(&one).map(drop)));
     assert!(index.is_ok(), "pair_index panics on the constant true with no leaf");
 }
@@ -61,7 +59,7 @@ fn a_restructure_refused_under_a_bound_keeps_the_count_over_the_home() {
 fn summing_out_the_root_follows_the_output_when_equal_counts_merge() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(2));
-    let not_x1 = Tdd::clause(&Vtree::projection(&home, [VarId(1)]).unwrap(), [-1]).unwrap();
+    let not_x1 = Tdd::clause(&home, [-1]).unwrap();
     let summed = eng.and_marginalizing_where(Tdd::one(&home), &not_x1, |_| true).unwrap();
     let count = catch_unwind(AssertUnwindSafe(|| summed.model_count().unwrap()));
     assert_eq!(count.ok(), Some(BigUint::from(2u32)), "the count of not x1 over two variables, its root summed out");
@@ -71,7 +69,7 @@ fn summing_out_the_root_follows_the_output_when_equal_counts_merge() {
 fn summing_out_a_root_of_several_nodes_follows_the_output() {
     // Three root nodes with 1, 1 and 2 models; the output is the second.
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = Home::new(Vtree::balanced(2));
     let root = vtree.root();
     let mut b = Tdd::builder(&eng, &vtree).unwrap();
     b.push(&eng, root, &[ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX)]).unwrap();
@@ -79,7 +77,7 @@ fn summing_out_a_root_of_several_nodes_follows_the_output() {
     b.push(&eng, root, &[ChildPair::new(POS_LEAF_IDX, POS_LEAF_IDX), ChildPair::new(NEG_LEAF_IDX, NEG_LEAF_IDX)]).unwrap();
     let mut f = b.finish(TddNodeId { vtree: root, local: second }).unwrap();
     assert_eq!(f.model_count().unwrap(), BigUint::from(1u32));
-    f.marginalize_levels(&[root]).unwrap();
+    f.marginalize(|_| true).unwrap();
     let count = catch_unwind(AssertUnwindSafe(|| f.model_count().unwrap()));
     assert_eq!(count.ok(), Some(BigUint::from(1u32)));
 }
@@ -109,7 +107,7 @@ fn and_clause_keeps_the_weights_when_it_adds_a_variable() {
     let literals: Vec<_> = (0..4).map(|i| LiteralWeights { negative: weight(1 + i, 2), positive: weight(2, 1 + i) }).collect();
     let weights = Weights::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational);
     let home = Home::weighted(Vtree::balanced(4), weights).unwrap();
-    let f = Tdd::clause(&Vtree::projection(&home, [VarId(1)]).unwrap(), [1]).unwrap();
+    let f = Tdd::clause(&home, [1]).unwrap();
     let on_home = Tdd::clause(&home, [1]).unwrap();
     assert_eq!(format!("{:?}", f.weighted_value()), format!("{:?}", on_home.weighted_value()));
     let expected = on_home.and_clause([3]).unwrap().weighted_value().unwrap();
@@ -138,7 +136,7 @@ fn negate_on_no_leaf_of_a_weighted_home() {
     let one = |a: i64| BigRational::from_integer(a.into());
     let literals: Vec<_> = (0..2).map(|_| LiteralWeights { negative: one(1), positive: one(2) }).collect();
     let home = Home::weighted(Vtree::balanced(2), Weights::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational)).unwrap();
-    let f = Tdd::one(&Vtree::empty_projection(&home));
+    let f = Tdd::one(&home);
     assert!(eng.negate(&f).unwrap().is_zero());
     let owned = eng.negate(f).unwrap();
     assert!(owned.weights().is_some());
@@ -149,14 +147,13 @@ fn negate_on_no_leaf_of_a_weighted_home() {
 fn or_cube_on_a_diagram_an_earlier_call_placed_is_canonical() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(4));
-    let f = Tdd::clause(&Vtree::projection(&home, [VarId(1), VarId(2)]).unwrap(), [1, -2]).unwrap();
+    let f = Tdd::clause(&home, [1, -2]).unwrap();
     let mut want = eng.or_cube(f.clone(), &[3, 4]).unwrap();
     want.minimize().unwrap();
-    let wide = Vtree::projection(&home, [1, 2, 3, 4].map(VarId)).unwrap();
     let placed = [
         ("a false cube", eng.or_cube(f.clone(), &[3, -3, 4]).unwrap()),
         ("a true clause", eng.and_clause(f.clone(), &[3, -3, 4]).unwrap()),
-        ("a conjunction with true", eng.and(f, Tdd::one(&wide)).unwrap()),
+        ("a conjunction with true", eng.and(f, Tdd::one(&home)).unwrap()),
     ];
     for (how, placed) in placed {
         let got = catch_unwind(AssertUnwindSafe(|| eng.or_cube(placed, &[3, 4]).unwrap()));

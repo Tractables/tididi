@@ -8,12 +8,11 @@
 //! after the packing is `from_models`'s build.
 
 use std::borrow::Cow;
-use std::sync::Arc;
 
 use crate::diagram::{NodeIdx, Tdd};
 use crate::limits::{Limits, OperationError};
 use crate::query::MAX_COLUMN_BITS;
-use crate::vtree::{VarId, Vtree};
+use crate::vtree::{Home, VarId};
 use crate::Engine;
 
 use super::layout::Layout;
@@ -83,7 +82,7 @@ impl Tdd {
     /// that length, [`OperationError::RowOutOfRange`] for a listed row past
     /// it, and otherwise as [`from_models`](Self::from_models).
     pub fn from_columns(
-        vtree: &Arc<Vtree>,
+        vtree: &Home,
         columns: &[&[VarId]],
         codes: &[&[u32]],
         rows: RowSelection<'_>,
@@ -101,7 +100,7 @@ impl Engine {
     /// As [`Tdd::from_columns`].
     pub fn from_columns(
         &self,
-        vtree: &Arc<Vtree>,
+        vtree: &Home,
         columns: &[&[VarId]],
         codes: &[&[u32]],
         rows: RowSelection<'_>,

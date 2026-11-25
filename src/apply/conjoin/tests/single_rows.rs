@@ -102,7 +102,7 @@ fn a_level_of_relayed_right_children_is_the_level_the_one_pair_loop_writes() {
                     .flat_map(|m| subsets.iter().map(move |s| m | s))
                     .collect();
                 models.sort_unstable();
-                Tdd::from_models(&vtree, &vars, &models).unwrap()
+                Tdd::from_models(&crate::vtree::Home::unchecked(&vtree), &vars, &models).unwrap()
             };
             let (f, g) = (operand(), operand());
             let what = format!("free variables {free:#b}, 1 in {one_in}");

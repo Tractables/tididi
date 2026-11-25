@@ -939,10 +939,10 @@ fn the_unnamed_count_is_the_nodes_no_pair_of_the_parent_level_names() {
         let mut rng = Lcg::new(seed ^ 0x0dd_c0de);
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 14, width: 3 });
         for (label, vtree) in bare_roots(vtree_shapes(num_vars)) {
-            let mut f = eng.cube(&vtree, std::iter::empty::<i32>()).unwrap();
+            let mut f = eng.cube(&crate::vtree::Home::unchecked(&vtree), std::iter::empty::<i32>()).unwrap();
             for (i, c) in clauses.iter().enumerate() {
                 f = match rng.below(2) {
-                    0 => eng.and(f, eng.clause(&vtree, c.iter().copied()).unwrap()).unwrap(),
+                    0 => eng.and(f, eng.clause(&crate::vtree::Home::unchecked(&vtree), c.iter().copied()).unwrap()).unwrap(),
                     _ => eng.and_clause(f, c).unwrap(),
                 };
                 if rng.below(3) == 0 {

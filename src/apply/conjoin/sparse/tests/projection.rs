@@ -63,8 +63,8 @@ fn crossed_join(
         .collect();
     let (fv, fr) = pack(&[&a, &b, &c], &f_rows);
     let (gv, gr) = pack(&[&a, &b], &g_rows);
-    let f = eng.from_models(vtree, &fv, &fr).unwrap();
-    let g = eng.from_models(vtree, &gv, &gr).unwrap();
+    let f = eng.from_models(&crate::vtree::Home::unchecked(vtree), &fv, &fr).unwrap();
+    let g = eng.from_models(&crate::vtree::Home::unchecked(vtree), &gv, &gr).unwrap();
     let (f, g) = on_one(eng, f, g);
     let ab = f.vtree().children(f.vtree().root()).0;
     assert_eq!(
@@ -141,8 +141,8 @@ fn root_join(
     }
     let (fv, fr) = pack(&[&a, &b, &c], &f_rows);
     let (gv, gr) = pack(&[&a, &b, &c], &g_rows);
-    let f = eng.from_models(vtree, &fv, &fr).unwrap();
-    let g = eng.from_models(vtree, &gv, &gr).unwrap();
+    let f = eng.from_models(&crate::vtree::Home::unchecked(vtree), &fv, &fr).unwrap();
+    let g = eng.from_models(&crate::vtree::Home::unchecked(vtree), &gv, &gr).unwrap();
     let (f, g) = on_one(eng, f, g);
     let root = f.vtree().root();
     assert_eq!(

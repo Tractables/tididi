@@ -33,7 +33,7 @@ pub fn compile_clauses(vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
 /// their results, and minimize once: a second route to the diagram
 /// [`compile_clauses`] reaches by a left fold.
 pub fn compile_clauses_pairwise(vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
-    let mut queue: Vec<Tdd> = clauses.iter().map(|c| Tdd::clause(vtree, c).unwrap()).collect();
+    let mut queue: Vec<Tdd> = clauses.iter().map(|c| clause_to_tdd(vtree, &literals(c))).collect();
     while queue.len() > 1 {
         let mut next = Vec::with_capacity(queue.len().div_ceil(2));
         let mut it = queue.into_iter();
@@ -45,7 +45,7 @@ pub fn compile_clauses_pairwise(vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd
         }
         queue = next;
     }
-    let mut tree = queue.pop().unwrap_or_else(|| Tdd::one(vtree));
+    let mut tree = queue.pop().unwrap_or_else(|| vtree.context().run(|eng| constant_one(eng, vtree)));
     tree.minimize().unwrap();
     tree
 }
@@ -54,7 +54,7 @@ pub fn compile_clauses_pairwise(vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd
 /// row `r` is in when `truth(r)`, and takes `vars[i]` positive when bit `i`
 /// of `r` is set. Every other variable stays free.
 pub fn or_of_cubes(vtree: &Arc<Vtree>, vars: &[VarId], truth: impl Fn(usize) -> bool) -> Tdd {
-    let mut f = Tdd::zero(vtree);
+    let mut f = vtree.context().run(|eng| crate::build::constant_zero(eng, vtree));
     for row in 0..1usize << vars.len() {
         if truth(row) {
             let cube: Vec<Literal> = vars
@@ -62,7 +62,7 @@ pub fn or_of_cubes(vtree: &Arc<Vtree>, vars: &[VarId], truth: impl Fn(usize) -> 
                 .enumerate()
                 .map(|(i, &var)| Literal::new(var, (row >> i) & 1 == 1))
                 .collect();
-            f = crate::or(f, Tdd::cube(vtree, cube).unwrap()).unwrap();
+            f = crate::or(f, vtree.context().run(|eng| eng.cube_on(vtree, cube)).unwrap()).unwrap();
         }
     }
     f
@@ -185,5 +185,5 @@ pub fn rand_conj(
 
 /// Build an unlimited clause fixture independently of the operation's armed engine.
 pub(crate) fn clause_to_tdd(vtree: &std::sync::Arc<crate::vtree::Vtree>, clause: &[crate::Literal]) -> crate::Tdd {
-    crate::Tdd::clause(vtree, clause).unwrap()
+    vtree.context().run(|eng| eng.clause_on(vtree, clause)).unwrap()
 }

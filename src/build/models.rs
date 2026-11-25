@@ -86,7 +86,7 @@ impl Tdd {
     /// outgrow the index that addresses it, and [`OperationError::Stopped`]
     /// when an armed stop fires.
     pub fn from_models(
-        vtree: &Arc<Vtree>,
+        vtree: &crate::vtree::Home,
         vars: &[VarId],
         rows: &[u64],
     ) -> Result<Tdd, OperationError> {
@@ -102,7 +102,7 @@ impl Engine {
     /// As [`Tdd::from_models`].
     pub fn from_models(
         &self,
-        vtree: &Arc<Vtree>,
+        vtree: &crate::vtree::Home,
         vars: &[VarId],
         rows: &[u64],
     ) -> Result<Tdd, OperationError> {

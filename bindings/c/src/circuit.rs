@@ -15,7 +15,7 @@ pub(crate) unsafe fn borrow<'a>(value: *const TididiCircuit) -> Result<Ref<'a, T
 /// Borrow and validate every operand before taking any payload.
 /// Holding the guards also prevents reentrant mutation during validation.
 pub(crate) unsafe fn take_many(values: &[*mut TididiCircuit], validate: impl FnOnce(&Vtree) -> Result<()>)
-    -> Result<(Arc<Vtree>, Vec<Tdd>)> {
+    -> Result<(tididi::vtree::Home, Vec<Tdd>)> {
     if values.is_empty() { return Err(invalid("at least one circuit is required")); }
     let mut seen = HashSet::new();
     for value in values {
@@ -57,7 +57,7 @@ unsafe fn literal_set(
     len: usize,
     out: *mut *mut TididiCircuit,
     config: *const TididiLimits,
-    build: impl FnOnce(&Engine, &Arc<Vtree>, Vec<tididi::Literal>) -> std::result::Result<Tdd, tididi::OperationError>,
+    build: impl FnOnce(&Engine, &tididi::vtree::Home, Vec<tididi::Literal>) -> std::result::Result<Tdd, tididi::OperationError>,
 ) -> Result<()> {
     let out = unsafe { vacant(out)? };
     let vtree = unsafe { vtree(tree)? };

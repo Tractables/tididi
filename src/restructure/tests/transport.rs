@@ -53,7 +53,7 @@ fn inverse(perm: &[VarId]) -> Vec<VarId> {
 /// `trim` is set.
 fn diagram(eng: &Engine, vtree: &Arc<Vtree>, trim: bool, rng: &mut Lcg) -> Tdd {
     let vars: Vec<VarId> = vtree.leaf_bottomup().map(|(_, var)| var).collect();
-    let mut f = Tdd::one(vtree);
+    let mut f = Tdd::one(&crate::vtree::Home::unchecked(vtree));
     for _ in 0..1 + rng.below(5) {
         let clause: Vec<i32> = (0..1 + rng.below(3))
             .map(|_| {
@@ -145,7 +145,7 @@ fn check_against_embed(eng: &Engine, c: &Case, owned: bool) {
     assert_eq!((stats.rotations, stats.peak_pairs), (0, pairs));
     if f.vtree().num_nodes() == 0 {
         assert_eq!(got.vtree().num_nodes(), 0);
-        assert!(Arc::ptr_eq(&got.home().unwrap(), dest));
+        assert!(Arc::ptr_eq(&got.home(), dest));
         assert_eq!((got.is_one(), got.is_zero()), (f.is_one(), f.is_zero()));
         assert_eq!(got.weights().is_some(), weighted);
         return;
@@ -161,7 +161,7 @@ fn check_against_embed(eng: &Engine, c: &Case, owned: bool) {
         v
     };
     assert_eq!(leaf_vars(got.vtree()), images);
-    assert!(Arc::ptr_eq(&got.home().unwrap(), dest));
+    assert!(Arc::ptr_eq(&got.home(), dest));
     let trimmed = check_trimmed(f, false).is_ok();
     if trimmed {
         check_trimmed(&got, false).unwrap_or_else(|e| panic!("{e}"));
@@ -238,7 +238,7 @@ fn a_map_that_breaks_the_shape_rotates_as_restructure_to_then_renames() {
                 expected.restructure_to(&shape, usize::MAX).unwrap();
                 let (mut expected, _) = eng.transport(expected, &dest, map, 0).map_err(|r| r.error).unwrap();
                 expected.trim(&dest).unwrap();
-                assert!(Arc::ptr_eq(&got.home().unwrap(), &dest));
+                assert!(Arc::ptr_eq(&got.home(), &dest));
                 assert_eq!(leaf_vars(got.vtree()), leaf_vars(expected.vtree()));
                 assert_eq!((got.node_count(), got.pair_count()), (expected.node_count(), expected.pair_count()));
                 assert!(eng.equivalent(&got, &expected).unwrap());
@@ -303,7 +303,7 @@ fn bad_images_marginal_levels_and_constants() {
     let eng = Engine::new();
     let home = Home::new(Vtree::balanced(6));
     let own = Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)]).unwrap();
-    let f = eng.clause(&own, [1, -2, 3]).unwrap();
+    let f = eng.clause(&crate::vtree::Home::unchecked(&own), [1, -2, 3]).unwrap();
 
     let r = eng.transport(&f, &home, |v| VarId(v.0 + 6), 0).unwrap_err();
     assert!(matches!(r.error, TransportError::Variable { variable: VarId(7..=9) }), "{:?}", r.error);
@@ -319,10 +319,10 @@ fn bad_images_marginal_levels_and_constants() {
     let other = Home::new(Vtree::linear(4));
     for value in [false, true] {
         let empty = Vtree::empty_projection(&home);
-        let c = if value { Tdd::one(&empty) } else { Tdd::zero(&empty) };
+        let c = if value { Tdd::one(&crate::vtree::Home::unchecked(&empty)) } else { Tdd::zero(&crate::vtree::Home::unchecked(&empty)) };
         let (moved, _) = eng.transport(c, &other, |v| v, 0).map_err(|r| r.error).unwrap();
         assert_eq!(moved.vtree().num_nodes(), 0);
-        assert!(Arc::ptr_eq(&moved.home().unwrap(), &other));
+        assert!(Arc::ptr_eq(&moved.home(), &other));
         assert_eq!(moved.is_one(), value);
         assert_eq!(moved.is_zero(), !value);
     }
@@ -332,7 +332,7 @@ fn bad_images_marginal_levels_and_constants() {
 /// and 2 summed into a region, and the region's level.
 fn with_region(eng: &Engine, home: &Home) -> (Tdd, VtreeIdx) {
     let own = Vtree::projection(home, [VarId(1), VarId(2), VarId(3)]).unwrap();
-    let mut f = eng.and_clause(eng.clause(&own, [1, -2, 3]).unwrap(), &[2, -3]).unwrap();
+    let mut f = eng.and_clause(eng.clause(&crate::vtree::Home::unchecked(&own), [1, -2, 3]).unwrap(), &[2, -3]).unwrap();
     eng.marginalize(&mut f, |v| v.0 <= 2).unwrap();
     let region = f.vtree().regions().next().expect("variables 1 and 2 are summed into a region");
     assert!(f.level(region).is_marginal());
@@ -408,12 +408,12 @@ fn a_structural_diagram_moves_onto_any_weights() {
     let eng = Engine::new();
     let home = Home::weighted(Vtree::balanced(8), table(8, &[(1, 5)])).unwrap();
     let own = Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)]).unwrap();
-    let f = eng.clause(&own, [1, -2, 3]).unwrap();
+    let f = eng.clause(&crate::vtree::Home::unchecked(&own), [1, -2, 3]).unwrap();
     let onto = Home::weighted(Vtree::balanced(8), table(8, &[(2, 3), (1, 1)])).unwrap();
     let g = eng.transport(&f, &onto, |v| VarId(v.0 + 1), usize::MAX).unwrap().0;
     assert!(g.weights() == onto.weights());
-    assert!(Arc::ptr_eq(&g.vtree().home().unwrap(), &onto));
-    let structural = eng.clause(&Vtree::projection(&onto, [VarId(2), VarId(3), VarId(4)]).unwrap(), [2, -3, 4]).unwrap();
+    assert!(Arc::ptr_eq(&g.home(), &onto));
+    let structural = eng.clause(&crate::vtree::Home::unchecked(&Vtree::projection(&onto, [VarId(2), VarId(3), VarId(4)]).unwrap()), [2, -3, 4]).unwrap();
     let value = |t: &Tdd| eng.weighted_value(t).unwrap().map(|w| w.into_rational());
     assert_eq!(value(&g), value(&structural));
 }

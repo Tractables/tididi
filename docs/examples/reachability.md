@@ -27,7 +27,6 @@ Allocate one Boolean variable per node for the current state, and another
 group for the next state:
 
 ```rust,ignore,{class=tested-example}
-use std::sync::Arc;
 use tididi::vtree::Home;
 
 use tididi::vtree::VarId;
@@ -54,7 +53,7 @@ literals; [`Literal::new`](crate::Literal::new) makes each literal positive
 only when its index is the selected node. Use the helper for both groups:
 
 ```rust,ignore,{class=tested-example}
-fn state(vtree: &Arc<Vtree>, indicators: &[VarId], node: usize)
+fn state(vtree: &Home, indicators: &[VarId], node: usize)
     -> Result<Tdd, OperationError> {
     Tdd::cube(vtree, indicators.iter().enumerate()
         .map(|(i, &var)| Literal::new(var, i == node)))

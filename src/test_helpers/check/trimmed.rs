@@ -115,7 +115,7 @@ pub fn check_trimmed(tdd: &Tdd, minimized: bool) -> Result<(), String> {
 /// variable leaf (R2).
 fn regions(tdd: &Tdd) -> Result<(), String> {
     let vtree = tdd.vtree();
-    let home = vtree.home().expect("a vtree on a home");
+    let home = tdd.home();
     for t in vtree.bottomup() {
         let summed_leaf = vtree.node(t).is_var_leaf() && tdd.level(t).is_marginal();
         if tdd.level(t).is_marginal() != vtree.node(t).is_region() && !summed_leaf {

@@ -20,7 +20,6 @@ variable identifiers in left-to-right leaf order. Changing their positions
 does not rename them: `VarId(3)` still means `x3`.
 
 ```rust,ignore,{class=tested-example}
-use std::sync::Arc;
 use tididi::vtree::Home;
 
 use tididi::{literal, xor, OperationError, Tdd, Vtree};
@@ -39,7 +38,7 @@ Two variables agree when their exclusive OR is false: `x1 ↔ x3` is
 then conjoin the equalities. The helper minimizes before comparing storage:
 
 ```rust,ignore,{class=tested-example}
-fn equal_pairs(vtree: &Arc<Vtree>) -> Result<Tdd, OperationError> {
+fn equal_pairs(vtree: &Home) -> Result<Tdd, OperationError> {
     let x1 = literal(vtree, 1)?;
     let x2 = literal(vtree, 2)?;
     let x3 = literal(vtree, 3)?;

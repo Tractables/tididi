@@ -602,7 +602,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn clause(
-        vtree: &Arc<Vtree>,
+        vtree: &crate::vtree::Home,
         literals: impl IntoIterator<Item = impl TryInto<Literal, Error: Into<OperationError>>>,
     ) -> Result<Tdd, OperationError> {
         vtree.context().run(|eng| eng.clause(vtree, literals))
@@ -621,7 +621,7 @@ impl crate::Engine {
     /// The output cap applies to the initial true diagram and rebuilt spine nodes.
     pub fn clause(
         &self,
-        vtree: &Arc<Vtree>,
+        vtree: &crate::vtree::Home,
         literals: impl IntoIterator<Item = impl TryInto<Literal, Error: Into<OperationError>>>,
     ) -> Result<Tdd, OperationError> {
         let lim = self.limits();
@@ -634,8 +634,13 @@ impl crate::Engine {
             lim.try_push(&mut clause, lit)?;
         }
         gate.flush()?;
-        let one = self.cube(vtree, std::iter::empty::<Literal>())?;
-        conjoin_clause_on(self, one, &clause)
+        self.clause_on(vtree, &clause)
+    }
+
+    /// [`Engine::clause`] on any vtree, as [`Engine::cube_on`] builds.
+    pub(crate) fn clause_on(&self, vtree: &Arc<Vtree>, clause: &[Literal]) -> Result<Tdd, OperationError> {
+        let one = self.cube_on(vtree, std::iter::empty::<Literal>())?;
+        conjoin_clause_on(self, one, clause)
     }
 
     /// Run [`Tdd::and_clause`](crate::Tdd::and_clause) using this batch's scratch and resource limits.

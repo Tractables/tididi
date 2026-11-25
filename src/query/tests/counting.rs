@@ -254,8 +254,8 @@ fn batch_model_count_matches_ordinary_count_and_honors_the_stop_axis() {
 #[test]
 fn saturated_node_counts_include_the_exact_u128_maximum() {
     let vtree = Arc::new(Vtree::balanced(128));
-    let maximum = Tdd::clause(&vtree, 1..=128).unwrap();
-    let overflow = Tdd::one(&vtree);
+    let maximum = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), 1..=128).unwrap();
+    let overflow = Tdd::one(&crate::vtree::Home::unchecked(&vtree));
     for (mut f, exact) in [
         (maximum, BigUint::from(u128::MAX)),
         (overflow, BigUint::from(u128::MAX) + BigUint::from(1u32)),

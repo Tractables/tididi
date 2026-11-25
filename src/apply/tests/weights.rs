@@ -47,17 +47,17 @@ fn operands_on_differently_weighted_vtrees_are_refused_before_shortcuts_and_allo
     ] {
         let left = first.children(first.root()).0;
         let summed = |tree: &Arc<Vtree>, lits: &[i32]| {
-            let mut f = Tdd::clause(tree, lits.iter().copied()).unwrap();
+            let mut f = Tdd::clause(&crate::vtree::Home::unchecked(tree), lits.iter().copied()).unwrap();
             eng.marginalize_levels(&mut f, &[left]).unwrap();
             assert_canonical(&f);
             f
         };
         for (a, b) in [
-            (Tdd::one(&first), Tdd::one(&other)),
-            (Tdd::zero(&first), Tdd::one(&other)),
-            (Tdd::clause(&first, [1]).unwrap(), Tdd::clause(&other, [2, 3]).unwrap()),
+            (Tdd::one(&crate::vtree::Home::unchecked(&first)), Tdd::one(&crate::vtree::Home::unchecked(&other))),
+            (Tdd::zero(&crate::vtree::Home::unchecked(&first)), Tdd::one(&crate::vtree::Home::unchecked(&other))),
+            (Tdd::clause(&crate::vtree::Home::unchecked(&first), [1]).unwrap(), Tdd::clause(&crate::vtree::Home::unchecked(&other), [2, 3]).unwrap()),
             (summed(&first, &[1]), summed(&other, &[3])),
-            (summed(&first, &[1, 3]), Tdd::one(&other)),
+            (summed(&first, &[1, 3]), Tdd::one(&crate::vtree::Home::unchecked(&other))),
         ] {
             let _limit = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
             for (f, g) in [(&a, &b), (&b, &a)] {
@@ -85,10 +85,10 @@ fn structural_operands_on_a_weighted_vtree_combine_in_either_order() {
     ] {
         let tree = weighted_tree(2, 2, arithmetic);
         for (a, b, and_value, or_value) in [
-            (Tdd::one(&tree), Tdd::one(&tree), 16, 16),
-            (Tdd::one(&tree), Tdd::clause(&tree, [1]).unwrap(), 8, 16),
-            (Tdd::zero(&tree), Tdd::clause(&tree, [1]).unwrap(), 0, 8),
-            (Tdd::clause(&tree, [1]).unwrap(), Tdd::zero(&tree), 0, 8),
+            (Tdd::one(&crate::vtree::Home::unchecked(&tree)), Tdd::one(&crate::vtree::Home::unchecked(&tree)), 16, 16),
+            (Tdd::one(&crate::vtree::Home::unchecked(&tree)), Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1]).unwrap(), 8, 16),
+            (Tdd::zero(&crate::vtree::Home::unchecked(&tree)), Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1]).unwrap(), 0, 8),
+            (Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1]).unwrap(), Tdd::zero(&crate::vtree::Home::unchecked(&tree)), 0, 8),
         ] {
             assert_canonical(&a);
             assert_canonical(&b);
@@ -110,11 +110,11 @@ fn structural_operands_on_a_weighted_vtree_combine_in_either_order() {
 fn a_structural_operand_conjoins_with_a_weighted_marginal_operand() {
     let tree = weighted_tree(4, 2, Arithmetic::ExactRational);
     let eng = Engine::new();
-    let mut a = Tdd::clause(&tree, [1]).unwrap();
+    let mut a = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1]).unwrap();
     eng.marginalize_levels(&mut a, &[tree.children(tree.root()).0])
         .unwrap();
     assert_canonical(&a);
-    let b = Tdd::clause(&tree, [3]).unwrap();
+    let b = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [3]).unwrap();
     assert_canonical(&b);
     for (f, g) in [(&a, &b), (&b, &a)] {
         let mut result = eng.and(f.clone(), g.clone()).unwrap();
@@ -131,7 +131,7 @@ fn a_structural_operand_conjoins_with_a_weighted_marginal_operand() {
 fn projecting_a_leaf_output_preserves_weights() {
     let tree = weighted_tree(1, 2, Arithmetic::ExactRational);
     let eng = Engine::new();
-    let f = Tdd::clause(&tree, [1]).unwrap();
+    let f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1]).unwrap();
     assert_canonical(&f);
     let result = eng.exists_var(f.clone(), VarId(1)).unwrap();
     assert_canonical(&result);
@@ -158,7 +158,7 @@ fn an_empty_clause_preserves_the_accumulators_weights() {
         Arithmetic::ScaledFloat,
     ] {
         let tree = weighted_tree(2, 2, arithmetic);
-        let f = Tdd::one(&tree);
+        let f = Tdd::one(&crate::vtree::Home::unchecked(&tree));
         let result = eng.and_clause(f, &[] as &[crate::Literal]).unwrap();
         assert_canonical(&result);
         assert!(result.is_zero());
@@ -176,16 +176,16 @@ fn every_care_restriction_outcome_preserves_the_input_weights() {
     ] {
         let tree = weighted_tree(2, 2, arithmetic);
         for (f, care, expected) in [
-            (Tdd::clause(&tree, [1]).unwrap(), Tdd::one(&tree), 8),
+            (Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1]).unwrap(), Tdd::one(&crate::vtree::Home::unchecked(&tree)), 8),
             (
-                Tdd::clause(&tree, [1, 2]).unwrap(),
-                Tdd::clause(&tree, [1]).unwrap(),
+                Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 2]).unwrap(),
+                Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1]).unwrap(),
                 8,
             ),
-            (Tdd::clause(&tree, [1]).unwrap(), Tdd::zero(&tree), 0),
+            (Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1]).unwrap(), Tdd::zero(&crate::vtree::Home::unchecked(&tree)), 0),
             (
-                Tdd::clause(&tree, [1]).unwrap(),
-                Tdd::clause(&tree, [-1]).unwrap(),
+                Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1]).unwrap(),
+                Tdd::clause(&crate::vtree::Home::unchecked(&tree), [-1]).unwrap(),
                 0,
             ),
         ] {
@@ -203,12 +203,12 @@ fn every_care_restriction_outcome_preserves_the_input_weights() {
 fn a_care_rebuild_keeps_the_weight_values_of_marginal_levels() {
     let tree = weighted_tree(4, 2, Arithmetic::ExactRational);
     let eng = Engine::new();
-    let mut f = Tdd::clause(&tree, [1]).unwrap() & Tdd::clause(&tree, [3, 4]).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1]).unwrap() & Tdd::clause(&crate::vtree::Home::unchecked(&tree), [3, 4]).unwrap();
     eng.marginalize_levels(&mut f, &[tree.children(tree.root()).0])
         .unwrap();
     f.minimize().unwrap();
     assert_canonical(&f);
-    let care = Tdd::clause(&tree, [3]).unwrap();
+    let care = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [3]).unwrap();
     assert_canonical(&care);
     let outcome = eng.restrict_to_care(f, &care).unwrap();
     assert!(matches!(outcome, RestrictionOutcome::Shrunk(_)));
@@ -231,7 +231,7 @@ fn ite_on_a_weighted_vtree_is_weighted() {
     ] {
         for weighted in [false, true] {
             let tree = if weighted { weighted_tree(3, 2, arithmetic) } else { Arc::new(Vtree::balanced(3)) };
-            let [condition, yes, no] = [1, 2, 3].map(|literal| eng.literal(&tree, literal).unwrap());
+            let [condition, yes, no] = [1, 2, 3].map(|literal| eng.literal(&crate::vtree::Home::unchecked(&tree), literal).unwrap());
             for f in [&condition, &yes, &no] {
                 assert_canonical(f);
             }

@@ -7,7 +7,7 @@ use crate::test_helpers::assert_canonical;
 #[test]
 fn pair_marks_union_contexts_across_word_boundaries() {
     let tree = Arc::new(Vtree::balanced(2));
-    let f = Tdd::one(&tree);
+    let f = Tdd::one(&crate::vtree::Home::unchecked(&tree));
     assert_canonical(&f);
     let eng = Engine::new();
     let (v, node) = (f.output.vtree, f.output.local);

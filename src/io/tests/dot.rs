@@ -34,7 +34,7 @@ fn plain_and_annotated_views_use_their_own_vtree() {
 fn vtree_overlays_handle_constants_leaves_and_marginal_levels() {
     for vtree in [Vtree::leaf(VarId(1)), Vtree::balanced(3)] {
         let vtree = std::sync::Arc::new(vtree);
-        for mut f in [Tdd::zero(&vtree), Tdd::one(&vtree)] {
+        for mut f in [Tdd::zero(&crate::vtree::Home::unchecked(&vtree)), Tdd::one(&crate::vtree::Home::unchecked(&vtree))] {
             assert_canonical(&f);
             assert!(f.level_sizes_to_dot().starts_with("graph vtree"));
             f.marginalize_levels(&[vtree.root()]).unwrap();

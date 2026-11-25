@@ -15,7 +15,7 @@ use crate::vtree::VarId;
 /// The disjunction the specialized walk is checked against: build the cube as
 /// a diagram and take the general `or`.
 fn or_with_cube_diagram(vtree: &Arc<Vtree>, f: &Tdd, cube: &[i32]) -> Tdd {
-    let cube = Tdd::cube(vtree, cube).expect("the cube is over the vtree");
+    let cube = Tdd::cube(&crate::vtree::Home::unchecked(vtree), cube).expect("the cube is over the vtree");
     let mut out = crate::or(f.clone(), cube).expect("the disjunction fits");
     out.minimize().expect("minimizing fits");
     out
@@ -251,7 +251,7 @@ fn a_cube_or_clause_naming_a_variable_both_ways_leaves_the_vtree() {
     let eng = crate::Engine::new();
     let home = Home::new(Vtree::balanced(4));
     let own = Vtree::projection(&home, [VarId(1), VarId(2)]).expect("a projection");
-    let f = Tdd::clause(&own, [1, -2]).expect("a clause on the projection");
+    let f = Tdd::clause(&crate::vtree::Home::unchecked(&own), [1, -2]).expect("a clause on the projection");
     let or = eng.or_cube(f.clone(), &[1, -1, 3]).expect("a false cube");
     assert!(Arc::ptr_eq(or.vtree(), f.vtree()), "or_cube widens the vtree");
     let and = eng.and_clause(f.clone(), &[1, -1, 3]).expect("a true clause");
@@ -287,7 +287,7 @@ fn an_unreachable_node_does_not_join_the_fill() {
                 lits
             };
             let (c, d) = (clause(), clause());
-            crate::and(Tdd::clause(&vtree, c).unwrap(), Tdd::clause(&vtree, d).unwrap()).unwrap()
+            crate::and(Tdd::clause(&crate::vtree::Home::unchecked(&vtree), c).unwrap(), Tdd::clause(&crate::vtree::Home::unchecked(&vtree), d).unwrap()).unwrap()
         };
         let f = crate::and(cnf(&a), cnf(&b)).unwrap();
         if f.is_zero() || f.is_one() || f.vtree().num_nodes() == 1 {
@@ -300,7 +300,7 @@ fn an_unreachable_node_does_not_join_the_fill() {
         unreached += 1;
         assert_partition(&f, &format!("seed {seed}, the operand"));
         let lit = a[0].0 as i32;
-        let general = crate::or(f.clone(), Tdd::cube(f.vtree(), [lit]).unwrap()).unwrap();
+        let general = crate::or(f.clone(), Tdd::cube(&crate::vtree::Home::unchecked(f.vtree()), [lit]).unwrap()).unwrap();
         let out = f.or_cube([lit]).unwrap();
         assert_partition(&out, &format!("seed {seed}"));
         assert_eq!(out.model_count().unwrap(), general.model_count().unwrap(), "seed {seed}");

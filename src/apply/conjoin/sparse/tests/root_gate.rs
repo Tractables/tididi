@@ -109,7 +109,7 @@ fn rectangles(eng: &Engine, vtree: &Arc<Vtree>, bits: u32, blocks: u64, shift: u
         }
     }
     let (vars, packed) = pack(&[&a, &b], &rows);
-    eng.from_models(vtree, &vars, &packed).unwrap()
+    eng.from_models(&crate::vtree::Home::unchecked(vtree), &vars, &packed).unwrap()
 }
 
 #[test]

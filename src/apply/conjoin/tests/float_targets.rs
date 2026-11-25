@@ -50,9 +50,9 @@ fn weighted(tree: &Vtree, store: &Weights) -> Arc<Vtree> {
 /// for canonicity.
 fn walk(eng: &Engine, tree: &Vtree, clauses: &[Vec<i32>], store: &Weights) -> Tdd {
     let tree = &weighted(tree, store);
-    let mut acc = eng.one(tree);
+    let mut acc = eng.one(&crate::vtree::Home::unchecked(tree));
     for (k, clause) in clauses.iter().enumerate() {
-        let g = eng.clause(tree, clause.iter().copied()).unwrap();
+        let g = eng.clause(&crate::vtree::Home::unchecked(tree), clause.iter().copied()).unwrap();
         let targets = finished(tree, &acc, &clauses[k + 1..]);
         acc = eng.and_marginalizing(acc, g, &targets).unwrap();
         if acc.is_zero() {
@@ -76,9 +76,9 @@ fn value(eng: &Engine, d: &Tdd) -> crate::diagram::WeightValue {
 }
 
 fn build_clauses(eng: &Engine, tree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
-    let mut d = eng.one(tree);
+    let mut d = eng.one(&crate::vtree::Home::unchecked(tree));
     for clause in clauses {
-        let c = eng.clause(tree, clause.iter().copied()).unwrap();
+        let c = eng.clause(&crate::vtree::Home::unchecked(tree), clause.iter().copied()).unwrap();
         d = eng.and(d, c).unwrap();
     }
     d

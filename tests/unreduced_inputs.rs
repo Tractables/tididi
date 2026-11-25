@@ -154,7 +154,7 @@ fn check_expansion(eng: &Engine, f: &Tdd, n: u32, rng: &mut Rng) -> Result<(), S
 }
 
 /// One random operation on the pool, the result and the table it must have.
-fn step(eng: &Engine, rng: &mut Rng, vtree: &Arc<Vtree>, pool: &[(Tdd, Table)], n: u32, op: usize) -> Option<(Tdd, Table)> {
+fn step(eng: &Engine, rng: &mut Rng, vtree: &Home, pool: &[(Tdd, Table)], n: u32, op: usize) -> Option<(Tdd, Table)> {
     let pick = |rng: &mut Rng| &pool[rng.below(pool.len() as u64) as usize];
     let ((f, tf), (g, tg), (h, th)) = (pick(rng), pick(rng), pick(rng));
     let vars = subset(rng, n);
@@ -274,7 +274,7 @@ fn random_sequences() {
     for s in (0..seqs).filter(|&s| only.is_none_or(|o| o == s)) {
         let mut rng = Rng(seed ^ s.wrapping_mul(0x2545_f491_4f6c_dd1d) | 1);
         let n = 2 + rng.below(7) as u32;
-        let vtree = Arc::new(match rng.below(4) {
+        let vtree = Home::new(match rng.below(4) {
             0 => Vtree::balanced(n),
             1 => Vtree::linear(n),
             2 => Vtree::reverse_linear(n),

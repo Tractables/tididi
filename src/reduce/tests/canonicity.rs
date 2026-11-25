@@ -40,7 +40,7 @@ fn build_by_folding<'a>(
 ) -> Tdd {
     let mut acc = constant_one(eng, vtree);
     for c in clauses {
-        acc = apply_and(acc, Tdd::clause(vtree, c).unwrap());
+        acc = apply_and(acc, Tdd::clause(&crate::vtree::Home::unchecked(vtree), c).unwrap());
     }
     acc.minimize().unwrap();
     acc

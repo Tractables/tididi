@@ -174,7 +174,7 @@ impl Engine {
             lim.next_phase()?;
             let order: Vec<VarId> = expansion.constants.iter().map(|literal| literal.var).collect();
             let vtree = context.bind(Vtree::balanced_over(&order)?);
-            parts.push(self.cube(&vtree, expansion.constants.iter().copied())?);
+            parts.push(self.cube_on(&vtree, expansion.constants.iter().copied())?);
         }
         lim.next_phase()?;
         super::graft::graft(self, parts, &expansion.free)
@@ -185,7 +185,7 @@ impl Engine {
 /// every home variable with a class, when that projection is wider than its
 /// vtree; `None` when it is not.
 fn widened_onto_classes(eng: &Engine, tdd: &Tdd, expansion: &VariableExpansion) -> Result<Option<Tdd>, ExpandError> {
-    let Some(home) = tdd.home() else { return Ok(None) };
+    let Some(home) = tdd.vtree().home() else { return Ok(None) };
     let vtree = tdd.vtree();
     let added: Vec<VarId> = (0..expansion.classes.len())
         .filter(|&r| !expansion.classes[r].is_empty())

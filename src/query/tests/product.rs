@@ -195,7 +195,7 @@ fn counts_past_u128_are_exact() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(260));
     let (left, right) = vtree.children(vtree.root());
-    let mut f = eng.clause(&vtree, [1]).unwrap();
+    let mut f = eng.clause(&crate::vtree::Home::unchecked(&vtree), [1]).unwrap();
     eng.marginalize_levels(&mut f, &[right]).unwrap();
     assert_canonical(&f);
     // m(x) = [x1] · 2^130 over the 130 kept variables: 2^129 assignments of
@@ -212,22 +212,22 @@ fn refusals_and_the_false_diagram() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let left = vtree.children(vtree.root()).0;
-    let mut m = eng.clause(&vtree, [1, 3]).unwrap();
+    let mut m = eng.clause(&crate::vtree::Home::unchecked(&vtree), [1, 3]).unwrap();
     eng.marginalize_levels(&mut m, &[left]).unwrap();
     assert_canonical(&m);
-    let s = eng.clause(&vtree, [1, 2]).unwrap();
+    let s = eng.clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap();
     for (f, g) in [(&m, &s), (&s, &m)] {
         assert_eq!(eng.marginal_product_count(f, g).unwrap_err(), OperationError::MarginalLevel(left));
     }
     // A structural operand free of the summed-out variables is read as its
     // constant.
-    let free = eng.clause(&vtree, [3, 4]).unwrap();
+    let free = eng.clause(&crate::vtree::Home::unchecked(&vtree), [3, 4]).unwrap();
     let want = eng.and_model_count(m.clone(), free.clone(), &[]).unwrap();
     assert_eq!(eng.marginal_product_count(&m, &free).unwrap(), want);
-    let zero = crate::diagram::Tdd::zero(&vtree);
+    let zero = crate::diagram::Tdd::zero(&crate::vtree::Home::unchecked(&vtree));
     assert_eq!(eng.marginal_product_count(&m, &zero).unwrap(), BigUint::ZERO);
     let other = Arc::new(Vtree::balanced(4));
-    let elsewhere = eng.clause(&other, [1]).unwrap();
+    let elsewhere = eng.clause(&crate::vtree::Home::unchecked(&other), [1]).unwrap();
     assert_eq!(eng.marginal_product_count(&s, &elsewhere).unwrap_err(), OperationError::VtreeMismatch);
     let stopped = stopping_engine();
     assert_eq!(stopped.marginal_product_count(&m, &m).unwrap_err(), OperationError::Stopped);
@@ -236,9 +236,9 @@ fn refusals_and_the_false_diagram() {
     let half = num_rational::BigRational::new(1.into(), 2.into());
     let weights = RationalWeights::from_literals(&vec![LiteralWeights { negative: half.clone(), positive: half }; 4]);
     let weighted_tree = Arc::new(Vtree::balanced(4).with_weights(Weights::new(weights, Arithmetic::ExactRational)).unwrap());
-    let mut weighted = eng.clause(&weighted_tree, [1, 3]).unwrap();
+    let mut weighted = eng.clause(&crate::vtree::Home::unchecked(&weighted_tree), [1, 3]).unwrap();
     eng.marginalize_levels(&mut weighted, &[left]).unwrap();
-    let structural = eng.clause(&weighted_tree, [1, 2]).unwrap();
+    let structural = eng.clause(&crate::vtree::Home::unchecked(&weighted_tree), [1, 2]).unwrap();
     for (f, g) in [(&weighted, &structural), (&structural, &weighted)] {
         assert_eq!(eng.marginal_product_count(f, g).unwrap_err(), OperationError::IncompatibleWeights);
     }

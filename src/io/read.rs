@@ -38,7 +38,7 @@ use super::{IoError, TDD_FORMAT_VERSION};
 ///
 /// Returns [`IoError::Io`] if the file cannot be opened or read, or the format
 /// errors from [`read_tdd`].
-pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
+pub fn load_tdd(path: impl AsRef<Path>, vtree: &crate::vtree::Home) -> Result<Tdd, IoError> {
     let file = std::fs::File::open(path.as_ref())?;
     read_tdd(&mut BufReader::new(file), vtree)
 }
@@ -109,7 +109,7 @@ pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoErr
 /// let result = read_tdd(&mut b"not a diagram".as_slice(), &vtree);
 /// assert!(matches!(result, Err(IoError::Format(_))));
 /// ```
-pub fn read_tdd<R: BufRead>(r: &mut R, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
+pub fn read_tdd<R: BufRead>(r: &mut R, vtree: &crate::vtree::Home) -> Result<Tdd, IoError> {
     let home = vtree.home();
     if home.is_some() && vtree.has_regions() {
         return Err(IoError::Format(format!("tdd: {}", super::REGION_REFUSED)));

@@ -13,7 +13,7 @@ fn random_cnf_diagram(
     num_clauses: usize,
     modulus: u64,
 ) -> Tdd {
-    let mut f = Tdd::one(tree);
+    let mut f = Tdd::one(&crate::vtree::Home::unchecked(tree));
     for _ in 0..num_clauses {
         let clause: Vec<Literal> = vars
             .iter()
@@ -29,7 +29,7 @@ fn random_cnf_diagram(
             })
             .collect();
         if !clause.is_empty() {
-            f = eng.and(f, eng.clause(tree, clause).unwrap()).unwrap();
+            f = eng.and(f, eng.clause(&crate::vtree::Home::unchecked(tree), clause).unwrap()).unwrap();
         }
     }
     f.minimize().unwrap();
@@ -43,10 +43,10 @@ fn support_and_backbone_match_sparse_id_truth_tables() {
     for tree in [Vtree::balanced_over(&vars).unwrap(), Vtree::linear_from_order(&vars).unwrap()] {
         let tree = Arc::new(tree);
         for bits in 0..256u16 {
-            let mut f = Tdd::one(&tree);
+            let mut f = Tdd::one(&crate::vtree::Home::unchecked(&tree));
             for row in 0..8 {
                 if bits & (1 << row) == 0 {
-                    let clause = eng.clause(&tree, vars.iter().enumerate().map(|(i, &var)| {
+                    let clause = eng.clause(&crate::vtree::Home::unchecked(&tree), vars.iter().enumerate().map(|(i, &var)| {
                         Literal::new(var, row & (1 << i) == 0)
                     })).unwrap();
                     f = eng.and(f, clause).unwrap();
@@ -130,7 +130,7 @@ fn leaf_scan_omits_marginal_leaves_and_public_query_rejects_them() {
     let eng = Engine::new();
     let vars = [VarId(20), VarId(3), VarId(9)];
     let tree = Arc::new(Vtree::balanced_over(&vars).unwrap());
-    let mut f = eng.cube(&tree, [Literal::pos(vars[0]), Literal::neg(vars[1])]).unwrap();
+    let mut f = eng.cube(&crate::vtree::Home::unchecked(&tree), [Literal::pos(vars[0]), Literal::neg(vars[1])]).unwrap();
     assert_canonical(&f);
     let leaf = tree.leaf_of(vars[0]).unwrap();
     eng.marginalize_levels(&mut f, &[leaf]).unwrap();
@@ -145,7 +145,7 @@ fn leaf_scan_omits_marginal_leaves_and_public_query_rejects_them() {
     assert!(matches!(f.implied_literals(), Err(OperationError::MarginalLevel(_))));
 
     let tree = Arc::new(Vtree::leaf(vars[0]));
-    let mut f = eng.literal(&tree, Literal::pos(vars[0])).unwrap();
+    let mut f = eng.literal(&crate::vtree::Home::unchecked(&tree), Literal::pos(vars[0])).unwrap();
     eng.marginalize_levels(&mut f, &[tree.root()]).unwrap();
     assert_canonical(&f);
     let mut visited = 0;

@@ -75,8 +75,8 @@ fn cases(nvars: u32, seed: u64, homes: bool) -> Vec<(String, Tdd, Tdd)> {
             out.push((format!("{name}, {nvars} variables, halves {case}"), minimized(&shift(&a, 0)), minimized(&shift(&b, half))));
         }
         let f = minimized(&cnf(&mut rng, 2 * nvars as usize, 3));
-        let cube = eng.cube(&vtree, [1, -(nvars as i32)]).unwrap();
-        let zero = eng.and(eng.literal(&vtree, 1).unwrap(), eng.literal(&vtree, -1).unwrap()).unwrap();
+        let cube = eng.cube(&crate::vtree::Home::unchecked(&vtree), [1, -(nvars as i32)]).unwrap();
+        let zero = eng.and(eng.literal(&crate::vtree::Home::unchecked(&vtree), 1).unwrap(), eng.literal(&crate::vtree::Home::unchecked(&vtree), -1).unwrap()).unwrap();
         out.push((format!("{name}, {nvars} variables, cube"), f.clone(), cube));
         out.push((format!("{name}, {nvars} variables, itself"), f.clone(), f.clone()));
         out.push((format!("{name}, {nvars} variables, false"), f, zero));
@@ -381,7 +381,7 @@ fn a_borrowed_operand_sums_out_as_an_owned_one() {
                     None => Arc::clone(&tree),
                 };
                 // Each step joins the next two clauses into the walk's diagram.
-                let mut acc = eng.one(&tree);
+                let mut acc = eng.one(&crate::vtree::Home::unchecked(&tree));
                 for (k, pair) in clauses.chunks(2).enumerate() {
                     let g = compile_clauses_on(&eng, &tree, pair);
                     let rest = clauses.get(2 * (k + 1)..).unwrap_or_default();
@@ -449,10 +449,10 @@ fn borrowed_operands_on_two_allocations_of_one_layout_are_not_copied() {
     let (a, b) = (on(), on());
     assert!(!Arc::ptr_eq(&a, &b));
     let clauses = |vtree: &Arc<Vtree>| {
-        let f = eng.clause(vtree, [1, -4, 6]).unwrap();
-        eng.and(f, eng.clause(vtree, [-2, 5, 8]).unwrap()).unwrap()
+        let f = eng.clause(&crate::vtree::Home::unchecked(vtree), [1, -4, 6]).unwrap();
+        eng.and(f, eng.clause(&crate::vtree::Home::unchecked(vtree), [-2, 5, 8]).unwrap()).unwrap()
     };
-    let (f, g_apart, g_shared) = (clauses(&a), eng.clause(&b, [2, -6, 7]).unwrap(), eng.clause(&a, [2, -6, 7]).unwrap());
+    let (f, g_apart, g_shared) = (clauses(&a), eng.clause(&crate::vtree::Home::unchecked(&b), [2, -6, 7]).unwrap(), eng.clause(&crate::vtree::Home::unchecked(&a), [2, -6, 7]).unwrap());
     let apart = reserves(&eng, || eng.and(&f, &g_apart).is_ok());
     let shared = reserves(&eng, || eng.and(&f, &g_shared).is_ok());
     assert_eq!(apart, shared, "a conjunction across two allocations copies an operand");

@@ -156,22 +156,23 @@ impl Tdd {
         }
     }
 
-    /// The vtree the diagram is decomposed along.
+    /// The vtree the diagram is decomposed along: the projection of its home
+    /// ([`home`](Self::home)) on the variables it uses, or the home's root.
     ///
-    /// Operands of a binary operation must share it (`Arc::ptr_eq`).
-    ///
-    /// Build another operand on the existing diagram's shared vtree:
+    /// Operands of a binary operation must share a home; their vtrees may
+    /// differ.
     ///
     /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Tdd, Vtree};
+    /// use tididi::{and, Tdd, Vtree};
+    /// use tididi::vtree::{Home, VarId};
     ///
-    /// let vtree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::clause(&vtree, [1, 2])?;
-    /// let g = Tdd::clause(f.vtree(), [-2, 3])?;
-    /// assert!(Arc::ptr_eq(f.vtree(), g.vtree()));
-    /// # tididi::test_helpers::assert_canonical(&f);
-    /// # tididi::test_helpers::assert_canonical(&g);
+    /// let home = Home::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&home, [1, 2])?;
+    /// let g = Tdd::clause(&f.home(), [-2, 3])?;
+    /// assert_eq!(f.vtree().leaf_of(VarId(3)), None);
+    /// let h = and(f, g)?;
+    /// assert_eq!(u64::try_from(h.model_count()?)?, 4);
+    /// # tididi::test_helpers::assert_canonical(&h);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     #[inline]
@@ -180,23 +181,21 @@ impl Tdd {
     }
 
     /// The home this diagram is on: its projection's home, or its vtree when
-    /// that is a home's root; `None` on a vtree that is neither.
+    /// that is a home's root.
     ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::Tdd;
-    /// use tididi::vtree::{Home, VarId, Vtree};
+    /// use tididi::vtree::{Home, Vtree};
     ///
     /// let home = Home::new(Vtree::balanced(4));
-    /// let f = Tdd::clause(&Vtree::projection(&home, [VarId(1), VarId(3)])?, [1, -3])?;
-    /// assert!(Arc::ptr_eq(&f.home().unwrap(), &home));
-    /// let all = Tdd::clause(&home, [2, 4])?;
-    /// assert!(Arc::ptr_eq(&all.home().unwrap(), &home));
-    /// assert!(Tdd::clause(&Arc::new(Vtree::balanced(4)), [1])?.home().is_none());
+    /// let f = Tdd::clause(&home, [1, -3])?;
+    /// assert!(!Arc::ptr_eq(f.vtree(), &home));
+    /// assert!(Arc::ptr_eq(&f.home(), &home));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn home(&self) -> Option<crate::vtree::Home> {
-        self.vtree.home()
+    pub fn home(&self) -> crate::vtree::Home {
+        self.vtree.home().expect("a diagram lies on a home's root or a projection")
     }
 
     /// The node denoting the function: a node of the root level, or

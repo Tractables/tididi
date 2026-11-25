@@ -96,9 +96,9 @@ fn conjunctions(eng: &crate::Engine, seed: u64) -> Vec<Tdd> {
     let mut out = Vec::new();
     for (_, vtree) in bare_roots(vtree_shapes(8)) {
         for _ in 0..6 {
-            let mut f = Tdd::one(&vtree);
+            let mut f = Tdd::one(&crate::vtree::Home::unchecked(&vtree));
             for (k, clause) in rand_cnf(&mut rng, 8, CnfShape { clauses: 8, width: 3 }).into_iter().enumerate() {
-                let mut g = eng.clause(&vtree, clause.iter().copied()).unwrap();
+                let mut g = eng.clause(&crate::vtree::Home::unchecked(&vtree), clause.iter().copied()).unwrap();
                 if k % 2 == 0 {
                     forget_counts(&mut f);
                     forget_counts(&mut g);

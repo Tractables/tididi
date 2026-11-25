@@ -46,7 +46,7 @@ fn clause(vars: &[VarId], rng: &mut Lcg) -> Vec<i32> {
 /// A random CNF over the projection of `home` on `vars`, built on it.
 fn cnf_on(eng: &Engine, home: &Home, vars: &[VarId], rng: &mut Lcg) -> Tdd {
     let vtree = Vtree::projection(home, vars.iter().copied()).unwrap();
-    let mut f = Tdd::one(&vtree);
+    let mut f = Tdd::one(&crate::vtree::Home::unchecked(&vtree));
     for _ in 0..1 + rng.below(4) {
         f = eng.and_clause(f, &clause(vars, rng)).unwrap();
     }
@@ -99,7 +99,7 @@ fn and_on_projections_is_and_on_the_home() {
                 eng.and(f.clone(), g.clone()).unwrap(),
             ];
             for mut h in results {
-                assert!(Arc::ptr_eq(&h.home().unwrap(), &home));
+                assert!(Arc::ptr_eq(&h.home(), &home));
                 if !h.is_zero() {
                     assert_eq!(h.vtree().num_leaves() as usize, union, "seed {seed}");
                 }
@@ -150,8 +150,8 @@ fn join_at_the_root_carries_what_the_operands_owe() {
 fn and_across_homes_is_refused() {
     let eng = Engine::new();
     let (a, b) = (Home::new(Vtree::balanced(4)), Home::new(Vtree::balanced(4)));
-    let f = Tdd::clause(&Vtree::projection(&a, [VarId(1)]).unwrap(), [1]).unwrap();
-    let g = Tdd::clause(&Vtree::projection(&b, [VarId(2)]).unwrap(), [2]).unwrap();
+    let f = Tdd::clause(&crate::vtree::Home::unchecked(&Vtree::projection(&a, [VarId(1)]).unwrap()), [1]).unwrap();
+    let g = Tdd::clause(&crate::vtree::Home::unchecked(&Vtree::projection(&b, [VarId(2)]).unwrap()), [2]).unwrap();
     assert_eq!(eng.and(&f, &g).unwrap_err(), OperationError::VtreeMismatch);
     let h = Tdd::clause(&a, [3]).unwrap();
     assert_eq!(eng.and(&h, &g).unwrap_err(), OperationError::VtreeMismatch);
@@ -172,7 +172,7 @@ fn and_clause_extends_to_the_clause_variables() {
             let expected = eng.and_clause(on_home(&f, &home), &lits).unwrap();
             let typed: Vec<crate::Literal> = lits.iter().map(|&l| crate::Literal::try_from(l).unwrap()).collect();
             for h in [eng.and_clause(f.clone(), &lits).unwrap(), eng.and_clause(f.clone(), &typed).unwrap()] {
-                assert!(Arc::ptr_eq(&h.home().unwrap(), &home));
+                assert!(Arc::ptr_eq(&h.home(), &home));
                 if lits.iter().any(|&l| lits.contains(&-l)) {
                     assert!(Arc::ptr_eq(h.vtree(), f.vtree()), "a true clause leaves the vtree");
                 } else if !h.is_zero() {
@@ -192,7 +192,7 @@ fn absent_variables_leave_the_operand() {
     let eng = Engine::new();
     let hm = Home::new(Vtree::balanced(6));
     let own = Vtree::projection(&hm, [VarId(2), VarId(5)]).unwrap();
-    let f = eng.and_clause(crate::test_helpers::padded(Tdd::one(&own), &own), &[2, -5]).unwrap();
+    let f = eng.and_clause(crate::test_helpers::padded(Tdd::one(&crate::vtree::Home::unchecked(&own)), &own), &[2, -5]).unwrap();
     let same = |g: Tdd| {
         assert!(Arc::ptr_eq(g.vtree(), &own));
         assert!(eng.equivalent(&g, &f).unwrap());
@@ -271,7 +271,7 @@ fn a_conjunction_placed_on_the_root_is_and_on_a_bare_root() {
             }
             let expected = eng.and(on_home(&f, &bare), on_home(&g, &bare)).unwrap();
             for mut h in [eng.and(&f, &g).unwrap(), eng.and(f.clone(), g.clone()).unwrap()] {
-                assert!(Arc::ptr_eq(&h.home().unwrap(), root), "seed {seed}");
+                assert!(Arc::ptr_eq(&h.home(), root), "seed {seed}");
                 assert_eq!(eng.model_count(&h).unwrap(), eng.model_count(&expected).unwrap(), "seed {seed}");
                 assert!(eng.equivalent(&on_home(&h, &bare), &expected).unwrap(), "seed {seed}");
                 eng.minimize(&mut h).unwrap();
@@ -303,11 +303,11 @@ fn and_with_a_literal_keeps_only_reached_nodes() {
     let hm = Home::new(Vtree::random(6, 101));
     let x1 = Vtree::projection(&hm, [VarId(1)]).unwrap();
     let x3_x5 = Vtree::projection(&hm, [VarId(3), VarId(5)]).unwrap();
-    let literal = Tdd::clause(&x1, [-1]).unwrap();
+    let literal = Tdd::clause(&crate::vtree::Home::unchecked(&x1), [-1]).unwrap();
     let mut reduced = literal.clone();
     eng.minimize(&mut reduced).unwrap();
     for f in [literal, reduced] {
-        let h = crate::and(f, Tdd::clause(&x3_x5, [3, -3, -5]).unwrap()).unwrap();
+        let h = crate::and(f, Tdd::clause(&crate::vtree::Home::unchecked(&x3_x5), [3, -3, -5]).unwrap()).unwrap();
         assert_eq!(unreached(&h), [], "{:?}", h.dirty.loose());
     }
 }
@@ -318,8 +318,8 @@ fn and_with_a_literal_keeps_only_reached_nodes() {
 fn operand(eng: &Engine, home: &Home, vars: &[VarId], rng: &mut Lcg) -> Tdd {
     let one = Vtree::projection(home, [vars[0]]).unwrap();
     let mut f = match rng.below(6) {
-        0 => Tdd::clause(&one, [if rng.coin() { vars[0].0 as i32 } else { -(vars[0].0 as i32) }]).unwrap(),
-        1 => crate::test_helpers::padded(Tdd::one(&one), &one),
+        0 => Tdd::clause(&crate::vtree::Home::unchecked(&one), [if rng.coin() { vars[0].0 as i32 } else { -(vars[0].0 as i32) }]).unwrap(),
+        1 => crate::test_helpers::padded(Tdd::one(&crate::vtree::Home::unchecked(&one)), &one),
         _ => cnf_on(eng, home, vars, rng),
     };
     if rng.below(3) == 0 {

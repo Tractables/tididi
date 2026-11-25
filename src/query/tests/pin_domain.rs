@@ -18,9 +18,9 @@ fn sparse_counts(retention: Retention) {
     ] {
         let tree = Arc::new(tree);
         for (f, kind) in [
-            (Tdd::one(&tree), 0),
-            (Tdd::zero(&tree), 1),
-            (Tdd::clause(&tree, [3]).unwrap(), 2),
+            (Tdd::one(&crate::vtree::Home::unchecked(&tree)), 0),
+            (Tdd::zero(&crate::vtree::Home::unchecked(&tree)), 1),
+            (Tdd::clause(&crate::vtree::Home::unchecked(&tree), [3]).unwrap(), 2),
         ] {
             assert_canonical(&f);
             for semantics in [PinSemantics::Evidence, PinSemantics::Cofactor] {
@@ -79,7 +79,7 @@ fn sparse_and_reordered_variables_count_under_both_pin_conventions() {
 fn invalid_pins(retention: Retention) {
     let eng = Engine::new();
     let tree = Arc::new(Vtree::balanced_over(&[VarId(10), VarId(3)]).unwrap());
-    let f = Tdd::one(&tree);
+    let f = Tdd::one(&crate::vtree::Home::unchecked(&tree));
     assert_canonical(&f);
     let mut counter = eng
         .counter_with(&f, retention, PinSemantics::Evidence)
@@ -119,7 +119,7 @@ fn marginal_pins(retention: Retention) {
         tree.children(tree.root()).0,
         tree.leaf_of(VarId(1)).unwrap(),
     ] {
-        let mut f = Tdd::clause(&tree, [1, 3]).unwrap();
+        let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 3]).unwrap();
         assert_canonical(&f);
         eng.marginalize_levels(&mut f, &[summed]).unwrap();
         f.minimize().unwrap();
@@ -158,7 +158,7 @@ fn summed_out_pin_variables_are_refused_without_losing_pending_pins() {
 fn sparse_pin_storage_fits_a_budget_independent_of_variable_ids() {
     let eng = Engine::new();
     let tree = Arc::new(Vtree::leaf(VarId(100_000)));
-    let f = Tdd::one(&tree);
+    let f = Tdd::one(&crate::vtree::Home::unchecked(&tree));
     assert_canonical(&f);
     let _limit = eng
         .limits()
@@ -175,7 +175,7 @@ fn sparse_pin_storage_fits_a_budget_independent_of_variable_ids() {
 /// Check signed observations against enumeration, including atomic rejection.
 fn observed_counts(retention: Retention) {
     let vtree = Arc::new(Vtree::balanced_over(&[VarId(10), VarId(3), VarId(72)]).unwrap());
-    let f = Tdd::clause(&vtree, [3, 10]).unwrap();
+    let f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [3, 10]).unwrap();
     assert_canonical(&f);
     for semantics in [PinSemantics::Evidence, PinSemantics::Cofactor] {
         let mut counter = f.counter_with(retention, semantics).unwrap();
@@ -253,7 +253,7 @@ fn signed_observations_count_and_reject_invalid_batches_atomically() {
 #[test]
 fn named_observations_match_signed_inputs_and_preserve_rejected_batches() {
     let vtree = Arc::new(Vtree::balanced_over(&[VarId(10), VarId(3), VarId(72)]).unwrap());
-    let f = Tdd::clause(&vtree, [3, 10]).unwrap();
+    let f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [3, 10]).unwrap();
     assert_canonical(&f);
     let remote = Literal::pos(VarId(10));
     let encrypted = Literal::pos(VarId(3));

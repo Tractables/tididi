@@ -130,10 +130,10 @@ fn checked_queries_refuse_incompatible_marginal_values() {
 
     let eng = Engine::new();
     let tree = Arc::new(Vtree::balanced(4));
-    let mut integer = Tdd::clause(&tree, [1, 2]).unwrap();
+    let mut integer = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 2]).unwrap();
     assert_canonical(&integer);
     let weighted_tree = Arc::new(Vtree::balanced(4).with_weights(Weights::new(RationalWeights::unit(4), Arithmetic::ExactRational)).unwrap());
-    let mut weighted = Tdd::clause(&weighted_tree, [1, 2]).unwrap();
+    let mut weighted = Tdd::clause(&crate::vtree::Home::unchecked(&weighted_tree), [1, 2]).unwrap();
     eng.marginalize_levels(&mut integer, &[tree.root()]).unwrap();
     eng.marginalize_levels(&mut weighted, &[weighted_tree.root()]).unwrap();
     assert!(matches!(eng.evaluate(&integer, &RationalWeights::unit(4)), Err(OperationError::MarginalLevel(_))));

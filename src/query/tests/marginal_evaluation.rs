@@ -211,7 +211,7 @@ fn a_marginal_diagram_evaluates_as_its_summed_structure_does() {
             let rows: Vec<u64> = (0..60 + 40 * round)
                 .map(|_| (rng.next_u64() & 0x3ff) | (rng.next_u64() % 3) << 10)
                 .collect();
-            let f = eng.from_models(&vtree, &vars, &rows).unwrap();
+            let f = eng.from_models(&crate::vtree::Home::unchecked(&vtree), &vars, &rows).unwrap();
             assert_canonical(&f);
             // A few subtrees summed out, the root among them now and then.
             let mut targets: Vec<VtreeIdx> = (0..vtree.num_nodes() as u32)
@@ -253,8 +253,8 @@ fn a_marginalizing_conjunction_evaluates_as_the_plain_one() {
         let vtree = Arc::new(tree);
         for round in 0..10u64 {
             let draw = |rng: &mut Lcg| -> Vec<u64> { (0..30 + 20 * round).map(|_| rng.next_u64() & 0xff).collect() };
-            let g = eng.from_models(&vtree, &low, &draw(&mut rng)).unwrap();
-            let h = eng.from_models(&vtree, &high, &draw(&mut rng)).unwrap();
+            let g = eng.from_models(&crate::vtree::Home::unchecked(&vtree), &low, &draw(&mut rng)).unwrap();
+            let h = eng.from_models(&crate::vtree::Home::unchecked(&vtree), &high, &draw(&mut rng)).unwrap();
             let both = eng.and(g.clone(), h.clone()).unwrap();
             // One subtree summed during the product, or several.
             let inner: Vec<VtreeIdx> = (0..vtree.num_nodes() as u32).map(VtreeIdx).filter(|&t| t != vtree.root()).collect();
@@ -282,8 +282,8 @@ fn a_count_past_u128_is_valued_exactly() {
     let eng = Engine::new();
     let mut rng = Lcg::new(47);
     let vtree = Arc::new(Vtree::linear(140));
-    let f = eng.and(Tdd::clause(&vtree, [1]).unwrap(), Tdd::clause(&vtree, [2, 3]).unwrap()).unwrap();
-    let wide = eng.or(f.clone(), Tdd::clause(&vtree, [-1, -2]).unwrap()).unwrap();
+    let f = eng.and(Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1]).unwrap(), Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [2, 3]).unwrap()).unwrap();
+    let wide = eng.or(f.clone(), Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [-1, -2]).unwrap()).unwrap();
     let right = vtree.children(vtree.root()).1;
     let summed = summed_vars(&vtree, &[right]);
     assert_eq!(summed.len(), 139);

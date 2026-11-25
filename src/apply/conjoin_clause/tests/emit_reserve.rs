@@ -9,7 +9,7 @@ use num_bigint::BigUint;
 /// Fold a formula into a diagram over `vtree`, one clause at a time through
 /// `and_clause` — the rebuild path under test.
 fn fold_cnf(_eng: &Engine, vtree: &Arc<Vtree>, cnf: &[Vec<i32>]) -> Tdd {
-    let mut acc = Tdd::one(vtree);
+    let mut acc = Tdd::one(&crate::vtree::Home::unchecked(vtree));
     for clause in cnf {
         let literals: Vec<Literal> = clause.iter().map(|&l| l.try_into().unwrap()).collect();
         acc = acc.and_clause(&literals).unwrap();

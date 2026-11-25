@@ -25,7 +25,7 @@ fn copy_levels(eng: &Engine, vtree: &Arc<Vtree>, f: &Tdd) -> crate::diagram::Tdd
 fn a_weighted_leaf_requires_its_store() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(1).with_weights(Weights::new(RationalWeights::unit(1), Arithmetic::ExactRational)).unwrap());
-    let mut f = Tdd::clause(&vtree, [1]).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1]).unwrap();
     eng.marginalize_levels(&mut f, &[vtree.root()]).unwrap();
     crate::test_helpers::assert_canonical(&f);
     assert!(crate::diagram::builder::check_levels(&vtree, &f.levels, f.output(), None).is_err());
@@ -54,7 +54,7 @@ fn weighted_vtree() -> Arc<Vtree> {
 /// A weighted diagram, with the level under the root's left child summed out.
 fn weighted_with_a_marginal_level(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
     let (left, _) = vtree.children(vtree.root());
-    let mut f = Tdd::clause(vtree, [1, -2]).unwrap() & Tdd::clause(vtree, [2, 3]).unwrap();
+    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(vtree), [1, -2]).unwrap() & Tdd::clause(&crate::vtree::Home::unchecked(vtree), [2, 3]).unwrap();
     eng.marginalize_levels(&mut f, &[left]).unwrap();
     assert!(f.level(left).is_weight_marginal());
     f
@@ -95,7 +95,7 @@ fn subsumed_empty_columns_remain_valid_in_both_arithmetics() {
     ] {
         let eng = Engine::new();
         let vtree = Arc::new(Vtree::balanced(8).with_weights(Weights::new(RationalWeights::unit(8), arithmetic)).unwrap());
-        let mut f = Tdd::clause(&vtree, [1, 2]).unwrap();
+        let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap();
         eng.marginalize_levels(&mut f, &[vtree.root()]).unwrap();
         crate::test_helpers::assert_canonical(&f);
         assert!(
@@ -136,7 +136,7 @@ fn copied_pinned_leaf_columns_are_checked_in_both_arithmetics() {
                 .with_weights(Weights::new(RationalWeights::from_literals(&weights), arithmetic))
                 .unwrap(),
         );
-        let mut f = Tdd::clause(&tree, [1]).unwrap();
+        let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1]).unwrap();
         let leaf = tree.leaf_bottomup().next().unwrap().0;
         eng.marginalize_levels(&mut f, &[leaf]).unwrap();
         crate::test_helpers::assert_canonical(&f);
@@ -159,9 +159,9 @@ fn negation_preserves_weights_for_structural_and_constant_results() {
         );
         let eng = Engine::new();
         for f in [
-            Tdd::clause(&tree, [1]).unwrap(),
-            Tdd::zero(&tree),
-            Tdd::one(&tree),
+            Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1]).unwrap(),
+            Tdd::zero(&crate::vtree::Home::unchecked(&tree)),
+            Tdd::one(&crate::vtree::Home::unchecked(&tree)),
         ] {
             crate::test_helpers::assert_canonical(&f);
             let before = f
@@ -249,14 +249,14 @@ fn a_false_result_carries_no_column_into_a_later_conjunction() {
     let weights = Weights::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational);
     let vtree = Arc::new(Vtree::balanced(4).with_weights(weights).unwrap());
     let (t, _) = vtree.children(vtree.root());
-    let a = Tdd::clause(&vtree, [3]).unwrap();
-    let x12 = Tdd::clause(&vtree, [1]).unwrap() & Tdd::clause(&vtree, [2]).unwrap();
+    let a = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [3]).unwrap();
+    let x12 = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1]).unwrap() & Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [2]).unwrap();
     let g = eng.and_marginalizing(a.clone(), x12, &[t]).unwrap();
-    let z = eng.and(Tdd::zero(&vtree), g).unwrap();
+    let z = eng.and(Tdd::zero(&crate::vtree::Home::unchecked(&vtree)), g).unwrap();
     assert!(z.is_zero());
     let h = eng.or(z.clone(), a).unwrap();
     let top = eng.negate(&z).unwrap();
-    let mut k = Tdd::clause(&vtree, [1, 2]).unwrap();
+    let mut k = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap();
     eng.marginalize_levels(&mut k, &[t]).unwrap();
 
     let total = |l: &LiteralWeights<num_rational::BigRational>| &l.positive + &l.negative;

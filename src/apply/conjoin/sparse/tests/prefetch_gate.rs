@@ -43,8 +43,8 @@ fn a_walk_that_prefetches_returns_what_the_walk_without_returns() {
         ];
         for vtree in vtrees(&a, &b, &c) {
             for ((fv, fr), (gv, gr)) in &joins {
-                let f = eng.from_models(&vtree, fv, fr).unwrap();
-                let g = eng.from_models(&vtree, gv, gr).unwrap();
+                let f = eng.from_models(&crate::vtree::Home::unchecked(&vtree), fv, fr).unwrap();
+                let g = eng.from_models(&crate::vtree::Home::unchecked(&vtree), gv, gr).unwrap();
                 assert_canonical(&f);
                 assert_canonical(&g);
                 let (built, exists) = {
@@ -97,8 +97,8 @@ fn a_walk_that_prefetches_returns_what_the_walk_without_returns() {
         ];
         for vtree in &wide {
             for ((fv, fr), (gv, gr)) in &joins {
-                let f = eng.from_models(vtree, fv, fr).unwrap();
-                let g = eng.from_models(vtree, gv, gr).unwrap();
+                let f = eng.from_models(&crate::vtree::Home::unchecked(vtree), fv, fr).unwrap();
+                let g = eng.from_models(&crate::vtree::Home::unchecked(vtree), gv, gr).unwrap();
                 assert_canonical(&f);
                 assert_canonical(&g);
                 let expected = {

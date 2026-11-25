@@ -16,8 +16,8 @@ use crate::Engine;
 
 /// `f ∧ g` under `thresholds`.
 fn conjoin(eng: &Engine, vtree: &Arc<Vtree>, f: (&[VarId], &[u64]), g: (&[VarId], &[u64]), thresholds: SparseThresholds) -> Tdd {
-    let f = eng.from_models(vtree, f.0, f.1).unwrap();
-    let g = eng.from_models(vtree, g.0, g.1).unwrap();
+    let f = eng.from_models(&crate::vtree::Home::unchecked(vtree), f.0, f.1).unwrap();
+    let g = eng.from_models(&crate::vtree::Home::unchecked(vtree), g.0, g.1).unwrap();
     let _forced = ForcedThresholds::install(thresholds);
     eng.and(f, g).expect("an unarmed engine refuses nothing")
 }

@@ -16,14 +16,14 @@ Run `cargo run --example marginalization`. The probability section uses
 
 ## Build the two-server model
 
-A balanced four-variable vtree groups server A's options in its left subtree
-and server B's in its right subtree:
+A home on a balanced four-variable vtree groups server A's options in its
+left subtree and server B's in its right subtree:
 
 ```rust,ignore,{class=tested-example}
-use std::sync::Arc;
+use tididi::vtree::Home;
 use tididi::{Literal, OperationError, Tdd, Vtree};
 
-let vtree = Arc::new(Vtree::balanced(4));
+let vtree = Home::new(Vtree::balanced(4));
 let local_a = Literal::try_from(1)?;
 let remote_a = Literal::try_from(2)?;
 let local_b = Literal::try_from(3)?;
@@ -41,13 +41,13 @@ Original configurations: 9
 
 ## Replace one subtree with counts
 
-[`marginalize_levels`](crate::Tdd::marginalize_levels) takes vtree node indices.
-Select the left subtree and summarize it in a copy of the circuit:
+[`marginalize`](crate::Tdd::marginalize) takes the variables to sum out.
+Select server A's two options and summarize them in a copy of the circuit:
 
 ```rust,ignore,{class=tested-example}
-let (server_a, _) = vtree.children(vtree.root());
+let server_a = |v| v == local_a.var || v == remote_a.var;
 let mut counted = rules.clone();
-counted.marginalize_levels(&[server_a])?;
+counted.marginalize(server_a)?;
 println!("After summarizing server A: {}", counted.model_count()?);
 println!("Distinct server B choices: {}",
     rules.projected_model_count(&[local_b.var, remote_b.var])?);
@@ -97,9 +97,8 @@ storage. That query needs the original circuit, which still distinguishes them.
 
 For independent options that are each enabled with probability 1/2, either
 server has a backup with probability 3/4. The combined probability is 9/16.
-Build the rules again on a vtree of the same shape that carries those weights
-([`Vtree::with_weights`](crate::Vtree::with_weights)), and marginalize that
-copy:
+Build the rules again on a home of the same shape that carries those weights
+([`Home::weighted`](crate::vtree::Home::weighted)), and marginalize that copy:
 
 ```rust,ignore,{class=tested-example}
 use num_rational::BigRational;
@@ -109,11 +108,11 @@ let half = BigRational::new(1.into(), 2.into());
 let weights = RationalWeights::from_literals(&vec![
     LiteralWeights { negative: half.clone(), positive: half }; 4
 ]);
-let weighted_vtree = Arc::new(Vtree::balanced(4).with_weights(Weights::new(weights, Arithmetic::ExactRational))?);
+let weighted_vtree = Home::weighted(Vtree::balanced(4), Weights::new(weights, Arithmetic::ExactRational))?;
 let mut weighted = Tdd::clause(&weighted_vtree, [local_a, remote_a])?
     & Tdd::clause(&weighted_vtree, [local_b, remote_b])?;
 println!("Probability before: {}", weighted.weighted_value()?.unwrap().into_rational());
-weighted.marginalize_levels(&[server_a])?;
+weighted.marginalize(server_a)?;
 println!("Probability after: {}", weighted.weighted_value()?.unwrap().into_rational());
 ```
 

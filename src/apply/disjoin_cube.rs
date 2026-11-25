@@ -374,11 +374,11 @@ fn disjoin_cube<L: crate::LiteralInput>(eng: &Engine, f: Tdd, lits: &[L]) -> Res
     // The empty cube is true, and `⊥ ∨ M` is the cube itself: both are the
     // cube built on its own, with the accumulator's marginal values.
     if cube.is_empty() || f.is_zero() {
-        return eng.cube(&vtree, literals());
+        return eng.cube_on(&vtree, literals());
     }
     let root = vtree.root();
     if f.output.vtree != root || vtree.node(root).is_leaf() {
-        let g = eng.cube(&vtree, literals())?;
+        let g = eng.cube_on(&vtree, literals())?;
         return eng.or(f, g);
     }
     f.require_structure()?;

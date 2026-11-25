@@ -10,7 +10,7 @@ fn outputs_below_the_root_are_compared_by_their_keys() {
     let clauses = [[1, 2, 3], [-1, 4, 5], [2, -3, 6], [-4, -5, 1], [3, -6, -2], [-1, -2, 4]];
     let vtree = Arc::new(Vtree::balanced(6));
     let mut f = clauses.iter().fold(constant_one(&Engine::new(), &vtree), |f, clause| {
-        apply_and(f, Tdd::clause(&vtree, *clause).unwrap())
+        apply_and(f, Tdd::clause(&crate::vtree::Home::unchecked(&vtree), *clause).unwrap())
     });
     f.minimize().unwrap();
     let below = vtree.children(vtree.root()).0;

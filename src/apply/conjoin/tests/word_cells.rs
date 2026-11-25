@@ -238,7 +238,7 @@ fn the_streamed_levels_read_by_vectors_fold_what_the_row_loop_folds() {
                 let mut operand = || {
                     let models: Vec<u64> =
                         (0..1u64 << n).filter(|_| rng.below(one_in) == 0).collect();
-                    Tdd::from_models(&vtree, &vars, &models).unwrap()
+                    Tdd::from_models(&crate::vtree::Home::unchecked(&vtree), &vars, &models).unwrap()
                 };
                 let (f, g) = (operand(), operand());
                 operands.push((
@@ -346,7 +346,7 @@ fn a_refused_column_table_builds_the_same_levels() {
     for (name, vtree) in bare_roots(vtree_shapes(n)).into_iter().take(2) {
         let mut operand = || {
             let models: Vec<u64> = (0..1u64 << n).filter(|_| rng.below(2) == 0).collect();
-            Tdd::from_models(&vtree, &vars, &models).unwrap()
+            Tdd::from_models(&crate::vtree::Home::unchecked(&vtree), &vars, &models).unwrap()
         };
         let (f, g) = (operand(), operand());
         let targets: Vec<VtreeIdx> = vtree.bottomup().filter(|&v| !vtree.node(v).is_leaf()).collect();

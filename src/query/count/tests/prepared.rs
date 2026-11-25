@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 fn table(tree: &Arc<Vtree>, vars: &[VarId]) -> (Tdd, Vec<u64>) {
     let rows: Vec<_> = (0..8192u64).map(|i| (i * 40503) & 65535).collect();
-    let f = Tdd::from_models(tree, vars, &rows).unwrap();
+    let f = Tdd::from_models(&crate::vtree::Home::unchecked(tree), vars, &rows).unwrap();
     assert_canonical(&f);
     (f, rows)
 }
@@ -165,7 +165,7 @@ fn marginal_implicit_and_constant_levels_keep_their_readers() {
         assert_eq!(c.model_count().unwrap(), oracle.model_count().unwrap());
     }
     assert!(matches!(c.set_pin(VarId(1), None), Err(OperationError::MarginalLevel(_))));
-    for f in [Tdd::one(&tree), Tdd::zero(&tree)] {
+    for f in [Tdd::one(&crate::vtree::Home::unchecked(&tree)), Tdd::zero(&crate::vtree::Home::unchecked(&tree))] {
         assert_canonical(&f);
         let eng = Engine::new();
         let plan = Prepared::new(&eng, &f).unwrap();
