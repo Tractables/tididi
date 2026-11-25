@@ -18,11 +18,11 @@ use super::{IoError, TDD_FORMAT_VERSION};
 /// [`Tdd::minimize`](crate::Tdd::minimize) certifies it.
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{Tdd, Vtree};
 /// use tididi::io::{load_tdd, save_tdd};
 ///
-/// let vtree = Arc::new(Vtree::balanced(3));
+/// let vtree = Home::new(Vtree::balanced(3));
 /// let f = Tdd::clause(&vtree, [1, -2])?;
 /// let path = std::env::temp_dir().join("tididi-doc-load.tdd");
 /// save_tdd(&f, &path)?;
@@ -83,11 +83,11 @@ pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoErr
 /// Read from an in-memory buffer:
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{Tdd, Vtree};
 /// use tididi::io::{read_tdd, write_tdd};
 ///
-/// let vtree = Arc::new(Vtree::balanced(3));
+/// let vtree = Home::new(Vtree::balanced(3));
 /// let f = Tdd::clause(&vtree, [1, -2])?;
 /// let mut bytes = Vec::new();
 /// write_tdd(&mut bytes, &f)?;
@@ -101,11 +101,11 @@ pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoErr
 /// Malformed input reports a format error:
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::Vtree;
 /// use tididi::io::{read_tdd, IoError};
 ///
-/// let vtree = Arc::new(Vtree::balanced(3));
+/// let vtree = Home::new(Vtree::balanced(3));
 /// let result = read_tdd(&mut b"not a diagram".as_slice(), &vtree);
 /// assert!(matches!(result, Err(IoError::Format(_))));
 /// ```

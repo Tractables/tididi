@@ -16,7 +16,7 @@
 //! belongs to the driver's own tests.
 
 use crate::Engine;
-use std::sync::Arc;
+use crate::vtree::Home;
 
 use crate::test_helpers::clause_to_tdd;
 use crate::io::tdd_to_dot;
@@ -35,7 +35,7 @@ use crate::vtree::{VarId, Vtree};
 /// `Tdd::has_marginal_level()` holds.
 fn tdd_with_a_marginal_level() -> Tdd {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = std::sync::Arc::new(Vtree::balanced(4));
     let mut tdd =
         compile_clauses_on(&eng, &vtree, &[vec![1, 2], vec![-2, 3], vec![3, 4]]);
 
@@ -87,7 +87,7 @@ fn save_tdd_refuses_a_marginal_diagram_without_creating_the_file() {
 /// Saved bytes contain exactly the records accepted by the reader.
 #[test]
 fn a_saved_diagram_reads_back_without_a_tail_of_padding() {
-    let vtree = Arc::new(crate::vtree::Vtree::balanced(8));
+    let vtree = Home::new(crate::vtree::Vtree::balanced(8));
     let mut tdd = compile_clauses_on(&Engine::new(), &vtree, &[vec![1, -2], vec![2, 3]]);
     tdd.minimize().unwrap();
 
@@ -114,7 +114,7 @@ fn tdd_to_dot_refuses_a_marginal_diagram() {
 
 #[test]
 fn the_writers_still_accept_an_explicit_diagram() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = (Tdd::clause(&vtree, [1]).unwrap() & Tdd::clause(&vtree, [2]).unwrap()) | Tdd::clause(&vtree, [3]).unwrap();
     assert!(!f.has_marginal_level(), "setup: no level may be marginal");
     assert_canonical(&f);
@@ -164,7 +164,7 @@ fn read_back() -> Vec<Tdd> {
     for &seed in &[0x5eed_0001u64, 0x5eed_0002, 0x5eed_0003] {
         let mut rng = Lcg::new(seed);
         for &nvars in &[2u32, 3, 4, 5] {
-            let vtree = Arc::new(Vtree::balanced(nvars));
+            let vtree = Home::new(Vtree::balanced(nvars));
             for _ in 0..10 {
                 let mut f = constant_one(&eng, &vtree);
                 for clause in rand_cnf(&mut rng, nvars, CnfShape { clauses: 4, width: 3 }) {
@@ -185,7 +185,7 @@ fn read_back() -> Vec<Tdd> {
         }
     }
 
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let zero = Tdd::zero(&vtree);
     assert!(round_trip(&zero).is_zero(), "the ZERO token must read back as the zero diagram");
     let one = constant_one(&eng, &vtree);
@@ -205,7 +205,7 @@ fn the_reader_refuses_what_is_not_this_diagram() {
     use super::read_tdd;
 
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = apply_and(
         constant_one(&eng, &vtree),
         clause_to_tdd(&vtree, &[Literal::pos(VarId(1)), Literal::neg(VarId(2))]),
@@ -213,9 +213,13 @@ fn the_reader_refuses_what_is_not_this_diagram() {
     let mut bytes: Vec<u8> = Vec::new();
     write_tdd(&mut bytes, &f).expect("an explicit diagram writes");
 
-    let wider = Arc::new(Vtree::balanced(4));
+    // The file names x1 and x2, and a home of balanced(4) projects onto the
+    // same tree; one that orders x2 first does not.
+    let wider = read_tdd(&mut bytes.as_slice(), &Home::new(Vtree::balanced(4))).unwrap();
+    assert_eq!(write_tdd_string(&wider), String::from_utf8(bytes.clone()).unwrap());
+    let other = Home::new(Vtree::balanced_over(&[VarId(2), VarId(1), VarId(3), VarId(4)]).unwrap());
     assert!(
-        matches!(read_tdd(&mut bytes.as_slice(), &wider), Err(IoError::Format(_))),
+        matches!(read_tdd(&mut bytes.as_slice(), &other), Err(IoError::Format(_))),
         "a file written over another vtree must be refused, not silently reinterpreted"
     );
 
@@ -240,7 +244,7 @@ fn a_problem_line_without_a_version_is_refused_as_predating_the_version() {
     use crate::io::IoError;
     use super::read_tdd;
 
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let unversioned = "p tdd 3 5 4 0\n";
     let Err(IoError::Format(msg)) = read_tdd(&mut unversioned.as_bytes(), &vtree) else {
         panic!("a file with no format version must be refused");
@@ -259,7 +263,7 @@ fn a_file_from_a_later_version_is_refused_naming_both_versions() {
     use crate::io::IoError;
     use super::read_tdd;
 
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let newer = "p tdd 2 3 5 4 0\n";
     let Err(IoError::Format(msg)) = read_tdd(&mut newer.as_bytes(), &vtree) else {
         panic!("a file from a later format version must be refused");
@@ -285,7 +289,7 @@ fn an_unknown_comment_is_ignored_and_an_unknown_record_is_refused() {
     use crate::io::IoError;
     use super::read_tdd;
 
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = crate::test_helpers::compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3]]);
     let text = write_tdd_string(&f);
 
@@ -305,7 +309,7 @@ fn an_unknown_comment_is_ignored_and_an_unknown_record_is_refused() {
 /// naming the variable count, then the vtree leaves and the internal nodes.
 #[test]
 fn the_text_format_carries_a_header_leaves_and_internal_nodes() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let tdd = crate::test_helpers::compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3]]);
     assert_canonical(&tdd);
     let text = write_tdd_string(&tdd);
@@ -328,7 +332,7 @@ fn the_text_format_carries_a_header_leaves_and_internal_nodes() {
 /// constant and stops there.
 #[test]
 fn the_text_format_names_the_zero_constant_and_emits_no_nodes() {
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = Home::new(Vtree::balanced(2));
     let tdd = crate::test_helpers::compile_clauses(&vtree, &[vec![1], vec![-1], vec![2]]);
     assert_canonical(&tdd);
     let text = write_tdd_string(&tdd);
@@ -339,8 +343,8 @@ fn the_text_format_names_the_zero_constant_and_emits_no_nodes() {
 
 #[test]
 fn saving_a_shorter_diagram_replaces_all_previous_contents() {
-    let tree = Arc::new(Vtree::balanced(8));
-    let one = Tdd::one(&tree);
+    let tree = Home::new(Vtree::balanced(8));
+    let one = Tdd::clause(&tree, 1..=8).unwrap();
     let zero = Tdd::zero(&tree);
     assert_canonical(&one);
     assert_canonical(&zero);
@@ -371,7 +375,7 @@ fn stream_writing_propagates_partial_write_failures() {
         }
         fn flush(&mut self) -> std::io::Result<()> { panic!("write_tdd must not flush its caller's writer") }
     }
-    let tree = Arc::new(Vtree::balanced(8));
+    let tree = Home::new(Vtree::balanced(8));
     let f = Tdd::one(&tree);
     assert_canonical(&f);
     let mut expected = Vec::new();
