@@ -38,7 +38,7 @@ fn text(f: &Tdd) -> Vec<u8> {
 
 /// A file the reader refuses with a format error, not a panic.
 fn refused(bytes: &[u8], vtree: &Arc<Vtree>, what: &str) {
-    match read_tdd_binary(&mut &bytes[..], vtree) {
+    match read_tdd_binary(&mut &bytes[..], &crate::vtree::Home::new(std::sync::Arc::clone(vtree))) {
         Err(IoError::Format(message)) => assert!(!message.is_empty()),
         other => panic!("{what}: expected a format error, got {other:?}"),
     }
@@ -72,8 +72,8 @@ fn assert_same_levels(a: &Tdd, b: &Tdd, what: &str) {
 fn round_trip(f: &Tdd, what: &str) {
     let vtree = f.vtree();
     let bytes = binary(f);
-    let back = read_tdd_binary(&mut bytes.as_slice(), vtree).unwrap();
-    let from_text = read_tdd(&mut text(f).as_slice(), vtree).unwrap();
+    let back = read_tdd_binary(&mut bytes.as_slice(), &crate::vtree::Home::new(std::sync::Arc::clone(vtree))).unwrap();
+    let from_text = read_tdd(&mut text(f).as_slice(), &crate::vtree::Home::new(std::sync::Arc::clone(vtree))).unwrap();
     match vtree.home() {
         Some(home) => assert!(back.vtree().is_on(&home)),
         None => assert!(Arc::ptr_eq(back.vtree(), vtree)),

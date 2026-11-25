@@ -15,24 +15,24 @@ use crate::vtree::{Home, Vtree};
 /// [`crate::io::read_tdd`], and for a file it reads over a root vtree, the
 /// same file read onto a home of a copy of that vtree: trimmed, and the same
 /// function. Every file these tests read takes both paths.
-pub(super) fn read_tdd<R: BufRead>(r: &mut R, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
+pub(super) fn read_tdd<R: BufRead>(r: &mut R, vtree: &crate::vtree::Home) -> Result<Tdd, IoError> {
     let mut bytes = Vec::new();
     r.read_to_end(&mut bytes)?;
-    let read = crate::io::read_tdd(&mut bytes.as_slice(), &crate::vtree::Home::unchecked(vtree));
+    let read = crate::io::read_tdd(&mut bytes.as_slice(), vtree);
     if let Ok(f) = &read {
-        also_on_home(f, vtree, |home| crate::io::read_tdd(&mut bytes.as_slice(), &crate::vtree::Home::unchecked(home)));
+        also_on_home(f, vtree, |home| crate::io::read_tdd(&mut bytes.as_slice(), &crate::vtree::Home::new(std::sync::Arc::clone(home))));
     }
     read
 }
 
 /// [`crate::io::read_tdd_binary`], with the check of [`read_tdd`] on the
 /// bytes the read took.
-pub(super) fn read_tdd_binary<R: Read>(r: &mut R, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
+pub(super) fn read_tdd_binary<R: Read>(r: &mut R, vtree: &crate::vtree::Home) -> Result<Tdd, IoError> {
     let mut tee = Tee { inner: r, seen: Vec::new() };
-    let read = crate::io::read_tdd_binary(&mut tee, &crate::vtree::Home::unchecked(vtree));
+    let read = crate::io::read_tdd_binary(&mut tee, vtree);
     if let Ok(f) = &read {
         let bytes = tee.seen;
-        also_on_home(f, vtree, |home| crate::io::read_tdd_binary(&mut bytes.as_slice(), &crate::vtree::Home::unchecked(home)));
+        also_on_home(f, vtree, |home| crate::io::read_tdd_binary(&mut bytes.as_slice(), &crate::vtree::Home::new(std::sync::Arc::clone(home))));
     }
     read
 }
@@ -50,7 +50,7 @@ impl<R: Read> Read for Tee<'_, R> {
     }
 }
 
-fn also_on_home(f: &Tdd, vtree: &Arc<Vtree>, read: impl Fn(&Arc<Vtree>) -> Result<Tdd, IoError>) {
+fn also_on_home(f: &Tdd, vtree: &crate::vtree::Home, read: impl Fn(&Arc<Vtree>) -> Result<Tdd, IoError>) {
     if vtree.home().is_some() || vtree.num_nodes() == 0 {
         return;
     }

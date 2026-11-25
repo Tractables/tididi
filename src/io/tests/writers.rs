@@ -158,7 +158,7 @@ fn read_back() -> Vec<Tdd> {
     let round_trip = |f: &Tdd| -> Tdd {
         let mut bytes: Vec<u8> = Vec::new();
         write_tdd(&mut bytes, f).expect("an explicit diagram writes");
-        read_tdd(&mut bytes.as_slice(), &f.vtree).expect("what the writer emits, the reader reads")
+        read_tdd(&mut bytes.as_slice(), &crate::vtree::Home::new(std::sync::Arc::clone(&f.vtree))).expect("what the writer emits, the reader reads")
     };
 
     for &seed in &[0x5eed_0001u64, 0x5eed_0002, 0x5eed_0003] {

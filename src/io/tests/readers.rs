@@ -23,14 +23,14 @@ fn fixture() -> (Home, Tdd, String) {
 
 /// A malformed record reports its line through the format error.
 fn refused(text: &str, tree: &Arc<Vtree>) {
-    match read_tdd(&mut text.as_bytes(), tree) {
+    match read_tdd(&mut text.as_bytes(), &crate::vtree::Home::new(std::sync::Arc::clone(tree))) {
         Err(IoError::Format(message)) => assert!(!message.is_empty()),
         other => panic!("expected a format error for {text:?}, got {other:?}"),
     }
 }
 
 fn assert_loads_equivalent(text: &str, vtree: &Arc<Vtree>, expected: &Tdd) {
-    let loaded = read_tdd(&mut text.as_bytes(), vtree).unwrap();
+    let loaded = read_tdd(&mut text.as_bytes(), &crate::vtree::Home::new(std::sync::Arc::clone(vtree))).unwrap();
     assert_canonical(&loaded);
     assert_canonical(expected);
     assert!(loaded.equivalent(expected).unwrap());
