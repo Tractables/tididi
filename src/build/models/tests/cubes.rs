@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use std::sync::Arc;
 
 use crate::diagram::Tdd;
@@ -95,7 +96,7 @@ fn random_vars(rng: &mut Lcg, total: u32, n: usize) -> Vec<VarId> {
 
 #[test]
 fn no_cubes_is_false_and_no_variables_is_true() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let none = Tdd::from_cubes(&vtree, &[VarId(1), VarId(2)], &[]).unwrap();
     assert!(none.is_zero());
     let all = Tdd::from_cubes(&vtree, &[], &[0, 0]).unwrap();
@@ -105,7 +106,7 @@ fn no_cubes_is_false_and_no_variables_is_true() {
 
 #[test]
 fn a_ragged_cube_buffer_and_a_bad_variable_are_refused() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     assert_eq!(
         Tdd::from_cubes(&vtree, &[VarId(1)], &[0, 0, 0]).unwrap_err(),
         OperationError::RaggedRows { words: 3, per_row: 2 },
@@ -134,7 +135,7 @@ fn a_cube_free_everywhere_is_true_and_fixed_everywhere_is_a_row() {
 
 #[test]
 fn value_bits_under_a_free_variable_and_past_the_last_are_ignored() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let vars = [VarId(1), VarId(2), VarId(3)];
     let clean = Tdd::from_cubes(&vtree, &vars, &[0b001, 0b101, 0b000, 0b010]).unwrap();
     let noisy = Tdd::from_cubes(&vtree, &vars, &[!0b100, 0b101 | !0b111, 0b101, 0b010, 0b000, 0b010]).unwrap();
@@ -158,7 +159,7 @@ fn random_cubes_build_what_their_assignments_build() {
             let again = cubes[0].clone();
             cubes.push(again);
         }
-        let vtree = Arc::new(Vtree::random(total, 0x70 + case));
+        let vtree = Home::new(Vtree::random(total, 0x70 + case));
         check(&vtree, &vars, &cubes, &format!("case {case}: {cubes:?}"));
     }
 }
@@ -207,10 +208,10 @@ fn products_of_aligned_intervals_build_what_their_assignments_build() {
         let vars = random_vars(&mut rng, total, bits + rank_bits);
         let n = 1 + rng.below(20) as usize;
         let cubes = block_cubes(&mut rng, bits, rank_bits, n, 7);
-        let vtree = Arc::new(Vtree::random(total, 0xb00 + case));
+        let vtree = Home::new(Vtree::random(total, 0xb00 + case));
         check(&vtree, &vars, &cubes, &format!("case {case}"));
         // Blocks laid out as the vtree's leaves, most significant first.
-        let ordered = Arc::new(Vtree::balanced(total));
+        let ordered = Home::new(Vtree::balanced(total));
         let in_order: Vec<VarId> = (1..=(bits + rank_bits) as u32).map(VarId).collect();
         check(&ordered, &in_order, &cubes, &format!("case {case}, blocks in leaf order"));
     }
@@ -230,7 +231,7 @@ fn cubes_wider_than_a_word_read_every_word() {
         let mut twin = cubes[0].clone();
         twin.1[width - 1] = false;
         cubes.push(twin);
-        let vtree = Arc::new(Vtree::random(total, 0x700 + case));
+        let vtree = Home::new(Vtree::random(total, 0x700 + case));
         check(&vtree, &vars, &cubes, &format!("case {case}"));
     }
 }
@@ -246,12 +247,12 @@ fn thousands_of_cubes_sort_through_the_radix_passes() {
         let vars = random_vars(&mut rng, total, width);
         let cubes: Vec<Cube> = (0..n).map(|_| random_cube(&mut rng, width, 230, 3)).collect();
         for seed in 0..3 {
-            let vtree = Arc::new(Vtree::random(total, 0x5eed + 16 * case as u64 + seed));
+            let vtree = Home::new(Vtree::random(total, 0x5eed + 16 * case as u64 + seed));
             check(&vtree, &vars, &cubes, &format!("width {width}, seed {seed}"));
         }
         let rows = block_cubes(&mut rng, width / 2, width - width / 2, n, 3);
         let in_order: Vec<VarId> = (1..=width as u32).map(VarId).collect();
-        check(&Arc::new(Vtree::balanced(total)), &in_order, &rows, &format!("width {width}, blocks"));
+        check(&Home::new(Vtree::balanced(total)), &in_order, &rows, &format!("width {width}, blocks"));
     }
 }
 
@@ -259,7 +260,7 @@ fn thousands_of_cubes_sort_through_the_radix_passes() {
 fn every_refusal_point_answers_over_budget_and_returns_the_buffers() {
     use crate::limits::LimitConfig;
     use crate::Engine;
-    let vtree = Arc::new(Vtree::balanced(8));
+    let vtree = Home::new(Vtree::balanced(8));
     let vars: Vec<VarId> = (1..=8).map(VarId).collect();
     let mut rng = Lcg::new(7);
     let cubes: Vec<Cube> = (0..30).map(|_| random_cube(&mut rng, 8, 180, 4)).collect();
@@ -307,7 +308,7 @@ fn cube_lists_past_the_list_cap_are_refused() {
         let n = 8 + rng.below(40) as usize;
         let cubes: Vec<Cube> = (0..n).map(|_| random_cube(&mut rng, width, 160, 4)).collect();
         let packed = packed_cubes(width, &cubes);
-        let vtree = Arc::new(Vtree::random(total, 0x11 + case));
+        let vtree = Home::new(Vtree::random(total, 0x11 + case));
         let eng = Engine::new();
         let want = eng.from_cubes(&vtree, &vars, &packed).unwrap();
         let (got, k) = eng

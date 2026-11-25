@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use std::sync::Arc;
 
 use super::*;
@@ -163,7 +164,7 @@ fn columns_in_leaf_order_shift_into_place_and_sorted_rows_are_only_checked() {
 
 #[test]
 fn no_rows_is_false_and_no_columns_is_true() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let column: &[VarId] = &[VarId(1), VarId(2)];
     for (cols, codes, rows) in [
         (
@@ -186,7 +187,7 @@ fn no_rows_is_false_and_no_columns_is_true() {
 
 #[test]
 fn ragged_columns_unknown_rows_and_bad_variables_are_refused() {
-    let vtree = Arc::new(Vtree::balanced(40));
+    let vtree = Home::new(Vtree::balanced(40));
     let (a, b): (&[VarId], &[VarId]) = (&[VarId(1), VarId(2)], &[VarId(3)]);
     let err = |columns: &[&[VarId]], codes: &[&[u32]], rows| {
         Tdd::from_columns(&vtree, columns, codes, rows).unwrap_err()

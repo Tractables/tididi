@@ -1,3 +1,4 @@
+use crate::vtree::Home;
 use std::sync::Arc;
 
 /// A bottom-up construction of the same diagrams, which the root-down one is
@@ -115,7 +116,7 @@ fn distinct(table: &[Vec<bool>]) -> usize {
 
 #[test]
 fn no_rows_is_false_and_no_variables_is_true() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let none = Tdd::from_models(&vtree, &vars(2), &[]).unwrap();
     assert!(none.is_zero());
     assert_canonical(&none);
@@ -131,7 +132,7 @@ fn no_rows_is_false_and_no_variables_is_true() {
 
 #[test]
 fn bits_past_the_last_variable_and_repeated_rows_are_ignored() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let clean = Tdd::from_models(&vtree, &vars(3), &[0b101, 0b010]).unwrap();
     let noisy = Tdd::from_models(&vtree, &vars(3), &[!0b010u64, 0b010, 0b101, 0b010]).unwrap();
     assert_canonical(&clean);
@@ -142,7 +143,7 @@ fn bits_past_the_last_variable_and_repeated_rows_are_ignored() {
 
 #[test]
 fn a_ragged_row_buffer_is_refused() {
-    let vtree = Arc::new(Vtree::balanced(70));
+    let vtree = Home::new(Vtree::balanced(70));
     assert!(matches!(
         Tdd::from_models(&vtree, &vars(70), &[0, 0, 0]),
         Err(OperationError::RaggedRows { words: 3, per_row: 2 })
@@ -151,7 +152,7 @@ fn a_ragged_row_buffer_is_refused() {
 
 #[test]
 fn an_unknown_or_repeated_variable_is_refused() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     assert_eq!(
         Tdd::from_models(&vtree, &[VarId(1), VarId(9)], &[0]).unwrap_err(),
         OperationError::VariableNotInVtree(VarId(9)),
@@ -227,7 +228,7 @@ fn small_relations_match_an_or_of_cubes_and_the_enumerated_count() {
 fn a_relation_wider_than_one_word_reads_both_words() {
     // Seventy constrained variables scattered through a hundred-leaf vtree, so
     // a row spans two words and the leaf order is not the input order.
-    let vtree = Arc::new(Vtree::balanced(100));
+    let vtree = Home::new(Vtree::balanced(100));
     let constrained: Vec<VarId> = (1..=70).map(|i| VarId(i * 100 / 70)).collect();
     let mut rng = Lcg::new(7);
     let table: Vec<Vec<bool>> =
@@ -397,7 +398,7 @@ fn leaf_partitions_match_every_small_relation() {
 fn leaf_independence_checks_the_complete_external_assignment() {
     // A shifted two-word encoding moves the toggled bit across word edges;
     // equal counts of zeros and ones alone do not imply equal completions.
-    let vtree = Arc::new(Vtree::balanced(128));
+    let vtree = Home::new(Vtree::balanced(128));
     for bit in [0usize, 31, 63, 64, 65, 70] {
         let mut rng = Lcg::new(317);
         for correlated in [false, true] {
@@ -421,7 +422,7 @@ fn leaf_independence_checks_the_complete_external_assignment() {
 
 #[test]
 fn a_closed_subtree_merges_duplicate_child_pairs_below_free_ancestors() {
-    let vtree = Arc::new(Vtree::balanced(16));
+    let vtree = Home::new(Vtree::balanced(16));
     // The constrained columns occupy a proper subtree. Cartesian blocks
     // repeat child-atom pairs, while correlations keep other atoms separate.
     for constrained in [vec![VarId(1), VarId(2), VarId(3), VarId(4)],
@@ -461,7 +462,7 @@ fn unique_and_shared_completions_match_cube_construction() {
 
 #[test]
 fn a_tiny_budget_refuses_without_leaving_a_diagram() {
-    let vtree = Arc::new(Vtree::linear(12));
+    let vtree = Home::new(Vtree::linear(12));
     let mut rng = Lcg::new(3);
     let table: Vec<Vec<bool>> =
         (0..200).map(|_| (0..12).map(|_| rng.coin()).collect()).collect();
@@ -481,7 +482,7 @@ fn a_tiny_budget_refuses_without_leaving_a_diagram() {
 
 #[test]
 fn every_refusal_point_answers_over_budget_and_returns_the_buffers() {
-    let vtree = Arc::new(Vtree::balanced(6));
+    let vtree = Home::new(Vtree::balanced(6));
     let table: Vec<Vec<bool>> = (0..20u32)
         .map(|code| (0..6).map(|i| ((code * 7) >> i) & 1 == 1).collect())
         .collect();
@@ -597,7 +598,7 @@ fn many_rows_of_several_words_build_as_their_distinct_rows_do() {
     // sort's; the distinct rows alone stay under both.
     let mut rng = Lcg::new(0x5ab1e);
     for width in [70u32, 150, 230] {
-        let vtree = Arc::new(Vtree::balanced(width));
+        let vtree = Home::new(Vtree::balanced(width));
         let ids = shuffled_vars(&mut rng, width);
         let table: Vec<Vec<bool>> = (0..700).map(|_| (0..width).map(|_| rng.coin()).collect()).collect();
         let mut repeated: Vec<Vec<bool>> = table.iter().chain(&table).chain(&table).cloned().collect();

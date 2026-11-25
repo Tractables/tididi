@@ -77,11 +77,11 @@ impl Tdd {
     /// The result is certified ([`is_canonical`](Self::is_canonical)).
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
     /// use tididi::vtree::VarId;
     ///
-    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let vtree = Home::new(Vtree::balanced(4));
     /// let vars = [VarId(1), VarId(2), VarId(3), VarId(4)];
     /// // Values below 8 with bit 3 clear, and the value 13 (bits 0, 2, 3).
     /// let cubes = [0b0000, 0b1000, 0b1101, 0b1111];

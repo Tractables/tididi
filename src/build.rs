@@ -159,9 +159,9 @@ pub(crate) fn seat_canonical(eng: &Engine, vtree: &Arc<Vtree>, levels: Vec<TddLe
 /// [`OperationError::OverBudget`] if an allocation is refused.
 ///
 /// ```
-/// use std::sync::Arc;
+/// use tididi::vtree::Home;
 /// use tididi::{and, literal, Vtree};
-/// let vtree = Arc::new(Vtree::balanced(3));
+/// let vtree = Home::new(Vtree::balanced(3));
 /// let f = and(literal(&vtree, 1)?, literal(&vtree, -2)?)?;
 /// assert_eq!(u64::try_from(f.model_count()?)?, 2);
 /// # tididi::test_helpers::assert_canonical(&f);
@@ -190,9 +190,9 @@ impl Tdd {
     /// [`OperationError::OverBudget`] if an allocation is refused.
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let f = Tdd::cube(&vtree, [1, -2])?;
     /// assert_eq!(f.model_count()?, 2u32.into());
     /// # tididi::test_helpers::assert_canonical(&f);
@@ -213,10 +213,10 @@ impl Tdd {
     /// The result is certified ([`is_canonical`](Self::is_canonical)).
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// use tididi::vtree::Home;
     /// use tididi::{Tdd, Vtree};
     ///
-    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Home::new(Vtree::balanced(3));
     /// let all = Tdd::one(&vtree);
     /// let none = Tdd::zero(&vtree);
     /// assert_eq!(all.model_count()?, 8u32.into());

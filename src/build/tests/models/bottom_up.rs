@@ -2,6 +2,7 @@
 //! grouping the rows by their completions at each level, and the tests that
 //! hold the root-down construction to the storage it produces.
 
+use crate::vtree::Home;
 use std::hash::Hasher;
 use std::sync::Arc;
 
@@ -52,12 +53,11 @@ pub(super) fn from_models_bottom_up(
     let output = fill(eng, &mut assembly, vtree, &layout, &sorted, w, m)?;
     // The levels are canonical as built: seat them with nothing to reduce.
     let levels = assembly.levels_mut();
-    Ok(crate::build::seat_canonical(
-        eng,
-        vtree,
-        std::mem::take(levels),
-        output,
-    ))
+    let mut tdd = crate::build::seat_canonical(eng, vtree, std::mem::take(levels), output);
+    if let Some(home) = vtree.home() {
+        eng.trim(&mut tdd, &home)?;
+    }
+    Ok(tdd)
 }
 
 /// Which atom of a finished vtree node each row belongs to.
@@ -778,17 +778,17 @@ fn store_level(
 }
 
 /// Fixed and random vtree shapes over `n` variables.
-fn vtrees(n: u32, rng: &mut Lcg) -> Vec<(String, Arc<Vtree>)> {
+fn vtrees(n: u32, rng: &mut Lcg) -> Vec<(String, Home)> {
     let mut out = vec![
-        ("balanced".to_string(), Arc::new(Vtree::balanced(n))),
-        ("linear".to_string(), Arc::new(Vtree::linear(n))),
+        ("balanced".to_string(), Home::new(Vtree::balanced(n))),
+        ("linear".to_string(), Home::new(Vtree::linear(n))),
     ];
     if n >= 2 {
-        out.push(("reverse".to_string(), Arc::new(Vtree::reverse_linear(n))));
+        out.push(("reverse".to_string(), Home::new(Vtree::reverse_linear(n))));
     }
     for _ in 0..3 {
         let seed = rng.next_u64() % 1000;
-        out.push((format!("random({seed})"), Arc::new(Vtree::random(n, seed))));
+        out.push((format!("random({seed})"), Home::new(Vtree::random(n, seed))));
     }
     let mut order: Vec<VarId> = (1..=n).map(VarId).collect();
     for i in (1..order.len()).rev() {
@@ -797,7 +797,7 @@ fn vtrees(n: u32, rng: &mut Lcg) -> Vec<(String, Arc<Vtree>)> {
     }
     out.push((
         "shuffled linear".to_string(),
-        Arc::new(Vtree::linear_from_order(&order).unwrap()),
+        Home::new(Vtree::linear_from_order(&order).unwrap()),
     ));
     out
 }
