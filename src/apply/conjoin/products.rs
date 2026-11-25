@@ -433,11 +433,12 @@ impl Products {
         }
     }
 
-    /// Child level `c`'s products listed by `f`'s node there, `f` of
-    /// `width` nodes: those of node `x` are `entries[2 * k]`, the `g` node or
-    /// 0 for a `pinned` one, and `entries[2 * k + 1]`, the product, for `k`
-    /// from `offsets[x]` to `offsets[x + 1]`, in list order; only those of
-    /// the first `rows` `g` nodes, or of the pinned one. False, with neither
+    /// Child level `c`'s products listed by the carrier's node there, `f`'s
+    /// where `carrier_f` and else `g`'s, the carrier of `width` nodes: those
+    /// of node `x` are `entries[2 * k]`, the other operand's node or 0 for a
+    /// `pinned` one, and `entries[2 * k + 1]`, the product, for `k` from
+    /// `offsets[x]` to `offsets[x + 1]`, in list order; only those of the
+    /// other operand's first `rows` nodes, or of the pinned one. False, with neither
     /// written, where over a quarter of those cells have a product: there
     /// reading each cell costs less than gathering and sorting products.
     ///
@@ -448,22 +449,24 @@ impl Products {
         &self,
         eng: &Engine,
         c: usize,
+        carrier_f: bool,
         (pinned, rows): (Option<u32>, usize),
         width: usize,
-        offsets: &mut Vec<u32>,
-        entries: &mut Vec<u32>,
+        (offsets, entries): (&mut Vec<u32>, &mut Vec<u32>),
     ) -> Result<bool, OperationError> {
         let lim = eng.limits();
-        let row = |g: u32| match pinned {
-            Some(p) => (g == p).then_some(0),
-            None => ((g as usize) < rows).then_some(g),
+        let row = |other: u32| match pinned {
+            Some(p) => (other == p).then_some(0),
+            None => ((other as usize) < rows).then_some(other),
         };
+        let sides = |e: &ProductEntry| if carrier_f { (e.f_idx.idx(), e.g_idx.0) } else { (e.g_idx.idx(), e.f_idx.0) };
         let list = &self.product_lists[c];
         offsets.clear();
         lim.try_resize(offsets, width + 1, 0)?;
         for e in list {
-            if row(e.g_idx.0).is_some() {
-                offsets[e.f_idx.idx() + 1] += 1;
+            let (x, other) = sides(e);
+            if row(other).is_some() {
+                offsets[x + 1] += 1;
             }
         }
         for x in 0..width {
@@ -478,8 +481,9 @@ impl Products {
         // Each node's offset runs to its end as its entries are written, and
         // is then the next node's start.
         for e in list {
-            if let Some(r) = row(e.g_idx.0) {
-                let at = &mut offsets[e.f_idx.idx()];
+            let (x, other) = sides(e);
+            if let Some(r) = row(other) {
+                let at = &mut offsets[x];
                 entries[2 * *at as usize] = r;
                 entries[2 * *at as usize + 1] = e.prod_idx.0;
                 *at += 1;

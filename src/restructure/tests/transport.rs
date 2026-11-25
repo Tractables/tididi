@@ -417,3 +417,39 @@ fn a_structural_diagram_moves_onto_any_weights() {
     let value = |t: &Tdd| eng.weighted_value(t).unwrap().map(|w| w.into_rational());
     assert_eq!(value(&g), value(&structural));
 }
+
+/// A summed diagram cannot be embedded onto a root vtree, whose levels
+/// have no regions; it moves by `transport` onto a home built for the move.
+/// Beside a fresh variable fixed true, or beside a copy of one of its
+/// variables made equal to it, it keeps its region and its count. A move
+/// that needs a rotation is refused.
+#[test]
+fn a_summed_diagram_moves_beside_a_fresh_variable_or_a_copy_by_transport() {
+    let eng = Engine::new();
+    let l = |v: u32| Vtree::leaf(VarId(v));
+    let j = |a: Vtree, b: Vtree| Vtree::join(&a, &b).unwrap();
+    let shape = |three: Vtree| j(j(j(l(1), l(2)), j(three, l(4))), j(j(l(5), l(6)), j(l(7), l(8))));
+    let home = Home::new(shape(l(3)));
+    let (f, _) = with_region(&eng, &home);
+    let count = eng.model_count(&f).unwrap();
+
+    let padded = Home::new(j(Vtree::clone(&home), l(9)));
+    let (g, stats) = eng.transport(&f, &padded, |v| v, 0).unwrap();
+    assert_eq!((stats.rotations, g.vtree().regions().count()), (0, 1));
+    let fixed = eng.cube(&Home::unchecked(&Vtree::projection(&padded, [VarId(9)]).unwrap()), [9]).unwrap();
+    assert_eq!(eng.model_count(&eng.and(&g, &fixed).unwrap()).unwrap(), count);
+
+    let copied = Home::new(shape(j(l(3), l(9))));
+    let (g, stats) = eng.transport(&f, &copied, |v| v, 0).unwrap();
+    assert_eq!((stats.rotations, g.vtree().regions().count()), (0, 1));
+    let pair = Home::unchecked(&Vtree::projection(&copied, [VarId(3), VarId(9)]).unwrap());
+    let equal = eng.and_clause(eng.clause(&pair, [3, -9]).unwrap(), &[-3, 9]).unwrap();
+    assert_eq!(eng.model_count(&eng.and(&g, &equal).unwrap()).unwrap(), count);
+
+    // ((R x3) x5) onto the linear home, where the projection is (R (x3 x5)).
+    let own = Home::unchecked(&Vtree::projection(&home, [1, 2, 3, 5].map(VarId)).unwrap());
+    let mut h = eng.and_clause(eng.clause(&own, [1, -2, 3]).unwrap(), &[2, -3, 5]).unwrap();
+    eng.marginalize(&mut h, |v| v.0 <= 2).unwrap();
+    let r = eng.transport(&h, &Home::new(Vtree::linear(8)), |v| v, usize::MAX).unwrap_err();
+    assert!(matches!(r.error, TransportError::Bound { .. }), "{:?}", r.error);
+}

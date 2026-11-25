@@ -28,7 +28,7 @@ fn rational(w: &WeightValue) -> BigRational {
 /// The value of `f` where its variable leaves take `x`: a node is the sum
 /// over its pairs of the product of what they name, a leaf named true is 1,
 /// a region reads its value.
-fn value_at(f: &Tdd, x: &dyn Fn(VarId) -> bool) -> BigRational {
+pub(crate) fn value_at(f: &Tdd, x: &dyn Fn(VarId) -> bool) -> BigRational {
     let v = f.vtree();
     if v.num_nodes() == 0 {
         return BigRational::from_integer(BigInt::from(u8::from(f.is_one())));

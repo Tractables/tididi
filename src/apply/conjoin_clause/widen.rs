@@ -4,11 +4,11 @@
 use std::sync::Arc;
 
 use super::{place_on, ClauseWork};
-use crate::apply::conjoin::view::{chain_readers, moved_dirty, read_chain_nodes, reserve_moved};
+use crate::apply::conjoin::view::{chain_readers, chain_tops, moved_dirty, read_chain_nodes, reserve_moved};
 use crate::diagram::{return_levels, try_take_levels, ChildSide, NodeIdx, Sides, Tdd, TddNodeId};
 use crate::limits::OperationError;
 use crate::restructure::embed::{literal_chain, Chain};
-use crate::restructure::placement::{first_ref, push_free_level, PassThrough};
+use crate::restructure::placement::{named_labels, push_free_level, PassThrough};
 use crate::vtree::{Reading, VarId, Vtree, VtreeIdx};
 use crate::Engine;
 
@@ -97,12 +97,10 @@ fn moved_onto(
     fresh: &[(VtreeIdx, Reading)],
 ) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
-    let carries_leaf = |reading| matches!(reading, Reading::Pass(c) if into.node(c).is_var_leaf());
-    let chains = fresh.iter().any(|&(_, reading)| carries_leaf(reading));
     let mut gate = lim.gate();
     gate.poll(fresh.len() as u64)?;
     gate.flush()?;
-    let listed = reserve_moved(eng, &mut f.dirty, source, chains)?;
+    let listed = reserve_moved(eng, &mut f.dirty, source)?;
     let mut levels = try_take_levels(eng, into.num_nodes())?;
     let closed = f.levels.is_closed();
     let moved = &mut f.levels[..];
@@ -121,9 +119,9 @@ fn moved_onto(
         let through = PassThrough::new(into, t, free_side, |c| levels[c.idx()].slot_count());
         let chain = through
             .carries_leaf
-            .then(|| literal_chain(into, (is_image, |_| false), |p, side| first_ref(&levels[p.idx()], side), f.output.local, t));
+            .then(|| literal_chain(into, (is_image, |_| false), |p, side| named_labels(&levels[p.idx()], side), f.output.local, t));
         match chain {
-            Some(Chain::Literals(top)) => lim.try_push(&mut tops, top)?,
+            Some(Chain::Literals(top, labels)) => lim.try_push(&mut tops, (top, labels))?,
             Some(Chain::Output(_)) => local = NodeIdx(0),
             _ => {}
         }
@@ -134,7 +132,7 @@ fn moved_onto(
         let decoders = Sides { left: levels[left.idx()].child_decoder(), right: levels[right.idx()].child_decoder() };
         read_chain_nodes(lim, &mut levels[parent.idx()], moving, decoders)?;
     }
-    tops.sort_unstable();
+    let tops = chain_tops(lim, &tops)?;
     let dirty = moved_dirty(f.take_worklists(), listed, (source, into), (map, |_| false), &tops);
     let output = TddNodeId { vtree: into.root(), local };
     let mut result = Tdd { vtree: Arc::clone(into), levels: levels.into(), output, dirty };

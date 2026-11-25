@@ -263,6 +263,7 @@ fn one_pair_columns_read_as_their_columns() {
 /// pairs back to the in-flight byte meter: after the conjunction the meter
 /// reads the same as with every cell reading its column.
 #[test]
+#[ignore = "on homes no level of these operands reads one g pair a column (census slot 4 stays 0 on both shapes): the case moved to another route, so the meter check would pass without exercising it"]
 fn one_pair_columns_give_back_their_table() {
     let fv: Vec<u32> = (1..=16).filter(|v| v % 2 == 1 || *v == 2 || *v == 4).collect();
     let gv: Vec<u32> = (1..=16).filter(|v| v % 2 == 0 || *v == 13 || *v == 15).collect();

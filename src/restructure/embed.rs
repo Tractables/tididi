@@ -704,7 +704,7 @@ fn seat_view<'a>(
     let closed = tdd.levels.is_closed();
     // A moved diagram's worklists are taken, with room made in place.
     let carried = match &mut tdd {
-        Cow::Owned(moved) => reserve_moved(eng, &mut moved.dirty, &moved.vtree, !tops.is_empty()).map(|listed| (None, listed)),
+        Cow::Owned(moved) => reserve_moved(eng, &mut moved.dirty, &moved.vtree).map(|listed| (None, listed)),
         Cow::Borrowed(source) => {
             copied_dirty(eng, &source.dirty, source.vtree(), into, plan, &tops).map(|copied| (Some(copied), Vec::new()))
         }
@@ -818,13 +818,11 @@ pub(crate) fn image_above(into: &Vtree, plan: &Plan, mut t: VtreeIdx) -> Option<
 
 /// The levels of a placement's result that may hold a node no pair
 /// of their parent level names, pushed to `out` bottom-up, given `loose`,
-/// the source's such levels, and `literal_tops`, the tops of the
-/// pass-through chains that read a leaf as `Pos` and `Neg`, both sorted.
-/// `source` is the vtree the levels were moved from, `images` the image of
-/// each of its nodes and `mirrored` the images whose children are their
-/// source's swapped; the walk visits the images of its internal nodes and
-/// the chains under them, not the levels built with no source variable
-/// under them.
+/// the source's such levels, sorted. `source` is the vtree the levels were
+/// moved from, `images` the image of each of its nodes and `mirrored` the
+/// images whose children are their source's swapped; the walk visits the
+/// images of its internal nodes, not the levels built with no source
+/// variable under them.
 ///
 /// Only a level whose parent is the image of a source level can hold one. A
 /// level built under a built level is named whole: a pass-through has a
@@ -834,18 +832,16 @@ pub(crate) fn image_above(into: &Vtree, plan: &Plan, mut t: VtreeIdx) -> Option<
 /// that is not false. Under an image, an image is named as its source level
 /// was, and the top of a pass-through chain as the level at the chain's
 /// foot, whose slots the chain carries one for one; a chain over a leaf
-/// holds `One`, which the image reads, or `Pos` and `Neg`, of which it may
-/// read one.
+/// holds the labels the image reads ([`Chain::labels`]), so it is named
+/// whole.
 pub(crate) fn moved_loose(
     source: &Vtree,
     into: &Vtree,
     (images, mirrored): (&[VtreeIdx], impl Fn(VtreeIdx) -> bool),
     loose: &crate::diagram::LooseLevels,
-    literal_tops: &[VtreeIdx],
     out: &mut Vec<u32>,
 ) {
-    // With neither, every level is named whole.
-    if loose.is_empty() && literal_tops.is_empty() {
+    if loose.is_empty() {
         return;
     }
     for &s in source.internal_bottomup_slice() {
@@ -856,14 +852,7 @@ pub(crate) fn moved_loose(
         // The chain under a child of `p` ends at the image of the source
         // child on that side.
         for (top, from) in [left, right].into_iter().zip(feet) {
-            if into.node(top).is_leaf() {
-                continue;
-            }
-            let named_whole = match source.node(from).is_leaf() {
-                true => literal_tops.binary_search(&top).is_err(),
-                false => !loose.contains(from.0),
-            };
-            if !named_whole {
+            if !into.node(top).is_leaf() && !source.node(from).is_leaf() && loose.contains(from.0) {
                 out.push(top.0);
             }
         }
@@ -874,10 +863,10 @@ pub(crate) fn moved_loose(
 pub(crate) enum Chain {
     /// As `One`: the chain has one node a level.
     One,
-    /// As `Pos` and `Neg`, read by the level above the chain, the top given:
-    /// the chain has the two as its nodes 0 and 1, and its reader is
-    /// renumbered.
-    Literals(VtreeIdx),
+    /// As the literals `labels` names, one bit each, read by the level above
+    /// the chain, the top given: the chain has those literals as its nodes,
+    /// `Pos` first, and its reader is renumbered ([`Chain::remap`]).
+    Literals(VtreeIdx, u8),
     /// As the output's literal, the chain reaching the root: the chain has
     /// that literal alone, as its node 0, which the output names.
     Output(NodeIdx),
@@ -888,21 +877,36 @@ impl Chain {
     pub(crate) fn labels(&self) -> &[NodeIdx] {
         match self {
             Chain::One => &[ONE_LEAF_IDX],
-            Chain::Literals(_) => &[POS_LEAF_IDX, NEG_LEAF_IDX],
+            Chain::Literals(_, labels) => match *labels >> POS_LEAF_IDX.0 & 3 {
+                1 => &[POS_LEAF_IDX],
+                2 => &[NEG_LEAF_IDX],
+                _ => &[POS_LEAF_IDX, NEG_LEAF_IDX],
+            },
             Chain::Output(label) => std::slice::from_ref(label),
+        }
+    }
+
+    /// The chain's node of each leaf label, indexed by label, where the
+    /// chain is read as the literals `labels` names; `u32::MAX` for a label
+    /// it does not hold.
+    pub(crate) fn remap(labels: u8) -> [u32; 3] {
+        match labels >> POS_LEAF_IDX.0 & 3 {
+            1 => [u32::MAX, 0, u32::MAX],
+            2 => [u32::MAX, u32::MAX, 0],
+            _ => [u32::MAX, 0, 1],
         }
     }
 }
 
 /// How the chain of pass-throughs a pass-through over a leaf at `t` starts
 /// reads the leaf: as the level above the chain names it, the first node
-/// above `t` that `is_image`, or as the output does when the chain reaches
-/// the root or a node that `is_free`. Determinism makes the first reference
-/// the level's form.
+/// above `t` that `is_image`, whose labels on the chain's side `named`
+/// gives ([`named_labels`](super::placement::named_labels)), or as the
+/// output does when the chain reaches the root or a node that `is_free`.
 pub(crate) fn literal_chain(
     into: &Vtree,
     (is_image, is_free): (impl Fn(VtreeIdx) -> bool, impl Fn(VtreeIdx) -> bool),
-    first_ref: impl Fn(VtreeIdx, ChildSide) -> Option<NodeIdx>,
+    named: impl Fn(VtreeIdx, ChildSide) -> u8,
     output: NodeIdx,
     t: VtreeIdx,
 ) -> Chain {
@@ -913,9 +917,9 @@ pub(crate) fn literal_chain(
         match into.node(top).parent().filter(|&p| !is_free(p)) {
             Some(p) if !is_image(p) => top = p,
             Some(p) => {
-                return match first_ref(p, ChildSide::of(into, p, top)) {
-                    Some(named) if named != ONE_LEAF_IDX => Chain::Literals(top),
-                    _ => Chain::One,
+                return match named(p, ChildSide::of(into, p, top)) {
+                    labels if labels == 0 || labels & 1 << ONE_LEAF_IDX.0 != 0 => Chain::One,
+                    labels => Chain::Literals(top, labels),
                 };
             }
             None if output == POS_LEAF_IDX || output == NEG_LEAF_IDX => return Chain::Output(output),

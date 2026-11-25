@@ -444,8 +444,11 @@ impl Tdd {
     /// otherwise false `care` produces an unsatisfiable outcome.
     ///
     /// Marginal levels in this function are retained; marginal levels in `care`
-    /// place no constraint on their discarded subtrees. Every outcome retains this
-    /// function's weights and arithmetic; the care set's weights are ignored.
+    /// place no constraint on their discarded subtrees. Where a summed extent of
+    /// one operand holds a variable of the other or meets one of its summed
+    /// extents, no projection holds both, and this function is returned
+    /// unchanged. Every outcome retains this function's weights and arithmetic;
+    /// the care set's weights are ignored.
     ///
     /// # Errors
     ///

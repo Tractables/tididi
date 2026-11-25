@@ -905,8 +905,10 @@ impl crate::Engine {
     /// stored, so the largest level of a join that ends in a count is never
     /// held. Otherwise the conjunction is built and counted.
     ///
-    /// Integer counts only: with weights attached, the result is the count
-    /// of the conjunction built with them, as [`Engine::model_count`] gives it.
+    /// The count is an integer and ignores literal weights. With weights
+    /// attached to either operand, nothing is summed, since a sum with
+    /// weights stores weighted values rather than counts: the conjunction is
+    /// built whole and counted as [`Engine::model_count`] counts it.
     ///
     /// ```
     /// use tididi::vtree::Home;
@@ -922,8 +924,10 @@ impl crate::Engine {
     ///
     /// # Errors
     ///
-    /// The errors of [`Engine::and_marginalizing_where`] and of
-    /// [`Engine::model_count`]. Both operands are consumed on every outcome.
+    /// The operand and resource errors of [`Engine::and`], and the errors of
+    /// [`Engine::model_count`], which refuses an operand that holds weighted
+    /// sums with [`OperationError::IncompatibleWeights`]. Both operands are
+    /// consumed on every outcome.
     pub fn and_model_count(
         &self,
         f: Tdd,
@@ -932,8 +936,9 @@ impl crate::Engine {
     ) -> Result<num_bigint::BigUint, OperationError> {
         let _op = self.limits().enter()?;
         if f.weight_table().is_some() || g.weight_table().is_some() {
-            let out = marginalizing_where(self, Cow::Owned(f), Cow::Owned(g), &summable)?;
-            return self.model_count(&out);
+            // A level summed with weights attached holds weighted sums, which
+            // the integer count cannot read.
+            return self.model_count(&self.and(f, g)?);
         }
         let [mut f, mut g] = extend::on_one(self, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
         let vtree = Arc::clone(f.vtree());
@@ -1201,7 +1206,8 @@ use tests::{
     note_ahead, note_as_operand, note_closed_in_sweep, note_complete_side, note_held_tight,
     note_implied_walk, note_lent, note_lone_columns, note_lookups,
     note_one_sided_masks, note_pair_row_unrolled, note_pair_rows, note_pairs_grown,
-    note_reach_columns_row, note_reach_tables, note_read_through, note_relabelled, note_relayed,
+    note_pass_listed, note_reach_columns_row, note_reach_tables, note_read_through, note_relabelled,
+    note_relayed, pass_listed_forced_off,
     note_route, note_row_columns_row, note_scheduled_charge, note_single_rows,
     note_whole_row, note_word_cells,
     one_sided_masks_forced_off, pair_rows_forced_off, reach_columns_forced_off, reach_tables_forced,
