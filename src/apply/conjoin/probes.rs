@@ -115,6 +115,16 @@ pub(super) fn note_pass_listed(_carrier_f: bool, _cells: usize, _grid: usize) {}
 
 #[cfg(not(test))]
 #[inline(always)]
+pub(super) fn pass_numbered_forced_off() -> bool {
+    false
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+pub(super) fn note_pass_numbered(_carried: bool) {}
+
+#[cfg(not(test))]
+#[inline(always)]
 pub(super) fn relay_forced_off() -> bool {
     false
 }

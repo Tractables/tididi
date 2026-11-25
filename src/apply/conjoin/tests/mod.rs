@@ -19,6 +19,7 @@ mod one_sided;
 mod owed;
 mod pair_floor;
 mod pair_rows;
+mod pass_numbered;
 mod pass_rows;
 mod relabel;
 mod probe;
@@ -801,6 +802,11 @@ thread_local! {
     /// their count, the cells they emitted and the cells of their grids
     /// ([`pass_listed_g_census`]).
     static PASS_LISTED_G: std::cell::Cell<[u64; 3]> = const { std::cell::Cell::new([0; 3]) };
+    /// Whether no pass level on this thread is carried whole for keeping
+    /// its child's numbering ([`pass_numbered_off`]).
+    static PASS_NUMBERED_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The pass levels on this thread so carried ([`pass_numbered_census`]).
+    static PASS_NUMBERED: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0; 2]) };
 }
 
 pub(super) fn pass_listed_forced_off() -> bool {
@@ -820,6 +826,30 @@ pub(super) fn note_pass_listed(carrier_f: bool, cells: usize, grid: usize) {
 /// listed pass levels are checked against.
 pub(super) fn pass_listed_off<R>(f: impl FnOnce() -> R) -> R {
     with_flag(&PASS_LISTED_OFF, f)
+}
+
+pub(super) fn pass_numbered_forced_off() -> bool {
+    PASS_NUMBERED_OFF.with(std::cell::Cell::get)
+}
+
+pub(super) fn note_pass_numbered(carried: bool) {
+    PASS_NUMBERED.with(|c| {
+        let [carried_levels, failed] = c.get();
+        c.set(if carried { [carried_levels + 1, failed] } else { [carried_levels, failed + 1] });
+    });
+}
+
+/// Run `f` with no pass level carried whole for keeping its child's
+/// numbering: the oracle that route is checked against.
+pub(super) fn pass_numbered_off<R>(f: impl FnOnce() -> R) -> R {
+    with_flag(&PASS_NUMBERED_OFF, f)
+}
+
+/// The pass levels on this thread so far carried whole for keeping their
+/// passed child's numbering, and those whose carrier's pairs were read for
+/// it in vain.
+pub(super) fn pass_numbered_census() -> [u64; 2] {
+    PASS_NUMBERED.with(std::cell::Cell::get)
 }
 
 /// The pass levels with carrier `g` on this thread so far that read their

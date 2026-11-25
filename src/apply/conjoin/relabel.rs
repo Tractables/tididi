@@ -365,6 +365,17 @@ pub(super) fn take_pass_level(
         run.products.note_complete(ti);
         return Ok(());
     }
+    if matches!(grid, Some(Grid::Lists))
+        && pinned.is_none()
+        && !pass_numbered_forced_off()
+        && carry_numbered(eng, run, f, g, shape, carrier_f, passed_left)?
+    {
+        return Ok(());
+    }
+    let grid = match cp_leaf {
+        true => None,
+        false => Some(run.products.grid(c, widths, Operands { f: run.f_identity[c], g: run.g_identity[c] })),
+    };
     // The passed child's products with passing node `i` are its cells
     // `(k, fixed(i))` over the carrier's nodes `k` where the carrier is `f`,
     // else `(fixed(i), k)`, read off its grid in place; a sparse level's are
@@ -453,6 +464,73 @@ pub(super) fn take_pass_level(
         }
         false => run.products.publish_cells(eng, ti, wg, &map, nodes),
     }
+}
+
+/// [`take_pass_level`] where the passed child's products are the carrier's
+/// nodes there in order, each with one passing node, and every pair of a
+/// carrier node here meets the same passing node: each carrier node is then
+/// one cell, its pairs unchanged, so the carrier's level is the output and
+/// its products are again the carrier's nodes in order. Where the carrier is
+/// `g`, the cells are in order only if the passing nodes rise with the
+/// carrier's. False, with nothing built, where any of this fails.
+///
+/// # Errors
+///
+/// [`OperationError::OverBudget`] when a table's growth or the carrier's copy
+/// is refused, and [`OperationError::Stopped`] when the stop fires.
+fn carry_numbered(
+    eng: &Engine,
+    run: &mut ApplyRun,
+    f: &mut Held<'_>,
+    g: &mut Held<'_>,
+    shape: LevelShape,
+    carrier_f: bool,
+    passed_left: bool,
+) -> Result<bool, OperationError> {
+    let lim = eng.limits();
+    let ti = shape.t.idx();
+    let c = if passed_left { shape.left.idx() } else { shape.right.idx() };
+    let (wf, wg) = (shape.f.here, shape.g.here);
+    let (wp, wo) = if carrier_f { (wg, wf) } else { (wf, wg) };
+    let stride = if carrier_f { run.f_widths[c] } else { run.g_widths[c] };
+    let mut partner = eng.scratch.apply.relabel_map.checkout(eng);
+    if !run.products.carrier_numbered(eng, c, carrier_f, (wp, stride), &mut partner)? {
+        return Ok(false);
+    }
+    let mut list = Vec::new();
+    lim.reserve(&mut list, wo)?;
+    let mut gate = lim.gate_with(APPLY_POLL_STRIDE);
+    let carrier = if carrier_f { f.level(ti) } else { g.level(ti) };
+    let mut last = 0;
+    let walked = carrier.try_for_each_node::<Option<OperationError>>(0..wo, |j, pairs| {
+        gate.poll(pairs.len() as u64).map_err(Some)?;
+        let passed = |pair: &ChildPair| partner[if passed_left { pair.left.raw() } else { pair.right.raw() } as usize];
+        let i = passed(&pairs[0]);
+        if pairs[1..].iter().any(|pair| passed(pair) != i) || (!carrier_f && i < last) {
+            return Err(None);
+        }
+        last = i;
+        let (fi, gi) = if carrier_f { (j as u32, i) } else { (i, j as u32) };
+        list.push(ProductEntry { f_idx: FNodeIdx(fi), g_idx: GNodeIdx(gi), prod_idx: ProductNodeIdx(j as u32) });
+        Ok(())
+    });
+    match walked {
+        Ok(()) => {}
+        Err(None) => {
+            note_pass_numbered(false);
+            return Ok(false);
+        }
+        Err(Some(error)) => return Err(error),
+    }
+    gate.flush()?;
+    match carrier_f {
+        true => f.carry(lim, ti, &mut run.levels[ti])?,
+        false => g.carry(lim, ti, &mut run.levels[ti])?,
+    }
+    run.lists.carry(ti, carrier_f, true);
+    note_pass_numbered(true);
+    run.products.publish_listed(ti, (wf, wg), list, wo)?;
+    Ok(true)
 }
 
 /// The cells of [`take_pass_level`] on a level where one operand passes and
