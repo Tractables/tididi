@@ -697,3 +697,13 @@ fn the_vtree_check_agrees_with_transport() {
     }
     assert!(accepted > 5 && accepted < 55, "{accepted} of 60 accepted");
 }
+
+#[test]
+fn the_evaluation_oracle_reads_the_constants_on_no_node() {
+    let home = Home::new(Vtree::balanced(3));
+    let empty = Vtree::empty_projection(&home);
+    for value in [false, true] {
+        let f = if value { Tdd::one(&empty) } else { Tdd::zero(&empty) };
+        assert_eq!(crate::test_helpers::eval(&f, &[false, true, false]), value);
+    }
+}
