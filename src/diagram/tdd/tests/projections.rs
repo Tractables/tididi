@@ -556,7 +556,6 @@ fn every_entry_point_answers_on_a_projection_as_on_the_home() {
 /// returns on it reaches all its nodes.
 #[cfg(debug_assertions)]
 #[test]
-#[ignore = "operations return diagrams that keep unreached nodes"]
 fn every_result_of_the_audit_at_seed_108_reaches_all_its_nodes() {
     let eng = Engine::new();
     let mut audit = Audit { unreached_by: Some(Vec::new()), ..Audit::default() };
