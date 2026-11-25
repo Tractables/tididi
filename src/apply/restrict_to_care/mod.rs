@@ -61,6 +61,7 @@ use crate::Engine;
 use crate::limits::OperationError;
 
 use crate::diagram::Tdd;
+use crate::vtree::Vtree;
 
 /// Outcome of [`Tdd::restrict_to_care`], so a caller can tell a no-op from a shrink
 /// without comparing diagrams.
@@ -87,9 +88,14 @@ impl RestrictionOutcome {
 }
 
 /// [`restrict_prepared`] of operands on different projections of one home:
-/// a copy of `f` placed with `care`, and `f` itself when nothing is removed.
+/// a copy of `f` placed with `care`, and `f` itself when nothing is removed
+/// or when a summed extent of one operand meets the other's variables or
+/// extents, so no projection holds both.
 #[cold]
 fn restrict_across(eng: &Engine, f: Tdd, care: &Tdd) -> Result<RestrictionOutcome, OperationError> {
+    if let Err(OperationError::MarginalLevel(_)) = Vtree::leaf_sets(&f.vtree, &care.vtree) {
+        return Ok(RestrictionOutcome::Unchanged(f));
+    }
     let [placed, care] = crate::apply::extend::on_one(eng, [Cow::Borrowed(&f), Cow::Borrowed(care)])?;
     if f.is_zero() {
         return Ok(RestrictionOutcome::Unchanged(f));

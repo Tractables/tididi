@@ -10,7 +10,7 @@ use crate::marginal::tests::region::operand;
 use crate::reduce::tests::trim_regions::value_at;
 use crate::vtree::rng::Lcg;
 use crate::vtree::{Home, VarId, Vtree};
-use crate::{Engine, OperationError, Tdd};
+use crate::{Engine, Tdd};
 
 /// The variables of `f`'s leaves that it has not summed out.
 fn structural(f: &Tdd) -> Vec<VarId> {
@@ -125,16 +125,19 @@ fn a_restriction_across_projections_reads_summed_levels_as_on_a_root() {
 }
 
 /// Operands with no common projection, where an extent of one meets the
-/// other's leaves or extents, are refused with the region the walk cannot
-/// place.
+/// other's leaves or extents, give `f` back unchanged, which agrees with the
+/// root reading.
 #[test]
-fn a_restriction_across_meeting_extents_is_refused() {
+fn a_restriction_across_meeting_extents_gives_f_unchanged() {
     let eng = Engine::new();
     let mut cases = 0;
-    for (seed, _, f, care) in summed_pairs(&eng).filter(|(_, _, f, care)| !share_a_projection(f, care)) {
+    for (seed, n, f, care) in summed_pairs(&eng).filter(|(_, _, f, care)| !share_a_projection(f, care)) {
         cases += 1;
-        let refused = eng.restrict_to_care(f, &care).unwrap_err();
-        assert!(matches!(refused, OperationError::MarginalLevel(_)), "seed {seed}: {refused}");
+        let what = format!("seed {seed}");
+        let outcome = eng.restrict_to_care(f.clone(), &care).unwrap_or_else(|e| panic!("{what}: {e}"));
+        let RestrictionOutcome::Unchanged(g) = outcome else { panic!("{what}: {outcome:?}") };
+        assert!(std::sync::Arc::ptr_eq(g.vtree(), f.vtree()), "{what}: not on f's vtree");
+        check_restricted(&f, &care, &g, n, &what);
     }
     assert!(cases > 40, "{cases} cases");
 }
