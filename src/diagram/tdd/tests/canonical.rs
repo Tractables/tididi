@@ -183,11 +183,9 @@ mod producers {
         }
     }
 
-    /// The same on homes. Where the key's subtree holds every leaf of the
-    /// operand's projection, the operand comes back canonical but not
-    /// certified (seed 6, key 2: a literal).
+    /// The same on homes, including a key whose subtree holds every leaf of
+    /// the operand's projection (seed 6, key 2: a literal).
     #[test]
-    #[ignore = "defect: on a home, a key subtree over the whole projection returns the operand uncertified"]
     fn projections_to_a_subtree_on_a_home_are_certified() {
         let eng = Engine::new();
         for seed in 0..100u64 {

@@ -264,7 +264,11 @@ fn distinct_on_home(eng: &Engine, tdd: &Tdd, home: &Home, key: VtreeIdx, m: u64)
             threshold(eng, &mut gate, tdd, k, &size, m, &into)
         }
         (Some(_), None) if scale(1) < m => Ok(crate::build::constant_zero(eng, &into)),
-        (Some(k), None) if k == vtree.root() => Ok(tdd.try_clone_on(eng)?),
+        (Some(k), None) if k == vtree.root() => {
+            let mut result = tdd.try_clone_on(eng)?;
+            eng.minimize(&mut result)?;
+            Ok(result)
+        }
         (Some(k), None) => {
             let size = capped_counts(eng, tdd, vtree.sibling(k), 1)?;
             threshold(eng, &mut gate, tdd, k, &size, 1, &into)

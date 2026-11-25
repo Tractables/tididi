@@ -184,16 +184,23 @@ fn constants_and_degenerate_tables() {
 }
 
 #[test]
-#[ignore = "on a diagram whose projection, with the listed variables, has no node, model_columns reads the root of an empty vtree and panics"]
 fn constants_and_degenerate_tables_on_a_home() {
-    let vtree = crate::vtree::Home::new(Vtree::balanced(3));
-    let mut zero = Tdd::zero(&vtree).model_columns(&[&[VarId(1)]]).unwrap();
+    let home = crate::vtree::Home::new(Vtree::balanced(3));
+    let vtree = &home;
+    let mut zero = Tdd::zero(vtree).model_columns(&[&[VarId(1)]]).unwrap();
     assert_eq!(zero.rows(), 0);
     assert_eq!(zero.to_columns(), vec![Vec::<u32>::new()]);
-    let mut one = Tdd::one(&vtree).model_columns(&[]).unwrap();
+    let mut zero = Tdd::zero(vtree).model_columns(&[&[]]).unwrap();
+    assert_eq!(zero.rows(), 0);
+    assert_eq!(zero.to_columns(), vec![Vec::<u32>::new()]);
+    let mut one = Tdd::one(vtree).model_columns(&[]).unwrap();
     assert_eq!((one.rows(), one.width()), (1, 0));
     assert!(one.to_columns().is_empty());
-    let mut one = Tdd::one(&vtree).model_columns(&[&[], &[VarId(2)]]).unwrap();
+    let mut one = Tdd::one(vtree).model_columns(&[&[], &[]]).unwrap();
+    assert_eq!((one.rows(), one.width()), (1, 2));
+    assert!(one.ascending());
+    assert_eq!(one.to_columns(), vec![vec![0], vec![0]]);
+    let mut one = Tdd::one(vtree).model_columns(&[&[], &[VarId(2)]]).unwrap();
     assert_eq!(one.to_columns(), vec![vec![0, 0], vec![0, 1]]);
     // A one-variable vtree: the output is a leaf node.
     let leaf = crate::vtree::Home::new(Vtree::leaf(VarId(5)));

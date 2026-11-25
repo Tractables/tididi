@@ -50,10 +50,15 @@ impl Tdd {
     /// shape, and its levels are then reseated on `target` itself, so the
     /// result shares `target`'s allocation and can be combined with diagrams
     /// built on it. The function is unchanged, and a canonical diagram stays
-    /// canonical. When `target` is on a [home](Vtree::home), the diagram is
-    /// minimized first and the variables it does not depend on leave: it ends
-    /// on the projection of that home on the variables left, which is
-    /// `target` when none left, and a constant ends on no leaf.
+    /// canonical. When `target` is on a [home](Vtree::home), the variables
+    /// compared are those of that home and of the diagram's home (its own
+    /// vtree's when it has none), as a function on a home is over every
+    /// home variable; the diagram, unless it has a summed-out level, is
+    /// minimized first and the variables it does not depend on leave: it
+    /// ends on the projection of `target`'s home on the variables left,
+    /// which is `target` when they are its leaves, and a constant ends on no
+    /// leaf of that home. A variable left that is not a leaf of `target` is
+    /// refused.
     ///
     /// A rotation rebuilds the two levels it turns from the pairs of the
     /// outer level expanded through the inner one; a mirror reads one level's
@@ -72,8 +77,9 @@ impl Tdd {
     ///
     /// # Errors
     ///
-    /// [`RestructureError::Variables`] when the two vtrees do not have the
-    /// same variables; [`RestructureError::Weighted`] for a diagram with a
+    /// [`RestructureError::Variables`] when the two vtrees (the two homes,
+    /// as above) do not have the same variables, or `target`, on a home,
+    /// lacks a variable the diagram depends on; [`RestructureError::Weighted`] for a diagram with a
     /// weight table; [`RestructureError::Bound`] when a rotation would expand
     /// more than `bound` pairs, and [`RestructureError::Operation`] with
     /// [`OperationError::MarginalLevel`] when it would turn a summed-out
@@ -122,7 +128,13 @@ impl Engine {
         bound: usize,
     ) -> Result<TransportStats, RestructureError> {
         let _op = self.limits().enter()?;
-        same_variables(tdd.vtree(), target)?;
+        match target.home() {
+            Some(home) => {
+                let source = tdd.vtree().home();
+                same_variables(source.as_ref().map_or(tdd.vtree(), |h| &**h), &home)?;
+            }
+            None => same_variables(tdd.vtree(), target)?,
+        }
         if let Some(region) = tdd.vtree().regions().chain(target.regions()).next() {
             return Err(OperationError::MarginalLevel(region).into());
         }
@@ -133,14 +145,22 @@ impl Engine {
         let mut target = target;
         if let Some(home) = target.home()
             && !Arc::ptr_eq(tdd.vtree(), target)
-            && !tdd.has_marginal_level()
         {
-            self.reduce(tdd, crate::reduce::ReductionPlan::default())?;
-            if tdd.vtree().num_nodes() == 0 {
-                return Ok(TransportStats::default());
+            if !tdd.has_marginal_level() {
+                self.reduce(tdd, crate::reduce::ReductionPlan::default())?;
+                if tdd.vtree().num_nodes() == 0 {
+                    if !tdd.vtree().home().is_some_and(|h| Arc::ptr_eq(&h, &home)) {
+                        *tdd = crate::build::constant_on(self, &Vtree::empty_projection(&home), !tdd.is_zero())?;
+                    }
+                    return Ok(TransportStats::default());
+                }
             }
-            if tdd.vtree().num_leaves() != target.num_leaves() {
-                narrowed = Vtree::projection(&home, tdd.vtree().leaf_bottomup().map(|(_, var)| var))
+            let own = tdd.vtree();
+            if let Some((_, variable)) = own.leaf_bottomup().find(|&(_, var)| target.leaf_of(var).is_none()) {
+                return Err(RestructureError::Variables { variable });
+            }
+            if own.num_leaves() != target.num_leaves() {
+                narrowed = Vtree::projection(&home, own.leaf_bottomup().map(|(_, var)| var))
                     .expect("the target's home has every variable of the diagram");
                 target = &narrowed;
             }

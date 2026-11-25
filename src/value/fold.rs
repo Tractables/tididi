@@ -331,6 +331,9 @@ pub(crate) fn walk_bottom_up<C, E>(
     mut release: impl FnMut(&mut [C], usize),
     frontier: Option<VtreeIdx>,
 ) -> Result<(), E> {
+    if vtree.num_nodes() == 0 {
+        return Ok(());
+    }
     let mut t = root;
     let mut subtree_done = false;
     loop {

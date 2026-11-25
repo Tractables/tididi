@@ -984,7 +984,6 @@ fn the_unnamed_count_is_the_nodes_no_pair_of_the_parent_level_names() {
 }
 
 #[test]
-#[ignore = "on a home the unnamed count can give a node more pairs than its parent level leaves it"]
 fn the_unnamed_count_is_the_nodes_no_pair_of_the_parent_level_names_on_a_home() {
     use crate::reduce::ReductionPlan;
     use crate::test_helpers::{assert_canonical, assert_same_shape, vtree_shapes, rand_cnf, CnfShape, Lcg};
@@ -994,11 +993,13 @@ fn the_unnamed_count_is_the_nodes_no_pair_of_the_parent_level_names_on_a_home() 
         let num_vars = 6 + (seed % 5) as u32;
         let mut rng = Lcg::new(seed ^ 0x0dd_c0de);
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 14, width: 3 });
-        for (label, vtree) in vtree_shapes(num_vars) {
-            let mut f = eng.cube(&vtree, std::iter::empty::<i32>()).unwrap();
+        for (label, shape) in vtree_shapes(num_vars) {
+            let home = crate::vtree::Home::new(Vtree::clone(&shape));
+            let vtree = Arc::clone(&home);
+            let mut f = eng.cube(&home, std::iter::empty::<i32>()).unwrap();
             for (i, c) in clauses.iter().enumerate() {
                 f = match rng.below(2) {
-                    0 => eng.and(f, eng.clause(&vtree, c.iter().copied()).unwrap()).unwrap(),
+                    0 => eng.and(f, eng.clause(&home, c.iter().copied()).unwrap()).unwrap(),
                     _ => eng.and_clause(f, c).unwrap(),
                 };
                 if rng.below(3) == 0 {

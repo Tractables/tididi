@@ -183,20 +183,27 @@ fn constants_and_refusals() {
 }
 
 #[test]
-#[ignore = "on a diagram whose projection, with the listed variables, has no node, ordered_models and ordered_keys read the root of an empty vtree and panic"]
 fn constants_and_refusals_on_a_home() {
-    let vtree = crate::vtree::Home::new(Vtree::linear(3));
+    let home = crate::vtree::Home::new(Vtree::linear(3));
+    let vtree = &home;
     let key: &[VarId] = &[VarId(1), VarId(2)];
-    assert_eq!(Tdd::zero(&vtree).ordered_models(&[key, &[VarId(3)]], &[false, false], 1, 5).unwrap(), Some(vec![vec![], vec![]]));
-    let one = Tdd::one(&vtree).ordered_models(&[key, &[VarId(3)]], &[true, false], 1, 5).unwrap().unwrap();
+    assert_eq!(Tdd::zero(vtree).ordered_models(&[key, &[VarId(3)]], &[false, false], 1, 5).unwrap(), Some(vec![vec![], vec![]]));
+    let one = Tdd::one(vtree).ordered_models(&[key, &[VarId(3)]], &[true, false], 1, 5).unwrap().unwrap();
     assert_eq!(one, vec![vec![3, 3, 2, 2, 1], vec![0, 1, 0, 1, 0]]);
     // A key read least significant bit first is not the spine.
-    assert_eq!(Tdd::one(&vtree).ordered_models(&[&[VarId(2), VarId(1)]], &[false], 1, 5).unwrap(), None);
-    let f = Tdd::clause(&vtree, [1, 3]).unwrap();
+    assert_eq!(Tdd::one(vtree).ordered_models(&[&[VarId(2), VarId(1)]], &[false], 1, 5).unwrap(), None);
+    let f = Tdd::clause(vtree, [1, 3]).unwrap();
     assert_eq!(f.ordered_models(&[key], &[false], 1, 5).unwrap_err(), OperationError::UnlistedLiteral(VarId(3)));
     // No column: one empty model, as `ordered_keys` gives.
-    assert_eq!(Tdd::one(&vtree).ordered_models(&[], &[], 0, 5).unwrap(), Some(vec![]));
-    assert_eq!(Tdd::one(&vtree).ordered_keys(&[], &[], 5).unwrap(), Some(vec![]));
+    assert_eq!(Tdd::one(vtree).ordered_models(&[], &[], 0, 5).unwrap(), Some(vec![]));
+    assert_eq!(Tdd::one(vtree).ordered_keys(&[], &[], 5).unwrap(), Some(vec![]));
+    // Columns that list no variable: one model, every code 0.
+    for keys in [0, 1] {
+        assert_eq!(Tdd::one(vtree).ordered_models(&[&[], &[]], &[false, true], keys, 5).unwrap(), Some(vec![vec![0], vec![0]]));
+        assert_eq!(Tdd::zero(vtree).ordered_models(&[&[]], &[false], keys, 5).unwrap(), Some(vec![vec![]]));
+    }
+    assert_eq!(Tdd::one(vtree).ordered_keys(&[&[]], &[false], 5).unwrap(), Some(vec![vec![0]]));
+    assert_eq!(Tdd::one(vtree).ordered_models(&[&[]], &[false], 0, 0).unwrap(), Some(vec![vec![]]));
 }
 
 #[test]

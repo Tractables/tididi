@@ -311,13 +311,47 @@ fn every_refusal_or_stop_keeps_a_move_retryable() {
 /// A diagram on a home whose function ignores a variable of its home moves
 /// onto another home over the same variables, as on a root.
 #[test]
-#[ignore = "defect: restructure_to compares the target with the projection's variables, not the home's"]
 fn a_diagram_on_a_home_moves_onto_a_vtree_over_the_home_s_variables() {
+    use crate::vtree::Home;
     let source = Home::new(Vtree::linear(4));
     let target = Home::new(Vtree::balanced(4));
     let mut f = compile_clauses(&source, &[vec![1, -3]]);
     let count = f.model_count().unwrap();
     f.restructure_to(&target, usize::MAX).unwrap();
+    assert!(Arc::ptr_eq(&f.home(), &target));
     assert_eq!(f.model_count().unwrap(), count);
     assert_canonical(&f);
+}
+
+/// On a home the variables compared are the homes', and a target that lacks
+/// a variable the function reads is refused.
+#[test]
+fn on_a_home_other_variables_are_refused() {
+    use crate::vtree::Home;
+    let source = Home::new(Vtree::linear(4));
+    let f = compile_clauses(&source, &[vec![1, -3]]);
+    let wider = Home::new(Vtree::balanced(5));
+    assert_eq!(f.clone().restructure_to(&wider, usize::MAX), Err(RestructureError::Variables { variable: VarId(5) }));
+    let other = Home::new(Vtree::balanced(4));
+    let short = Vtree::projection(&other, [VarId(1), VarId(2)]).unwrap();
+    assert_eq!(f.clone().restructure_to(&short, usize::MAX), Err(RestructureError::Variables { variable: VarId(3) }));
+    let over = Vtree::projection(&other, [VarId(1), VarId(2), VarId(3)]).unwrap();
+    let mut g = f.clone();
+    g.restructure_to(&over, usize::MAX).unwrap();
+    assert!(Arc::ptr_eq(&g.home(), &other));
+    assert_eq!(g.model_count().unwrap(), f.model_count().unwrap());
+}
+
+/// A constant moved onto another home ends on that home.
+#[test]
+fn a_constant_on_a_home_moves_onto_the_target_s_home() {
+    use crate::vtree::Home;
+    let source = Home::new(Vtree::linear(4));
+    let target = Home::new(Vtree::balanced(4));
+    for mut f in [compile_clauses(&source, &[vec![1, -1]]), compile_clauses(&source, &[vec![1], vec![-1]])] {
+        let count = f.model_count().unwrap();
+        f.restructure_to(&target, usize::MAX).unwrap();
+        assert!(Arc::ptr_eq(&f.home(), &target));
+        assert_eq!(f.model_count().unwrap(), count);
+    }
 }

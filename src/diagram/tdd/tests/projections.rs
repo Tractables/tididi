@@ -83,6 +83,10 @@ struct Tally {
 struct Audit {
     tallies: BTreeMap<&'static str, Tally>,
     case: String,
+    /// When set, every diagram a call returns is checked to reach all its
+    /// nodes, and each that does not is listed here.
+    #[cfg(debug_assertions)]
+    unreached_by: Option<Vec<String>>,
 }
 
 static PANIC_AT: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
@@ -110,6 +114,12 @@ fn unreached(t: &Tdd) -> Result<bool, String> {
     }
 }
 
+/// The panic of [`debug_assert_all_reached`](crate::reduce::prune::debug_assert_all_reached) on `t`, if any.
+#[cfg(debug_assertions)]
+fn all_reached(t: &Tdd) -> Option<String> {
+    catch_unwind(AssertUnwindSafe(|| crate::reduce::prune::debug_assert_all_reached(t))).err().map(|e| panic_text(&*e))
+}
+
 fn panic_text(e: &(dyn std::any::Any + Send)) -> String {
     let text = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| (*s).to_string())).unwrap_or_default();
     format!("{text} at {}", PANIC_AT.lock().unwrap())
@@ -135,6 +145,14 @@ impl Audit {
             Ok(expected) => expected,
             Err(e) => return tally.panics.push(format!("{case}: on the home: {}", panic_text(&*e))),
         };
+        #[cfg(debug_assertions)]
+        if let Some(list) = &mut self.unreached_by {
+            for (side, r) in [("projection", got.as_ref().ok().map(|g| g as &dyn std::any::Any)), ("home", expected.as_ref().ok().map(|f| f as &dyn std::any::Any))] {
+                if let Some(e) = r.and_then(|r| r.downcast_ref::<Tdd>()).and_then(all_reached) {
+                    list.push(format!("{name} on the {side}: {e}"));
+                }
+            }
+        }
         if let Ok(g) = &got
             && let Some(t) = (g as &dyn std::any::Any).downcast_ref::<Tdd>()
         {
@@ -500,6 +518,19 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
     );
 }
 
+/// The audit's operands and calls for `seed`; returns the two operands.
+fn audit_seed(audit: &mut Audit, eng: &Engine, seed: u64) -> (Tdd, Tdd) {
+    let mut rng = Lcg::new(seed ^ 0xa0d1);
+    let n = 2 + rng.below(8) as u32;
+    let home = Arc::clone(&Home::new(Vtree::random(n, seed)));
+    let f = diagram(&home, n, &mut rng);
+    let mut g = f.clone();
+    g.trim(&Home::new(Arc::clone(&home))).unwrap();
+    audit.case = format!("seed {seed}, {n} variables, {} of them kept", g.vtree().num_leaves());
+    audit_case(audit, eng, &home, &f, &g, n, &mut rng);
+    (f, g)
+}
+
 #[test]
 fn every_entry_point_answers_on_a_projection_as_on_the_home() {
     let eng = Engine::new();
@@ -514,18 +545,28 @@ fn every_entry_point_answers_on_a_projection_as_on_the_home() {
         *PANIC_AT.lock().unwrap() = format!("{} from {caller}", info.location().map(ToString::to_string).unwrap_or_default());
     }));
     for seed in 0..200u64 {
-        let mut rng = Lcg::new(seed ^ 0xa0d1);
-        let n = 2 + rng.below(8) as u32;
-        let home = Arc::clone(&Home::new(Vtree::random(n, seed)));
-        let f = diagram(&home, n, &mut rng);
-        let mut g = f.clone();
-        g.trim(&Home::new(Arc::clone(&home))).unwrap();
-        audit.case = format!("seed {seed}, {n} variables, {} of them kept", g.vtree().num_leaves());
-        audit_case(&mut audit, &eng, &home, &f, &g, n, &mut rng);
+        audit_seed(&mut audit, &eng, seed);
     }
     let report = audit.report();
     eprintln!("{report}");
     assert!(!report.contains("DIFFER") && !report.contains("PANIC"), "{report}");
+}
+
+/// Every operand of the audit's case at seed 108 and every diagram a call
+/// returns on it reaches all its nodes.
+#[cfg(debug_assertions)]
+#[test]
+fn every_result_of_the_audit_at_seed_108_reaches_all_its_nodes() {
+    let eng = Engine::new();
+    let mut audit = Audit { unreached_by: Some(Vec::new()), ..Audit::default() };
+    let (f, g) = audit_seed(&mut audit, &eng, 108);
+    let mut failures: Vec<String> = [("home operand", &f), ("projection operand", &g)]
+        .into_iter()
+        .filter_map(|(what, t)| all_reached(t).map(|e| format!("{what}: {e}")))
+        .collect();
+    failures.extend(audit.unreached_by.take().unwrap());
+    let shape = |t: &Tdd| format!("{} leaves, {} levels, {} nodes, {} pairs", t.vtree().num_leaves(), t.levels.len(), t.node_count(), t.pair_count());
+    assert!(failures.is_empty(), "operands: home {}, projection {}\n{}", shape(&f), shape(&g), failures.join("\n"));
 }
 
 /// `x1 ∧ ¬x3` over `Vtree::balanced(4)`, on the home and trimmed to the
