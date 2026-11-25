@@ -413,3 +413,39 @@ fn a_conjunction_on_homes_leaves_no_more_unnamed_nodes_than_on_roots() {
     assert!(roots > 100, "expected nodes no pair names on roots, got {roots}");
     assert!(homes <= roots, "{homes} nodes no pair names on homes, {roots} on roots");
 }
+
+/// A pass level whose passing operand is `f` and whose passed child keeps a
+/// product list emits only its live cells, and its level is the one the
+/// route that emits every cell builds.
+#[test]
+fn a_pass_level_with_carrier_g_emits_its_live_cells() {
+    use crate::limits::{LimitConfig, SparseRoute};
+    use crate::test_helpers::assert_same_shape;
+    let cnf = |home: &Home, vars: &[VarId], rng: &mut Lcg| {
+        let eng = Engine::new();
+        let mut f = Tdd::one(&Vtree::projection(home, vars.iter().copied()).unwrap());
+        for _ in 0..2 + rng.below(4 + vars.len() as u64) {
+            f = eng.and_clause(f, &clause(vars, rng)).unwrap();
+        }
+        f
+    };
+    let before = pass_listed_g_census();
+    for seed in 0..400u64 {
+        let hm = Home::new(rotated_home(10 + (seed % 12) as u32 * 2, seed));
+        let home = Arc::clone(hm.vtree());
+        let mut rng = Lcg::new(seed ^ 0x2545_f491);
+        for (fv, gv) in leaf_set_pairs(&home, &mut rng) {
+            let (f, g) = (cnf(&hm, &fv, &mut rng), cnf(&hm, &gv, &mut rng));
+            for (a, b) in [(&f, &g), (&g, &f)] {
+                let eng = Engine::new();
+                let _scope = eng.limits().scope(LimitConfig::none().with_sparse_route(SparseRoute::new(1, 0)));
+                let out = eng.and(a, b).unwrap();
+                let oracle = pass_listed_off(|| eng.and(a, b).unwrap());
+                assert_same_shape(&out, &oracle, &format!("seed {seed}: {fv:?} and {gv:?}"));
+            }
+        }
+    }
+    let [levels, emitted, cells] = std::array::from_fn(|k| pass_listed_g_census()[k] - before[k]);
+    assert!(levels > 0, "no pass level with carrier g read its child's list");
+    assert!(emitted < cells, "{levels} levels emitted {emitted} of {cells} cells");
+}
