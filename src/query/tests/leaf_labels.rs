@@ -189,18 +189,18 @@ fn support_and_backbone_charge_every_pair_of_a_leaf_parent_however_far_they_read
     // a pair for each leaf child of the level all the same.
     let eng = Engine::new();
     let vars: Vec<VarId> = (1..=6).map(VarId).collect();
-    let tree = Arc::new(Vtree::balanced_over(&vars).unwrap());
+    let tree = Home::new(Vtree::balanced_over(&vars).unwrap());
     let lim = eng.limits();
     let mut seed = 0x9e37_79b9_7f4a_7c15u64;
     for _ in 0..40 {
         let f = random_cnf_diagram(&eng, &tree, &vars, &mut seed, 4, 4);
         assert_canonical(&f);
-        if f.is_zero() || tree.node(f.output().vtree).is_leaf() {
+        if f.is_zero() || f.vtree().node(f.output().vtree).is_leaf() {
             continue;
         }
         let mut expected = 0u64;
-        for (t, left, right) in tree.internal_bottomup() {
-            let leaves = [left, right].iter().filter(|&&c| tree.node(c).is_leaf()).count() as u64;
+        for (t, left, right) in f.vtree().internal_bottomup() {
+            let leaves = [left, right].iter().filter(|&&c| f.vtree().node(c).is_leaf()).count() as u64;
             let pairs: u64 = (0..f.level(t).nodes().len()).map(|i| f.level(t).pair_count_at(i) as u64).sum();
             expected += leaves * pairs;
         }
@@ -228,7 +228,7 @@ fn an_implicit_leaf_parent_names_the_labels_of_its_stored_copy() {
     // labels its stored copy's pairs give, charged the same.
     let eng = Engine::new();
     let vars: Vec<VarId> = (1..=6).map(VarId).collect();
-    let tree = Arc::new(Vtree::balanced_over(&vars).unwrap());
+    let tree = Home::new(Vtree::balanced_over(&vars).unwrap());
     let read = |g: &Tdd| {
         let (mut labels, mut charged) = (Vec::new(), 0u64);
         visit_leaf_labels(g, |_| false, |work, pairs| { charged += work * pairs; Ok(()) }, |var, l| {
@@ -245,8 +245,8 @@ fn an_implicit_leaf_parent_names_the_labels_of_its_stored_copy() {
             if f.is_zero() {
                 continue;
             }
-            described += tree.internal_bottomup()
-                .filter(|&(_, l, r)| tree.node(l).is_leaf() || tree.node(r).is_leaf())
+            described += f.vtree().internal_bottomup()
+                .filter(|&(_, l, r)| f.vtree().node(l).is_leaf() || f.vtree().node(r).is_leaf())
                 .filter(|&(t, _, _)| f.level(t).implicit().is_some())
                 .count();
             let stored = crate::test_helpers::stored_copies(&f);

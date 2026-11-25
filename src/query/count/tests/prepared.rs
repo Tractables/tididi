@@ -48,7 +48,7 @@ fn prepared_updates_match_model_enumeration() {
 
 #[test]
 fn prepared_counts_promote_and_retry_after_every_reservation_failure() {
-    let tree = Arc::new(Vtree::balanced(160));
+    let tree = Home::new(Vtree::balanced(160));
     let vars: Vec<_> = (0..16).map(|i| VarId(1 + 10 * i)).collect();
     let free: Vec<_> = (1..=160).map(VarId).filter(|v| !vars.contains(v)).collect();
     let (f, rows) = table(&tree, &vars);
@@ -56,7 +56,7 @@ fn prepared_counts_promote_and_retry_after_every_reservation_failure() {
     let mut counter = f.counter().unwrap();
     counter.prepare().unwrap();
     let plan = Prepared::new(&eng, &f).unwrap();
-    assert!(plan.levels[tree.root().idx()].is_some(), "overflowing root uses packed pairs");
+    assert!(plan.levels[f.vtree().root().idx()].is_some(), "overflowing root uses packed pairs");
     assert_eq!(counter.model_count().unwrap(), BigUint::from(rows.len()) << 144);
     for pinned in [144, 100, 30, 0, 144, 0] {
         counter.clear_pins();

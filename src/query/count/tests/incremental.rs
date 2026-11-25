@@ -101,6 +101,35 @@ fn frontier_evidence_invalidates_without_retaining_a_dirty_worklist() {
     assert!(counter.cache.observations.pins.iter().all(|pin| !pin.dirty));
 }
 
+#[test]
+#[ignore = "on a home repeating the pins of a constant on the empty projection invalidates the cached count"]
+fn frontier_evidence_invalidates_without_retaining_a_dirty_worklist_on_a_home() {
+    let tree = Home::new(Vtree::balanced(16));
+    let diagram = Tdd::one(&tree);
+    assert_canonical(&diagram);
+    let engine = Engine::new();
+    let mut counter = diagram.counter_with(Retention::Frontier, PinSemantics::Evidence).unwrap();
+    assert_eq!(counter.cache.observations.changed.capacity(), 0);
+    assert_eq!(counter.model_count().unwrap(), BigUint::from(1u32) << 16);
+    let pins: Vec<_> = (1..=16).map(|v| (VarId(v), Some(false))).collect();
+    counter.set_pins(&pins).unwrap();
+    assert!(!counter.cache.observations.evaluated);
+    assert_eq!(counter.model_count().unwrap(), BigUint::from(1u32));
+    // Repeating observations leaves the root cached, even if allocations would be refused.
+    engine.refuse_nth_reserve(0);
+    counter.set_pins(&pins).unwrap();
+    assert!(counter.cache.observations.evaluated);
+    assert_eq!(counter.bind(&engine).model_count().unwrap(), BigUint::from(1u32));
+    engine.limits().grant_every_reserve();
+    counter.clear_pins();
+    assert!(!counter.cache.observations.evaluated);
+    assert_eq!(counter.model_count().unwrap(), BigUint::from(1u32) << 16);
+    counter.clear_pins();
+    assert!(counter.cache.observations.evaluated);
+    assert_eq!(counter.cache.observations.changed.capacity(), 0);
+    assert!(counter.cache.observations.pins.iter().all(|pin| !pin.dirty));
+}
+
 /// The table a fresh counter gives one assignment at a time.
 fn one_at_a_time(f: &Tdd, vars: &[VarId], retention: Retention, convention: PinSemantics) -> Vec<BigUint> {
     (0..1usize << vars.len())

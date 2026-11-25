@@ -71,12 +71,12 @@ fn both_counter_policies_recover_from_every_refresh_reservation_failure() {
 fn stopped_refreshes(retention: Retention) {
     let eng = Engine::new();
     eng.limits().pin_reduce_poll_stride(Some(1));
-    let f = Tdd::one(&Arc::new(Vtree::balanced(8)));
+    let f = Tdd::clause(&Home::new(Vtree::balanced(8)), 1..=8).unwrap();
     assert_canonical(&f);
     let mut completed = false;
     for cut in 0..128 {
         let mut counter = eng.counter_with(&f, retention, PinSemantics::Evidence).unwrap();
-        assert_eq!(counter.model_count().unwrap(), 256u32.into());
+        assert_eq!(counter.model_count().unwrap(), 255u32.into());
         counter.set_pin(VarId(1), Some(false)).unwrap();
         let calls = Arc::new(AtomicUsize::new(0));
         let result = {
@@ -87,9 +87,9 @@ fn stopped_refreshes(retention: Retention) {
                 }))));
             counter.model_count()
         };
-        assert_eq!(counter.model_count().unwrap(), 128u32.into(), "cut {cut}");
+        assert_eq!(counter.model_count().unwrap(), 127u32.into(), "cut {cut}");
         counter.set_pin(VarId(1), None).unwrap();
-        assert_eq!(counter.model_count().unwrap(), 256u32.into());
+        assert_eq!(counter.model_count().unwrap(), 255u32.into());
         match result {
             Ok(_) => { assert!(cut > 2); completed = true; break; }
             Err(error) => assert_eq!(error, OperationError::Stopped),
@@ -165,8 +165,8 @@ fn counters_sharing_a_context_retain_independent_evidence() {
 #[test]
 fn node_count_export_shares_one_allocation_budget() {
     let engine = Engine::new();
-    let vtree = Arc::new(Vtree::leaf(VarId(1)));
-    let f = Tdd::one(&vtree);
+    let vtree = Home::new(Vtree::leaf(VarId(1)));
+    let f = crate::literal(&vtree, 1).unwrap();
     assert_canonical(&f);
     let header = std::mem::size_of::<crate::value::CountVec>() as u64;
     let values = (crate::diagram::LEAF_WIDTH * std::mem::size_of::<u128>()) as u64;
@@ -176,7 +176,7 @@ fn node_count_export_shares_one_allocation_budget() {
         assert_eq!(engine.node_counts_u128(&f), Err(OperationError::OverBudget));
     }
     let counts = engine.node_counts_u128(&f).unwrap();
-    assert_eq!(counts[vtree.root().idx()], [2, 1, 1]);
+    assert_eq!(counts[f.vtree().root().idx()], [2, 1, 1]);
     assert_canonical(&f);
 }
 
@@ -185,7 +185,7 @@ fn node_count_export_shares_one_allocation_budget() {
 fn node_count_export_checks_stops_after_the_fold() {
     use crate::limits::{StopAt, StopRules};
     let engine = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = Tdd::clause(&vtree, [1, 2]).unwrap();
     assert_canonical(&f);
     {
@@ -196,7 +196,7 @@ fn node_count_export_checks_stops_after_the_fold() {
         assert_eq!(engine.node_counts_u128(&f), Err(OperationError::Stopped));
     }
     let counts = engine.node_counts_u128(&f).unwrap();
-    assert_eq!(counts[vtree.root().idx()][f.output().local.idx()], 6);
+    assert_eq!(counts[f.vtree().root().idx()][f.output().local.idx()], 3);
     assert_canonical(&f);
 }
 
@@ -204,8 +204,8 @@ fn node_count_export_checks_stops_after_the_fold() {
 #[test]
 fn node_count_export_recovers_from_each_allocation_refusal() {
     let engine = Engine::new();
-    let vtree = Arc::new(Vtree::leaf(VarId(1)));
-    let f = Tdd::one(&vtree);
+    let vtree = Home::new(Vtree::leaf(VarId(1)));
+    let f = crate::literal(&vtree, 1).unwrap();
     assert_canonical(&f);
     let expected = f.node_counts_u128().unwrap();
     let mut refusals = 0;

@@ -1,6 +1,5 @@
 //! `Tdd::ordered_models` against the models read off a truth table, sorted.
 
-use crate::test_helpers::bare_roots;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -153,7 +152,7 @@ fn no_key_columns_is_any_order_on_any_vtree() {
     // With no key, every vtree is a spine of nothing: the first models are
     // any `limit` distinct models.
     let mut rng = Lcg::new(73);
-    for (shape, vtree) in bare_roots(vtree_shapes(6)) {
+    for (shape, vtree) in vtree_shapes(6) {
         let clauses = rand_cnf(&mut rng, 6, CnfShape { clauses: 4, width: 3 });
         let truth = truth_table(6, &clauses);
         let f = compile_clauses(&vtree, &clauses);
@@ -170,6 +169,23 @@ fn no_key_columns_is_any_order_on_any_vtree() {
 #[test]
 fn constants_and_refusals() {
     let vtree = Arc::new(Vtree::linear(3));
+    let key: &[VarId] = &[VarId(1), VarId(2)];
+    assert_eq!(Tdd::zero(&vtree).ordered_models(&[key, &[VarId(3)]], &[false, false], 1, 5).unwrap(), Some(vec![vec![], vec![]]));
+    let one = Tdd::one(&vtree).ordered_models(&[key, &[VarId(3)]], &[true, false], 1, 5).unwrap().unwrap();
+    assert_eq!(one, vec![vec![3, 3, 2, 2, 1], vec![0, 1, 0, 1, 0]]);
+    // A key read least significant bit first is not the spine.
+    assert_eq!(Tdd::one(&vtree).ordered_models(&[&[VarId(2), VarId(1)]], &[false], 1, 5).unwrap(), None);
+    let f = Tdd::clause(&vtree, [1, 3]).unwrap();
+    assert_eq!(f.ordered_models(&[key], &[false], 1, 5).unwrap_err(), OperationError::UnlistedLiteral(VarId(3)));
+    // No column: one empty model, as `ordered_keys` gives.
+    assert_eq!(Tdd::one(&vtree).ordered_models(&[], &[], 0, 5).unwrap(), Some(vec![]));
+    assert_eq!(Tdd::one(&vtree).ordered_keys(&[], &[], 5).unwrap(), Some(vec![]));
+}
+
+#[test]
+#[ignore = "on a diagram whose projection, with the listed variables, has no node, ordered_models and ordered_keys read the root of an empty vtree and panic"]
+fn constants_and_refusals_on_a_home() {
+    let vtree = crate::vtree::Home::new(Vtree::linear(3));
     let key: &[VarId] = &[VarId(1), VarId(2)];
     assert_eq!(Tdd::zero(&vtree).ordered_models(&[key, &[VarId(3)]], &[false, false], 1, 5).unwrap(), Some(vec![vec![], vec![]]));
     let one = Tdd::one(&vtree).ordered_models(&[key, &[VarId(3)]], &[true, false], 1, 5).unwrap().unwrap();
@@ -228,7 +244,7 @@ fn the_first_keys_are_the_least_distinct_values_on_a_key_spine() {
     }
     assert!(cases > 500, "{cases} cases");
     // Keys read out of order: refused.
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(4));
     assert_eq!(Tdd::one(&vtree).ordered_keys(&[&[VarId(2)], &[VarId(1)]], &[false, false], 2).unwrap(), None);
 }
 
@@ -314,7 +330,7 @@ fn the_first_rows_are_the_least_on_any_layout_that_reads_the_keys_first() {
 
 #[test]
 fn ordered_queries_accept_128_key_bits_and_decline_more() {
-    let vtree = Arc::new(Vtree::linear(129));
+    let vtree = crate::vtree::Home::new(Vtree::linear(129));
     let f = Tdd::one(&vtree);
     crate::test_helpers::assert_canonical(&f);
     let bits: Vec<VarId> = (1..=129).map(VarId).collect();

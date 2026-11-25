@@ -94,6 +94,18 @@ fn test_node_counts_basic() {
     assert_eq!(*out_count, BigUint::from(8u32));
 }
 
+#[test]
+#[ignore = "node counts of a constant on the empty projection read the root of an empty vtree and panic"]
+fn test_node_counts_basic_on_a_home() {
+    let eng = &crate::Engine::new();
+    let vtree = Home::new(Vtree::balanced(3));
+    let tdd = constant_one(eng, &vtree);
+    let counts = node_counts(&tdd);
+    // Output node should have count = 2^3 = 8
+    let out_count = &counts[tdd.output.vtree.idx()][tdd.output.local.idx()];
+    assert_eq!(*out_count, BigUint::from(8u32));
+}
+
 // --- Overflow tests ---
 
 /// Conditioning collapses a false result to ZERO on `is_sat`'s answer, so on

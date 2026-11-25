@@ -127,7 +127,8 @@ pub fn node_counts(tdd: &Tdd) -> Vec<Vec<BigUint>> {
     count_big(tdd, &[], PinSemantics::Cofactor)
 }
 
-/// Full-precision pinned model count of `tdd` under `convention`.
+/// Full-precision pinned model count of `tdd` under `convention`, a
+/// variable of the home its projection lacks counted as a free leaf.
 ///
 /// The oracle the u128-hybrid pinned counter ([`ModelCounter`](crate::query::ModelCounter)) is
 /// differentially tested against: one `BigUint` bottom-up pass with no u128
@@ -145,7 +146,14 @@ pub fn pinned_counts(tdd: &Tdd, pins: &[Option<bool>], convention: PinSemantics)
     }
     let counts = count_big(tdd, pins, convention);
     let (out_t, out_i) = (tdd.output.vtree.idx(), tdd.output.local.idx());
-    counts[out_t][out_i].clone()
+    let mut count = counts[out_t][out_i].clone();
+    if let Some(home) = tdd.vtree.link_home() {
+        for (_, var) in home.leaf_bottomup().filter(|&(_, var)| tdd.vtree.home_has(var)) {
+            let pin = pins.get(var.idx()).copied().flatten();
+            count *= leaf_seed(LeafLabel::One, pin, convention);
+        }
+    }
+    count
 }
 
 /// The walk behind [`node_counts`] and [`pinned_counts`], with per-variable
