@@ -251,3 +251,24 @@ fn a_refused_trim_is_an_allocation_refusal() {
     let format = crate::io::build_error(TddBuildError::IncompatibleWeights, |e| IoError::Format(e.to_string()));
     assert!(matches!(format, IoError::Format(_)), "{format:?}");
 }
+
+/// A file read onto a weighted home is checked with the home's weights and
+/// has the weighted value of the diagram written, as on a weighted root.
+#[test]
+fn a_file_reads_onto_a_weighted_home_with_its_weighted_value() {
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
+    use num_rational::BigRational;
+    let w = |n: i64, d: i64| BigRational::new(n.into(), d.into());
+    let literal = |p: i64, d: i64| LiteralWeights { negative: w(d - p, d), positive: w(p, d) };
+    let table = [literal(1, 3), literal(1, 4), literal(2, 5), literal(1, 7)];
+    let weights = || Weights::new(RationalWeights::from_literals(&table), Arithmetic::ExactRational);
+    let home = Home::weighted(Vtree::balanced(4), weights()).unwrap();
+    let root = Arc::new(Vtree::balanced(4).with_weights(weights()).unwrap());
+    let f = Tdd::clause(home.vtree(), [1, 3]).unwrap();
+    let want = Tdd::clause(&root, [1, 3]).unwrap().weighted_value().unwrap().unwrap().into_rational();
+    for back in both_readers(&f, home.vtree()) {
+        let back = back.unwrap();
+        assert!(Arc::ptr_eq(back.vtree().link_home().unwrap().vtree(), home.vtree()));
+        assert_eq!(back.weighted_value().unwrap().unwrap().into_rational(), want);
+    }
+}

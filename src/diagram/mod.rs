@@ -211,7 +211,7 @@ pub(crate) use pool::LevelPool;
 // tdd
 pub use build_error::TddBuildError;
 pub use builder::{LevelView, TddBuilder};
-pub(crate) use builder::{check_seated_pairs, trim_on_home};
+pub(crate) use builder::{check_seated_pairs, check_seated_weighted, trim_on_home};
 #[cfg(any(test, debug_assertions, feature = "testing"))]
 pub(crate) use builder::check_stored;
 pub use pair_index::PairIndex;

@@ -565,6 +565,13 @@ pub(crate) fn check_seated_pairs(tdd: &Tdd) -> Result<(), TddBuildError> {
     check_storage::<true>(&tdd.vtree, &tdd.levels, tdd.output, None)
 }
 
+/// [`check_seated_pairs`] on a diagram seated on a weighted home.
+#[cold]
+#[inline(never)]
+pub(crate) fn check_seated_weighted(tdd: &Tdd) -> Result<(), TddBuildError> {
+    check_storage::<true>(&tdd.vtree, &tdd.levels, tdd.output, tdd.weights())
+}
+
 /// The checks of [`TddBuilder::finish`], the repeated-pair check and the
 /// diagram's weights included, on any diagram.
 #[cfg(any(test, debug_assertions, feature = "testing"))]
