@@ -29,7 +29,7 @@ fn xor2_tdd() -> (Arc<Vtree>, Tdd) {
 
 #[test]
 fn support_mask_tracks_dependence() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let f = and2(&cls(&vtree, &[(1, true)]), &cls(&vtree, &[(3, true)]));
     let sup = support_mask(&f);
     assert_eq!(sup, vec![true, false, true], "support should be {{x0,x2}}");
@@ -45,7 +45,7 @@ fn support_mask_tracks_dependence() {
 
 #[test]
 fn support_bits_covers_support_mask_and_detects_disjoint() {
-    let vtree = Arc::new(Vtree::balanced(3));
+    let vtree = Home::new(Vtree::balanced(3));
     let x0 = cls(&vtree, &[(1, true)]);
     let f = and2(&x0, &cls(&vtree, &[(3, true)]));
     let (mask, bits) = (support_mask(&f), support_bits(&f));

@@ -317,10 +317,10 @@ fn every_refused_reservation_comes_back_as_a_refusal() {
 #[test]
 fn the_scratch_per_vtree_node_is_charged() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(400));
+    let vtree = Home::new(Vtree::balanced(400));
     let f = eng.clause(&vtree, [1, 2, 300]).unwrap();
     let cube = eng.cube(&vtree, [-1, 3]).unwrap();
-    let nodes = vtree.num_nodes() as u64;
+    let nodes = crate::test_helpers::on_one(&eng, f.clone(), cube.clone()).0.vtree().num_nodes() as u64;
     let got = eng.and_in_place_loose(f.clone(), &cube).unwrap();
     let charged = eng.limits().meters().in_flight_bytes;
     assert!(charged >= nodes * std::mem::size_of::<Vec<u32>>() as u64, "{charged} bytes charged over {nodes} vtree nodes");

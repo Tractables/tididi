@@ -59,22 +59,22 @@ fn spell(shape: &Shape, lines: &mut Vec<String>) -> usize {
     id.0
 }
 
-fn vtree_of(shape: &Shape) -> Arc<Vtree> {
+fn vtree_of(shape: &Shape) -> Home {
     let mut lines = Vec::new();
     spell(shape, &mut lines);
     let text = format!("vtree {}\n{}\n", lines.len(), lines.join("\n"));
-    Arc::new(Vtree::from_text(&text).expect("a well-formed vtree"))
+    Home::new(Vtree::from_text(&text).expect("a well-formed vtree"))
 }
 
 /// The shapes every comparison runs on: balanced, right- and left-linear,
 /// random, and two blocks of uneven widths joined at the root.
-fn shapes(n: u32) -> Vec<(&'static str, Arc<Vtree>)> {
+fn shapes(n: u32) -> Vec<(&'static str, Home)> {
     let vars: Vec<u32> = (1..=n).collect();
     let mut out = vec![
-        ("balanced", Arc::new(Vtree::balanced(n))),
-        ("right-linear", Arc::new(Vtree::linear(n))),
+        ("balanced", Home::new(Vtree::balanced(n))),
+        ("right-linear", Home::new(Vtree::linear(n))),
         ("left-linear", vtree_of(&left_linear(&vars))),
-        ("random(7)", Arc::new(Vtree::random(n, 7))),
+        ("random(7)", Home::new(Vtree::random(n, 7))),
     ];
     if n >= 3 {
         let (a, b) = vars.split_at(((n as usize) / 3).max(1));
@@ -229,7 +229,7 @@ fn constants_and_equal_operands() {
 #[test]
 fn a_leaf_root_combines_labels() {
     let eng = &Engine::new();
-    let vtree = Arc::new(Vtree::balanced(1));
+    let vtree = Home::new(Vtree::balanced(1));
     let fns = [
         Tdd::zero(&vtree),
         Tdd::one(&vtree),

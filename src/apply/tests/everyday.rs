@@ -43,7 +43,7 @@ fn exists_truth_table_3(bits: u16, vars: &[VarId], row: usize) -> bool {
 #[test]
 fn comparisons_support_and_witnesses_match_all_two_variable_truth_tables() {
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(2));
+    let tree = Home::new(Vtree::balanced(2));
     let fs: Vec<_> = (0..16).map(|bits| function(&tree, bits, false)).collect();
     for (bits, f) in fs.iter().enumerate() {
         let other = function(&tree, bits as u16, true);
@@ -164,7 +164,7 @@ fn substitution_is_simultaneous_for_cycles_identification_and_functions() {
 #[test]
 fn ite_and_existential_conjunction_match_enumeration() {
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(3));
+    let tree = Home::new(Vtree::balanced(3));
     for (a, b, c) in [(42, 97, 130), (255, 16, 0), (0, 100, 150), (150, 85, 170)] {
         let (f, g, h) = (
             function(&tree, a, false),
@@ -477,9 +477,9 @@ fn composed_operations_propagate_output_caps() {
 
 #[test]
 fn witness_walk_handles_deep_vtrees_without_recursion() {
-    let tree = Arc::new(Vtree::linear(8192));
+    let tree = Home::new(Vtree::linear(8192));
     let eng = Engine::new();
-    let f = eng.literal(&tree, 8192).unwrap();
+    let f = eng.cube(&tree, (1..8192).map(|v| -v).chain([8192])).unwrap();
     let model = eng.satisfying_assignment(&f).unwrap().unwrap();
     assert_eq!(model.len(), 8192);
     assert!(model[..8191].iter().all(|lit| !lit.sign));

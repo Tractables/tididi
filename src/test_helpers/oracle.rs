@@ -353,7 +353,7 @@ pub fn support_mask(t: &Tdd) -> Vec<bool> {
     }
     let vtree = Arc::clone(&mt.vtree);
     for (x, sup_x) in sup.iter_mut().enumerate() {
-        let leaf = vtree.leaf_of(VarId(x as u32 + 1)).expect("the vtree carries this variable");
+        let Some(leaf) = vtree.leaf_of(VarId(x as u32 + 1)) else { continue };
         // Output sits at the leaf itself: depends on x iff the label is Pos/Neg.
         if mt.output.vtree == leaf {
             *sup_x = mt.output.local == POS_LEAF_IDX || mt.output.local == NEG_LEAF_IDX;
@@ -543,8 +543,8 @@ fn eval_node(t: &Tdd, v: VtreeIdx, local: NodeIdx, asn: &[bool]) -> bool {
 /// forcing it over every assignment is a soundness oracle independent of the
 /// operator under test.
 pub fn eval(t: &Tdd, asn: &[bool]) -> bool {
-    if t.is_zero() {
-        return false;
+    if t.is_zero() || t.vtree.num_nodes() == 0 {
+        return !t.is_zero();
     }
     eval_node(t, t.output.vtree, t.output.local, asn)
 }

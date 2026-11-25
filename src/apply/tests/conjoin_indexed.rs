@@ -4,6 +4,7 @@
 use super::*;
 use crate::apply::conjoin_indexed::{and_indexed_counted, sum_indexed_counted, IndexedWork};
 use crate::diagram::{ChildPair, ColumnAlgebra, LeafLabel, Literal, NodeIdx, PairIndex, SlotPairs};
+use crate::test_helpers::bare_roots;
 use crate::test_helpers::check::{check_all_fast, check_determinism, check_no_false_nodes};
 use crate::vtree::VtreeIdx;
 
@@ -71,7 +72,7 @@ fn cases() -> Vec<Tdd> {
     let mut rng = Lcg::new(0x0001_d5ed_2026_1011);
     let mut out = Vec::new();
     for nvars in [3u32, 5, 7] {
-        for (shape, vtree) in bare_roots(vtree_shapes(nvars)) {
+        for (shape, vtree) in vtree_shapes(nvars) {
             for round in 0..10 {
                 let label = format!("{shape} n={nvars} round {round}");
                 let f = rand_conj(&vtree, nvars, 4, 3, round % 2 == 0, &mut rng);
@@ -118,7 +119,7 @@ fn products_past_the_list_cap_are_refused() {
     let eng = Engine::new();
     let mut rng = Lcg::new(0x11a7_1dec_2026_1110);
     let nvars = 7;
-    for (shape, vtree) in bare_roots(vtree_shapes(nvars)) {
+    for (shape, vtree) in vtree_shapes(nvars) {
         let f = rand_conj(&vtree, nvars, 4, 3, false, &mut rng);
         let g = rand_conj(&vtree, nvars, 4, 3, false, &mut rng);
         let index = PairIndex::new(&g).unwrap();
@@ -611,7 +612,7 @@ fn every_refused_reserve_of_an_indexed_conjunction_leaves_the_operands() {
         let mut rng = Lcg::new(0x0001_d5ed_2026_1116);
         let mut absorbed = 0;
         for nvars in [5u32, 7] {
-            for (shape, vtree) in bare_roots(vtree_shapes(nvars)).into_iter().take(3) {
+            for (shape, vtree) in vtree_shapes(nvars).into_iter().take(3) {
                 let f = rand_conj(&vtree, nvars, 4, 3, false, &mut rng);
                 let set = local_set(&vtree, &mut rng);
                 let g = rand_conj(&vtree, nvars, 4, 3, true, &mut rng);
