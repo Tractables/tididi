@@ -127,12 +127,12 @@ fn a_skipped_fusion_is_one_that_finds_no_group() {
                 .collect();
             for step in 0..4 {
                 let target = below_root[rng.below(below_root.len() as u64) as usize];
-                eng.marginalize_levels(&mut kept, &[target]).unwrap();
+                crate::test_helpers::marginalize_under(&eng, &mut kept, &[target]).unwrap();
                 recorded += (0..vtree.num_nodes() as u32)
                     .filter(|&t| kept.dirty.is_fused(t))
                     .count();
                 eng.minimize(&mut kept).unwrap();
-                eng.marginalize_levels(&mut forced, &[target]).unwrap();
+                crate::test_helpers::marginalize_under(&eng, &mut forced, &[target]).unwrap();
                 forced.dirty.forget_all_fused();
                 eng.minimize(&mut forced).unwrap();
                 forced.dirty.forget_all_fused();
@@ -252,7 +252,7 @@ fn a_conjunction_records_the_levels_it_builds_beside_a_recorded_carrier() {
                 .filter(|&t| t != vtree.root() && !vtree.node(t).is_leaf())
                 .collect();
             let target = inner[rng.below(inner.len() as u64) as usize];
-            eng.marginalize_levels(&mut f, &[target]).unwrap();
+            crate::test_helpers::marginalize_under(&eng, &mut f, &[target]).unwrap();
             eng.minimize(&mut f).unwrap();
             let inside: Vec<VtreeIdx> = vtree.subtree(target).collect();
             let outside: Vec<i32> = (1..=num_vars)
@@ -295,7 +295,7 @@ fn a_conjunction_records_the_levels_it_builds_beside_a_recorded_carrier() {
                 continue;
             }
             let second = beside[rng.below(beside.len() as u64) as usize];
-            let kept = eng.and_marginalizing(f, g, &[second]).unwrap();
+            let kept = crate::test_helpers::and_marginalizing_under(&eng, f, g, &[second]).unwrap();
             assert_minimizes_same_without_fused_records(
                 &eng,
                 kept,

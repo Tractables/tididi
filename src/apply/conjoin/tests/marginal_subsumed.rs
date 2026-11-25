@@ -20,8 +20,7 @@ fn a_marginalizing_conjunction_frees_the_stores_it_subsumes() {
     // Every level a target, so each internal level is summed out over
     // children that were summed out moments earlier in the same conjunction.
     let targets: Vec<VtreeIdx> = vtree.bottomup().collect();
-    let h = Engine::new()
-        .and_marginalizing(f, g, &targets)
+    let h = crate::test_helpers::and_marginalizing_under(&Engine::new(), f, g, &targets)
         .expect("an unarmed engine refuses nothing");
 
     assert_eq!(h.model_count().unwrap(), expected);

@@ -44,13 +44,13 @@ fn checked_satisfiability_ignores_weights_and_reads_marginal_counts() {
     assert_eq!(engine.is_sat(&f), Ok(true));
     assert_eq!(engine.implied_literals(&f), Ok(vec![1.try_into().unwrap(), (-2).try_into().unwrap()]));
     assert_eq!(engine.weighted_value(&f).unwrap().unwrap().into_rational(), rat(0, 1));
-    engine.marginalize_levels(&mut f, &[weighted.root()]).unwrap();
+    crate::test_helpers::marginalize_under(&engine, &mut f, &[weighted.root()]).unwrap();
     assert_eq!(engine.is_sat(&f), Ok(true));
     assert!(matches!(engine.implied_literals(&f), Err(OperationError::MarginalLevel(_))));
     let tree = Arc::new(Vtree::balanced(3));
     let mut counts = engine.one(&crate::vtree::Home::unchecked(&tree));
     assert_canonical(&counts);
-    engine.marginalize_levels(&mut counts, &[tree.root()]).unwrap();
+    crate::test_helpers::marginalize_under(&engine, &mut counts, &[tree.root()]).unwrap();
     assert_eq!(engine.is_sat(&counts), Ok(true));
     assert!(matches!(engine.implied_literals(&counts), Err(OperationError::MarginalLevel(_))));
 }
@@ -91,7 +91,7 @@ fn edited_marginal_fixture(engine: &Engine) -> Tdd {
     }
     let summed: Vec<VtreeIdx> = tree.internal_bottomup_slice().iter().copied()
         .filter(|&t| under_left[t.idx()]).collect();
-    engine.marginalize_levels(&mut g, &summed).unwrap();
+    crate::test_helpers::marginalize_under(engine, &mut g, &summed).unwrap();
     let f = engine.and(g, engine.literal(&crate::vtree::Home::unchecked(&tree), 8).unwrap()).unwrap();
     assert!(f.has_marginal_level() && !f.dirty.is_empty());
     f
@@ -106,7 +106,7 @@ fn edited_weighted_fixture(engine: &Engine) -> Tdd {
     let mut g = engine.clause(&crate::vtree::Home::unchecked(&tree), [1, 3]).unwrap();
     assert_canonical(&g);
     let (left, _) = tree.children(tree.root());
-    engine.marginalize_levels(&mut g, &[left]).unwrap();
+    crate::test_helpers::marginalize_under(engine, &mut g, &[left]).unwrap();
     let f = engine.and(g, engine.literal(&crate::vtree::Home::unchecked(&tree), 4).unwrap()).unwrap();
     assert!(f.has_marginal_level() && !f.dirty.is_empty());
     f

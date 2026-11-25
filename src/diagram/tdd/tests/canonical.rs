@@ -33,7 +33,7 @@ fn builder_and_marginal_storage_are_not_certified() {
     let mut rebuilt = Tdd::from_levels_unchecked(vtree.clone(), f.levels.clone().into_vec(), f.output);
     assert!(!rebuilt.levels.is_canonical(rebuilt.output));
     assert_eq!(rebuilt.support().unwrap(), f.support().unwrap());
-    rebuilt.marginalize_levels(&[vtree.root()]).unwrap();
+    rebuilt.marginalize(crate::test_helpers::summing(rebuilt.vtree(), &[vtree.root()])).unwrap();
     rebuilt.minimize().unwrap();
     assert!(!rebuilt.levels.is_canonical(rebuilt.output));
 }

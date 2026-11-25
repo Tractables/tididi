@@ -194,7 +194,7 @@ fn constants_marginals_and_batch_limits() {
         let _scope = engine.limits().scope(LimitConfig::none().with_stop_rules(crate::limits::StopRules { unconditional: Some(crate::limits::StopAt::WorkUnits(0)), after_pairs: None }));
         assert!(e.value().is_err());
     }
-    f.marginalize_levels(&[vtree.root()]).unwrap();
+    f.marginalize(crate::test_helpers::summing(f.vtree(), &[vtree.root()])).unwrap();
     assert_canonical(&f);
     assert!(matches!(f.evaluator(RationalWeights::unit(4)), Err(OperationError::MarginalLevel(_))));
 }

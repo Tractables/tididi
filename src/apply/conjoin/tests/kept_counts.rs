@@ -66,7 +66,7 @@ fn a_conjunction_keeps_no_counts() {
             let out = eng.and(a.clone(), b.clone()).unwrap();
             assert!(!out.has_level_counts() || super::is_self_conjunction(&a, &b), "{what}: a conjunction kept counts");
             assert_eq!(eng.model_count(&out).unwrap(), eng.model_count(&plain).unwrap(), "{what}");
-            assert_eq!(eng.and_model_count(a, b, &[]).unwrap(), eng.model_count(&plain).unwrap(), "{what}: and_model_count");
+            assert_eq!(eng.and_model_count(a, b, |_| false).unwrap(), eng.model_count(&plain).unwrap(), "{what}: and_model_count");
         }
     }
 }
@@ -94,6 +94,6 @@ fn a_change_to_the_levels_drops_the_counts() {
     g.levels[0].clear();
     assert!(!g.has_level_counts(), "a mutable access");
     let mut g = f.clone();
-    eng.marginalize_levels(&mut g, &[vtree.children(vtree.root()).0]).unwrap();
+    crate::test_helpers::marginalize_under(&eng, &mut g, &[vtree.children(vtree.root()).0]).unwrap();
     assert!(!g.has_level_counts(), "marginalize");
 }

@@ -439,10 +439,10 @@ fn summing_a_child_of_a_cross_root_keeps_the_count() {
                     let _scope = route.map(|r| eng.limits().scope(LimitConfig::none().with_sparse_route(r)));
                     let oracle = list_complete_sides(|| eng.and(a.clone(), b.clone()).unwrap());
                     let count = eng.model_count(&oracle).unwrap();
-                    assert_eq!(eng.and_model_count(a.clone(), b.clone(), &[]).unwrap(), count, "{what}: count");
+                    assert_eq!(eng.and_model_count(a.clone(), b.clone(), |_| false).unwrap(), count, "{what}: count");
                     for target in [left, right] {
                         let what = format!("{what}, summing {target:?}");
-                        let sum = || eng.and_marginalizing(a.clone(), b.clone(), &[target]).unwrap();
+                        let sum = || crate::test_helpers::and_marginalizing_under(&eng, a.clone(), b.clone(), &[target]).unwrap();
                         for (path, out) in [("arithmetic", sum()), ("listed", list_complete_sides(sum))] {
                             let what = format!("{what}, {path}");
                             assert_eq!(eng.model_count(&out).unwrap(), count, "{what}: count");

@@ -196,7 +196,7 @@ fn weighted_marginal_levels_keep_their_values() {
     let vtree = Arc::new(Vtree::balanced(8).with_weights(weights).unwrap());
     let mut f = compile_clauses(&vtree, &[vec![1, 3, -6], vec![-2, 5, 7], vec![4, -8]]);
     let forgotten = vtree.children(vtree.root()).0;
-    eng.marginalize_levels(&mut f, &[forgotten]).unwrap();
+    crate::test_helpers::marginalize_under(&eng, &mut f, &[forgotten]).unwrap();
     assert_canonical(&f);
     let g = eng.renumber_top_down(&f).unwrap();
     assert_canonical(&g);

@@ -37,7 +37,7 @@ fn vtree_overlays_handle_constants_leaves_and_marginal_levels() {
         for mut f in [Tdd::zero(&crate::vtree::Home::unchecked(&vtree)), Tdd::one(&crate::vtree::Home::unchecked(&vtree))] {
             assert_canonical(&f);
             assert!(f.level_sizes_to_dot().starts_with("graph vtree"));
-            f.marginalize_levels(&[vtree.root()]).unwrap();
+            f.marginalize(crate::test_helpers::summing(f.vtree(), &[vtree.root()])).unwrap();
             assert_canonical(&f);
             let dot = f.level_sizes_to_dot();
             assert!(dot.starts_with("graph vtree"));

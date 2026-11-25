@@ -965,7 +965,7 @@ fn exists_above_a_summed_out_level_is_refused() {
     for (text, clauses) in homes {
         let tree = Arc::new(Vtree::from_text(text).unwrap());
         let mut f = compile_clauses(&tree, &clauses);
-        f.marginalize_levels(&[tree.leaf_of(VarId(1)).unwrap()]).unwrap();
+        f.marginalize(crate::test_helpers::summing(f.vtree(), &[tree.leaf_of(VarId(1)).unwrap()])).unwrap();
         assert_eq!(f.model_count().unwrap(), 3u32.into());
         for quantify in [Tdd::exists_var as fn(Tdd, VarId) -> _, |f: Tdd, x| f.exists_vars(&[x])] {
             match quantify(f.clone(), VarId(2)) {

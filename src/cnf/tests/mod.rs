@@ -104,7 +104,7 @@ fn a_weight_marginal_level_is_refused_before_the_sink_is_called() {
     let tree = Arc::new(Vtree::balanced(8).with_weights(weights).unwrap());
     let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 3, 5, 7]).unwrap();
     let forgotten = tree.children(tree.root()).0;
-    f.marginalize_levels(&[forgotten]).unwrap();
+    f.marginalize(crate::test_helpers::summing(f.vtree(), &[forgotten])).unwrap();
     assert_canonical(&f);
     let first = f.levels.iter().position(|level| level.is_weight_marginal()).expect("a weighted level");
     assert!(f.levels[forgotten.idx()].is_weight_marginal());

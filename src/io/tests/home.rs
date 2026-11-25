@@ -109,7 +109,7 @@ fn finish_trims_a_summed_out_leaf_to_a_region() {
     let vtree = &home;
     let (x1, x2) = vtree.children(vtree.root());
     let mut donor = Tdd::cube(&crate::vtree::Home::unchecked(&Arc::new(Vtree::clone(vtree))), std::iter::empty::<i32>()).unwrap();
-    donor.marginalize_levels(&[x2]).unwrap();
+    donor.marginalize(crate::test_helpers::summing(donor.vtree(), &[x2])).unwrap();
     let mut b = Tdd::builder(&eng, vtree).unwrap();
     b.replace_level(&eng, x2, donor.level_view(x2)).unwrap();
     let side = crate::test_helpers::inline_side(1);

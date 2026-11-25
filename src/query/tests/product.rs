@@ -59,7 +59,7 @@ fn summed(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<i32>], targets: &[Vtr
     let mut t = compile_clauses_on(eng, vtree, clauses);
     assert_canonical(&t);
     if !t.is_zero() && !targets.is_empty() {
-        eng.marginalize_levels(&mut t, targets).unwrap();
+        crate::test_helpers::marginalize_under(eng, &mut t, targets).unwrap();
         eng.minimize(&mut t).unwrap();
         assert_canonical(&t);
     }
@@ -140,7 +140,7 @@ fn disjoint_scopes_count_the_conjunction() {
             let (l, r) = (summed(&eng, &vtree, &cl, &[tl]), summed(&eng, &vtree, &cr, &[tr]));
             let got = eng.marginal_product_count(&l, &r).unwrap();
             assert_eq!(Some(&got), brute(n, &cl, kept_mask(&l), &cr, kept_mask(&r)).as_ref(), "{name} round {round}");
-            assert_eq!(got, eng.and_model_count(l, r, &[]).unwrap(), "{name} round {round}: the conjunction");
+            assert_eq!(got, eng.and_model_count(l, r, |_| false).unwrap(), "{name} round {round}: the conjunction");
             compared += 1;
         }
     }
@@ -196,13 +196,13 @@ fn counts_past_u128_are_exact() {
     let vtree = Arc::new(Vtree::balanced(260));
     let (left, right) = vtree.children(vtree.root());
     let mut f = eng.clause(&crate::vtree::Home::unchecked(&vtree), [1]).unwrap();
-    eng.marginalize_levels(&mut f, &[right]).unwrap();
+    crate::test_helpers::marginalize_under(&eng, &mut f, &[right]).unwrap();
     assert_canonical(&f);
     // m(x) = [x1] · 2^130 over the 130 kept variables: 2^129 assignments of
     // 2^260 each.
     assert_eq!(eng.marginal_product_count(&f, &f).unwrap(), BigUint::from(1u32) << 389usize);
     // The left half summed out too: one value, 2^129 · 2^130, squared.
-    eng.marginalize_levels(&mut f, &[left]).unwrap();
+    crate::test_helpers::marginalize_under(&eng, &mut f, &[left]).unwrap();
     assert_eq!(eng.marginal_product_count(&f, &f).unwrap(), BigUint::from(1u32) << 518usize);
 }
 
@@ -213,7 +213,7 @@ fn refusals_and_the_false_diagram() {
     let vtree = Arc::new(Vtree::balanced(4));
     let left = vtree.children(vtree.root()).0;
     let mut m = eng.clause(&crate::vtree::Home::unchecked(&vtree), [1, 3]).unwrap();
-    eng.marginalize_levels(&mut m, &[left]).unwrap();
+    crate::test_helpers::marginalize_under(&eng, &mut m, &[left]).unwrap();
     assert_canonical(&m);
     let s = eng.clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap();
     for (f, g) in [(&m, &s), (&s, &m)] {
@@ -222,7 +222,7 @@ fn refusals_and_the_false_diagram() {
     // A structural operand free of the summed-out variables is read as its
     // constant.
     let free = eng.clause(&crate::vtree::Home::unchecked(&vtree), [3, 4]).unwrap();
-    let want = eng.and_model_count(m.clone(), free.clone(), &[]).unwrap();
+    let want = eng.and_model_count(m.clone(), free.clone(), |_| false).unwrap();
     assert_eq!(eng.marginal_product_count(&m, &free).unwrap(), want);
     let zero = crate::diagram::Tdd::zero(&crate::vtree::Home::unchecked(&vtree));
     assert_eq!(eng.marginal_product_count(&m, &zero).unwrap(), BigUint::ZERO);
@@ -237,7 +237,7 @@ fn refusals_and_the_false_diagram() {
     let weights = RationalWeights::from_literals(&vec![LiteralWeights { negative: half.clone(), positive: half }; 4]);
     let weighted_tree = Arc::new(Vtree::balanced(4).with_weights(Weights::new(weights, Arithmetic::ExactRational)).unwrap());
     let mut weighted = eng.clause(&crate::vtree::Home::unchecked(&weighted_tree), [1, 3]).unwrap();
-    eng.marginalize_levels(&mut weighted, &[left]).unwrap();
+    crate::test_helpers::marginalize_under(&eng, &mut weighted, &[left]).unwrap();
     let structural = eng.clause(&crate::vtree::Home::unchecked(&weighted_tree), [1, 2]).unwrap();
     for (f, g) in [(&weighted, &structural), (&structural, &weighted)] {
         assert_eq!(eng.marginal_product_count(f, g).unwrap_err(), OperationError::IncompatibleWeights);

@@ -209,7 +209,7 @@ fn a_contraction_drops_the_nodes_no_pair_names() {
             let (f, g) = (placed(eng, &mut rng, &wide), placed(eng, &mut rng, &wide));
             let conj = if marginal {
                 let targets: Vec<VtreeIdx> = wide.bottomup().filter(|_| rng.below(4) == 0).collect();
-                eng.and_marginalizing(f, g, &targets).unwrap()
+                crate::test_helpers::and_marginalizing_under(eng, f, g, &targets).unwrap()
             } else {
                 eng.and(f, g).unwrap()
             };
@@ -1048,7 +1048,7 @@ fn a_marginal_level_leaves_the_unnamed_count_unknown() {
     let mut f = compile_clauses(&vtree, &[vec![1, 2, -3], vec![-4, 5], vec![3, -6]]);
     assert!(eng.unnamed_nodes(&mut f).unwrap().is_some());
     let below = vtree.children(vtree.root()).0;
-    eng.marginalize_levels(&mut f, &[below]).unwrap();
+    crate::test_helpers::marginalize_under(&eng, &mut f, &[below]).unwrap();
     assert!(f.has_marginal_level());
     assert_eq!(eng.unnamed_nodes(&mut f).unwrap(), None);
 }

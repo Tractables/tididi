@@ -137,7 +137,7 @@ keep both contracts.
 
 ## Marginal levels
 
-[`Tdd::marginalize_levels`] replaces the structure of a subtree by one value
+[`Tdd::marginalize`] replaces the structure of a subtree by one value
 per node: a model count, or a weighted value when the diagram's vtree
 carries [`Weights`]. Nodes of a marginal level point to *value slots*, and nodes
 with equal values share a slot. A reference from a structural parent into a
@@ -303,7 +303,7 @@ release build, as described under [Testing](#testing).
 [`Tdd`]: crate::Tdd
 [`Tdd::output`]: crate::Tdd::output
 [`Tdd::is_zero`]: crate::Tdd::is_zero
-[`Tdd::marginalize_levels`]: crate::Tdd::marginalize_levels
+[`Tdd::marginalize`]: crate::Tdd::marginalize
 [`TddLevel`]: crate::diagram::TddLevel
 [`Vtree::bottomup`]: crate::Vtree::bottomup
 [`Weights`]: crate::diagram::Weights
@@ -315,8 +315,6 @@ release build, as described under [Testing](#testing).
 [`io`]: crate::io
 [`limits`]: crate::limits
 [`maintain`]: crate::maintain
-[`marginal::marginalize_levels`]: crate::Tdd::marginalize_levels
-[`marginalize_levels`]: crate::Tdd::marginalize_levels
 [`query`]: crate::query
 [`reduce`]: crate::reduce
 [`reduce::minimize`]: crate::Tdd::minimize

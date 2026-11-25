@@ -318,7 +318,7 @@ fn invalid_maps_and_marginal_inputs_are_rejected_even_for_constants() {
     }
     let mut marginal = x.clone();
     let leaf = tree.leaf_of(VarId(1)).unwrap();
-    eng.marginalize_levels(&mut marginal, &[leaf]).unwrap();
+    crate::test_helpers::marginalize_under(&eng, &mut marginal, &[leaf]).unwrap();
     let error = OperationError::MarginalLevel(leaf);
     assert_eq!(eng.equivalent(&marginal, &marginal).unwrap_err(), error);
     assert_eq!(eng.implies(&marginal, &x).unwrap_err(), error);

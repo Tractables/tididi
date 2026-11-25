@@ -29,7 +29,7 @@ fn edited_marginal_diagram(eng: &Engine) -> crate::Tdd {
     let summed: Vec<VtreeIdx> = vtree.internal_bottomup_slice().iter().copied()
         .filter(|&t| vtree.in_subtree(t, left))
         .collect();
-    eng.marginalize_levels(&mut g, &summed).unwrap();
+    crate::test_helpers::marginalize_under(eng, &mut g, &summed).unwrap();
     let f = eng.and(g, eng.literal(&crate::vtree::Home::unchecked(&vtree), 8).unwrap()).unwrap();
     assert!(f.has_marginal_level() && !f.dirty.is_empty());
     f

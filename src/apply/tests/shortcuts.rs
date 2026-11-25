@@ -106,7 +106,7 @@ fn empty_replacement_maps_still_reject_discarded_structure() {
     let eng = Engine::new();
     let tree = Arc::new(Vtree::balanced(2));
     let mut f = eng.literal(&crate::vtree::Home::unchecked(&tree), 1).unwrap();
-    eng.marginalize_levels(&mut f, &[tree.root()]).unwrap();
+    crate::test_helpers::marginalize_under(&eng, &mut f, &[tree.root()]).unwrap();
     assert!(matches!(eng.substitute(f.clone(), &[]), Err(OperationError::MarginalLevel(_))));
     assert!(matches!(eng.rename_vars(f, &[]), Err(OperationError::MarginalLevel(_))));
 }

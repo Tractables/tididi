@@ -3,7 +3,7 @@
 //! and under the `testing` feature in any profile.
 //!
 //! A checker reports and never repairs: restoring an invariant belongs to the
-//! pass that broke it, in [`crate::reduce`] or [`Tdd::marginalize_levels`](crate::Tdd::marginalize_levels). Every
+//! pass that broke it, in [`crate::reduce`] or [`Tdd::marginalize`](crate::Tdd::marginalize). Every
 //! checker walks the whole diagram, which is why a consumer's release build
 //! does not carry them. A test suite built on the crate reaches them through
 //! `test_helpers`.

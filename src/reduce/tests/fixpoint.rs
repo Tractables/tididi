@@ -152,7 +152,7 @@ fn a_marginal_contraction_leaves_no_merge_for_a_second() {
             let g = compile_clauses(&vtree, &clauses[half..]);
             let expected = eng.and(f.clone(), g.clone()).unwrap().model_count().unwrap();
             let targets: Vec<_> = vtree.bottomup().filter(|_| rng.below(4) == 0).collect();
-            let mut h = eng.and_marginalizing(f, g, &targets).unwrap();
+            let mut h = crate::test_helpers::and_marginalizing_under(&eng, f, g, &targets).unwrap();
             marginal += usize::from(h.has_marginal_level());
             let before = h.levels.node_count();
             eng.reduce(&mut h, ReductionPlan::Contract).unwrap();

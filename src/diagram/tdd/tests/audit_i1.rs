@@ -377,14 +377,14 @@ fn random_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, used: &[u32], rng
     if let Some(at) = pick(&internal_nodes(&f), rng) {
         a.run("at_least_distinct", || eng.at_least_distinct(&f, at, 2));
         a.run("project_to_subtree", || eng.project_to_subtree(&f, at));
-        a.run("marginalize_levels", || mutate(&f, &|t| t.marginalize_levels(&[at])));
-        a.run("and_marginalizing", || eng.and_marginalizing(&f, &g, &[at]));
+        a.run("marginalize_levels", || mutate(&f, &|t| t.marginalize(crate::test_helpers::summing(t.vtree(), &[at]))));
+        a.run("and_marginalizing", || crate::test_helpers::and_marginalizing_under(eng, &f, &g, &[at]));
         let under_at: Vec<VarId> = f.vtree().leaf_bottomup().filter(|&(l, _)| f.vtree().in_subtree(l, at)).map(|(_, v)| v).collect();
         a.run("marginalize", || mutate(&f, &|t| t.marginalize(|v| under_at.contains(&v))));
         a.run("and_marginalizing_where", || eng.and_marginalizing_where(&f, &g, |v| under_at.contains(&v)));
         a.run("rotate_marginal_cluster", || {
             let mut t = f.clone();
-            t.marginalize_levels(&[at])?;
+            t.marginalize(crate::test_helpers::summing(t.vtree(), &[at]))?;
             let root = t.vtree().root();
             eng.rotate_marginal_cluster(&mut t, root, 8, &mut Vec::new()).map(|_| t)
         });
@@ -697,7 +697,7 @@ fn audit_i1_and_of_a_summed_subtree_beside_true_leaves() {
     let (abc, f) = c_over_true(&eng);
     let ab = abc.children(abc.root()).0;
     let mut g = eng.and(eng.clause(&crate::vtree::Home::unchecked(&abc), [1, 2]).unwrap(), eng.literal(&crate::vtree::Home::unchecked(&abc), 3).unwrap()).unwrap();
-    g.marginalize_levels(&[ab]).unwrap();
+    g.marginalize(crate::test_helpers::summing(g.vtree(), &[ab])).unwrap();
     let got = eng.and(&f, &g).map(|t| t.model_count());
     assert_eq!(got, Ok(Ok(3u32.into())));
 }
@@ -710,8 +710,8 @@ fn audit_i1_and_marginalizing_of_a_summed_subtree_beside_true_leaves() {
     let (abc, f) = c_over_true(&eng);
     let ab = abc.children(abc.root()).0;
     let mut g = eng.and(eng.clause(&crate::vtree::Home::unchecked(&abc), [1, 2]).unwrap(), eng.literal(&crate::vtree::Home::unchecked(&abc), 3).unwrap()).unwrap();
-    g.marginalize_levels(&[ab]).unwrap();
-    let got = eng.and_marginalizing(&f, &g, &[abc.root()]).map(|t| t.model_count());
+    g.marginalize(crate::test_helpers::summing(g.vtree(), &[ab])).unwrap();
+    let got = crate::test_helpers::and_marginalizing_under(&eng, &f, &g, &[abc.root()]).map(|t| t.model_count());
     assert_eq!(got, Ok(Ok(3u32.into())));
 }
 
@@ -734,7 +734,7 @@ fn audit_i1_and_of_a_summed_leaf_beside_a_true_leaf() {
         let f = built(&eng, &xyz, &[(xy, vec![(one, POS)]), (root, vec![(0, POS)])]);
         let mut g = eng.and(eng.clause(&crate::vtree::Home::unchecked(&xyz), [1, 2]).unwrap(), eng.literal(&crate::vtree::Home::unchecked(&xyz), 3).unwrap()).unwrap();
         let want = eng.and(eng.cube(&crate::vtree::Home::unchecked(&xyz), [2, 3]).unwrap(), &g).unwrap();
-        g.marginalize_levels(&[x]).unwrap();
+        g.marginalize(crate::test_helpers::summing(g.vtree(), &[x])).unwrap();
         let value = |t: &Tdd| if weighted { format!("{:?}", t.weighted_value().map(|v| v.map(|v| crate::test_helpers::exact_weight(&v)))) } else { format!("{:?}", t.model_count()) };
         let got = catch_unwind(AssertUnwindSafe(|| eng.and(&f, &g).map(|t| value(&t)))).map_err(|_| "a panic");
         eprintln!("T1b weighted {weighted}: {got:?}, the unsummed conjunction {}", value(&want));

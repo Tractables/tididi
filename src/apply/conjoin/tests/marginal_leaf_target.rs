@@ -19,13 +19,13 @@ fn a_leaf_target_is_summed_out_after_the_product() {
     let expected = (f.clone() & g.clone()).model_count().unwrap();
 
     let eng = Engine::new();
-    let h = eng.and_marginalizing(f.clone(), g.clone(), &[leaf]).expect("no limit is armed");
+    let h = crate::test_helpers::and_marginalizing_under(&eng, f.clone(), g.clone(), &[leaf]).expect("no limit is armed");
     assert!(h.levels[leaf.idx()].is_marginal());
     assert_eq!(h.model_count().unwrap(), expected);
 
     // The same diagram the pass gives when it runs after the product.
     let mut by_pass = f & g;
-    eng.marginalize_levels(&mut by_pass, &[leaf]).expect("no limit is armed");
+    crate::test_helpers::marginalize_under(&eng, &mut by_pass, &[leaf]).expect("no limit is armed");
     let (mut h, mut by_pass) = (h, by_pass);
     h.minimize().unwrap();
     by_pass.minimize().unwrap();

@@ -54,7 +54,7 @@ fn a_filtered_walk_counts_what_the_unfiltered_walk_counts() {
                 for pin in pins {
                     let _pinned = ForcedFilter::install(pin);
                     for (l, r) in [(&f, &g), (&g, &f)] {
-                        let counted = eng.and_model_count(l.clone(), r.clone(), &[]).unwrap();
+                        let counted = eng.and_model_count(l.clone(), r.clone(), |_| false).unwrap();
                         assert_eq!(counted, expected, "seed {seed}, {pin:?}");
                     }
                 }

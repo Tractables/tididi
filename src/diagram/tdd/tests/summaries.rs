@@ -26,7 +26,7 @@ fn summaries_follow_consuming_edits_clones_and_marginalization() {
     f = eng.condition_var(f, crate::vtree::VarId(4), false).unwrap();
     check(&f);
     let root = tree.root();
-    eng.marginalize_levels(&mut f, &[root]).unwrap();
+    crate::test_helpers::marginalize_under(&eng, &mut f, &[root]).unwrap();
     eng.minimize(&mut f).unwrap();
     check(&f);
     assert!(f.has_marginal_level());

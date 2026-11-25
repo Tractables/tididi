@@ -424,7 +424,7 @@ fn column_evaluation_stops_refuses_and_rejects_marginal_levels() {
     let tree = Arc::new(Vtree::balanced(4));
     let mut marginal = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 2]).unwrap();
     assert_canonical(&marginal);
-    eng.marginalize_levels(&mut marginal, &[tree.root()]).unwrap();
+    crate::test_helpers::marginalize_under(&eng, &mut marginal, &[tree.root()]).unwrap();
     assert!(matches!(eng.evaluate_columns(&marginal, &counts()), Err(OperationError::MarginalLevel(_))));
     assert_canonical(&f);
 }
@@ -522,7 +522,7 @@ fn evaluating_at_a_level_refuses_a_foreign_level_and_marginal_structure() {
     let zero = Tdd::zero(&crate::vtree::Home::unchecked(&tree));
     assert!(zero.evaluate_at(tree.root(), &PlainCounts).unwrap().is_empty());
     let mut marginal = f.clone();
-    eng.marginalize_levels(&mut marginal, &[tree.root()]).unwrap();
+    crate::test_helpers::marginalize_under(&eng, &mut marginal, &[tree.root()]).unwrap();
     assert!(matches!(eng.evaluate_at(&marginal, tree.root(), &PlainCounts), Err(OperationError::MarginalLevel(_))));
     assert!(matches!(eng.evaluate_columns_at(&marginal, tree.root(), &counts), Err(OperationError::MarginalLevel(_))));
 }

@@ -110,9 +110,7 @@ impl Star {
     /// `f ∧ e` with `b` summed out: the running conjunction, marginal over `b`.
     fn summed(&self, eng: &Engine) -> Tdd {
         let b = subtree(&self.vtree, &self.blocks[1]);
-        let summed = eng
-            .and_marginalizing(self.f.clone(), self.e.clone(), &[b])
-            .unwrap();
+        let summed = crate::test_helpers::and_marginalizing_under(eng, self.f.clone(), self.e.clone(), &[b]).unwrap();
         assert!(summed.level(b).is_marginal());
         summed
     }
@@ -121,7 +119,7 @@ impl Star {
     /// marginal in `summed` and `k` is the identity there.
     fn second(&self, eng: &Engine, summed: Tdd) -> Tdd {
         let c = subtree(&self.vtree, &self.blocks[2]);
-        eng.and_marginalizing(summed, self.k.clone(), &[c]).unwrap()
+        crate::test_helpers::and_marginalizing_under(eng, summed, self.k.clone(), &[c]).unwrap()
     }
 
     fn plain(&self, eng: &Engine) -> Tdd {

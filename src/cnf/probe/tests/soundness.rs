@@ -61,7 +61,7 @@ fn cases(seed: u64, count: usize, vars: std::ops::Range<u32>) -> Vec<Case> {
                     .collect();
                 let leaf = leaves[rng.below(leaves.len() as u64) as usize];
                 let mut g = f.clone();
-                eng.marginalize_levels(&mut g, &[summed, leaf]).unwrap();
+                crate::test_helpers::marginalize_under(&eng, &mut g, &[summed, leaf]).unwrap();
                 eng.minimize(&mut g).unwrap();
                 out.push(Case {
                     f: g,

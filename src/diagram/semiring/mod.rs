@@ -54,7 +54,7 @@ use crate::vtree::{FreeVars, VarId, VtreeIdx};
 /// summed variable neutrally — `Pos` and `Neg` both the multiplicative
 /// identity `count(1)`, so `One` is `count(2)` — because each of the `n`
 /// assignments then contributes one identity. On those terms evaluating
-/// [`Engine::and_marginalizing`](crate::Engine::and_marginalizing)'s result
+/// [`Engine::and_marginalizing_where`](crate::Engine::and_marginalizing_where)'s result
 /// equals evaluating the plain conjunction, without its summed structure.
 ///
 /// Count the fewest true variables in any satisfying assignment with a min-plus algebra:

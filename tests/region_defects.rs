@@ -177,11 +177,6 @@ fn entries_on_a_diagram_with_a_region_do_not_panic() {
     run("model_columns", &mut || drop(f.model_columns(&[&[VarId(3)], &[VarId(4)]])));
     run("ordered_models", &mut || drop(f.ordered_models(&[&[VarId(3)], &[VarId(4)]], &[false, false], 1, 10)));
     run("marginalize again", &mut || drop(f.clone().marginalize(|_| true)));
-    run("marginalize_levels", &mut || {
-        let mut g = f.clone();
-        let root = g.vtree().root();
-        drop(g.marginalize_levels(&[root]).map(|()| g.model_count()));
-    });
     eprintln!("{} entries panic:\n{}", panics.len(), panics.join("\n"));
     assert!(panics.is_empty(), "{} entries panic:\n{}", panics.len(), panics.join("\n"));
 }
@@ -215,9 +210,8 @@ fn value(t: &Tdd) -> Result<String, String> {
 }
 
 /// Random sequences of sum-outs and other operations on a diagram on a
-/// projection and on the same diagram on the home, where the sum-outs are
-/// `marginalize_levels`: the counts and weighted values agree after each
-/// step, and a sum-out changes neither.
+/// projection and on the same diagram on the home: the counts and weighted
+/// values agree after each step, and a sum-out changes neither.
 #[test]
 fn sum_outs_between_other_operations_agree_with_the_home() {
     quiet();
@@ -260,7 +254,6 @@ fn sum_outs_between_other_operations_agree_with_the_home() {
             let step = |t: &Tdd, on_home: bool| -> Result<Tdd, OperationError> {
                 let mut t = t.clone();
                 match kind {
-                    0..=2 if on_home => t.marginalize_levels(&targets).map(|()| t),
                     0..=2 => t.marginalize(under(&home, &targets)).map(|()| t),
                     3 => t.condition_var(var, sign),
                     4 => t.exists_vars(&[var]),

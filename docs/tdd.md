@@ -69,7 +69,7 @@ different size;
 
 ## When only a value is needed
 
-[`marginalize_levels`] replaces a subtree's structure with per-node counts,
+[`marginalize`] replaces a subtree's structure with per-node counts,
 or with weighted values if the diagram's vtree carries [`Weights`].
 This preserves the chosen evaluation but discards the assignments behind it:
 keep the structure if you will need to recover assignments or change weights
@@ -96,7 +96,7 @@ must also establish the determinism contract documented on that type.
 [`minimize`]: crate::Tdd::minimize
 [`Tdd::rotation_search`]: crate::Tdd::rotation_search
 [`Tdd::equivalent`]: crate::Tdd::equivalent
-[`marginalize_levels`]: crate::Tdd::marginalize_levels
+[`marginalize`]: crate::Tdd::marginalize
 [`Weights`]: crate::diagram::Weights
 [`Tdd::output`]: crate::Tdd::output
 [`Tdd::is_zero`]: crate::Tdd::is_zero

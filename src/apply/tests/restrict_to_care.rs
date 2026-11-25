@@ -961,7 +961,7 @@ fn f_rooted_above_the_care_holds_on_the_care() -> Vec<Tdd> {
                 }
                 let holds_u = w.is_some_and(|w| vtree.lca(w, u) == w);
                 if let Some(w) = w {
-                    eng.marginalize_levels(&mut f, &[w]).unwrap();
+                    crate::test_helpers::marginalize_under(&eng, &mut f, &[w]).unwrap();
                 }
                 eng.minimize(&mut f).unwrap();
                 if f.is_zero() || f.levels[f.output.vtree.idx()].is_marginal() {

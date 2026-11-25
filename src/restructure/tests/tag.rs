@@ -107,7 +107,7 @@ fn a_level_summed_beside_the_tagged_one_is_not_read() {
             if f.is_zero() {
                 continue;
             }
-            eng.marginalize_levels(&mut f, &[right]).unwrap();
+            crate::test_helpers::marginalize_under(&eng, &mut f, &[right]).unwrap();
             assert!(f.level(right).is_marginal());
             check(&f, left, &cycling(&f, left));
             // A summed level under the tagged one is refused.

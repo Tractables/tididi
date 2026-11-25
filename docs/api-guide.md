@@ -31,9 +31,9 @@ Combine circuits with [`and`](crate::and), [`or`](crate::or),
 without building a complement. [`Tdd::and_clause`](crate::Tdd::and_clause)
 conjoins a clause and [`Tdd::or_cube`](crate::Tdd::or_cube) disjoins a cube
 without building a second circuit. [`add`](crate::add) sums two count diagrams,
-such as results of [`Tdd::marginalize_levels`](crate::Tdd::marginalize_levels).
+such as results of [`Tdd::marginalize`](crate::Tdd::marginalize).
 These operations consume their operands, except that [`and`](crate::and),
-[`Engine::and_marginalizing`](crate::Engine::and_marginalizing) and
+[`Engine::and_marginalizing_where`](crate::Engine::and_marginalizing_where) and
 [`Engine::negate`](crate::Engine::negate) also read a borrowed operand in
 place; [`Tdd`](crate::Tdd) explains when to clone.
 
@@ -89,9 +89,8 @@ its own storage, run through [`Tdd::evaluate_columns`](crate::Tdd::evaluate_colu
 one level's nodes. An algebra that values counts
 ([`EvalAlgebra::count`](crate::diagram::EvalAlgebra::count)) also evaluates
 diagrams with summed-out levels, such as
-[`Engine::and_marginalizing`](crate::Engine::and_marginalizing)'s result.
-A weighted vtree ([`Vtree::with_weights`](crate::Vtree::with_weights),
-[`Home::weighted`](crate::vtree::Home::weighted)) weighs every diagram on it,
+[`Engine::and_marginalizing_where`](crate::Engine::and_marginalizing_where)'s result.
+A weighted home ([`Home::weighted`](crate::vtree::Home::weighted)) weighs every diagram on it,
 and [`Tdd::weighted_value`](crate::Tdd::weighted_value) reads a diagram's value.
 
 ## Save and inspect circuits
@@ -137,7 +136,7 @@ For more specialized control:
 | Remove internal nodes a predicate rejects | [`Tdd::filter_nodes`](crate::Tdd::filter_nodes), [`FilterOutcome`](crate::apply::FilterOutcome) |
 | Encode nodes as clauses for a SAT solver | [`Tdd::encode_cnf`](crate::Tdd::encode_cnf), [`ClauseSink`](crate::cnf::ClauseSink) |
 | Find the encoded nodes the solver proves impossible | [`Tdd::probe_nodes`](crate::Tdd::probe_nodes), [`SatOracle`](crate::cnf::SatOracle) |
-| Replace structure with counts or weighted values | [`Tdd::marginalize_levels`](crate::Tdd::marginalize_levels); [worked example](crate::guide::examples::marginalization) |
+| Replace structure with counts or weighted values | [`Tdd::marginalize`](crate::Tdd::marginalize); [worked example](crate::guide::examples::marginalization) |
 | Place a circuit on a home under a renaming | [`Engine::transport`](crate::Engine::transport); [reusable components](crate::guide::examples::composition) |
 | Move a circuit onto another vtree over the same variables | [`Tdd::restructure_to`](crate::Tdd::restructure_to) |
 | Expand each variable into a class of new variables | [`Tdd::expand_variables`](crate::Tdd::expand_variables), [`Vtree::expand_leaves`](crate::Vtree::expand_leaves) |

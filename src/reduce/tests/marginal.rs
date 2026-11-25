@@ -257,7 +257,7 @@ fn minimize_relocates_weight_store_rows_with_their_slots() {
     let (left, right) = vtree.children(root);
 
     let mut tdd = compile_clauses(&vtree, &[vec![1, 2], vec![2, -3], vec![3, 4], vec![-1, 4]]);
-    eng.marginalize_levels(&mut tdd, &[left, right]).expect("no wall is installed in a test");
+    crate::marginal::tests::marginalize_levels(&eng, &mut tdd, &[left, right]).expect("no wall is installed in a test");
     assert!(
         tdd.levels[left.idx()].is_weight_marginal() && tdd.levels[right.idx()].is_weight_marginal(),
         "setup: both root children must be weight-marginal"

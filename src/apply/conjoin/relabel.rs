@@ -93,7 +93,7 @@ pub(super) fn single_pair(tdd: &Held<'_>, t: usize, width: usize) -> Option<Chil
 /// must see: a marginal level on either operand, a marginal child other
 /// than one the output carries from the carrier, a target, a weighted
 /// sweep, and a root the count mode counts instead of building. So in a sweep that
-/// sums levels out (`and_marginalizing`) it takes the levels beside and
+/// sums levels out (`and_marginalizing_where`) it takes the levels beside and
 /// above the targets: each is structure whose children's products are one
 /// node per live cell, as in a plain conjunction. And on an operand an
 /// earlier sum left marginal levels in, it reads through each one the other

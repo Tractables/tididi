@@ -30,7 +30,7 @@ fn and_under(eng: &Engine, thresholds: SparseThresholds, f: &Tdd, g: &Tdd) -> Td
 
 fn count_under(eng: &Engine, thresholds: SparseThresholds, f: &Tdd, g: &Tdd) -> num_bigint::BigUint {
     let _forced = ForcedThresholds::install(thresholds);
-    eng.and_model_count(f.clone(), g.clone(), &[]).expect("an unarmed engine refuses nothing")
+    eng.and_model_count(f.clone(), g.clone(), |_| false).expect("an unarmed engine refuses nothing")
 }
 
 /// A random subset of `1..=n` of at least two variables.

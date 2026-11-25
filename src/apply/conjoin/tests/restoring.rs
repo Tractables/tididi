@@ -241,7 +241,7 @@ fn a_summed_out_conjunction_refused_at_each_reserve_gives_the_operands_back() {
     let vtree = Arc::new(Vtree::balanced(8));
     let f = build(&eng, &vtree, &[&[5, 6], &[-7, 8], &[6, -8]]);
     let mut g = build(&eng, &vtree, &[&[2, 5], &[-4, 6], &[7, 8, -2], &[1, -6]]);
-    eng.marginalize_levels(&mut g, &[vtree.children(vtree.root()).0]).unwrap();
+    crate::test_helpers::marginalize_under(&eng, &mut g, &[vtree.children(vtree.root()).0]).unwrap();
     assert!(g.has_marginal_level());
     // `equivalent` refuses a summed-out level: the counts stand in for it.
     let count = |t: &Tdd| Engine::new().model_count(t).unwrap();

@@ -74,8 +74,6 @@ fn an_armed_stop_comes_before_every_input_error() {
     let f = Tdd::clause(&vtree, [1, -2]).unwrap();
     // The same shape on another vtree: every binary operation rejects the pair.
     let other = Tdd::clause(&Home::new(Vtree::balanced(4)), [1, -2]).unwrap();
-    // `marginalize_levels` refuses a diagram on a home before the stop.
-    let root = Tdd::clause(&crate::vtree::Home::unchecked(&Arc::new(Vtree::balanced(4))), [1, -2]).unwrap();
     let absent = [VarId(99)];
     let wide: Vec<VarId> = (1..=65).map(VarId).collect();
     let _stop = eng.limits().scope(LimitConfig::none().with_stop_callback(Some(
@@ -84,7 +82,7 @@ fn an_armed_stop_comes_before_every_input_error() {
     assert_eq!(eng.equivalent(&f, &other).err(), Some(Stopped));
     assert_eq!(eng.implies(&f, &other).err(), Some(Stopped));
     assert_eq!(eng.and(f.clone(), g()).err(), Some(Stopped));
-    assert_eq!(eng.and_marginalizing(f.clone(), g(), &[]).err(), Some(Stopped));
+    assert_eq!(crate::test_helpers::and_marginalizing_under(&eng, f.clone(), g(), &[]).err(), Some(Stopped));
     assert_eq!(eng.and_exists(f.clone(), g(), &absent).err(), Some(Stopped));
     assert_eq!(eng.or(f.clone(), g()).err(), Some(Stopped));
     assert_eq!(eng.or_many(vec![f.clone(), g()]).err(), Some(Stopped));
@@ -99,7 +97,7 @@ fn an_armed_stop_comes_before_every_input_error() {
     assert_eq!(eng.clause(&vtree, [0]).err(), Some(Stopped));
     assert_eq!(eng.from_models(&vtree, &wide, &[0]).err(), Some(Stopped));
     assert_eq!(eng.rotate_marginal_cluster(&mut f.clone(), VtreeIdx(999), 1, &mut Vec::new()).err(), Some(Stopped));
-    assert_eq!(eng.marginalize_levels(&mut root.clone(), &[VtreeIdx(999)]).err(), Some(Stopped));
+    assert_eq!(eng.marginalize(&mut f.clone(), |_| true).err(), Some(Stopped));
     // An unweighted diagram has no weighted value, but the stop is tested first.
     assert_eq!(eng.weighted_value(&f).err(), Some(Stopped));
 }

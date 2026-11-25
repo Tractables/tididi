@@ -37,7 +37,7 @@ fn weighted_closure_root(
     let vtree = &Arc::new(Vtree::clone(vtree).with_weights(Weights::new(algebra, Arithmetic::ExactRational)).unwrap());
     let (a, b) = vtree.children(vtree.root());
     let mut tdd = compile_clauses(vtree, clauses);
-    eng.marginalize_levels(&mut tdd, &[a, b])
+    crate::marginal::tests::marginalize_levels(eng, &mut tdd, &[a, b])
         .expect("no wall is installed in a test");
     check_marginal_invariants(&tdd, "weighted_closure_root");
     assert!(
@@ -151,7 +151,7 @@ fn integer_marginalize_leaves_no_subsumed_data() {
         .copied()
         .filter(|&t| t != vtree.root())
         .collect();
-    eng.marginalize_levels(&mut tdd, &targets)
+    crate::marginal::tests::marginalize_levels(&eng, &mut tdd, &targets)
         .expect("no wall is installed in a test");
     check_marginal_invariants(&tdd, "integer_marginalize_leaves_no_subsumed_data");
 
@@ -184,7 +184,7 @@ fn weighted_marginalize_leaves_no_subsumed_data() {
     let mc = BigRational::from(BigInt::from(tdd.model_count().unwrap()));
 
     let targets: Vec<_> = vtree.bottomup_slice().to_vec();
-    eng.marginalize_levels(&mut tdd, &targets)
+    crate::marginal::tests::marginalize_levels(&eng, &mut tdd, &targets)
         .expect("no wall is installed in a test");
     check_marginal_invariants(&tdd, "weighted_marginalize_leaves_no_subsumed_data");
 

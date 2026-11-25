@@ -44,8 +44,8 @@ fn the_bit_per_bucket_keeps_every_candidate_of_a_wide_level() {
                         let _thresholds = ForcedThresholds::install(thresholds);
                         let and = eng.and(l.clone(), r.clone()).unwrap();
                         let exists = eng.and_exists(l.clone(), r.clone(), &b).unwrap();
-                        let marginal = eng.and_marginalizing(l.clone(), r.clone(), &[right]).unwrap();
-                        let count = eng.and_model_count(l.clone(), r.clone(), &[]).unwrap();
+                        let marginal = crate::test_helpers::and_marginalizing_under(&eng, l.clone(), r.clone(), &[right]).unwrap();
+                        let count = eng.and_model_count(l.clone(), r.clone(), |_| false).unwrap();
                         (and, exists, marginal, count)
                     };
                     let (and_d, exists_d, marginal_d, count_d) = run(dense);

@@ -96,7 +96,7 @@ fn a_hand_written_traversal_agrees_with_the_model_counter() {
     // 2. The same function after the left subtree {x1, x2} is marginalized:
     //    the root's pairs now carry inline counts on their left side.
     let (left, _right) = vtree.children(vtree.root());
-    eng.marginalize_levels(&mut f, &[left]).expect("no limits installed");
+    crate::test_helpers::marginalize_under(&eng, &mut f, &[left]).expect("no limits installed");
     assert!(f.level(left).is_marginal());
     assert_eq!(count(&f), BigUint::from(9u32));
     assert_eq!(count(&f), f.model_count().unwrap());

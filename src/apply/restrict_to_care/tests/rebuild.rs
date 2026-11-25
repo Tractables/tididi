@@ -190,7 +190,7 @@ fn the_node_filter_agrees_with_the_rebuild_from_marks() {
                 .filter(|&t| t != vtree.root())
                 .collect();
             if let Some(&t) = inner.get(round as usize % inner.len().max(1)) {
-                eng.marginalize_levels(&mut summed, &[t]).unwrap();
+                crate::test_helpers::marginalize_under(&eng, &mut summed, &[t]).unwrap();
                 eng.minimize(&mut summed).unwrap();
             }
             for f in [f, summed] {

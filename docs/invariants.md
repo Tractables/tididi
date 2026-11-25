@@ -13,8 +13,8 @@ reference] explains the passes named here.
 ## Terms
 
 - A level is **structural** when it stores nodes made of pairs, and
-  **summed out** (marginal) when [`Tdd::marginalize_levels`] or
-  [`Tdd::marginalize`] replaced its nodes by values.
+  **summed out** (marginal) when [`Tdd::marginalize`] replaced its nodes
+  by values.
 - A leaf level offers the labels `Pos` (the variable), `Neg` (its negation)
   and `One` (true). `Pos` and `Neg` are the **literals**.
 - A node is **dead** when the output does not reach it. Unless an item says
@@ -157,8 +157,7 @@ certified diagram whose worklists are empty.
 ## A diagram with a summed-out level
 
 A summed-out level holds one value per node: a model count, or a weighted
-value when the vtree or home carries [`Weights`]. On a plain root
-[`Tdd::marginalize_levels`] sums out whole subtrees; on a home
+value when the vtree or home carries [`Weights`].
 [`Tdd::marginalize`] sums out variables, and each summed part becomes a
 **region**, a childless vtree node that stands for the variables summed into
 it ([`VtreeNode::is_region`]).
@@ -184,12 +183,12 @@ What changes:
 
 | # | Statement | Kept by | Decided by |
 |---|---|---|---|
-| 5 | Marginality is permanent and downward-closed: a summed-out level never becomes structural, and the levels below it are summed out or leaves whose contribution is absorbed. | [`Tdd::marginalize_levels`] | `diagram::check_stored` (downward closure); [`reduce`]'s demarginalization guard |
+| 5 | Marginality is permanent and downward-closed: a summed-out level never becomes structural, and the levels below it are summed out or leaves whose contribution is absorbed. | [`Tdd::marginalize`] | `diagram::check_stored` (downward closure); [`reduce`]'s demarginalization guard |
 | 22 | Regions, on a home: a summed-out level stands only at a region or a variable leaf, and every region holds one. | [`Tdd::marginalize`]; [`Tdd::trim`]; [`TddBuilder::finish`], which makes a region of each internal summed-out level that is not under another (with the exception of item 15) | `check_trimmed` |
 | 23 | Extents, on a home: the extents of the regions are pairwise disjoint and hold no variable that is at a leaf. | [`Tdd::marginalize`]; the conjunction refuses an operand with a variable leaf inside the other operand's extent | `check_trimmed` |
 | 6 | Every reference into a summed-out child decodes through [`ChildDecoder`]; no site outside `diagram/` reads the raw bits. | the marginal-reference encoding | review |
 | 7 | Inline discipline: no value slot referenced from a structural parent holds a value that fits inline in the reference. | the reference tagger, then the slot prune. Broken by apply's emit, before tagging | `test_helpers::check::marginal::check_inline_discipline` |
-| 8 | Pair-fusion saturation: no node of a structural parent holds two pairs over the same structural child that pair fusion would add up (exact arithmetic; at a weighted leaf or region the sum must already be in the column, where fusion mints no value). | the fusion sweep of [`Tdd::marginalize_levels`]. Broken by a later twin merge | `test_helpers::check::marginal::check_pair_fusion_saturation` |
+| 8 | Pair-fusion saturation: no node of a structural parent holds two pairs over the same structural child that pair fusion would add up (exact arithmetic; at a weighted leaf or region the sum must already be in the column, where fusion mints no value). | the fusion sweep of [`Tdd::marginalize`]. Broken by a later twin merge | `test_helpers::check::marginal::check_pair_fusion_saturation` |
 | 9 | Content twins: no two nodes of a level have equal pair multisets. | the content-twin merge. Broken by pair fusion and by the slot prune's value merge | `test_helpers::check::marginal::check_twin_canonicality` |
 | 10 | Value-slot uniqueness: the counts stored at a summed-out level are pairwise distinct. A weighted level instead holds one value per node, equal values included. | mint-time dedup, then the slot prune. Broken by apply's emit | `test_helpers::check::marginal::check_slot_count_uniqueness` |
 | 11 | Weighted leaf column pin: a weight-marginal leaf's three slots are a fixed, label-ordered copy of the literal weights. No pass compacts, erases, reorders or appends to the column, and every reader derives it through `diagram::leaf_column_vals`. | `marginal::marginalize_leaf_weighted` | `test_helpers::check::marginal::check_leaf_columns_pinned` |
@@ -246,7 +245,6 @@ What the checkers leave open:
 [`Tdd::equivalent`]: crate::Tdd::equivalent
 [`Tdd::is_canonical`]: crate::Tdd::is_canonical
 [`Tdd::marginalize`]: crate::Tdd::marginalize
-[`Tdd::marginalize_levels`]: crate::Tdd::marginalize_levels
 [`Tdd::minimize`]: crate::Tdd::minimize
 [`Tdd::reduce`]: crate::Tdd::reduce
 [`Tdd::trim`]: crate::Tdd::trim

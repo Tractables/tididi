@@ -174,7 +174,7 @@ fn conjunction_rejects_a_constrained_marginal_level() {
     let tree = Arc::new(Vtree::balanced(4));
     let left = tree.children(tree.root()).0;
     let mut marginal = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 3]).unwrap();
-    eng.marginalize_levels(&mut marginal, &[left]).unwrap();
+    crate::test_helpers::marginalize_under(&eng, &mut marginal, &[left]).unwrap();
     crate::test_helpers::assert_canonical(&marginal);
     let structural = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 2]).unwrap();
     crate::test_helpers::assert_canonical(&structural);

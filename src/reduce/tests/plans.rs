@@ -101,7 +101,7 @@ fn a_content_scan_between_conjunctions_moves_a_count_diagram_s_fixpoint() {
     };
     let summed = |clauses: &[Vec<i32>], scan: bool| {
         let mut f = compile_clauses(&vtree, clauses);
-        f.marginalize_levels(&[h]).unwrap();
+        f.marginalize(crate::test_helpers::summing(f.vtree(), &[h])).unwrap();
         full(&mut f, scan);
         f
     };

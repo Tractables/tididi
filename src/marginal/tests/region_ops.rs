@@ -39,7 +39,7 @@ fn exists_on_a_summed_diagram_is_refused() {
     let leaf = |v: u32| Vtree::leaf(VarId(v));
     let vtree = Arc::new(Vtree::join(&leaf(1), &Vtree::join(&leaf(2), &leaf(3)).unwrap()).unwrap());
     let mut f = eng.and(Tdd::cube(&crate::vtree::Home::unchecked(&vtree), [-3]).unwrap(), Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [-1, 2]).unwrap()).unwrap();
-    f.marginalize_levels(&[vtree.leaf_of(VarId(1)).unwrap()]).unwrap();
+    f.marginalize(crate::test_helpers::summing(f.vtree(), &[vtree.leaf_of(VarId(1)).unwrap()])).unwrap();
     assert!(f.has_marginal_level());
     assert!(matches!(f.exists_var(VarId(2)), Err(OperationError::MarginalLevel(_))));
 }

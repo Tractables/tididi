@@ -26,7 +26,7 @@ fn a_weighted_leaf_requires_its_store() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(1).with_weights(Weights::new(RationalWeights::unit(1), Arithmetic::ExactRational)).unwrap());
     let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1]).unwrap();
-    eng.marginalize_levels(&mut f, &[vtree.root()]).unwrap();
+    crate::marginal::tests::marginalize_levels(&eng, &mut f, &[vtree.root()]).unwrap();
     crate::test_helpers::assert_canonical(&f);
     assert!(crate::diagram::builder::check_levels(&vtree, &f.levels, f.output(), None).is_err());
 }
@@ -55,7 +55,7 @@ fn weighted_vtree() -> Arc<Vtree> {
 fn weighted_with_a_marginal_level(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
     let (left, _) = vtree.children(vtree.root());
     let mut f = Tdd::clause(&crate::vtree::Home::unchecked(vtree), [1, -2]).unwrap() & Tdd::clause(&crate::vtree::Home::unchecked(vtree), [2, 3]).unwrap();
-    eng.marginalize_levels(&mut f, &[left]).unwrap();
+    crate::marginal::tests::marginalize_levels(eng, &mut f, &[left]).unwrap();
     assert!(f.level(left).is_weight_marginal());
     f
 }
@@ -96,7 +96,7 @@ fn subsumed_empty_columns_remain_valid_in_both_arithmetics() {
         let eng = Engine::new();
         let vtree = Arc::new(Vtree::balanced(8).with_weights(Weights::new(RationalWeights::unit(8), arithmetic)).unwrap());
         let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap();
-        eng.marginalize_levels(&mut f, &[vtree.root()]).unwrap();
+        crate::marginal::tests::marginalize_levels(&eng, &mut f, &[vtree.root()]).unwrap();
         crate::test_helpers::assert_canonical(&f);
         assert!(
             vtree
@@ -138,7 +138,7 @@ fn copied_pinned_leaf_columns_are_checked_in_both_arithmetics() {
         );
         let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1]).unwrap();
         let leaf = tree.leaf_bottomup().next().unwrap().0;
-        eng.marginalize_levels(&mut f, &[leaf]).unwrap();
+        crate::marginal::tests::marginalize_levels(&eng, &mut f, &[leaf]).unwrap();
         crate::test_helpers::assert_canonical(&f);
         let copied = copy_levels(&eng, &tree, &f).finish(f.output()).unwrap();
         crate::test_helpers::assert_canonical(&copied);
@@ -251,13 +251,13 @@ fn a_false_result_carries_no_column_into_a_later_conjunction() {
     let (t, _) = vtree.children(vtree.root());
     let a = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [3]).unwrap();
     let x12 = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1]).unwrap() & Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [2]).unwrap();
-    let g = eng.and_marginalizing(a.clone(), x12, &[t]).unwrap();
+    let g = crate::test_helpers::and_marginalizing_under(&eng, a.clone(), x12, &[t]).unwrap();
     let z = eng.and(Tdd::zero(&crate::vtree::Home::unchecked(&vtree)), g).unwrap();
     assert!(z.is_zero());
     let h = eng.or(z.clone(), a).unwrap();
     let top = eng.negate(&z).unwrap();
     let mut k = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap();
-    eng.marginalize_levels(&mut k, &[t]).unwrap();
+    crate::marginal::tests::marginalize_levels(&eng, &mut k, &[t]).unwrap();
 
     let total = |l: &LiteralWeights<num_rational::BigRational>| &l.positive + &l.negative;
     let [w1, w2, w3, w4] = &literals;

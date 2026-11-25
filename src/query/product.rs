@@ -1,8 +1,8 @@
 //! The inner product of two count-marginal diagrams, counted without building
 //! their product.
 //!
-//! A diagram whose levels have been summed out ([`Tdd::marginalize_levels`],
-//! [`Engine::and_marginalizing`]) denotes a count over the variables it kept.
+//! A diagram whose levels have been summed out ([`Tdd::marginalize`],
+//! [`Engine::and_marginalizing_where`]) denotes a count over the variables it kept.
 //! [`Engine::marginal_product_count`] multiplies two such counts pointwise and
 //! sums the product, with the two diagrams' summed-out variables independent:
 //! where the conjunction of two diagrams that summed out the same scope keeps

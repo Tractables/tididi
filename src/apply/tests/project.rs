@@ -470,7 +470,7 @@ fn projection_across_a_marginalized_level_is_refused() {
     let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap() & Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [-1, 3]).unwrap();
     f.minimize().unwrap();
     let leaf = vtree.leaf_of(VarId(8)).unwrap();
-    f.marginalize_levels(&[leaf]).unwrap();
+    f.marginalize(crate::test_helpers::summing(f.vtree(), &[leaf])).unwrap();
     assert!(matches!(f.exists_var(VarId(1)), Err(crate::OperationError::MarginalLevel(_))));
 }
 
@@ -520,7 +520,7 @@ fn universal_quantification_validates_before_it_rewrites() {
     // empty request returns the operand before that check.
     let mut marginal = f;
     let leaf = vtree.leaf_of(VarId(3)).unwrap();
-    eng.marginalize_levels(&mut marginal, &[leaf]).unwrap();
+    crate::test_helpers::marginalize_under(&eng, &mut marginal, &[leaf]).unwrap();
     assert_eq!(eng.forall_vars(marginal.clone(), &[VarId(1)]).unwrap_err(), OperationError::MarginalLevel(leaf));
     assert!(eng.forall_vars(marginal, &[]).is_ok());
 }

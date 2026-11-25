@@ -58,10 +58,10 @@ fn summed(rng: &mut Lcg, eng: &Engine) -> Option<(Tdd, String)> {
     let below_root: Vec<VtreeIdx> = (0..vtree.num_nodes() as u32).map(VtreeIdx).filter(|&t| t != vtree.root()).collect();
     let targets: Vec<VtreeIdx> = below_root.iter().copied().filter(|_| rng.below(4) == 0).collect();
     let r = if rng.below(2) == 0 {
-        eng.and_marginalizing(&f, &g, &targets).ok()?
+        crate::test_helpers::and_marginalizing_under(eng, &f, &g, &targets).ok()?
     } else {
         let mut h = eng.and(&f, &g).ok()?;
-        eng.marginalize_levels(&mut h, &targets).ok()?;
+        crate::test_helpers::marginalize_under(eng, &mut h, &targets).ok()?;
         h
     };
     Some((r, label))

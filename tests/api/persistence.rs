@@ -47,10 +47,10 @@ fn named_roots_and_weight_metadata_survive_a_fresh_context() {
             ("true", vec![true; 16]),
             ("false", vec![false; 16]),
         ]);
-        let weighted_tree = Home::new(Vtree::clone(tree).with_weights(Weights::new(
+        let weighted_tree = Home::weighted(Vtree::clone(tree), Weights::new(
             RationalWeights::from_literals(&weights),
             Arithmetic::ExactRational,
-        )).unwrap());
+        )).unwrap();
         let mut encoded_roots = BTreeMap::new();
         for (name, truth) in &root_truths {
             let diagram = or_of_cubes(&weighted_tree, &[VarId(1), VarId(2), VarId(3), VarId(4)], |row| truth[row]);

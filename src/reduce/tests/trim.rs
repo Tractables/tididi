@@ -433,7 +433,7 @@ fn summed_leaf_under_a_dropped_level(clause: &[i32], vars: &[u32], arithmetic: O
     let own = Vtree::projection(&home, vars.iter().map(|&v| crate::vtree::VarId(v))).unwrap();
     let mut f = crate::test_helpers::padded(Tdd::clause(&crate::vtree::Home::unchecked(&own), clause.iter().copied()).unwrap(), &own);
     let leaf = own.leaf_of(crate::vtree::VarId(2)).unwrap();
-    crate::marginal::marginalize_levels(&Engine::new(), &mut f, &[leaf]).unwrap();
+    crate::marginal::tests::marginalize_levels(&Engine::new(), &mut f, &[leaf]).unwrap();
     (f.clone(), f, home)
 }
 

@@ -312,7 +312,7 @@ fn bad_images_marginal_levels_and_constants() {
     assert!(matches!(r.tdd, Cow::Owned(_)));
 
     let mut summed = f.clone();
-    crate::marginal::marginalize_levels(&eng, &mut summed, &[own.root()]).unwrap();
+    crate::marginal::tests::marginalize_levels(&eng, &mut summed, &[own.root()]).unwrap();
     let r = eng.transport(summed, &home, |v| v, usize::MAX).unwrap_err();
     assert!(matches!(r.error, TransportError::Operation(OperationError::MarginalLevel(_))), "{:?}", r.error);
 

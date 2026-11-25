@@ -68,14 +68,14 @@ fn projected_counts_ignore_weights_and_reject_marginal_structure() {
     assert_eq!(f.projected_model_count(&[VarId(1)]).unwrap(), 2u32.into());
     assert_eq!(f.model_count().unwrap(), 6u32.into());
     assert_eq!(f.weighted_value().unwrap().unwrap().into_rational(), rat(0, 1));
-    f.marginalize_levels(&[weighted.root()]).unwrap();
+    f.marginalize(crate::test_helpers::summing(f.vtree(), &[weighted.root()])).unwrap();
     assert_canonical(&f);
     for selected in [vec![], vec![VarId(1)], vec![VarId(1), VarId(2), VarId(3)]] {
         assert!(matches!(f.projected_model_count(&selected), Err(OperationError::MarginalLevel(_))));
     }
     let vtree = Arc::new(Vtree::balanced(3));
     let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap();
-    f.marginalize_levels(&[vtree.root()]).unwrap();
+    f.marginalize(crate::test_helpers::summing(f.vtree(), &[vtree.root()])).unwrap();
     assert_canonical(&f);
     assert!(matches!(f.projected_model_count(&[VarId(1)]), Err(OperationError::MarginalLevel(_))));
 }

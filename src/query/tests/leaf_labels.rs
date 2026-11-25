@@ -133,7 +133,7 @@ fn leaf_scan_omits_marginal_leaves_and_public_query_rejects_them() {
     let mut f = eng.cube(&crate::vtree::Home::unchecked(&tree), [Literal::pos(vars[0]), Literal::neg(vars[1])]).unwrap();
     assert_canonical(&f);
     let leaf = tree.leaf_of(vars[0]).unwrap();
-    eng.marginalize_levels(&mut f, &[leaf]).unwrap();
+    crate::marginal::tests::marginalize_levels(&eng, &mut f, &[leaf]).unwrap();
     f.minimize().unwrap();
     assert_canonical(&f);
     let mut literals = Vec::new();
@@ -146,7 +146,7 @@ fn leaf_scan_omits_marginal_leaves_and_public_query_rejects_them() {
 
     let tree = Arc::new(Vtree::leaf(vars[0]));
     let mut f = eng.literal(&crate::vtree::Home::unchecked(&tree), Literal::pos(vars[0])).unwrap();
-    eng.marginalize_levels(&mut f, &[tree.root()]).unwrap();
+    crate::marginal::tests::marginalize_levels(&eng, &mut f, &[tree.root()]).unwrap();
     assert_canonical(&f);
     let mut visited = 0;
     visit_leaf_labels(&f, |_| false, |_, _| Ok(()), |_, _| { visited += 1; Ok(()) }).unwrap();

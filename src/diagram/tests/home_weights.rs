@@ -120,7 +120,7 @@ fn a_weighted_root_computes_what_a_weighted_home_computes() {
     assert_eq!(f.weights(), Some(&table(6)));
     assert_eq!(value_of(&f), value_of(&fh));
     let (left, _) = weighted.children(weighted.root());
-    let h = eng.and_marginalizing(&f, &g, &[left]).unwrap();
+    let h = crate::test_helpers::and_marginalizing_under(&eng, &f, &g, &[left]).unwrap();
     let under_left: Vec<VarId> = weighted.leaf_bottomup().filter(|&(l, _)| weighted.in_subtree(l, left)).map(|(_, v)| v).collect();
     let hh = eng.and_marginalizing_where(&fh, &gh, |v| under_left.contains(&v)).unwrap();
     assert!(h.level(left).is_weight_marginal());

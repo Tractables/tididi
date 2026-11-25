@@ -31,7 +31,7 @@
 //!   products.
 //! - A **marginal level** has dropped its structure: it stores no nodes and
 //!   [`TddLevel::marginal_counts`] holds one model count per node. In weighted
-//!   mode (a weighted vtree, [`Vtree::with_weights`](crate::Vtree::with_weights)) the level is weight-marginal instead
+//!   mode (a weighted home, [`Home::weighted`](crate::vtree::Home::weighted)) the level is weight-marginal instead
 //!   ([`TddLevel::is_weight_marginal`]): `marginal_counts` is `None` and the
 //!   values are [`TddLevel::weight_values`]. A
 //!   pair whose child level is marginal does not hold a plain index on that

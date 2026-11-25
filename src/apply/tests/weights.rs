@@ -48,7 +48,7 @@ fn operands_on_differently_weighted_vtrees_are_refused_before_shortcuts_and_allo
         let left = first.children(first.root()).0;
         let summed = |tree: &Arc<Vtree>, lits: &[i32]| {
             let mut f = Tdd::clause(&crate::vtree::Home::unchecked(tree), lits.iter().copied()).unwrap();
-            eng.marginalize_levels(&mut f, &[left]).unwrap();
+            crate::marginal::tests::marginalize_levels(&eng, &mut f, &[left]).unwrap();
             assert_canonical(&f);
             f
         };
@@ -65,7 +65,7 @@ fn operands_on_differently_weighted_vtrees_are_refused_before_shortcuts_and_allo
                 refused(eng.and(f.clone(), g.clone()));
                 refused(eng.or(f.clone(), g.clone()));
                 refused(eng.xor(f.clone(), g.clone()));
-                refused(eng.and_marginalizing(f.clone(), g.clone(), &[first.root()]));
+                refused(crate::test_helpers::and_marginalizing_under(&eng, f.clone(), g.clone(), &[first.root()]));
                 refused(eng.or_many(vec![f.clone(), g.clone()]));
                 refused(eng.nor_many(vec![f.clone(), g.clone()]));
                 refused(eng.ite(f.clone(), g.clone(), f.clone()));
@@ -111,7 +111,7 @@ fn a_structural_operand_conjoins_with_a_weighted_marginal_operand() {
     let tree = weighted_tree(4, 2, Arithmetic::ExactRational);
     let eng = Engine::new();
     let mut a = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1]).unwrap();
-    eng.marginalize_levels(&mut a, &[tree.children(tree.root()).0])
+    crate::marginal::tests::marginalize_levels(&eng, &mut a, &[tree.children(tree.root()).0])
         .unwrap();
     assert_canonical(&a);
     let b = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [3]).unwrap();
@@ -140,7 +140,7 @@ fn projecting_a_leaf_output_preserves_weights() {
         rat(4, 1)
     );
     let mut marginal = f;
-    eng.marginalize_levels(&mut marginal, &[tree.root()])
+    crate::marginal::tests::marginalize_levels(&eng, &mut marginal, &[tree.root()])
         .unwrap();
     assert_canonical(&marginal);
     assert_eq!(
@@ -204,7 +204,7 @@ fn a_care_rebuild_keeps_the_weight_values_of_marginal_levels() {
     let tree = weighted_tree(4, 2, Arithmetic::ExactRational);
     let eng = Engine::new();
     let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1]).unwrap() & Tdd::clause(&crate::vtree::Home::unchecked(&tree), [3, 4]).unwrap();
-    eng.marginalize_levels(&mut f, &[tree.children(tree.root()).0])
+    crate::marginal::tests::marginalize_levels(&eng, &mut f, &[tree.children(tree.root()).0])
         .unwrap();
     f.minimize().unwrap();
     assert_canonical(&f);

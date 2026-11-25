@@ -49,10 +49,10 @@ fn a_level_fused_in_chunks_is_the_level_fused_whole() {
             for step in 0..4 {
                 let target = below_root[rng.below(below_root.len() as u64) as usize];
                 let prior = pin_chunk_plans(Some(1));
-                eng.marginalize_levels(&mut chunked, &[target]).unwrap();
+                crate::test_helpers::marginalize_under(&eng, &mut chunked, &[target]).unwrap();
                 eng.minimize(&mut chunked).unwrap();
                 pin_chunk_plans(Some(usize::MAX));
-                eng.marginalize_levels(&mut whole, &[target]).unwrap();
+                crate::test_helpers::marginalize_under(&eng, &mut whole, &[target]).unwrap();
                 eng.minimize(&mut whole).unwrap();
                 pin_chunk_plans(prior);
                 assert!(levels(&chunked) == levels(&whole), "{shape} over {num_vars} variables, step {step}");

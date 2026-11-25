@@ -1007,7 +1007,7 @@ fn operands_the_fold_cannot_read_are_refused() {
         .node(vtree.leaf_of(value_vars[0]).unwrap())
         .parent()
         .unwrap();
-    eng.marginalize_levels(&mut summed, &[value_root]).unwrap();
+    crate::test_helpers::marginalize_under(&eng, &mut summed, &[value_root]).unwrap();
     assert!(matches!(
         run(&f, &summed),
         Err(PrefixFoldError::Operation(OperationError::MarginalLevel(_)))

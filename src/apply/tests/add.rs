@@ -68,7 +68,7 @@ fn random_marginal_pair(
     let mut f = compile_clauses_on(eng, vtree, &rand_cnf(rng, n, shape));
     let mut g = compile_clauses_on(eng, vtree, &rand_cnf(rng, n, shape));
     for d in [&mut f, &mut g] {
-        eng.marginalize_levels(d, summed).unwrap();
+        crate::test_helpers::marginalize_under(eng, d, summed).unwrap();
         eng.minimize(d).unwrap();
     }
     (f, g)
@@ -106,7 +106,7 @@ fn adds_a_diagram_to_itself() {
         for (name, vtree) in bare_roots(vtree_shapes(n)) {
             let eng = Engine::new();
             let mut f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, CnfShape { clauses: n as usize, width: 3 }));
-            eng.marginalize_levels(&mut f, &targets(&mut rng, &vtree)).unwrap();
+            crate::test_helpers::marginalize_under(&eng, &mut f, &targets(&mut rng, &vtree)).unwrap();
             eng.minimize(&mut f).unwrap();
             let twice = eng.add(f.clone(), f.clone()).unwrap();
             assert_sum(&twice, &f, &f, n, name);
@@ -173,12 +173,12 @@ fn a_level_summed_out_on_one_side_only_is_refused() {
     let (left, right) = vtree.children(vtree.root());
     let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap();
     let mut g = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 3]).unwrap();
-    f.marginalize_levels(&[left]).unwrap();
+    f.marginalize(crate::test_helpers::summing(f.vtree(), &[left])).unwrap();
     match add(f.clone(), g.clone()) {
         Err(OperationError::MarginalLevel(t)) => assert!(under(&vtree, t, left)),
         other => panic!("expected a marginal level, got {other:?}"),
     }
-    g.marginalize_levels(&[right]).unwrap();
+    g.marginalize(crate::test_helpers::summing(g.vtree(), &[right])).unwrap();
     assert!(matches!(add(f, g), Err(OperationError::MarginalLevel(_))));
 }
 
@@ -188,7 +188,7 @@ fn a_false_operand_returns_the_other() {
     let vtree = Arc::new(Vtree::balanced(4));
     let (left, _) = vtree.children(vtree.root());
     let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 3]).unwrap();
-    f.marginalize_levels(&[left]).unwrap();
+    f.marginalize(crate::test_helpers::summing(f.vtree(), &[left])).unwrap();
     for sum in [add(f.clone(), Tdd::zero(&crate::vtree::Home::unchecked(&vtree))).unwrap(), add(Tdd::zero(&crate::vtree::Home::unchecked(&vtree)), f.clone()).unwrap()] {
         assert_sum(&sum, &f, &Tdd::zero(&crate::vtree::Home::unchecked(&vtree)), 4, "false operand");
     }
@@ -210,8 +210,8 @@ fn wholly_summed_out_diagrams_add_their_values() {
     let root = vtree.root();
     let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap();
     let mut g = Tdd::cube(&crate::vtree::Home::unchecked(&vtree), [3, -4]).unwrap();
-    f.marginalize_levels(&[root]).unwrap();
-    g.marginalize_levels(&[root]).unwrap();
+    f.marginalize(crate::test_helpers::summing(f.vtree(), &[root])).unwrap();
+    g.marginalize(crate::test_helpers::summing(g.vtree(), &[root])).unwrap();
     let sum = add(f, g).unwrap();
     assert_eq!(sum.model_count().unwrap(), BigUint::from(12u32 + 4));
     assert_canonical(&sum);
@@ -225,8 +225,8 @@ fn counts_past_u128_add_exactly() {
     let (left, _) = vtree.children(vtree.root());
     let mut f = Tdd::one(&crate::vtree::Home::unchecked(&vtree));
     let mut g = Tdd::cube(&crate::vtree::Home::unchecked(&vtree), [1]).unwrap();
-    f.marginalize_levels(&[left]).unwrap();
-    g.marginalize_levels(&[left]).unwrap();
+    f.marginalize(crate::test_helpers::summing(f.vtree(), &[left])).unwrap();
+    g.marginalize(crate::test_helpers::summing(g.vtree(), &[left])).unwrap();
     let two = BigUint::from(2u32);
     let sum = add(f.clone(), g).unwrap();
     assert_eq!(sum.model_count().unwrap(), two.pow(260) + two.pow(259));
@@ -243,7 +243,7 @@ fn weights_on_summed_out_levels_are_refused() {
     let vtree = Arc::new(Vtree::balanced(4).with_weights(weights).unwrap());
     let (left, _) = vtree.children(vtree.root());
     let weighted = |mut f: Tdd| {
-        f.marginalize_levels(&[left]).unwrap();
+        f.marginalize(crate::test_helpers::summing(f.vtree(), &[left])).unwrap();
         f
     };
     let f = weighted(Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap());
@@ -310,7 +310,7 @@ fn every_refused_reserve_of_a_sum_leaves_the_operands() {
         for (name, vtree) in bare_roots(vtree_shapes(n)).into_iter().take(3) {
             let eng = Engine::new();
             let mut f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, CnfShape { clauses: n as usize, width: 3 }));
-            eng.marginalize_levels(&mut f, &targets(&mut rng, &vtree)).unwrap();
+            crate::test_helpers::marginalize_under(&eng, &mut f, &targets(&mut rng, &vtree)).unwrap();
             eng.minimize(&mut f).unwrap();
             let before = format!("{f:?}");
             refused += eng

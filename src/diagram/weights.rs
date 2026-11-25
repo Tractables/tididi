@@ -35,8 +35,7 @@ pub enum Arithmetic {
 ///
 /// Give them to a home with [`Home::weighted`](crate::vtree::Home::weighted):
 /// every diagram on that home is then weighted, and a sum-out on it stores
-/// weight values. A root vtree that is not a home takes them with
-/// [`Vtree::with_weights`](crate::Vtree::with_weights). Query a diagram's
+/// weight values. Query a diagram's
 /// value with [`Tdd::weighted_value`](crate::Tdd::weighted_value).
 /// Choose [`Arithmetic::ExactRational`] for exact results, or
 /// [`Arithmetic::ScaledFloat`] or [`Arithmetic::SignedLog`] for bounded

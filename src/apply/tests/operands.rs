@@ -44,6 +44,6 @@ fn mismatched_vtrees_are_rejected_before_shortcuts_or_allocation() {
         assert_eq!(engine.and(f.clone(), g.clone()).unwrap_err(), OperationError::VtreeMismatch);
         assert_eq!(engine.or(f.clone(), g.clone()).unwrap_err(), OperationError::VtreeMismatch);
         assert_eq!(engine.restrict_to_care(f.clone(), &g).unwrap_err(), OperationError::VtreeMismatch);
-        assert_eq!(engine.and_marginalizing(f, g, &[a.root()]).unwrap_err(), OperationError::VtreeMismatch);
+        assert_eq!(crate::test_helpers::and_marginalizing_under(&engine, f, g, &[a.root()]).unwrap_err(), OperationError::VtreeMismatch);
     }
 }

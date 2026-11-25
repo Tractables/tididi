@@ -70,7 +70,7 @@ fn a_walk_that_prefetches_returns_what_the_walk_without_returns() {
                             eng.minimize(&mut out).unwrap();
                             assert_canonical(&out);
                             assert_same_shape(&out, &exists, &what);
-                            let counted = eng.and_model_count(l.clone(), r.clone(), &[]).unwrap();
+                            let counted = eng.and_model_count(l.clone(), r.clone(), |_| false).unwrap();
                             assert_eq!(counted, expected, "{what}");
                         }
                     }
@@ -109,7 +109,7 @@ fn a_walk_that_prefetches_returns_what_the_walk_without_returns() {
                 for gate in [Some(false), Some(true)] {
                     let _pinned = ForcedPrefetch::install(gate);
                     for (l, r) in [(&f, &g), (&g, &f)] {
-                        let counted = eng.and_model_count(l.clone(), r.clone(), &[]).unwrap();
+                        let counted = eng.and_model_count(l.clone(), r.clone(), |_| false).unwrap();
                         assert_eq!(counted, expected, "seed {seed}, gate {gate:?}, wide");
                     }
                 }

@@ -60,7 +60,7 @@ impl Log {
             "restructure_to: refused Variables",
             "and_indexed: refused VtreeMismatch",
             "and_indexed: PANIC index out of bounds: the len is 0",
-            "and_marginalizing some levels",
+            "and_marginalizing_where some levels",
         ];
         // Levels and targets name nodes of a root vtree only; on a projection
         // `marginalize` and `and_marginalizing_where` sum out.
@@ -206,18 +206,18 @@ fn binary(log: &mut Log, eng: &Engine, n: u32, f: &Tdd, g: &Tdd, h: &Tdd, rng: &
     log.tdd(n, "and_in_place", || eng.and_in_place(f.clone(), g), &and);
     log.tdd(n, "and_in_place_loose", || eng.and_in_place_loose(f.clone(), g), &and);
     log.tdd(n, "and_indexed", || eng.and_indexed(f, g, &eng.pair_index(g)?), &and);
-    log.value("and_model_count", || eng.and_model_count(f.clone(), g.clone(), &[]), popcount(&and));
+    log.value("and_model_count", || eng.and_model_count(f.clone(), g.clone(), |_| false), popcount(&and));
     log.value("marginal_product_count", || eng.marginal_product_count(f, g), popcount(&and));
-    log.tdd(n, "and_marginalizing", || eng.and_marginalizing(f, g, &[]), &and);
+    log.tdd(n, "and_marginalizing_where", || eng.and_marginalizing_where(f, g, |_| false), &and);
     let home = HOME.with_borrow(Clone::clone).expect("the case names its home");
     let targets: Vec<VtreeIdx> = f.vtree().bottomup().filter(|_| rng.coin()).collect();
-    let summed = || eng.and_marginalizing(f, g, &targets);
-    log.value("and_marginalizing some levels: count", || summed()?.model_count(), popcount(&and));
-    log.value("and_marginalizing some levels: is_sat", || summed()?.is_sat(), and.iter().any(|&v| v));
-    log.value("and_marginalizing some levels, trim: count", || summed().and_then(|mut t| { let _ = t.trim(&home); t.model_count() }), popcount(&and));
-    log.value("and_marginalizing some levels, minimize, trim: count", || summed().and_then(|mut t| { t.minimize()?; let _ = t.trim(&home); t.model_count() }), popcount(&and));
-    log.value("and_marginalizing some levels, counter", || summed().and_then(|t| t.counter()?.model_count()), popcount(&and));
-    log.value("and_model_count some levels", || eng.and_model_count(f.clone(), g.clone(), &targets), popcount(&and));
+    let summed = || eng.and_marginalizing_where(f, g, summing(f.vtree(), &targets));
+    log.value("and_marginalizing_where some levels: count", || summed()?.model_count(), popcount(&and));
+    log.value("and_marginalizing_where some levels: is_sat", || summed()?.is_sat(), and.iter().any(|&v| v));
+    log.value("and_marginalizing_where some levels, trim: count", || summed().and_then(|mut t| { let _ = t.trim(&home); t.model_count() }), popcount(&and));
+    log.value("and_marginalizing_where some levels, minimize, trim: count", || summed().and_then(|mut t| { t.minimize()?; let _ = t.trim(&home); t.model_count() }), popcount(&and));
+    log.value("and_marginalizing_where some levels, counter", || summed().and_then(|t| t.counter()?.model_count()), popcount(&and));
+    log.value("and_model_count some levels", || eng.and_model_count(f.clone(), g.clone(), summing(f.vtree(), &targets)), popcount(&and));
     let (ws, literal_weights) = weights(n, rng);
     let (weighted, _) = tididi::test_helpers::weighted_sum(&and, &literal_weights);
     let weighted_home = Home::weighted(Vtree::clone(&home), ws).unwrap();
@@ -225,12 +225,12 @@ fn binary(log: &mut Log, eng: &Engine, n: u32, f: &Tdd, g: &Tdd, h: &Tdd, rng: &
     for (name, targets) in [("weighted and", &[][..]), ("weighted and_marginalizing some levels", &targets[..])] {
         log.same(
             name,
-            || eng.and_marginalizing(on_weighted(f, &weighted_home), on_weighted(g, &weighted_home), targets).and_then(|t| exact(&t)),
+            || eng.and_marginalizing_where(on_weighted(f, &weighted_home), on_weighted(g, &weighted_home), summing(f.vtree(), targets)).and_then(|t| exact(&t)),
             || Ok::<_, OperationError>(Some(weighted.clone())),
         );
         log.same(
             &format!("{name}, trim"),
-            || eng.and_marginalizing(on_weighted(f, &weighted_home), on_weighted(g, &weighted_home), targets)
+            || eng.and_marginalizing_where(on_weighted(f, &weighted_home), on_weighted(g, &weighted_home), summing(f.vtree(), targets))
                 .and_then(|mut t| { let _ = t.trim(&weighted_home); exact(&t) }),
             || Ok::<_, OperationError>(Some(weighted.clone())),
         );
@@ -487,19 +487,19 @@ fn unary(log: &mut Log, eng: &Engine, home: &Home, n: u32, f: &Tdd, hf: &Tdd, rn
     let levels: Vec<VtreeIdx> = f.vtree().bottomup().filter(|_| rng.coin()).collect();
     let summed = |weights: bool| -> Result<Tdd, OperationError> {
         let mut t = if weights { on_weighted(f, &weighted_home) } else { f.clone() };
-        t.marginalize_levels(&levels)?;
+        t.marginalize(summing(f.vtree(), &levels))?;
         Ok(t)
     };
     let exact = |t: &Tdd| t.weighted_value().map(|v| v.map(|v| tididi::test_helpers::exact_weight(&v)));
-    log.value("marginalize_levels: count", || summed(false)?.model_count(), popcount(&tf));
-    log.value("marginalize_levels: counter", || summed(false)?.counter()?.model_count(), popcount(&tf));
+    log.value("marginalize some levels: count", || summed(false)?.model_count(), popcount(&tf));
+    log.value("marginalize some levels: counter", || summed(false)?.counter()?.model_count(), popcount(&tf));
     // A refused trim leaves the diagram and its count as they were.
-    log.value("marginalize_levels, trim: count", || summed(false).and_then(|mut t| { let _ = t.trim(home); t.model_count() }), popcount(&tf));
-    log.value("marginalize_levels, minimize, trim: count", || summed(false).and_then(|mut t| { t.minimize()?; let _ = t.trim(home); t.model_count() }), popcount(&tf));
-    log.value("marginalize_levels weighted", || exact(&summed(true)?), Some(weighted.clone()));
-    log.value("marginalize_levels weighted, trim", || summed(true).and_then(|mut t| { let _ = t.trim(&weighted_home); exact(&t) }), Some(weighted.clone()));
+    log.value("marginalize some levels, trim: count", || summed(false).and_then(|mut t| { let _ = t.trim(home); t.model_count() }), popcount(&tf));
+    log.value("marginalize some levels, minimize, trim: count", || summed(false).and_then(|mut t| { t.minimize()?; let _ = t.trim(home); t.model_count() }), popcount(&tf));
+    log.value("marginalize some levels weighted", || exact(&summed(true)?), Some(weighted.clone()));
+    log.value("marginalize some levels weighted, trim", || summed(true).and_then(|mut t| { let _ = t.trim(&weighted_home); exact(&t) }), Some(weighted.clone()));
     log.value(
-        "marginalize_levels, stored and read: count",
+        "marginalize some levels, stored and read: count",
         || {
             let t = summed(false)?;
             let mut bytes = Vec::new();
@@ -797,3 +797,18 @@ fn pools_in_every_form() {
 
 #[allow(dead_code)]
 fn unused(_: VtreeIdx) {}
+
+/// Whether a variable has its leaf under one of `targets` of `vtree`.
+fn summing(vtree: &Vtree, targets: &[VtreeIdx]) -> impl Fn(VarId) -> bool + use<> {
+    let under = |mut t: VtreeIdx| loop {
+        if targets.contains(&t) {
+            return true;
+        }
+        match vtree.node(t).parent() {
+            Some(p) => t = p,
+            None => return false,
+        }
+    };
+    let vars: Vec<VarId> = vtree.leaf_bottomup().filter(|&(leaf, _)| under(leaf)).map(|(_, var)| var).collect();
+    move |v| vars.contains(&v)
+}

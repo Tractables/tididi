@@ -19,6 +19,12 @@ Breaking changes:
   `Tdd::project_to_vars` are removed. On a home, `Tdd::exists_vars`
   followed by `Tdd::minimize` leaves a diagram on the projection of its
   support. `Vtree::project_to_vars` stays.
+- `Tdd::marginalize_levels`, `Engine::marginalize_levels`,
+  `Engine::and_marginalizing` and `Vtree::with_weights` are removed: sums
+  are named by variables with `marginalize` and `and_marginalizing_where`,
+  and weights are attached with `Home::weighted`.
+  `Engine::and_model_count` takes a variable predicate in place of level
+  targets.
 - `Tdd::splice_subtree_unchecked` and `Tdd::reseat_vtree_unchecked` are
   removed.
 - No operation minimizes its result by default. Each one ends with its own

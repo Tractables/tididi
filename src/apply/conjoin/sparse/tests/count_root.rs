@@ -76,7 +76,7 @@ fn assert_counted_both_orders(
 ) {
     let _forced = ForcedThresholds::install(thresholds);
     for (label, (l, r)) in [("direct", (f, g)), ("swapped", (g, f))] {
-        let counted = eng.and_model_count(l.clone(), r.clone(), targets).unwrap();
+        let counted = crate::test_helpers::and_model_count_under(eng, l.clone(), r.clone(), targets).unwrap();
         assert_eq!(&counted, expected, "{what}, {thresholds:?}, {label}");
     }
 }
@@ -222,14 +222,14 @@ fn a_false_operand_and_a_self_conjunction_count_through_the_shortcuts() {
     assert_canonical(&zero);
     let expected = eng.model_count(&f).unwrap();
     assert_eq!(
-        eng.and_model_count(f.clone(), f.clone(), &[]).unwrap(),
+        eng.and_model_count(f.clone(), f.clone(), |_| false).unwrap(),
         expected
     );
     assert_eq!(
-        eng.and_model_count(f.clone(), zero.clone(), &[]).unwrap(),
+        eng.and_model_count(f.clone(), zero.clone(), |_| false).unwrap(),
         BigUint::ZERO
     );
-    assert_eq!(eng.and_model_count(zero, f, &[]).unwrap(), BigUint::ZERO);
+    assert_eq!(eng.and_model_count(zero, f, |_| false).unwrap(), BigUint::ZERO);
 }
 
 /// The fold's own arithmetic, on columns near the top of `u64`: a grouped

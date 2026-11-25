@@ -18,7 +18,7 @@ fn refused_weight_slot_preserves_values_and_width() {
     ]);
     assert_canonical(&tdd);
     let (level, _) = vtree.children(vtree.root());
-    eng.marginalize_levels(&mut tdd, &[level]).unwrap();
+    crate::test_helpers::marginalize_under(&eng, &mut tdd, &[level]).unwrap();
     assert_canonical(&tdd);
     let values: Vec<_> = tdd.levels[level.idx()].weight_values().unwrap().iter().map(|v| v.clone().into_rational()).collect();
     let width = tdd.levels[level.idx()].slot_count();

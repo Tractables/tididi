@@ -79,7 +79,7 @@ fn an_accepted_rotation_keeps_the_fusion_records_it_left_alone() {
                 .filter(|&t| t != vtree.root() && !vtree.node(t).is_leaf())
                 .collect();
             let target = inner[rng.below(inner.len() as u64) as usize];
-            eng.marginalize_levels(&mut f, &[target]).unwrap();
+            crate::test_helpers::marginalize_under(&eng, &mut f, &[target]).unwrap();
             eng.minimize(&mut f).unwrap();
             let count = f.model_count().unwrap();
             for step in 0..6 {

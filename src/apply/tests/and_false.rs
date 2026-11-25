@@ -80,7 +80,7 @@ fn false_conjunctions_hold_no_node() {
         let index = crate::diagram::PairIndex::new(&g).unwrap();
         check(&label("indexed"), &eng.and_indexed(&f, &g, &index).unwrap(), &mut falses);
         let (left, _) = vtree.children(vtree.root());
-        check(&label("marginalizing"), &eng.and_marginalizing(&f, &g, &[left]).unwrap(), &mut falses);
+        check(&label("marginalizing"), &crate::test_helpers::and_marginalizing_under(&eng, &f, &g, &[left]).unwrap(), &mut falses);
     }
     assert!(falses > 200, "the seeds give false conjunctions ({falses})");
 }

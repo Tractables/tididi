@@ -114,10 +114,10 @@ fn counts_and_quantified_conjunctions_agree() {
     for (what, f, g) in cases(8, 0xc0_4e7) {
         let eng = Engine::new();
         let before = relabel_census();
-        let count = eng.and_model_count(f.clone(), g.clone(), &[]).unwrap();
+        let count = eng.and_model_count(f.clone(), g.clone(), |_| false).unwrap();
         let after = relabel_census();
         relabelled += after[0] + after[1] - before[0] - before[1];
-        let oracle = no_relabel(|| eng.and_model_count(f.clone(), g.clone(), &[]).unwrap());
+        let oracle = no_relabel(|| eng.and_model_count(f.clone(), g.clone(), |_| false).unwrap());
         assert_eq!(count, oracle, "{what}: count");
         assert_eq!(count, eng.model_count(&eng.and(f.clone(), g.clone()).unwrap()).unwrap(), "{what}: built count");
         let quantified = [VarId(1), VarId(5)];
@@ -144,19 +144,19 @@ fn marginalizing_conjunctions_agree() {
             for targets in [vec![t], vec![t, vtree.sibling(t)]] {
                 let eng = Engine::new();
                 let before = relabel_census();
-                let out = eng.and_marginalizing(f.clone(), g.clone(), &targets).unwrap();
+                let out = crate::test_helpers::and_marginalizing_under(&eng, f.clone(), g.clone(), &targets).unwrap();
                 let after = relabel_census();
                 relabelled += after[0] + after[1] - before[0] - before[1];
-                let oracle = no_relabel(|| eng.and_marginalizing(f.clone(), g.clone(), &targets).unwrap());
+                let oracle = no_relabel(|| crate::test_helpers::and_marginalizing_under(&eng, f.clone(), g.clone(), &targets).unwrap());
                 let what = format!("{what}, targets {targets:?}");
                 assert_same_shape(&out, &oracle, &what);
                 let count = eng.model_count(&out).unwrap();
                 assert_eq!(count, eng.model_count(&oracle).unwrap(), "{what}: count");
                 let plain = eng.and(f.clone(), g.clone()).unwrap();
                 assert_eq!(count, eng.model_count(&plain).unwrap(), "{what}: plain count");
-                let counted = eng.and_model_count(f.clone(), g.clone(), &targets).unwrap();
+                let counted = crate::test_helpers::and_model_count_under(&eng, f.clone(), g.clone(), &targets).unwrap();
                 assert_eq!(counted, count, "{what}: and_model_count");
-                let oracle = no_relabel(|| eng.and_model_count(f.clone(), g.clone(), &targets).unwrap());
+                let oracle = no_relabel(|| crate::test_helpers::and_model_count_under(&eng, f.clone(), g.clone(), &targets).unwrap());
                 assert_eq!(counted, oracle, "{what}: and_model_count oracle");
             }
         }
@@ -180,18 +180,18 @@ fn a_summed_operand_is_read_through_its_marginal_level() {
                 continue;
             }
             let mut summed = f.clone();
-            eng.marginalize_levels(&mut summed, &[t]).unwrap();
+            crate::test_helpers::marginalize_under(&eng, &mut summed, &[t]).unwrap();
             if !summed.level(t).is_marginal() {
                 continue;
             }
             let what = format!("{what}, {t:?} summed");
             let before = read_through_census();
-            let out = eng.and_marginalizing(summed.clone(), g.clone(), &[]).unwrap();
+            let out = crate::test_helpers::and_marginalizing_under(&eng, summed.clone(), g.clone(), &[]).unwrap();
             read_through += read_through_census() - before;
-            let oracle = no_relabel(|| eng.and_marginalizing(summed.clone(), g.clone(), &[]).unwrap());
+            let oracle = no_relabel(|| crate::test_helpers::and_marginalizing_under(&eng, summed.clone(), g.clone(), &[]).unwrap());
             assert_same_shape(&out, &oracle, &what);
             assert_eq!(eng.model_count(&out).unwrap(), whole, "{what}: count");
-            let counted = eng.and_model_count(summed.clone(), g.clone(), &[]).unwrap();
+            let counted = eng.and_model_count(summed.clone(), g.clone(), |_| false).unwrap();
             assert_eq!(counted, whole, "{what}: and_model_count");
         }
     }
@@ -318,12 +318,12 @@ fn a_summed_root_child_of_one_value_is_counted() {
     let g = eng.and(clause(&[33, 34]), clause(&[-33, -34])).unwrap();
     let whole = eng.model_count(&eng.and(eng.and(clause(&all), clause(&[33, 34])).unwrap(), g.clone()).unwrap()).unwrap();
     assert_eq!(whole, ((1u64 << 33) - 2).into());
-    let summed = eng.and_marginalizing(clause(&all), clause(&[33, 34]), &[child]).unwrap();
+    let summed = crate::test_helpers::and_marginalizing_under(&eng, clause(&all), clause(&[33, 34]), &[child]).unwrap();
     assert_canonical(&summed);
     assert!(summed.level(child).is_marginal(), "the child is summed");
     assert_eq!(summed.level(child).marginal_counts(), Some([(1u128 << 32) - 1].as_slice()), "one count, in a slot");
     assert_eq!(summed.level(vtree.root()).nodes().len(), 1);
     assert_eq!(g.level(vtree.root()).nodes().len(), 1);
-    assert_eq!(eng.and_model_count(summed.clone(), g.clone(), &[]).unwrap(), whole);
-    assert_eq!(eng.and_model_count(g, summed, &[]).unwrap(), whole);
+    assert_eq!(eng.and_model_count(summed.clone(), g.clone(), |_| false).unwrap(), whole);
+    assert_eq!(eng.and_model_count(g, summed, |_| false).unwrap(), whole);
 }

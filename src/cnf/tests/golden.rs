@@ -115,7 +115,7 @@ fn without_a_structural_leaf_there_is_no_true_variable() {
     let tree = Arc::new(Vtree::balanced(2));
     let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 2]).unwrap();
     let (left, right) = tree.children(tree.root());
-    f.marginalize_levels(&[left, right]).unwrap();
+    crate::test_helpers::sum_levels(&mut f, &[left, right]).unwrap();
     assert_marginal_canonical(&f);
     let (encoding, sink) = encode(&f, None);
     assert_eq!(transcript(&sink.calls, &[(tree.root(), "root")]), [

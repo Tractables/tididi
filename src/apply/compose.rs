@@ -142,7 +142,7 @@ impl Quantification {
 /// Both operands are structural and consumed; the result keeps their shared
 /// vtree and agreed weights. It is not minimized; [`Engine::minimize`] certifies it. Quantified variables remain
 /// free in that universe, as in [`Tdd::exists_vars`]. Summing counts with
-/// [`Engine::and_marginalizing`] is a different operation.
+/// [`Engine::and_marginalizing_where`] is a different operation.
 ///
 /// Quantification follows [`Quantification::Fused`];
 /// [`Engine::and_exists_with`] takes the choice.

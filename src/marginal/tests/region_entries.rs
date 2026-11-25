@@ -218,7 +218,7 @@ pub(crate) fn region_case_and_source(eng: &Engine, seed: u64, max_leaves: u32) -
     }
     let source = g.clone();
     eng.marginalize(&mut g, under(&home, &hs)).unwrap();
-    eng.marginalize_levels(&mut f, &hs).unwrap();
+    crate::test_helpers::marginalize_under(eng, &mut f, &hs).unwrap();
     g.vtree().has_regions().then_some((home, n, f, g, source, hs))
 }
 
@@ -293,7 +293,7 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Home, f: &Tdd, g: &Tdd, n: u32
     a.check("trim", || mutate(g, &|t| t.trim(home).map(drop)), || Ok(f.clone()), same_value);
     a.check("reduce", || mutate(g, &|t| t.reduce(crate::reduce::ReductionPlan::default())), || mutate(f, &|t| t.reduce(crate::reduce::ReductionPlan::default())), same_value);
     a.check("attach_level_counts", || mutate(g, &|t| t.attach_level_counts()), || mutate(f, &|t| t.attach_level_counts()), same_value);
-    a.check("marginalize all", || mutate(g, &|t| t.marginalize(|_| true)), || mutate(f, &|t| t.marginalize_levels(&[t.vtree().root()])), same_value);
+    a.check("marginalize all", || mutate(g, &|t| t.marginalize(|_| true)), || mutate(f, &|t| t.marginalize(crate::test_helpers::summing(t.vtree(), &[t.vtree().root()]))), same_value);
     let model: Vec<Literal> = (1..=n).map(|v| lit(VarId(v), rng.coin())).collect();
     a.runs("insert_model", || mutate(g, &|t| t.insert_model(&model)));
     a.runs("remove_model", || mutate(g, &|t| t.remove_model(&model)));
@@ -422,7 +422,7 @@ fn binary_audit_case(a: &mut Audit, eng: &Engine, f: &Tdd, g: &Tdd, b: &Tdd) {
         }
         both!("and", |x: Tdd, y: Tdd, c: bool| formed(eng.and(&x, &y), c), same_value);
         both!("and_marginalizing_where", |x: Tdd, y: Tdd, c: bool| formed(eng.and_marginalizing_where(&x, &y, |_| false), c), same_value);
-        both!("and_model_count", |x: Tdd, y: Tdd, _: bool| eng.and_model_count(x, y, &[]), PartialEq::eq);
+        both!("and_model_count", |x: Tdd, y: Tdd, _: bool| eng.and_model_count(x, y, |_| false), PartialEq::eq);
         both!("marginal_product_count", |x: Tdd, y: Tdd, _: bool| eng.marginal_product_count(&x, &y), PartialEq::eq);
         both!("and_in_place", |x: Tdd, y: Tdd, c: bool| formed(eng.and_in_place(x, &y), c), same_value);
         both!("and_exists", |x: Tdd, y: Tdd, c: bool| formed(eng.and_exists(x, y, &[]), c), same_value);

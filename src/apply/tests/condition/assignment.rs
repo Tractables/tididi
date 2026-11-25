@@ -103,7 +103,7 @@ fn a_false_cofactor_with_a_weighted_sibling_keeps_its_store_and_no_false_nodes()
     let eng = Engine::new();
     let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1]).unwrap();
     let (_, right) = tree.children(tree.root());
-    eng.marginalize_levels(&mut f, &[right]).unwrap();
+    crate::test_helpers::marginalize_under(&eng, &mut f, &[right]).unwrap();
     assert_canonical(&f);
     let result = eng.condition(f, [-1]).unwrap();
     assert!(result.is_zero());
@@ -198,7 +198,7 @@ fn falsity_cascades_preserve_marginal_sibling_values_on_either_side() {
                 )
                 .unwrap();
             assert_canonical(&f);
-            eng.marginalize_levels(&mut f, &[sibling]).unwrap();
+            crate::test_helpers::marginalize_under(&eng, &mut f, &[sibling]).unwrap();
             assert_canonical(&f);
             assert!(!f.level(target).is_marginal());
             for all_false in [false, true] {
@@ -228,9 +228,7 @@ fn conditioning_recovers_from_each_reservation_refusal() {
             .unwrap();
         assert_canonical(&f);
         if marginal.is_some() {
-            setup
-                .marginalize_levels(&mut f, &[vtree.children(vtree.root()).0])
-                .unwrap();
+            crate::test_helpers::marginalize_under(&setup, &mut f, &[vtree.children(vtree.root()).0]).unwrap();
             assert_canonical(&f);
         }
         for last in [-8, 8] {

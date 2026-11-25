@@ -843,105 +843,6 @@ impl crate::Engine {
         })
     }
 
-    /// Conjoin two diagrams and replace selected subtrees with marginal values.
-    ///
-    /// Each operand is owned or borrowed, as [`and`] says: a borrowed one is
-    /// read in place, weights and summed-out levels included, and costs the
-    /// levels the result takes from it and a copy of its weight store.
-    ///
-    /// `targets` names vtree nodes; order and duplicates do not matter. Internal
-    /// targets can be summed out during product construction; leaf targets are
-    /// handled afterward. The result preserves the conjunction's count, or its
-    /// fixed weighted value when weights are attached. Operands on projections
-    /// take [`Engine::and_marginalizing_where`] instead.
-    ///
-    /// Every target's remaining structure is discarded, including after identity
-    /// and self-conjunction shortcuts; the false diagram stays false. See
-    /// [`Tdd::marginalize_levels`] for the operations
-    /// that remain valid after structure is discarded.
-    ///
-    /// A target built as structure is summed out once the conjunction is
-    /// built, and the pairs above it that then name the same node on their
-    /// other side are fused into one.
-    ///
-    /// On an unweighted conjunction, a subtree whose internal levels are all
-    /// targets is built as structure and summed at its top, as it is when
-    /// only the top is named, where its products are large enough for the
-    /// sparse route and its operands wide enough for its grids to be sparse.
-    ///
-    /// Under [`Arithmetic::ScaledFloat`](crate::diagram::Arithmetic::ScaledFloat)
-    /// a target summed out during product construction holds its values in
-    /// 8 bytes each while they lie within an `f64`'s range of one power of
-    /// two, 16 otherwise, and the weight store receives only the values of
-    /// targets whose parent is not also summed out: naming every finished
-    /// level of a weighted sum as a target keeps the levels below the
-    /// topmost out of the store.
-    ///
-    /// The result is not certified
-    /// ([`Tdd::is_canonical`](crate::Tdd::is_canonical)), and while it holds a
-    /// summed-out level no reduction certifies it.
-    ///
-    /// ```
-    /// # use tididi::vtree::Home;
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    ///
-    /// let engine = Engine::new();
-    /// let vtree = Home::new(Vtree::balanced(4));
-    /// let (left, _) = vtree.children(vtree.root());
-    /// let f = engine.clause(&vtree, [1, 2])?;
-    /// let g = engine.clause(&vtree, [3, 4])?;
-    /// let counted = engine.and_marginalizing(&f, g, &[left])?;
-    /// assert!(counted.level(left).is_marginal());
-    /// assert_eq!(engine.model_count(&counted)?, 9u32.into());
-    /// assert_eq!(engine.model_count(&f)?, 12u32.into());
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// The operand and resource errors of [`Engine::and`], plus
-    /// [`OperationError::LevelNotInVtree`] for an invalid target and
-    /// [`OperationError::InertOption`] for an operand on a home (a projection
-    /// or a home's root), checked before product construction. An owned operand is consumed on every
-    /// outcome, and a borrowed one is left as it was.
-    pub fn and_marginalizing<'f, 'g>(
-        &self,
-        f: impl Into<Cow<'f, Tdd>>,
-        g: impl Into<Cow<'g, Tdd>>,
-        targets: &[VtreeIdx],
-    ) -> Result<Tdd, OperationError> {
-        let (f, g) = (f.into(), g.into());
-        let _op = self.limits().enter()?;
-        if f.vtree().on_home() || g.vtree().on_home() {
-            return Err(targets_on_projection());
-        }
-        f.check_level_indices(targets)?;
-        let [f, g] = extend::on_one(self, [f, g])?;
-        // The apply core asks "is level `t` a target?" once per level it emits,
-        // so the membership array is derived here, once, at the cost the caller
-        // would pay to build it.
-        let vtree = Arc::clone(f.vtree());
-        let mut mask = target_mask(self, &vtree, targets, true)?;
-        let unweighted = f.weight_table().is_none() && g.weight_table().is_none();
-        if unweighted {
-            collapse_target_subtrees(self, &vtree, &f, &g, &mut mask)?;
-        }
-        // An unweighted sweep left no level to sum is given none, as
-        // `and_model_count` gives it none: the pass below sums the targets.
-        let summed = match unweighted && !mask.contains(&true) {
-            true => VtreeMask::default(),
-            false => VtreeMask::new(Some(&mask)),
-        };
-        let mut out = conjoin_cow(self, f, g, summed)?;
-        // Streaming can finish every target; only retained structure needs the pass.
-        if !out.is_zero() && targets.iter().any(|&t| !out.level(t).is_marginal()) {
-            self.marginalize_levels(&mut out, targets)?;
-        }
-        crate::reduce::close_constant(self, &mut out);
-        Ok(out)
-    }
-
     /// Conjoin two diagrams and sum out the variables `summable` names.
     ///
     /// Each operand is owned or borrowed, as [`and`] says. The conjunction is
@@ -995,9 +896,10 @@ impl crate::Engine {
 
     /// Count the models of `f ∧ g` without keeping the conjunction.
     ///
-    /// The result is `model_count(and_marginalizing(f, g, targets))`:
-    /// `targets` are summed out during product construction as there, which
-    /// changes how much structure is built, never the count. Where the root
+    /// The result is `model_count(and_marginalizing_where(f, g, summable))`:
+    /// the nodes over the variables `summable` names are summed out during
+    /// product construction as there, which changes how much structure is
+    /// built, never the count. Where the root
     /// of the conjunction is one product built by the sparse route, its
     /// pairs are folded into the count as they are found instead of being
     /// stored, so the largest level of a join that ends in a count is never
@@ -1014,38 +916,32 @@ impl crate::Engine {
     /// let vtree = Home::new(Vtree::balanced(4));
     /// let f = engine.clause(&vtree, [1, 2])?;
     /// let g = engine.clause(&vtree, [3, 4])?;
-    /// assert_eq!(engine.and_model_count(f, g, &[])?, 9u32.into());
+    /// assert_eq!(engine.and_model_count(f, g, |_| false)?, 9u32.into());
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     ///
     /// # Errors
     ///
-    /// The errors of [`Engine::and_marginalizing`] and of
+    /// The errors of [`Engine::and_marginalizing_where`] and of
     /// [`Engine::model_count`]. Both operands are consumed on every outcome.
     pub fn and_model_count(
         &self,
         f: Tdd,
         g: Tdd,
-        targets: &[VtreeIdx],
+        summable: impl Fn(VarId) -> bool,
     ) -> Result<num_bigint::BigUint, OperationError> {
         let _op = self.limits().enter()?;
-        f.check_level_indices(targets)?;
-        let from = Arc::clone(f.vtree());
-        let [mut f, mut g] = extend::on_one(self, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
-        let translated = extend::nodes_on(self, &from, f.vtree(), targets)?;
-        let targets = translated.as_deref().unwrap_or(targets);
         if f.weight_table().is_some() || g.weight_table().is_some() {
-            let out = match f.vtree().on_home() {
-                true => self.and_marginalizing_where(f, g, |_| true)?,
-                false => self.and_marginalizing(f, g, targets)?,
-            };
+            let out = marginalizing_where(self, Cow::Owned(f), Cow::Owned(g), &summable)?;
             return self.model_count(&out);
         }
+        let [mut f, mut g] = extend::on_one(self, [Cow::Owned(f), Cow::Owned(g)])?.map(Cow::into_owned);
         let vtree = Arc::clone(f.vtree());
-        // A target at the root sums the whole conjunction into its count,
-        // which is what is returned anyway: it is dropped, so the root can be
-        // counted instead of built.
-        let mut mask = target_mask(self, &vtree, targets, false)?;
+        let summed = |t: VtreeIdx| f.level(t).is_marginal() || g.level(t).is_marginal();
+        let (mut mask, _) = crate::marginal::finished(self, &vtree, summed, &summable)?;
+        // A summed root is the count returned anyway: the root is counted
+        // instead of built.
+        mask[vtree.root().idx()] = false;
         collapse_target_subtrees(self, &vtree, &f, &g, &mut mask)?;
         // With no target left the sweep is given none, so no route reads a
         // set mask that names nothing as one that sums levels out.
@@ -1070,11 +966,6 @@ impl crate::Engine {
             Conjoined::Built(out) => self.model_count(&out),
         }
     }
-}
-
-#[cold]
-fn targets_on_projection() -> OperationError {
-    OperationError::InertOption { option: "targets", needs: "operands on a root vtree that is not a home; on a home, `and_marginalizing_where`" }
 }
 
 /// [`Engine::and_marginalizing_where`]: the nodes
@@ -1124,22 +1015,6 @@ fn marginalizing_where(eng: &Engine, f: Cow<'_, Tdd>, g: Cow<'_, Tdd>, summable:
     extend::trimmed(eng, out)
 }
 
-/// Membership mask of internal vtree nodes in `targets`, optionally including
-/// the vtree root.
-fn target_mask(
-    eng: &Engine,
-    vtree: &crate::vtree::Vtree,
-    targets: &[VtreeIdx],
-    include_root: bool,
-) -> Result<Vec<bool>, OperationError> {
-    let mut mask = Vec::new();
-    eng.limits().try_resize(&mut mask, vtree.num_nodes(), false)?;
-    for &t in targets {
-        mask[t.idx()] = !vtree.node(t).is_leaf() && (include_root || t != vtree.root());
-    }
-    Ok(mask)
-}
-
 /// Whether a subtree's product grids can be sparse by the sparse routes'
 /// factor `sparsity`, from its grid cells and those cells weighted by the
 /// narrower operand's node count, both summed over the subtree's structural
@@ -1184,8 +1059,7 @@ fn may_be_sparse((cells, weighted): (u128, u128), sparsity: u128) -> bool {
 /// where the fold over its children would not pay: a level under it is
 /// marginal in an operand, its sibling is summed too, or `c` is a level the
 /// relabelling route can take. The pass that follows the sweep
-/// ([`Engine::marginalize_levels`](crate::Engine::marginalize_levels)) then
-/// sums it.
+/// ([`sum_out`](crate::marginal::sum_out)) then sums it.
 ///
 /// Which levels `mask` names changes the work of the sweep and never the
 /// diagram or count the caller gets. The pass reads two levels' headers per

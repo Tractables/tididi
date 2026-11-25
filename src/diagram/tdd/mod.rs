@@ -91,8 +91,8 @@ use super::primitives::{LEAF_WIDTH, ONE_LEAF_IDX, TddNodeId, TRUE, ZERO};
 /// Diagrams assembled with [`TddBuilder`](crate::diagram::TddBuilder) need an
 /// explicit minimization step to become canonical.
 ///
-/// [`marginalize_levels`](Self::marginalize_levels) replaces selected subtrees
-/// with counts or fixed weighted values. This discards Boolean choices; each
+/// [`marginalize`](Self::marginalize) replaces the subtrees over chosen
+/// variables with counts or fixed weighted values. This discards Boolean choices; each
 /// operation states whether it accepts such marginal levels.
 #[derive(Clone, Debug)]
 pub struct Tdd {
@@ -349,8 +349,8 @@ impl Tdd {
     }
 
     /// The weights the diagram is computed under: those of its vtree
-    /// ([`Home::weighted`](crate::vtree::Home::weighted),
-    /// [`Vtree::with_weights`]); `None` in integer mode.
+    /// ([`Home::weighted`](crate::vtree::Home::weighted)); `None` in integer
+    /// mode.
     pub fn weights(&self) -> Option<&Weights> {
         self.weight_table()
     }

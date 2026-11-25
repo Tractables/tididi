@@ -224,7 +224,7 @@ fn a_marginal_diagram_evaluates_as_its_summed_structure_does() {
                 let w = Weighted::new(&mut rng, 14, &summed, regroup);
                 let expected = eng.evaluate(&f, &w).unwrap();
                 let mut m = f.clone();
-                eng.marginalize_levels(&mut m, &targets).unwrap();
+                crate::test_helpers::marginalize_under(&eng, &mut m, &targets).unwrap();
                 // As the pass leaves it, and minimized.
                 for minimized in [false, true] {
                     if minimized {
@@ -264,7 +264,7 @@ fn a_marginalizing_conjunction_evaluates_as_the_plain_one() {
             };
             let summed = summed_vars(&vtree, &targets);
             let w = Weighted::new(&mut rng, 13, &summed, round % 3 == 0);
-            let m = eng.and_marginalizing(g, h, &targets).unwrap();
+            let m = crate::test_helpers::and_marginalizing_under(&eng, g, h, &targets).unwrap();
             let context = format!("round {round}, targets {targets:?}");
             let expected = eng.evaluate(&both, &w).unwrap();
             assert_eval_matches(&eng, &m, &w, expected, &context);
@@ -291,7 +291,7 @@ fn a_count_past_u128_is_valued_exactly() {
         let w = Weighted::new(&mut rng, 140, &summed, false);
         let expected = eng.evaluate(&g, &w).unwrap();
         let mut m = g;
-        eng.marginalize_levels(&mut m, &[right]).unwrap();
+        crate::test_helpers::marginalize_under(&eng, &mut m, &[right]).unwrap();
         assert!(m.level(right).marginal_counts().unwrap().contains(&u128::MAX), "the count overflowed");
         assert!(reach(&m).slots > 0, "the root reads the count from its slot");
         assert_eval_matches(&eng, &m, &w, expected, "past u128");

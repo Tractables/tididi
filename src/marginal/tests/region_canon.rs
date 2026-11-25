@@ -127,7 +127,7 @@ fn a_pass_through_level_keeps_apart_what_the_projection_merges() {
     check_form(&f, "projection");
     assert_eq!(root_pairs(&f), pairs(&[("1", "Neg"), ("3", "Pos")]));
 
-    eng.marginalize_levels(&mut g, &[summed]).unwrap();
+    crate::test_helpers::marginalize_under(&eng, &mut g, &[summed]).unwrap();
     let middle = home_vtree.node(summed).parent().unwrap();
     let root = g.vtree().root();
     assert_eq!((g.level(middle).slot_count(), g.level(root).pair_count_at(0)), (2, 3));

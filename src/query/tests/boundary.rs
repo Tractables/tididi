@@ -35,7 +35,7 @@ fn a_count_marginal_output_answers_from_its_count() {
     let vtree = Arc::new(Vtree::balanced(4));
     let mut f = two_clauses(&vtree);
     let before = f.model_count().unwrap();
-    eng.marginalize_levels(&mut f, &internal_levels_bottom_up(&vtree)).unwrap();
+    crate::marginal::tests::marginalize_levels(eng, &mut f, &internal_levels_bottom_up(&vtree)).unwrap();
     assert!(f.levels[f.output.vtree.idx()].marginal_counts().is_some(), "output level is count-marginal");
     assert_eq!(f.model_count().unwrap(), before);
     assert!(f.is_sat().unwrap());
@@ -48,7 +48,7 @@ fn a_weight_marginal_output_is_satisfiable() {
     let weights = Weights::new(RationalWeights::from_literals(&weights), Arithmetic::ExactRational);
     let vtree = Arc::new(Vtree::balanced(4).with_weights(weights).unwrap());
     let mut f = two_clauses(&vtree);
-    eng.marginalize_levels(&mut f, &internal_levels_bottom_up(&vtree)).unwrap();
+    crate::marginal::tests::marginalize_levels(eng, &mut f, &internal_levels_bottom_up(&vtree)).unwrap();
     assert!(f.levels[f.output.vtree.idx()].is_weight_marginal(), "output level is weight-marginal");
     assert_eq!(f.is_sat(), Ok(true));
 }
@@ -74,7 +74,7 @@ fn weighted_leaf_outputs_are_satisfiable_unless_false() {
             let tree = Arc::new(Vtree::balanced(1).with_weights(weights).unwrap());
             let mut f = eng.literal(&crate::vtree::Home::unchecked(&tree), 1).unwrap();
             assert_canonical(&f);
-            eng.marginalize_levels(&mut f, &[tree.root()]).unwrap();
+            crate::marginal::tests::marginalize_levels(&eng, &mut f, &[tree.root()]).unwrap();
             assert!(f.level(tree.root()).is_weight_marginal());
             assert_eq!(f.is_sat(), Ok(true));
             f.output.local = crate::diagram::ZERO;
@@ -90,7 +90,7 @@ fn structural_and_count_marginal_leaf_outputs_remain_satisfiable() {
     for mut f in [eng.one(&crate::vtree::Home::unchecked(&tree)), eng.literal(&crate::vtree::Home::unchecked(&tree), 1).unwrap(), eng.literal(&crate::vtree::Home::unchecked(&tree), -1).unwrap()] {
         assert_canonical(&f);
         assert!(f.is_sat().unwrap());
-        eng.marginalize_levels(&mut f, &[tree.root()]).unwrap();
+        crate::marginal::tests::marginalize_levels(&eng, &mut f, &[tree.root()]).unwrap();
         assert!(f.level(tree.root()).marginal_counts().is_some());
         assert!(f.is_sat().unwrap());
     }

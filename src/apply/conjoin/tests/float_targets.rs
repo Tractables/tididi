@@ -54,7 +54,7 @@ fn walk(eng: &Engine, tree: &Vtree, clauses: &[Vec<i32>], store: &Weights) -> Td
     for (k, clause) in clauses.iter().enumerate() {
         let g = eng.clause(&crate::vtree::Home::unchecked(tree), clause.iter().copied()).unwrap();
         let targets = finished(tree, &acc, &clauses[k + 1..]);
-        acc = eng.and_marginalizing(acc, g, &targets).unwrap();
+        acc = crate::test_helpers::and_marginalizing_under(eng, acc, g, &targets).unwrap();
         if acc.is_zero() {
             return acc;
         }
@@ -67,7 +67,7 @@ fn walk(eng: &Engine, tree: &Vtree, clauses: &[Vec<i32>], store: &Weights) -> Td
         assert_canonical(&minimized);
     }
     let rest = finished(tree, &acc, &[]);
-    eng.marginalize_levels(&mut acc, &rest).unwrap();
+    crate::test_helpers::marginalize_under(eng, &mut acc, &rest).unwrap();
     acc
 }
 
@@ -250,18 +250,18 @@ fn every_refused_reserve_leaves_the_walk_repeatable() {
     let f = build_clauses(&eng, &tree, &clauses[..half]);
     let g = build_clauses(&eng, &tree, &clauses[half..]);
     let targets: Vec<VtreeIdx> = tree.bottomup().filter(|&t| !tree.node(t).is_leaf()).collect();
-    let expected = value(&eng, &eng.and_marginalizing(f.clone(), g.clone(), &targets).unwrap());
+    let expected = value(&eng, &crate::test_helpers::and_marginalizing_under(&eng, f.clone(), g.clone(), &targets).unwrap());
     let mut refusals = 0;
     for n in 0.. {
         eng.refuse_nth_reserve(n);
-        let outcome = eng.and_marginalizing(f.clone(), g.clone(), &targets);
+        let outcome = crate::test_helpers::and_marginalizing_under(&eng, f.clone(), g.clone(), &targets);
         let fired = !eng.limits().refusal_pending();
         eng.limits().grant_every_reserve();
         match outcome {
             Ok(out) => assert_eq!(value(&eng, &out).as_scaled(), expected.as_scaled(), "granted at {n}"),
             Err(_) => {
                 refusals += 1;
-                let again = eng.and_marginalizing(f.clone(), g.clone(), &targets).unwrap();
+                let again = crate::test_helpers::and_marginalizing_under(&eng, f.clone(), g.clone(), &targets).unwrap();
                 assert_eq!(value(&eng, &again).as_scaled(), expected.as_scaled(), "repeated after a refusal at {n}");
             }
         }
@@ -288,7 +288,7 @@ fn full_sum_out_agrees_with_the_signed_log_domain() {
             let tree = weighted(&tree, &Weights::new(weights.clone(), arithmetic));
             let (a, b) = clauses.split_at(clauses.len() / 2);
             let targets: Vec<VtreeIdx> = tree.bottomup().filter(|&t| !tree.node(t).is_leaf()).collect();
-            let out = eng.and_marginalizing(
+            let out = crate::test_helpers::and_marginalizing_under(&eng, 
                 build_clauses(&eng, &tree, a),
                 build_clauses(&eng, &tree, b),
                 &targets,

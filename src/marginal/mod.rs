@@ -7,8 +7,8 @@
 //! reduction passes the epilogue calls are [`crate::reduce`]; counting over a
 //! partly marginalized diagram is [`crate::query`].
 //!
-//! [`Tdd::marginalize_levels`] sums out a bottom-up group of levels and
-//! restores invariants 7, 8 and 10 before it returns. Folding a weighted
+//! [`Tdd::marginalize`] sums out the subtrees over the variables it names
+//! and restores invariants 7, 8 and 10 before it returns. Folding a weighted
 //! diagram down to its value is [`Tdd::weighted_value`].
 
 pub(crate) mod transition;
@@ -32,13 +32,12 @@ use crate::reduce::{restore_marginal_invariants, trim};
 /// `rebuild_levels` never collapses a node to counts, so a rotation
 /// that brings two marginal children together leaves a structural parent over
 /// two marginal children, which is not a canonical marginal form. Each round
-/// collects the bottom layer of such levels and marginalizes it through
-/// [`marginalize_levels`]; a freshly marginal level can complete a cluster one level
+/// collects the bottom layer of such levels and marginalizes it; a freshly marginal level can complete a cluster one level
 /// up, hence the loop. A diagram already in canonical form makes this a no-op.
 ///
 /// # Errors
 ///
-/// Passes through [`marginalize_levels`]'s `Err(OperationError::Stopped)`. The
+/// Passes through the fold's `Err(OperationError::Stopped)`. The
 /// clusters closed before the cut stay closed; the rest are still structural
 /// levels over two marginal children, which is the state this pass exists to
 /// finish and a caller that resumes will find waiting for it.
@@ -72,19 +71,6 @@ pub(crate) fn marginalize_closure(eng: &Engine, tdd: &mut Tdd) -> Result<usize, 
 }
 
 impl Engine {
-    /// Sum out selected levels under this engine's resource limits.
-    ///
-    /// See [`Tdd::marginalize_levels`] for target, arithmetic and preservation
-    /// semantics. Invalid targets are rejected before mutation. Allocation or
-    /// stop refusals may leave a completed prefix; retrying finishes the remaining
-    /// levels and cleanup while preserving the diagram's value.
-    pub fn marginalize_levels(&self, f: &mut Tdd, levels: &[VtreeIdx]) -> Result<(), OperationError> {
-        if f.vtree.on_home() {
-            return Err(on_projection());
-        }
-        marginalize_levels(self, f, levels)
-    }
-
     /// Sum out the variables `summable` names, under this engine's resource
     /// limits.
     ///
@@ -93,27 +79,6 @@ impl Engine {
     pub fn marginalize(&self, f: &mut Tdd, summable: impl Fn(VarId) -> bool) -> Result<(), OperationError> {
         marginalize(self, f, &summable)
     }
-}
-
-/// Sum out validated target subtrees and restore the marginal invariants.
-pub(crate) fn marginalize_levels(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx]) -> Result<(), OperationError> {
-    let _op = eng.limits().enter()?;
-    f.check_level_indices(levels)?;
-    let vtree = std::sync::Arc::clone(&f.vtree);
-    // The folds mark the structural levels they change; what they leave
-    // unmarked became marginal or was cleared, which a close leaves as it is.
-    f.levels.hold_counts(f.levels.is_closed());
-    f.levels.forget_pair_total();
-    let done = evaluate_levels(eng, f, levels, &vtree).and_then(|()| restore_marginal_invariants(eng, f, levels, &vtree));
-    if done.is_err() {
-        f.levels.forget_left_pairs();
-    }
-    done
-}
-
-#[cold]
-fn on_projection() -> OperationError {
-    OperationError::InertOption { option: "levels", needs: "a diagram on a root vtree that is not a home; on a home, `marginalize`" }
 }
 
 /// The one integer-vs-weighted dispatch of the pass: a weighted diagram's

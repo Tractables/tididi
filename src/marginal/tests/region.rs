@@ -199,7 +199,7 @@ fn marginalize_matches_the_smooth_form_on_the_home() {
             let had = count_regions(&f);
             let free = hs.iter().any(|&h| f.vtree().own_at(h).is_none());
             eng.marginalize(&mut f, under(&home, &hs)).unwrap_or_else(|e| panic!("{what}: {e:?}"));
-            eng.marginalize_levels(&mut g, &hs).unwrap();
+            crate::test_helpers::marginalize_under(&eng, &mut g, &hs).unwrap();
             check_form(&f, &what);
             check_values(&f, &g, n, arithmetic, &what);
             // The closing step of `condition` on the summed-out form.
@@ -278,21 +278,8 @@ fn marginalize_refuses_a_summed_out_internal_level_that_is_not_a_region() {
     let own = Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)]).unwrap();
     let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&own), [1, 2, 3]).unwrap();
     let (left, _) = own.children(own.root());
-    crate::marginal::marginalize_levels(&eng, &mut f, &[left]).unwrap();
+    crate::marginal::tests::marginalize_levels(&eng, &mut f, &[left]).unwrap();
     assert_eq!(f.marginalize(|_| true), Err(OperationError::MarginalLevel(left)));
-}
-
-/// Home node ids index another tree than a projection's own nodes.
-#[test]
-fn marginalize_levels_refuses_a_projection() {
-    let home = Home::new(Vtree::balanced(4));
-    let own = Vtree::projection(&home, [VarId(1), VarId(2), VarId(3)]).unwrap();
-    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&own), [1, 2, 3]).unwrap();
-    let before = f.clone();
-    let (left, _) = home.children(home.root());
-    assert!(matches!(f.marginalize_levels(&[left]), Err(OperationError::InertOption { .. })));
-    assert_eq!(f.levels.len(), before.levels.len());
-    assert!(!f.has_marginal_level());
 }
 
 /// A summable leaf whose parent has a variable that is not summable becomes
@@ -341,7 +328,7 @@ fn a_refused_marginalize_leaves_the_count_as_it_was() {
         f = f.and_clause(clause).unwrap();
     }
     let m = f.vtree().leaf_bottomup().find(|&(_, v)| v == VarId(1)).unwrap().0;
-    crate::marginal::marginalize_levels(&eng, &mut f, &[m]).unwrap();
+    crate::marginal::tests::marginalize_levels(&eng, &mut f, &[m]).unwrap();
     let mut f = f.condition_var(VarId(5), true).unwrap();
     let before = f.model_count().unwrap();
     let _ = f.marginalize(|v| (2..=4).contains(&v.0));
@@ -389,7 +376,7 @@ fn summing_out_a_root_of_several_nodes_follows_the_output() {
     b.push(&eng, root, &[ChildPair::new(POS_LEAF_IDX, POS_LEAF_IDX), ChildPair::new(NEG_LEAF_IDX, NEG_LEAF_IDX)]).unwrap();
     let mut f = b.finish(TddNodeId { vtree: root, local: second }).unwrap();
     assert_eq!(f.model_count().unwrap(), BigUint::from(1u32));
-    f.marginalize_levels(&[root]).unwrap();
+    f.marginalize(crate::test_helpers::summing(f.vtree(), &[root])).unwrap();
     assert_eq!(f.model_count().unwrap(), BigUint::from(1u32));
 }
 

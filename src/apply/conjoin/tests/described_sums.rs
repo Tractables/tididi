@@ -74,11 +74,11 @@ fn sum(
             .limits()
             .scope(LimitConfig::none().with_stop_rules(rules));
         match parts {
-            [a, b] => eng.and_marginalizing(a, b, targets),
+            [a, b] => crate::test_helpers::and_marginalizing_under(&eng, a, b, targets),
             [a, b, c, d] => eng
                 .and(a, b)
                 .and_then(|l| Ok((l, eng.and(c, d)?)))
-                .and_then(|(l, r)| eng.and_marginalizing(l, r, targets)),
+                .and_then(|(l, r)| crate::test_helpers::and_marginalizing_under(&eng, l, r, targets)),
             _ => unreachable!("two or four parts"),
         }
     };
@@ -288,7 +288,7 @@ fn carried_operands(n: u32, seed: u64) -> (Arc<Vtree>, Tdd, Tdd, Vec<VtreeIdx>) 
         low.extend([lll, llr, lrl, lrr, ll, lr, l]);
     }
     let third = eng.exists_vars(factors[3].clone(), &low_vars).unwrap();
-    let mut partial = eng.and_marginalizing(&f02, &f1, &low).unwrap();
+    let mut partial = crate::test_helpers::and_marginalizing_under(&eng, &f02, &f1, &low).unwrap();
     partial.minimize().unwrap();
     (vtree, partial, third, h4)
 }
@@ -393,7 +393,7 @@ fn levels_taken_from_the_sparse_marginal_route_meter_as_that_route() {
                 .with_sparse_route(SparseRoute { sparsity: 1, min_grid: 0 })
                 .with_stop_rules(rules),
         );
-        eng.and_marginalizing(&a, &b, &targets).ok().map(|out| {
+        crate::test_helpers::and_marginalizing_under(&eng, &a, &b, &targets).ok().map(|out| {
             let value = eng.weighted_value(&out).unwrap().unwrap();
             value.as_scaled().expect("a scaled value").to_f64()
         })

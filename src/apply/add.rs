@@ -52,7 +52,7 @@ use super::overlay::{ABSENT, LevelOverlay, Overlay, Pieces, Scratch, leaf_index,
 ///
 /// A diagram denotes a count for each assignment of its structural
 /// variables: one for a model and zero otherwise while no level is summed
-/// out, and after [`Tdd::marginalize_levels`] the number of assignments of
+/// out, and after [`Tdd::marginalize`] the number of assignments of
 /// the summed-out variables that extend it to a model. The result's count is
 /// `f`'s plus `g`'s on every assignment. For `f` and `g` summed out from
 /// Boolean functions `F` and `G` over the same subtrees, it is `F ⊎ G`

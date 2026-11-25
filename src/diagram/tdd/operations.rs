@@ -290,7 +290,7 @@ impl Tdd {
     /// where `k` is the number of distinct quantified variables; or query the
     /// original function with [`projected_model_count`](Self::projected_model_count).
     /// In contrast,
-    /// [`marginalize_levels`](Self::marginalize_levels) sums extension counts and
+    /// [`marginalize`](Self::marginalize) sums extension counts and
     /// preserves the original total.
     ///
     /// # Errors
@@ -706,7 +706,7 @@ impl Tdd {
     /// assert!(f.has_level_counts());
     /// assert_eq!(f.model_count()?, 12u32.into());
     /// let engine = Engine::new();
-    /// assert_eq!(engine.and_model_count(f.clone(), g, &[])?, 9u32.into());
+    /// assert_eq!(engine.and_model_count(f.clone(), g, |_| false)?, 9u32.into());
     /// // A change to the levels drops the counts.
     /// let f1 = f.condition_var(VarId(1), false)?;
     /// assert!(!f1.has_level_counts());
@@ -809,7 +809,7 @@ impl Tdd {
     /// Use [`satisfying_assignment`](Self::satisfying_assignment) to obtain a model.
     ///
     /// Summed-out variables are satisfiable whatever their counts or weights: a
-    /// [marginalized](Self::marginalize_levels) diagram is satisfiable when the
+    /// [marginalized](Self::marginalize) diagram is satisfiable when the
     /// function over its remaining variables is. Answers from the output node
     /// in constant time.
     ///
@@ -1284,57 +1284,6 @@ impl Tdd {
         self.context_arc().run(|eng| eng.reduce(self, plan))
     }
 
-    /// Replace selected subtrees with per-node counts or fixed weighted values.
-    ///
-    /// Targets are vtree node indices, not variable ids. An internal target also
-    /// marginalizes its descendants; already marginal levels are skipped and a
-    /// false diagram stays false. On a vtree without weights, the values are
-    /// exact model counts. On a weighted vtree ([`Vtree::with_weights`](crate::Vtree::with_weights),
-    /// [`Home::weighted`](crate::vtree::Home::weighted)), they use its
-    /// [`Weights`](crate::diagram::Weights)' arithmetic and remain readable
-    /// through [`weighted_value`](Self::weighted_value). Counts cannot later be
-    /// converted to weights.
-    ///
-    /// The discarded structure cannot be recovered. Later operations cannot
-    /// constrain its variables or recover their assignments; structural serialization
-    /// and Boolean queries may reject the result. [`exists_vars`](Self::exists_vars)
-    /// instead retains a Boolean function and merges satisfying extensions.
-    ///
-    /// Completed levels retain their values and valid parent references. The pass
-    /// also fuses eligible marginal pairs and removes unused or duplicate value
-    /// slots.
-    ///
-    /// The result is not certified ([`is_canonical`](Self::is_canonical)), and
-    /// while it holds a summed-out level no reduction certifies it.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`OperationError::LevelNotInVtree`] for an invalid target and
-    /// [`OperationError::InertOption`] for a diagram on a home (a projection
-    /// or a home's root), whose sum-out is [`marginalize`](Self::marginalize),
-    /// both before mutation.
-    /// [`OperationError::OverBudget`] may leave a completed prefix whose
-    /// counts or weighted values remain readable and preserved. An unfinished
-    /// column is discarded before installation; retrying finishes remaining levels
-    /// and cleanup.
-    ///
-    /// ```
-    /// # use tididi::vtree::Home;
-    /// use std::sync::Arc;
-    /// use tididi::{and, Tdd, Vtree};
-    /// let vtree = Home::new(Vtree::balanced(4));
-    /// let (left, _) = vtree.children(vtree.root());
-    /// let mut f = and(Tdd::clause(&vtree, [1, 2])?, Tdd::clause(&vtree, [3, 4])?)?;
-    /// let before = f.model_count()?;
-    /// f.marginalize_levels(&[left])?;
-    /// assert!(f.level(left).is_marginal());
-    /// assert_eq!(f.model_count()?, before);
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
-    pub fn marginalize_levels(&mut self, levels: &[VtreeIdx]) -> Result<(), OperationError> {
-        self.context_arc().run(|eng| eng.marginalize_levels(self, levels))
-    }
-
     /// Sum out the variables `summable` names.
     ///
     /// Every node of the diagram's vtree whose variable leaves all satisfy
@@ -1344,8 +1293,12 @@ impl Tdd {
     /// ([`VtreeNode::is_region`](crate::vtree::VtreeNode::is_region)), whose
     /// level holds per node the count or weighted value of the variables
     /// summed there, a lone variable leaf a region of its one variable; on a
-    /// root vtree its level is summed out as
-    /// [`marginalize_levels`](Self::marginalize_levels) does.
+    /// root vtree its level holds those values in place.
+    ///
+    /// The summed structure cannot be recovered: later operations cannot
+    /// constrain its variables or recover their assignments, and structural
+    /// serialization and Boolean queries may refuse the result.
+    /// [`exists_vars`](Self::exists_vars) instead keeps a Boolean function.
     ///
     /// `summable(v)` must be true only if no diagram this one will meet has
     /// `v` as a leaf: a later operand with a leaf in a region is refused
@@ -1375,10 +1328,10 @@ impl Tdd {
     /// # Errors
     ///
     /// [`OperationError::MarginalLevel`] for an internal summed-out level on
-    /// a projection that is not a region, before mutation. Refusals of
-    /// allocation or a stop are those of
-    /// [`marginalize_levels`](Self::marginalize_levels); counts and weighted
-    /// values stay as they were.
+    /// a projection that is not a region, before mutation.
+    /// [`OperationError::OverBudget`] and [`OperationError::Stopped`] may
+    /// leave a completed prefix of the sum-out; counts and weighted values
+    /// stay as they were, and a retry finishes it.
     ///
     /// ```
     /// use tididi::Tdd;

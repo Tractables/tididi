@@ -295,7 +295,7 @@ fn saturated_node_counts_include_the_exact_u128_maximum() {
         let counts = f.node_counts_u128().unwrap();
         assert_eq!(counts[output.vtree.idx()][output.local.idx()], u128::MAX);
         assert_eq!(f.model_count().unwrap(), exact);
-        f.marginalize_levels(&[vtree.root()]).unwrap();
+        f.marginalize(crate::test_helpers::summing(f.vtree(), &[vtree.root()])).unwrap();
         crate::test_helpers::assert_canonical(&f);
         let level = f.level(vtree.root());
         let slot = f.output().local.idx();
@@ -365,8 +365,8 @@ fn an_implicit_level_counts_as_its_stored_copy() {
         eng.attach_level_counts(&mut kept).unwrap();
         assert_eq!(eng.model_count(&kept).unwrap(), want, "n {n}, k {k}: the kept counts");
         let one = constant_one(&eng, &implicit.vtree);
-        assert_eq!(eng.and_model_count(implicit.clone(), one.clone(), &[]).unwrap(), want, "n {n}, k {k}: a counted conjunction");
-        let written = crate::test_helpers::stored_levels(|| eng.and_model_count(stored, one, &[]).unwrap());
+        assert_eq!(eng.and_model_count(implicit.clone(), one.clone(), |_| false).unwrap(), want, "n {n}, k {k}: a counted conjunction");
+        let written = crate::test_helpers::stored_levels(|| eng.and_model_count(stored, one, |_| false).unwrap());
         assert_eq!(written, want, "n {n}, k {k}: the stored copy's");
     }
 }

@@ -236,7 +236,7 @@ fn weighted_operands_keep_their_weights_on_every_outcome() {
     let tree = Arc::new(Vtree::balanced(8).with_weights(weights).unwrap());
     let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 3, 5, 7]).unwrap();
     let forgotten = tree.children(tree.root()).0;
-    eng.marginalize_levels(&mut f, &[forgotten]).unwrap();
+    crate::test_helpers::marginalize_under(&eng, &mut f, &[forgotten]).unwrap();
     assert_canonical(&f);
     let root = f.output();
     let mut rejected = None;

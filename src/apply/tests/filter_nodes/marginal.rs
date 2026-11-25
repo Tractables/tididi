@@ -130,7 +130,7 @@ fn copied_and_carried() -> Vec<Tdd> {
             });
             let summed_more = next_target(f.vtree(), summed).map(|next| {
                 let mut h = g.clone();
-                eng.marginalize_levels(&mut h, &[next]).unwrap();
+                crate::test_helpers::marginalize_under(&eng, &mut h, &[next]).unwrap();
                 eng.minimize(&mut h).unwrap();
                 check(&h, &f, &rejected, None, name);
                 h

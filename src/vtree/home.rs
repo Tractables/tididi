@@ -191,7 +191,7 @@ impl RootIndex {
         self.0.as_deref().and_then(|data| data.weights.as_ref())
     }
 
-    fn new(index: Option<HomeIndex>, weights: Option<Weights>) -> Self {
+    pub(super) fn new(index: Option<HomeIndex>, weights: Option<Weights>) -> Self {
         match index.is_none() && weights.is_none() {
             true => RootIndex(None),
             false => RootIndex(Some(Box::new(RootData { index, weights }))),
@@ -1478,48 +1478,6 @@ impl Vtree {
             Some(link) => link.home.weights(),
             None => self.index.weights(),
         }
-    }
-
-    /// This root vtree, which is not a home, with `weights` for its
-    /// variables: every diagram on it is weighted as on a
-    /// [`Home::weighted`] and carries no weights of its own, and the level
-    /// sum-outs of a root vtree
-    /// ([`Engine::and_marginalizing`](crate::Engine::and_marginalizing),
-    /// [`Engine::marginalize_levels`](crate::Engine::marginalize_levels))
-    /// store weight values computed under `weights`.
-    ///
-    /// ```
-    /// # use tididi::vtree::Home;
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    /// use tididi::diagram::{Arithmetic, RationalWeights, Weights};
-    ///
-    /// let weights = Weights::new(RationalWeights::unit(2), Arithmetic::ExactRational);
-    /// let vtree = Home::weighted(Vtree::balanced(2), weights)?;
-    /// let engine = Engine::new();
-    /// let f = engine.clause(&vtree, [1, 2])?;
-    /// let summed = engine.and_marginalizing(&f, engine.one(&vtree), &[vtree.root()])?;
-    /// assert_eq!(summed.weighted_value()?.expect("the root is weighted").into_rational(), num_rational::BigRational::from_integer(3.into()));
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// [`TddBuildError::MissingVariableWeight`] when the table has no weight
-    /// for a leaf's variable; [`TddBuildError::IncompatibleWeights`] on a
-    /// home's root or a projection, which are weighted by
-    /// [`Home::weighted`] alone, and on a root that already has other
-    /// weights.
-    ///
-    /// [`TddBuildError::MissingVariableWeight`]: crate::diagram::TddBuildError::MissingVariableWeight
-    /// [`TddBuildError::IncompatibleWeights`]: crate::diagram::TddBuildError::IncompatibleWeights
-    pub fn with_weights(mut self, weights: Weights) -> Result<Vtree, TddBuildError> {
-        if self.home.is_some() || self.is_home() || self.weights().is_some_and(|own| *own != weights) {
-            return Err(TddBuildError::IncompatibleWeights);
-        }
-        weights.check_variables(self.leaf_bottomup().map(|(_, var)| var))?;
-        self.index = RootIndex::new(None, Some(weights));
-        Ok(self)
     }
 
     /// Give a root that is not a home the weights of the root it was made

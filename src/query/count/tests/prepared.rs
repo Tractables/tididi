@@ -152,7 +152,7 @@ fn marginal_implicit_and_constant_levels_keep_their_readers() {
     let tree = Arc::new(Vtree::balanced(16));
     let vars: Vec<_> = (1..=16).map(VarId).collect();
     let (mut f, _) = table(&tree, &vars);
-    f.marginalize_levels(&[tree.leaf_of(VarId(1)).unwrap()]).unwrap();
+    f.marginalize(crate::test_helpers::summing(f.vtree(), &[tree.leaf_of(VarId(1)).unwrap()])).unwrap();
     f.minimize().unwrap();
     assert_canonical(&f);
     let mut c = f.counter().unwrap();

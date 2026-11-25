@@ -96,7 +96,7 @@ fn marginal_slot_donor(eng: &Engine) -> (Tdd, VtreeIdx) {
     // Each level holds true beside its literals, nodes that overlap, which
     // `finish` refuses as a repeated pair; only the summed level is kept.
     let mut donor = unsafe { builder.finish_unchecked(TddNodeId { vtree: root, local: output }) };
-    eng.marginalize_levels(&mut donor, &[source]).unwrap();
+    crate::test_helpers::marginalize_under(eng, &mut donor, &[source]).unwrap();
     let mut counts = donor.level(source).marginal_counts().unwrap().to_vec();
     counts.sort_unstable();
     assert_eq!(counts, [1u128 << 31, 1u128 << 32]);
@@ -141,7 +141,7 @@ pub fn slot_side(slot: u32) -> EncodedChildRef {
 /// Give `builder` a summed-out leaf at `leaf`, whose sides are all inline.
 pub fn sum_out_leaf(eng: &Engine, vtree: &Arc<Vtree>, builder: &mut TddBuilder, leaf: VtreeIdx) {
     let mut donor = eng.cube(&crate::vtree::Home::unchecked(vtree), std::iter::empty::<i32>()).unwrap();
-    eng.marginalize_levels(&mut donor, &[leaf]).unwrap();
+    crate::test_helpers::marginalize_under(eng, &mut donor, &[leaf]).unwrap();
     assert_eq!(donor.level(leaf).marginal_counts(), Some([].as_slice()));
     builder.replace_level(eng, leaf, donor.level_view(leaf)).unwrap();
 }
@@ -190,7 +190,7 @@ pub fn marginal_diagrams(seed: u64, count: usize, vars: Range<u32>) -> Vec<(Tdd,
             let leaves: Vec<VtreeIdx> = (0..vtree.num_nodes() as u32).map(VtreeIdx)
                 .filter(|&t| vtree.node(t).is_leaf() && !under(&vtree, t, summed)).collect();
             let leaf = leaves[rng.below(leaves.len() as u64) as usize];
-            eng.marginalize_levels(&mut f, &[summed, leaf]).unwrap();
+            crate::test_helpers::marginalize_under(&eng, &mut f, &[summed, leaf]).unwrap();
             eng.minimize(&mut f).unwrap();
             assert_marginal_canonical(&f);
             out.push((f, summed));
@@ -284,4 +284,60 @@ pub fn free_vars(f: &Tdd) -> Vec<bool> {
         };
     }
     free
+}
+
+/// Whether a variable has its leaf under one of `levels` of `vtree`: the
+/// sum-out by variables of the subtrees at `levels`, which also sums a node
+/// whose children are all summed.
+pub fn summing(vtree: &Vtree, levels: &[VtreeIdx]) -> impl Fn(VarId) -> bool + use<> {
+    let mut marked = vec![false; vtree.num_nodes()];
+    for &t in levels {
+        if let Some(m) = marked.get_mut(t.idx()) {
+            *m = true;
+        }
+    }
+    let order: Vec<VtreeIdx> = vtree.bottomup().collect();
+    for &t in order.iter().rev() {
+        if vtree.node(t).parent().is_some_and(|p| marked[p.idx()]) {
+            marked[t.idx()] = true;
+        }
+    }
+    let mut vars = vec![false; vtree.num_vars() as usize + 1];
+    for (leaf, var) in vtree.leaf_bottomup() {
+        vars[var.0 as usize] = marked[leaf.idx()];
+    }
+    move |v| vars.get(v.0 as usize).copied().unwrap_or(false)
+}
+
+/// [`Engine::marginalize`] of the variables under `levels` of `f`'s vtree.
+pub fn marginalize_under(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx]) -> Result<(), crate::OperationError> {
+    let summable = summing(f.vtree(), levels);
+    eng.marginalize(f, summable)
+}
+
+/// [`Engine::and_marginalizing_where`] of the variables under `targets` of
+/// `f`'s vtree.
+pub fn and_marginalizing_under<'f, 'g>(
+    eng: &Engine,
+    f: impl Into<std::borrow::Cow<'f, Tdd>>,
+    g: impl Into<std::borrow::Cow<'g, Tdd>>,
+    targets: &[VtreeIdx],
+) -> Result<Tdd, crate::OperationError> {
+    let f = f.into();
+    let summable = summing(f.vtree(), targets);
+    eng.and_marginalizing_where(f, g, summable)
+}
+
+/// [`Engine::and_model_count`] summing the variables under `targets` of
+/// `f`'s vtree.
+pub fn and_model_count_under(eng: &Engine, f: Tdd, g: Tdd, targets: &[VtreeIdx]) -> Result<BigUint, crate::OperationError> {
+    let summable = summing(f.vtree(), targets);
+    eng.and_model_count(f, g, summable)
+}
+
+/// Sum out `levels` themselves, through the internal pass: the level
+/// shapes (a root leaf, a lone leaf output, one of two siblings) that a
+/// sum-out by variables does not make.
+pub fn sum_levels(f: &mut Tdd, levels: &[VtreeIdx]) -> Result<(), crate::OperationError> {
+    Arc::clone(f.context()).run(|eng| crate::marginal::tests::marginalize_levels(eng, f, levels))
 }

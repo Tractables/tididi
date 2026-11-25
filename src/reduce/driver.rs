@@ -446,7 +446,7 @@ pub(crate) fn restore_marginal_invariants(eng: &Engine, tdd: &mut Tdd, levels: &
         parents.dedup();
         fuse_pairs_at_parents(eng, tdd, &parents)?;
         #[cfg(debug_assertions)]
-        crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(tdd, Some(&parents), "marginalize_levels");
+        crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(tdd, Some(&parents), "marginalize");
     }
     prune_value_slots(eng, tdd)?;
     tdd.close_marked_levels();

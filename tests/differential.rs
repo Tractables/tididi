@@ -1174,7 +1174,7 @@ fn level_counts_match_enumeration(case: &Case) {
     step("keeping level counts");
     f.attach_level_counts().unwrap();
     assert_eq!(f.model_count().unwrap(), head_count, "a kept count");
-    assert_eq!(eng.and_model_count(f.clone(), g.clone(), &[]).unwrap(), count, "a conjunction counted from an operand keeping counts");
+    assert_eq!(eng.and_model_count(f.clone(), g.clone(), |_| false).unwrap(), count, "a conjunction counted from an operand keeping counts");
     let both = eng.and(f.clone(), g.clone()).unwrap();
     assert_canonical_after_minimize(&both);
     assert_eq!(both.model_count().unwrap(), count, "a conjunction of an operand keeping counts");
@@ -1190,7 +1190,7 @@ fn level_counts_match_enumeration(case: &Case) {
         assert!(back.has_level_counts(), "the counts were carried");
     }
     assert_eq!(back.model_count().unwrap(), head_count, "a count read back");
-    assert_eq!(eng.and_model_count(back, g.clone(), &[]).unwrap(), count, "a conjunction counted over counts read back");
+    assert_eq!(eng.and_model_count(back, g.clone(), |_| false).unwrap(), count, "a conjunction counted over counts read back");
 
     step("corrupted kept counts");
     let mut rng = Lcg::new(case.seed ^ 0xc0);
@@ -1198,7 +1198,7 @@ fn level_counts_match_enumeration(case: &Case) {
         let bad = corrupt_and_reseal(&bytes, &mut rng);
         if let Ok(read) = read_tdd_binary(&mut bad.as_slice(), &case.vtree) {
             read.model_count().expect("a diagram the reader accepted counts");
-            let _ = eng.and_model_count(read, g.clone(), &[]);
+            let _ = eng.and_model_count(read, g.clone(), |_| false);
         }
     }
 }
@@ -1512,7 +1512,7 @@ fn streaming_marginalization_matches_enumeration(case: &Case) {
     let count = BigUint::from(brute_force_count(case.num_vars, &case.clauses));
     assert_eq!(integer.model_count().unwrap(), count);
     // The same count, with the conjunction's root counted instead of kept.
-    assert_eq!(eng.and_model_count(left.clone(), right.clone(), &[]).unwrap(), count);
+    assert_eq!(eng.and_model_count(left.clone(), right.clone(), |_| false).unwrap(), count);
     let w = weighted_case(case);
     for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
         let f = weighted_twin(&left, Weights::new(RationalWeights::from_literals(&w.weights), arithmetic));

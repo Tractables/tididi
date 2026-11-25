@@ -194,18 +194,15 @@ fn check_operations(case: &Case<'_>, f: &Tdd, g: &Tdd, h: &Tdd, rng: &mut Lcg) {
     }
 
     let count = eng.model_count(&product).unwrap();
-    assert_eq!(eng.and_model_count(f.clone(), g.clone(), &[]).unwrap(), count, "and_model_count {}", case.what);
+    assert_eq!(eng.and_model_count(f.clone(), g.clone(), |_| false).unwrap(), count, "and_model_count {}", case.what);
     assert_eq!(eng.marginal_product_count(f, g).unwrap(), count, "marginal_product_count {}", case.what);
     case.check("and_marginalizing_where", eng.and_marginalizing_where(f, g, |_| false).unwrap(), &product);
-    if f.vtree().home().is_some() {
-        assert!(matches!(eng.and_marginalizing(f, g, &[]), Err(OperationError::InertOption { .. })), "{}", case.what);
-    }
     if f.vtree().num_nodes() != 0 {
         let t = VtreeIdx(rng.below(f.vtree().num_nodes() as u64) as u32);
         let at_home = f.vtree().home_node(t);
         assert_eq!(
-            eng.and_model_count(f.clone(), g.clone(), &[t]).unwrap(),
-            eng.and_model_count(hf.clone(), hg.clone(), &[at_home]).unwrap(),
+            crate::test_helpers::and_model_count_under(eng, f.clone(), g.clone(), &[t]).unwrap(),
+            crate::test_helpers::and_model_count_under(eng, hf.clone(), hg.clone(), &[at_home]).unwrap(),
             "and_model_count with a target {}",
             case.what
         );
@@ -316,7 +313,7 @@ fn summed_out_internal_levels_do_not_move() {
     let g = Tdd::clause(&crate::vtree::Home::unchecked(&Vtree::projection(&home, [VarId(4), VarId(5)]).unwrap()), [4, -5]).unwrap();
     let mut summed = f.clone();
     let root = summed.vtree().root();
-    crate::marginal::marginalize_levels(&eng, &mut summed, &[root]).unwrap();
+    crate::marginal::tests::marginalize_levels(&eng, &mut summed, &[root]).unwrap();
     assert!(summed.has_marginal_level());
     for result in [eng.or(summed.clone(), g.clone()), eng.and_not(g.clone(), summed.clone()), eng.add(summed.clone(), g.clone())] {
         assert!(matches!(result.unwrap_err(), OperationError::MarginalLevel(_)));

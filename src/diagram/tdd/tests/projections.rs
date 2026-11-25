@@ -452,7 +452,7 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Arc<Vtree>, f: &Tdd, g: &Tdd, 
     if g.vtree().num_nodes() > 0 {
         a.check(
             "marginalize_levels",
-            || mutate(g, &|t| t.marginalize_levels(&[root])).and_then(|t| t.model_count()),
+            || mutate(g, &|t| t.marginalize(crate::test_helpers::summing(t.vtree(), &[root]))).and_then(|t| t.model_count()),
             || Ok(f.model_count().unwrap()),
             PartialEq::eq,
         );

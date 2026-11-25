@@ -43,7 +43,7 @@ fn marginalize_root_of_deep_spine() {
         let engine = Engine::new();
         let vtree = Arc::new(Vtree::linear(DEPTH));
         let mut f = engine.clause(&crate::vtree::Home::unchecked(&vtree), 1..=DEPTH as i32).unwrap();
-        engine.marginalize_levels(&mut f, &[vtree.root()]).unwrap();
+        crate::test_helpers::marginalize_under(&engine, &mut f, &[vtree.root()]).unwrap();
         assert!(f.level(vtree.root()).is_marginal());
         assert_eq!(engine.model_count(&f).unwrap(), pow2(DEPTH) - 1u32);
     });
@@ -61,7 +61,7 @@ fn and_marginalizing_over_deep_unbuilt_spine() {
         let f = engine.clause(&crate::vtree::Home::unchecked(&vtree), 2..=DEPTH as i32).unwrap();
         let g = engine.clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap();
         let targets: Vec<VtreeIdx> = vtree.internal_bottomup().map(|(t, _, _)| t).collect();
-        let counted = engine.and_marginalizing(&f, &g, &targets).unwrap();
+        let counted = crate::test_helpers::and_marginalizing_under(&engine, &f, &g, &targets).unwrap();
         assert!(counted.level(vtree.root()).is_marginal());
         // x2 true: any x1 and the rest; x2 false: x1, and not every one of
         // x3 … xn false.

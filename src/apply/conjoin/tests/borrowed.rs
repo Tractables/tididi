@@ -194,7 +194,7 @@ fn a_weighted_or_marginal_borrowed_operand_conjoins_as_an_owned_one() {
     let g_weighted = compile_clauses_on(&eng, &weighted_tree, &[vec![2, 5], vec![-4, 6], vec![7, 8, -2], vec![1, -6]]);
     // g with the variables 1 to 4 summed out, and a formula over the others.
     let mut marginal = g.clone();
-    eng.marginalize_levels(&mut marginal, &[vtree.children(vtree.root()).0]).unwrap();
+    crate::test_helpers::marginalize_under(&eng, &mut marginal, &[vtree.children(vtree.root()).0]).unwrap();
     assert!(marginal.has_marginal_level());
     let right = compile_clauses_on(&eng, &vtree, &[vec![5, 6], vec![-7, 8], vec![6, -8]]);
     for (a, b, what) in [(&f_weighted, &g_weighted, "weighted"), (&right, &marginal, "marginal")] {
@@ -388,10 +388,10 @@ fn a_borrowed_operand_sums_out_as_an_owned_one() {
                     let targets = finished(&tree, &acc, rest);
                     marginal += usize::from(acc.has_marginal_level());
                     let at = |borrow: (bool, bool)| format!("{shape}, {:?}, step {k}, borrowing {borrow:?}", store.as_ref().map(Weights::arithmetic));
-                    let (owned, owned_work) = on_fresh(false, |eng| eng.and_marginalizing(acc.clone(), g.clone(), &targets).unwrap());
+                    let (owned, owned_work) = on_fresh(false, |eng| crate::test_helpers::and_marginalizing_under(eng, acc.clone(), g.clone(), &targets).unwrap());
                     let (acc_before, g_before) = (values(&acc), values(&g));
                     for borrow in BORROWS {
-                        let (out, work) = on_fresh(false, |eng| eng.and_marginalizing(given(&acc, borrow.0), given(&g, borrow.1), &targets).unwrap());
+                        let (out, work) = on_fresh(false, |eng| crate::test_helpers::and_marginalizing_under(eng, given(&acc, borrow.0), given(&g, borrow.1), &targets).unwrap());
                         assert!(same_storage(&out, &owned) && values(&out) == values(&owned), "{}: a different diagram", at(borrow));
                         assert_eq!(work, owned_work, "{}: other work", at(borrow));
                         assert!(values(&acc) == acc_before && values(&g) == g_before, "{}: a borrowed operand changed", at(borrow));
@@ -402,13 +402,13 @@ fn a_borrowed_operand_sums_out_as_an_owned_one() {
                         for n in 0u32.. {
                             let eng = Engine::new();
                             eng.refuse_nth_reserve(n);
-                            let refused = eng.and_marginalizing(&acc, &g, &targets).is_err();
+                            let refused = crate::test_helpers::and_marginalizing_under(&eng, &acc, &g, &targets).is_err();
                             let fired = !eng.limits().refusal_pending();
                             eng.limits().grant_every_reserve();
                             assert!(values(&acc) == acc_before && values(&g) == g_before, "{}: refused at reserve {n}, an operand changed", at(borrow));
                             if refused {
                                 refusals += 1;
-                                let again = eng.and_marginalizing(&acc, &g, &targets).unwrap();
+                                let again = crate::test_helpers::and_marginalizing_under(&eng, &acc, &g, &targets).unwrap();
                                 assert!(same_storage(&again, &owned) && values(&again) == values(&owned), "{}: repeated after reserve {n}", at(borrow));
                             }
                             if !fired {

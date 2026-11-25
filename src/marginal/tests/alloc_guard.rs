@@ -94,7 +94,7 @@ fn marginal_refusals(weighted: bool, overflow: bool) {
     for reserve in 0..2048 {
         let mut f = original.clone();
         eng.refuse_nth_reserve(reserve);
-        let result = eng.marginalize_levels(&mut f, &targets);
+        let result = crate::marginal::tests::marginalize_levels(&eng, &mut f, &targets);
         eng.limits().grant_every_reserve();
         if reserve == 0 {
             assert_eq!(result, Err(OperationError::OverBudget));
@@ -107,7 +107,7 @@ fn marginal_refusals(weighted: bool, overflow: bool) {
         }
         partial |= f.levels[targets[0].idx()].is_marginal()
             && !f.levels[targets[targets.len() - 1].idx()].is_marginal();
-        eng.marginalize_levels(&mut f, &targets).unwrap();
+        crate::marginal::tests::marginalize_levels(&eng, &mut f, &targets).unwrap();
         check_value(&f);
         assert_canonical(&f);
     }
@@ -145,13 +145,13 @@ fn a_refused_move_of_the_implicit_parent_installs_nothing() {
     let count = tdd.model_count().unwrap();
     let capacity = tdd.levels[v.idx()].pairs.node_capacity();
     tdd.levels[v.idx()].pairs.set_node_capacity(OVER_BUDGET_WIDTH);
-    assert_eq!(eng.marginalize_levels(&mut tdd, &[w]), Err(crate::OperationError::OverBudget));
+    assert_eq!(crate::marginal::tests::marginalize_levels(&eng, &mut tdd, &[w]), Err(crate::OperationError::OverBudget));
     assert!(!tdd.levels[w.idx()].is_marginal(), "a refused move installs no column");
     assert_eq!(tdd.levels[v.idx()].implicit(), Some(&described));
     assert_eq!(tdd.model_count().unwrap(), count);
 
     tdd.levels[v.idx()].pairs.set_node_capacity(capacity);
-    eng.marginalize_levels(&mut tdd, &[w]).unwrap();
+    crate::marginal::tests::marginalize_levels(&eng, &mut tdd, &[w]).unwrap();
     assert!(tdd.levels[w.idx()].is_marginal());
     assert_eq!(tdd.model_count().unwrap(), count);
 }

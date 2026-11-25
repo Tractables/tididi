@@ -47,12 +47,12 @@ fn a_streamed_column_past_the_slot_cap_is_refused() {
             None => tree.clone(),
         };
         let (f, g) = (conjoin_all(&eng, &tree, a), conjoin_all(&eng, &tree, b));
-        let expected = value(&eng, &eng.and_marginalizing(f.clone(), g.clone(), &targets).unwrap());
+        let expected = value(&eng, &crate::test_helpers::and_marginalizing_under(&eng, f.clone(), g.clone(), &targets).unwrap());
         eng.limits().pin_slot_cap(Some(1));
-        let refused = eng.and_marginalizing(f.clone(), g.clone(), &targets);
+        let refused = crate::test_helpers::and_marginalizing_under(&eng, f.clone(), g.clone(), &targets);
         eng.limits().pin_slot_cap(None);
         assert_eq!(refused.err(), Some(OperationError::IndexOverflow), "{:?}", store.as_ref().map(Weights::arithmetic));
-        let again = eng.and_marginalizing(f, g, &targets).unwrap();
+        let again = crate::test_helpers::and_marginalizing_under(&eng, f, g, &targets).unwrap();
         assert_eq!(value(&eng, &again), expected);
     }
 }

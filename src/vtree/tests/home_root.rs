@@ -17,27 +17,6 @@ fn x_and_y() -> (Home, Tdd) {
     (home, f)
 }
 
-fn names(error: &OperationError, option: &str, entry: &str) -> bool {
-    matches!(error, OperationError::InertOption { option: o, needs } if *o == option && needs.contains(entry))
-}
-
-#[test]
-fn marginalize_levels_refuses_a_home_root() {
-    let (home, mut f) = x_and_y();
-    let before = f.clone();
-    let error = f.marginalize_levels(&[home.root()]).unwrap_err();
-    assert!(names(&error, "levels", "`marginalize`"), "{error:?}");
-    assert!(Engine::new().equivalent(&f, &before).unwrap() && !f.has_marginal_level());
-}
-
-#[test]
-fn and_marginalizing_by_targets_refuses_a_home_root() {
-    let (home, f) = x_and_y();
-    let g = Tdd::clause(&home, [1, -2]).unwrap();
-    let error = Engine::new().and_marginalizing(&f, &g, &[home.root()]).unwrap_err();
-    assert!(names(&error, "targets", "`and_marginalizing_where`"), "{error:?}");
-}
-
 /// The weighted route of `and_model_count` on a home's root goes through
 /// the `_where` form, as on a projection, since targets are refused there,
 /// and refuses the weights as a weighted root vtree of the same shape does.
@@ -50,7 +29,7 @@ fn weighted_and_model_count_on_a_home_root() {
     let count = |vtree: &Arc<Vtree>| {
         let f = Tdd::cube(&crate::vtree::Home::unchecked(vtree), [1, 2]).unwrap();
         let g = Tdd::clause(&crate::vtree::Home::unchecked(vtree), [1, -2]).unwrap();
-        eng.and_model_count(f, g, &[vtree.root()])
+        crate::test_helpers::and_model_count_under(&eng, f, g, &[vtree.root()])
     };
     assert_eq!(count(&home), Err(OperationError::IncompatibleWeights));
 }
@@ -62,7 +41,7 @@ fn weighted_and_model_count_on_a_home_root() {
 fn marginalize_refuses_an_internal_summed_level_on_a_home_root() {
     let (home, mut f) = x_and_y();
     let root = home.root();
-    crate::marginal::marginalize_levels(&Engine::new(), &mut f, &[root]).unwrap();
+    crate::marginal::tests::marginalize_levels(&Engine::new(), &mut f, &[root]).unwrap();
     assert_eq!(f.marginalize(|_| true), Err(OperationError::MarginalLevel(root)));
 }
 
@@ -73,7 +52,7 @@ fn embed_places_a_summed_leaf_of_a_home_root() {
     let (home, mut f) = x_and_y();
     let eng = Engine::new();
     let x = home.leaf_of(VarId(1)).unwrap();
-    crate::marginal::marginalize_levels(&eng, &mut f, &[x]).unwrap();
+    crate::marginal::tests::marginalize_levels(&eng, &mut f, &[x]).unwrap();
     let count = f.model_count().unwrap();
     let into = Arc::new(Vtree::balanced(2));
     let (placed, _) = crate::test_helpers::moved(&eng, f, &into, |v| v).unwrap();

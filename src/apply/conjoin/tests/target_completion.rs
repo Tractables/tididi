@@ -29,11 +29,8 @@ fn requested_targets_are_completed_after_identity_and_self_conjunction() {
                 assert_canonical(&g);
                 for targets in [vec![left], vec![tree.root()], vec![leaf, left, left], vec![tree.root(), leaf, left]] {
                     let mut expected = eng.and(f.clone(), g.clone()).unwrap();
-                    eng.marginalize_levels(&mut expected, &targets).unwrap();
-                    let mut actual = eng.and_marginalizing(f.clone(), g.clone(), &targets).unwrap();
-                    for &target in &targets {
-                        assert!(actual.level(target).is_marginal(), "target {target:?}, arithmetic {arithmetic:?}");
-                    }
+                    crate::test_helpers::marginalize_under(&eng, &mut expected, &targets).unwrap();
+                    let mut actual = crate::test_helpers::and_marginalizing_under(&eng, f.clone(), g.clone(), &targets).unwrap();
                     if arithmetic.is_some() {
                         let a = eng.weighted_value(&actual).unwrap().unwrap();
                         let b = eng.weighted_value(&expected).unwrap().unwrap();
@@ -65,10 +62,10 @@ fn target_completion_preserves_false_and_empty_requests() {
     assert_canonical(&f);
     let zero = Tdd::zero(&crate::vtree::Home::unchecked(&tree));
     assert_canonical(&zero);
-    let result = eng.and_marginalizing(f.clone(), zero, &[tree.root()]).unwrap();
+    let result = crate::test_helpers::and_marginalizing_under(&eng, f.clone(), zero, &[tree.root()]).unwrap();
     assert!(result.is_zero());
     assert_canonical(&result);
-    let result = eng.and_marginalizing(f.clone(), f.clone(), &[]).unwrap();
+    let result = crate::test_helpers::and_marginalizing_under(&eng, f.clone(), f.clone(), &[]).unwrap();
     assert!(eng.equivalent(&result, &f).unwrap());
     assert_canonical(&result);
 }
@@ -84,7 +81,7 @@ fn collapse_operands(eng: &Engine) -> (Tdd, Tdd, Arc<Vtree>) {
     f = eng.and(f, eng.clause(&crate::vtree::Home::unchecked(&tree), [2, -4, 7, 8]).unwrap()).unwrap();
     let mut g = eng.clause(&crate::vtree::Home::unchecked(&tree), [3, 5, 7]).unwrap();
     g = eng.and(g, eng.clause(&crate::vtree::Home::unchecked(&tree), [-4, -6, 8]).unwrap()).unwrap();
-    eng.marginalize_levels(&mut f, &[ll]).unwrap();
+    crate::test_helpers::marginalize_under(eng, &mut f, &[ll]).unwrap();
     assert!(f.level(ll).is_marginal() && !f.level(lr).is_marginal());
     (f, g, tree)
 }
@@ -117,15 +114,12 @@ fn closed_target_subtrees_match_the_two_step_result() {
             vec![root, left, lr, right, rl, rr],
         ] {
             let mut expected = eng.and(f.clone(), g.clone()).unwrap();
-            eng.marginalize_levels(&mut expected, &targets).unwrap();
-            let mut actual = eng.and_marginalizing(f.clone(), g.clone(), &targets).unwrap();
-            for &t in &targets {
-                assert!(actual.level(t).is_marginal(), "target {t:?} of {targets:?}, floor {min_grid}");
-            }
+            crate::test_helpers::marginalize_under(&eng, &mut expected, &targets).unwrap();
+            let mut actual = crate::test_helpers::and_marginalizing_under(&eng, f.clone(), g.clone(), &targets).unwrap();
             let count = expected.model_count().unwrap();
             assert_eq!(actual.model_count().unwrap(), count, "{targets:?}, floor {min_grid}");
             assert_eq!(
-                eng.and_model_count(f.clone(), g.clone(), &targets).unwrap(),
+                crate::test_helpers::and_model_count_under(&eng, f.clone(), g.clone(), &targets).unwrap(),
                 count,
                 "counted, {targets:?}, floor {min_grid}",
             );

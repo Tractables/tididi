@@ -163,11 +163,11 @@ fn counts_and_quantified_conjunctions_agree() {
             let _scope = eng.limits().scope(LimitConfig::none().with_sparse_route(EVERY_LEVEL_SPARSE));
             let probed = |op: &dyn Fn() -> Tdd| if always { always_probe(op) } else { op() };
             let count = if always {
-                always_probe(|| eng.and_model_count(f.clone(), d.clone(), &[]).unwrap())
+                always_probe(|| eng.and_model_count(f.clone(), d.clone(), |_| false).unwrap())
             } else {
-                eng.and_model_count(f.clone(), d.clone(), &[]).unwrap()
+                eng.and_model_count(f.clone(), d.clone(), |_| false).unwrap()
             };
-            let oracle = no_probe(|| eng.and_model_count(f.clone(), d.clone(), &[]).unwrap());
+            let oracle = no_probe(|| eng.and_model_count(f.clone(), d.clone(), |_| false).unwrap());
             assert_eq!(count, oracle, "{name}: count");
             let out = probed(&|| eng.and_exists(f.clone(), d.clone(), &shared).unwrap());
             let oracle = no_probe(|| eng.and_exists(f.clone(), d.clone(), &shared).unwrap());

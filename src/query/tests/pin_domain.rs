@@ -121,7 +121,7 @@ fn marginal_pins(retention: Retention) {
     ] {
         let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, 3]).unwrap();
         assert_canonical(&f);
-        eng.marginalize_levels(&mut f, &[summed]).unwrap();
+        crate::test_helpers::marginalize_under(&eng, &mut f, &[summed]).unwrap();
         f.minimize().unwrap();
         assert_canonical(&f);
         let mut counter = eng

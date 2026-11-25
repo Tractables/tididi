@@ -126,8 +126,6 @@ fn settle_cold(eng: &Engine, f: &mut Tdd, dropped: &mut Vec<VtreeIdx>) -> Result
         return Ok(());
     };
     if f.has_marginal_level() {
-        // A summed internal level is the smooth form `marginalize_levels`
-        // leaves on the home, which stays as it is.
         if f.vtree.bottomup().any(|t| !f.vtree.node(t).is_leaf() && f.levels[t.idx()].is_marginal()) {
             return Ok(());
         }

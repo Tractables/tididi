@@ -391,7 +391,7 @@ fn errors_name_the_operand_the_index_does_not_fit() {
     // A marginal level, a leaf or a missing `at`.
     let (left, _) = vtree.children(vtree.root());
     let mut summed = g.clone();
-    eng.marginalize_levels(&mut summed, &[left]).unwrap();
+    crate::test_helpers::marginalize_under(&eng, &mut summed, &[left]).unwrap();
     assert!(matches!(PairIndex::new(&summed), Err(crate::OperationError::MarginalLevel(_))));
     assert!(matches!(eng.and_indexed(&summed, &g, &index), Err(crate::OperationError::MarginalLevel(_))));
     let count = Moments { weight: vec![0; 5] };

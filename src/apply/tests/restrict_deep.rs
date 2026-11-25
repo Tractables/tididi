@@ -27,7 +27,7 @@ pub(super) fn spine_operands(m: u32) -> (Tdd, Tdd) {
     let xs = 1..=m as i32;
     let mut f = engine.clause(&crate::vtree::Home::unchecked(&vtree), [m as i32 + 1, m as i32 + 2]).unwrap();
     let leaves: Vec<VtreeIdx> = (1..=m).map(|x| vtree.leaf_of(VarId(x)).unwrap()).collect();
-    engine.marginalize_levels(&mut f, &leaves).unwrap();
+    crate::test_helpers::marginalize_under(&engine, &mut f, &leaves).unwrap();
     let all = engine.cube(&crate::vtree::Home::unchecked(&vtree), xs.clone()).unwrap();
     let none = engine.cube(&crate::vtree::Home::unchecked(&vtree), xs.map(|x| -x)).unwrap();
     let care = engine.or(all, none).unwrap();

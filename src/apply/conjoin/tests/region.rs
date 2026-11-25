@@ -543,7 +543,7 @@ fn t1_check(entry: &dyn Fn(&Tdd, &Tdd) -> Result<Tdd, OperationError>, levels: &
     let eng = Engine::new();
     let (_, g, [reads, ignores]) = t1_operands(weighted);
     let mut summed = g.clone();
-    crate::marginal::marginalize_levels(&eng, &mut summed, levels).unwrap();
+    crate::marginal::tests::marginalize_levels(&eng, &mut summed, levels).unwrap();
     for (f, g) in [(&reads, &summed), (&summed, &reads)] {
         assert!(matches!(entry(f, g), Err(OperationError::MarginalLevel(_))), "{what}: a read of a summed variable");
     }
@@ -585,7 +585,7 @@ fn t1c_a_summed_level_read_while_its_parent_is_summed_is_refused() {
     let (left, _) = vtree.children(vtree.root());
     let root = vtree.root();
     for weighted in [false, true] {
-        t1_check(&|f, g| Engine::new().and_marginalizing(f, g, &[root]), &[left], weighted, "T1c");
+        t1_check(&|f, g| crate::test_helpers::and_marginalizing_under(&Engine::new(), f, g, &[root]), &[left], weighted, "T1c");
     }
 }
 
