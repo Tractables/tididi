@@ -827,6 +827,7 @@ pub(crate) fn trim(eng: &Engine, f: &mut Tdd, home: &Home, dropped: Option<&[Vtr
     if canonical && !built && !shape.merged && shape.regrouped.is_empty() {
         f.levels.certify(f.output);
         f.dirty.set_loose(Some(Vec::new()));
+        f.dirty.clear_lists();
         #[cfg(debug_assertions)]
         {
             super::contract::contract_leaf::assert_no_full_twin_side(f);

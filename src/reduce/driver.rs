@@ -187,9 +187,7 @@ impl<'a> Reduction<'a> {
             super::prune::debug_assert_all_reached(self.tdd);
             self.tdd.dirty.set_loose(Some(Vec::new()));
         }
-        for pass in [Pass::Contract, Pass::LeafContract, Pass::ContentTwin] {
-            self.tdd.dirty.clear(pass);
-        }
+        self.tdd.dirty.clear_lists();
         if structural {
             self.tdd.levels.certify(self.tdd.output);
             #[cfg(debug_assertions)]
