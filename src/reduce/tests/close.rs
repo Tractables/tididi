@@ -86,9 +86,8 @@ fn i1(home: &Home, n: u32, rng: &mut Lcg) -> Tdd {
 }
 
 #[test]
-fn quantification_and_conditioning_close_as_plain_then_trim() {
+fn quantification_and_conditioning_close() {
     let eng = Engine::new();
-    let mut dropped = 0;
     for seed in 0..40u64 {
         let mut rng = Lcg::new(seed ^ 0x5eed);
         let n = 4 + rng.below(6) as u32;
@@ -101,13 +100,9 @@ fn quantification_and_conditioning_close_as_plain_then_trim() {
         let case = format!("seed {seed}, {n} variables, {vars:?}");
         let mut closed = eng.exists_vars(f.clone(), &vars).unwrap();
         eng.minimize(&mut closed).unwrap();
-        let mut plain = crate::apply::project::exists_vars_on(&eng, f.clone(), &vars, Some(ReductionPlan::default()), false).unwrap();
-        dropped += usize::from(trim_by_rebuild(&mut plain, &home).unwrap());
         assert_eq!(reachable_true_labels(&closed), Ok(None), "{case}");
-        assert_eq!(leaf_vars(&closed), leaf_vars(&plain), "{case}");
-        if closed.vtree().num_nodes() > 0 {
-            assert_same_shape(&closed, &plain, &case);
-        }
+        let mut again = closed.clone();
+        assert!(!trim_by_rebuild(&mut again, &home).unwrap(), "{case}: trim after minimize");
         for prune in [true, false] {
             let plan = if prune { ReductionPlan::Prune } else { ReductionPlan::Contract };
             let other = eng.exists_vars_with(f.clone(), &vars, plan).unwrap();
@@ -119,15 +114,14 @@ fn quantification_and_conditioning_close_as_plain_then_trim() {
         let mut conditioned = eng.condition_var(f.clone(), var, value).unwrap();
         eng.minimize(&mut conditioned).unwrap();
         let literal = eng.literal(&home, Literal { var, sign: value }).unwrap();
-        let mut by_exists = crate::apply::project::exists_vars_on(&eng, eng.and(&f, &literal).unwrap(), &[var], Some(ReductionPlan::default()), false).unwrap();
-        trim_by_rebuild(&mut by_exists, &home).unwrap();
+        let mut by_exists = eng.exists_vars(eng.and(&f, &literal).unwrap(), &[var]).unwrap();
+        eng.minimize(&mut by_exists).unwrap();
         assert_eq!(reachable_true_labels(&conditioned), Ok(None), "{case}, {var:?} = {value}");
         assert_eq!(leaf_vars(&conditioned), leaf_vars(&by_exists), "{case}, {var:?} = {value}");
         if conditioned.vtree().num_nodes() > 0 {
             assert_same_shape(&conditioned, &by_exists, &case);
         }
     }
-    assert!(dropped > 0, "no plain result had a leaf to trim");
 }
 
 #[test]

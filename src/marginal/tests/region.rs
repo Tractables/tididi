@@ -299,6 +299,22 @@ fn a_lone_summable_leaf_becomes_a_region() {
     assert_eq!(f.model_count().unwrap(), BigUint::from(12u32));
 }
 
+/// A diagram that reads every variable is on its home's root, which
+/// `Vtree::home` answers with the home itself; summing an internal node
+/// there leaves the trimmed form on a projection.
+#[test]
+fn summing_an_internal_node_on_a_home_s_root_is_trimmed() {
+    let home = Home::new(Vtree::balanced(4));
+    let mut f = Tdd::clause(&home, [1, 2, 3]).unwrap() & Tdd::clause(&home, [-2, 4]).unwrap();
+    assert!(Arc::ptr_eq(f.vtree(), &home));
+    let before = f.model_count().unwrap();
+    f.marginalize(|v| v.0 <= 2).unwrap();
+    crate::test_helpers::check::check_trimmed(&f, false).unwrap();
+    check_form(&f, "sum of 1 and 2 on the home's root");
+    assert_eq!(f.vtree().regions().count(), 1);
+    assert_eq!(f.model_count().unwrap(), before);
+}
+
 /// Summing a node with nodes under it leaves one region and no internal
 /// summed-out level.
 #[test]

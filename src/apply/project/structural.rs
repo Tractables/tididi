@@ -184,9 +184,8 @@ enum Role {
 
 /// Existentially quantify the variables at `targets` out of `tdd` by one
 /// in-place bottom-up sweep, then reduce on `eng` by `reduction`, checking its
-/// limits throughout. With `close`, the reduction ends by leaving the
-/// targets ([`Engine::reduce_seeded`]); without it the result stays on
-/// `tdd`'s vtree. With no `reduction` and `close`, the sweep's result is
+/// limits throughout. The reduction ends by leaving the targets
+/// ([`Engine::reduce_seeded`]). With no `reduction`, the sweep's result is
 /// only closed ([`Engine::close`]): the sweep leaves no node empty and no
 /// level loose that was not. The full default plan leaves the result canonical; a
 /// prune leaves it the same function, with every node reachable but twins the
@@ -213,7 +212,6 @@ pub(super) fn exists_leaves_structural(
     mut tdd: Tdd,
     targets: &[VtreeIdx],
     reduction: Option<ReductionPlan<'_>>,
-    close: bool,
 ) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     lim.check_stop()?;
@@ -223,10 +221,7 @@ pub(super) fn exists_leaves_structural(
         emitted: 0,
     };
     if tdd.is_zero() {
-        return match close {
-            true => crate::build::constant_like(eng, &tdd, false),
-            false => Ok(tdd),
-        };
+        return crate::build::constant_like(eng, &tdd, false);
     }
     // After a sum-out, the pair fusion at a marginal level's parents and the
     // slot prune let one reference stand for a union of events, and the
@@ -256,10 +251,7 @@ pub(super) fn exists_leaves_structural(
     let root_vi = vtree.root();
     if role[root_vi.idx()] == Role::Whole {
         // Every variable is quantified and the operand is satisfiable: ∃.F = ⊤.
-        if close {
-            return crate::build::constant_like(eng, &tdd, true);
-        }
-        return crate::build::constant_padded_on(eng, &vtree, true);
+        return crate::build::constant_like(eng, &tdd, true);
     }
 
     let mut remap: Vec<Option<Remap>> = Vec::new();
@@ -313,10 +305,9 @@ pub(super) fn exists_leaves_structural(
     // one node the level held, or, under another quantified level, is the
     // node that level's `⊤` pair names (index 0 of an internal child).
     tdd.dirty.set_loose(loose);
-    match (reduction, close) {
-        (None, true) => eng.close(&mut tdd, targets)?,
-        (Some(reduction), true) => eng.reduce_seeded(&mut tdd, reduction, targets)?,
-        (reduction, false) => eng.reduce_plain(&mut tdd, reduction.unwrap_or_default())?,
+    match reduction {
+        None => eng.close(&mut tdd, targets)?,
+        Some(reduction) => eng.reduce_seeded(&mut tdd, reduction, targets)?,
     }
     Ok(tdd)
 }

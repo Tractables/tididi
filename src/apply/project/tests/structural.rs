@@ -29,7 +29,7 @@ fn regrouping_checks_its_allocations_before_reduction() {
         let mut work = Rewrite { eng: &eng, gate: eng.limits().gate_with(1), emitted: 0 };
         assert_eq!(regroup(&mut work, &mut original.clone(), parent, below_left, below_right).err(), Some(OperationError::OverBudget));
     }
-    let result = exists_leaves_structural(&eng, original, &[leaf], Some(ReductionPlan::default()), true).unwrap();
+    let result = exists_leaves_structural(&eng, original, &[leaf], Some(ReductionPlan::default())).unwrap();
     assert_canonical(&result);
     assert_eq!(result.model_count().unwrap(), 16u32.into());
 }
@@ -64,11 +64,11 @@ fn freeing_a_whole_subtree_matches_one_variable_at_a_time() {
     // The balanced vtree over six variables groups 1..=3 under one subtree.
     let block: Vec<VtreeIdx> = [1, 2, 3].iter().map(|&v| tree.leaf_of(VarId(v)).unwrap()).collect();
     let eng = Engine::new();
-    let at_once = exists_leaves_structural(&eng, f.clone(), &block, Some(ReductionPlan::default()), true).unwrap();
+    let at_once = exists_leaves_structural(&eng, f.clone(), &block, Some(ReductionPlan::default())).unwrap();
     assert_canonical(&at_once);
     let mut one_at_a_time = f;
     for &leaf in &block {
-        one_at_a_time = exists_leaves_structural(&eng, one_at_a_time, &[leaf], Some(ReductionPlan::default()), true).unwrap();
+        one_at_a_time = exists_leaves_structural(&eng, one_at_a_time, &[leaf], Some(ReductionPlan::default())).unwrap();
     }
     assert_canonical(&one_at_a_time);
     assert!(at_once.equivalent(&one_at_a_time).unwrap());
@@ -83,7 +83,7 @@ fn quantifying_every_variable_leaves_the_constant() {
     let f = Tdd::clause(&tree, [1, -2, 3]).unwrap();
     let all: Vec<VtreeIdx> = (1..=4).map(|v| tree.leaf_of(VarId(v)).unwrap()).collect();
     let eng = Engine::new();
-    let result = exists_leaves_structural(&eng, f, &all, Some(ReductionPlan::default()), true).unwrap();
+    let result = exists_leaves_structural(&eng, f, &all, Some(ReductionPlan::default())).unwrap();
     assert_canonical(&result);
     assert_eq!(result.model_count().unwrap(), 16u32.into());
 }
@@ -100,7 +100,7 @@ fn structural_projection_recovers_after_each_refused_reservation() {
     for nth in 0..512 {
         let eng = Engine::new();
         eng.refuse_nth_reserve(nth);
-        let outcome = exists_leaves_structural(&eng, f.clone(), &[leaf], Some(ReductionPlan::default()), true);
+        let outcome = exists_leaves_structural(&eng, f.clone(), &[leaf], Some(ReductionPlan::default()));
         let pending = eng.limits().refusal_pending();
         match outcome {
             Ok(result) => {
@@ -111,7 +111,7 @@ fn structural_projection_recovers_after_each_refused_reservation() {
             Err(error) => assert_eq!(error, OperationError::OverBudget),
         }
         eng.limits().grant_every_reserve();
-        let result = exists_leaves_structural(&eng, f.clone(), &[leaf], Some(ReductionPlan::default()), true).unwrap();
+        let result = exists_leaves_structural(&eng, f.clone(), &[leaf], Some(ReductionPlan::default())).unwrap();
         assert_canonical(&result);
         assert_eq!(result.model_count().unwrap(), 30u32.into());
     }
@@ -134,8 +134,8 @@ fn quantifying_an_unreduced_product_matches_quantifying_a_reduced_one() {
 
     let leaves: Vec<VtreeIdx> = [1, 4].iter().map(|&v| tree.leaf_of(VarId(v)).unwrap()).collect();
     let eng = Engine::new();
-    let from_product = exists_leaves_structural(&eng, product, &leaves, Some(ReductionPlan::default()), true).unwrap();
-    let from_reduced = exists_leaves_structural(&eng, reduced, &leaves, Some(ReductionPlan::default()), true).unwrap();
+    let from_product = exists_leaves_structural(&eng, product, &leaves, Some(ReductionPlan::default())).unwrap();
+    let from_reduced = exists_leaves_structural(&eng, reduced, &leaves, Some(ReductionPlan::default())).unwrap();
     assert_canonical(&from_product);
     assert_eq!(from_product.node_count(), from_reduced.node_count());
     assert_eq!(from_product.pair_count(), from_reduced.pair_count());
@@ -162,8 +162,8 @@ fn the_prune_after_the_sweep_drops_what_a_whole_prune_drops() {
                 if leaves.is_empty() || leaves.len() == nvars as usize {
                     continue;
                 }
-                let canonical = exists_leaves_structural(&eng, f.clone(), &leaves, Some(ReductionPlan::default()), true).unwrap();
-                let pruned = exists_leaves_structural(&eng, f, &leaves, Some(ReductionPlan::Prune), true).unwrap();
+                let canonical = exists_leaves_structural(&eng, f.clone(), &leaves, Some(ReductionPlan::default())).unwrap();
+                let pruned = exists_leaves_structural(&eng, f, &leaves, Some(ReductionPlan::Prune)).unwrap();
                 let mut whole = pruned.clone();
                 whole.dirty.set_loose(None);
                 eng.reduce(&mut whole, ReductionPlan::Prune).unwrap();

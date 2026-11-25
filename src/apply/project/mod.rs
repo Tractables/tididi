@@ -18,14 +18,12 @@ use crate::vtree::{VarId, Vtree, VtreeIdx};
 mod structural;
 
 /// Existentially quantify every variable in `vars` out of `f` in one sweep,
-/// ending with `reduction`. With `close` the result leaves the quantified
-/// leaves, on a home; without it, it stays on `f`'s vtree.
+/// ending with `reduction`; the result leaves the quantified leaves.
 pub(crate) fn exists_vars_on(
     eng: &Engine,
     f: Tdd,
     vars: &[VarId],
     reduction: Option<ReductionPlan<'_>>,
-    close: bool,
 ) -> Result<Tdd, OperationError> {
     let _op = eng.limits().enter()?;
     // Caller input, so it is answered before any work and before the ⊥
@@ -43,7 +41,7 @@ pub(crate) fn exists_vars_on(
         }
         return Ok(f);
     }
-    structural::exists_leaves_structural(eng, f, &targets, reduction, close)
+    structural::exists_leaves_structural(eng, f, &targets, reduction)
 }
 
 /// Validate the entire request and retain each leaf once.
@@ -76,7 +74,7 @@ pub(super) fn exists_targets_on(
     if targets.is_empty() {
         return Ok(f);
     }
-    structural::exists_leaves_structural(eng, f, targets, reduction, true)
+    structural::exists_leaves_structural(eng, f, targets, reduction)
 }
 
 impl crate::Engine {
@@ -91,7 +89,7 @@ impl crate::Engine {
     /// The rewrite checks allocation and cancellation while regrouping nodes. Its
     /// output cap counts emitted intermediate nodes, including the final root union.
     pub fn exists_var(&self, f: Tdd, x: VarId) -> Result<Tdd, OperationError> {
-        exists_vars_on(self, f, &[x], None, true)
+        exists_vars_on(self, f, &[x], None)
     }
 
     /// Run [`Tdd::exists_vars`](crate::Tdd::exists_vars) using this batch's scratch and resource limits.
@@ -102,7 +100,7 @@ impl crate::Engine {
     /// the output-node cap return [`OperationError::Stopped`],
     /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn exists_vars(&self, f: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
-        exists_vars_on(self, f, vars, None, true)
+        exists_vars_on(self, f, vars, None)
     }
 
     /// [`exists_vars`](Self::exists_vars) ending with the reduction `plan`,
@@ -121,7 +119,7 @@ impl crate::Engine {
     ///
     /// As [`exists_vars`](Self::exists_vars).
     pub fn exists_vars_with(&self, f: Tdd, vars: &[VarId], plan: ReductionPlan<'_>) -> Result<Tdd, OperationError> {
-        exists_vars_on(self, f, vars, Some(plan), true)
+        exists_vars_on(self, f, vars, Some(plan))
     }
 
     /// Run [`Tdd::forall_vars`](crate::Tdd::forall_vars) using this batch's scratch and resource limits.

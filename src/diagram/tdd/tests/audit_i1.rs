@@ -1,10 +1,8 @@
 //! No reachable pair of a result names a variable leaf `One`, and each level
 //! names a leaf child `One` in all its reachable pairs or in none, for every
 //! public producer on operands that satisfy both, on projections of one home.
-//! [`EXPECTED_OPEN`] lists the producers known to name a leaf `One` today:
-//! each must do so at least once, every other producer never. Every other
-//! result on a home also passes `check_all_fast`, I1 over dead nodes
-//! included, and minimizes to a diagram whose leaves are its support.
+//! Every result also passes `check_all_fast`, I1 over dead nodes included,
+//! and minimizes to a diagram whose leaves are its support.
 
 use std::collections::BTreeMap;
 use std::fmt::Debug;
@@ -23,14 +21,6 @@ use crate::vtree::{Home, RotationKind, VarId, VtreeIdx};
 use crate::{Engine, Literal, OperationError};
 
 use super::*;
-
-/// The producers whose results name a leaf `One` today, with the reason. A
-/// line marked `unpredicted` was found by this test, not by an audit.
-const EXPECTED_OPEN: &[(&str, &str)] = &[];
-
-// Predicted open, but no result named One on these inputs, so the audit
-// holds them to I1: `and, weighted`, `marginalize_levels`,
-// `and_marginalizing`, `rotate_marginal_cluster`, `prefix_fold [fixed]`.
 
 #[derive(Default)]
 struct Seen {
@@ -99,13 +89,11 @@ impl Audit {
         }
     }
 
-    /// The breaches off the table, the table lines that never breached, and
-    /// every leaf-form failure and panic; with a line per producer.
+    /// Every breach, leaf-form failure and panic; with a line per producer.
     fn verdict(&self) -> (Vec<String>, String) {
         let mut findings = Vec::new();
         let mut report = String::new();
         for (&name, s) in &self.seen {
-            let open = EXPECTED_OPEN.iter().any(|&(n, _)| n == name);
             report += &format!(
                 "{name}: {} results, {} named One, {} refused, {} false on a vtree with nodes, {} not trimmed, {} off the support once minimized, {} with a true node{}\n",
                 s.runs,
@@ -120,25 +108,17 @@ impl Audit {
             if let Some(e) = s.leaf_form.first() {
                 findings.push(format!("{name}: leaf form fails {} times, first {e}", s.leaf_form.len()));
             }
-            let held = !open;
-            if let (true, Some(e)) = (held, s.untrimmed.first()) {
+            if let Some(e) = s.untrimmed.first() {
                 findings.push(format!("{name}: not trimmed {} times, first {e}", s.untrimmed.len()));
             }
-            if let (true, Some(e)) = (held, s.off_support.first()) {
+            if let Some(e) = s.off_support.first() {
                 findings.push(format!("{name}: off the support once minimized {} times, first {e}", s.off_support.len()));
             }
             if let Some(p) = s.panics.first() {
                 findings.push(format!("{name}: {} panics, first {p}", s.panics.len()));
             }
-            match (open, &s.first_one) {
-                (false, Some(w)) => findings.push(format!("{name}: names One off the table, first {w}")),
-                (true, None) => findings.push(format!("{name}: on the table, names no One in {} results", s.runs)),
-                _ => {}
-            }
-        }
-        for &(name, _) in EXPECTED_OPEN {
-            if !self.seen.contains_key(name) {
-                findings.push(format!("{name}: on the table, never run"));
+            if let Some(w) = &s.first_one {
+                findings.push(format!("{name}: names One, first {w}"));
             }
         }
         (findings, report)
