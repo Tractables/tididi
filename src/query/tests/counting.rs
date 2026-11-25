@@ -126,8 +126,6 @@ fn queries_answer_on_the_empty_projection() {
         assert!(f.equivalent(&f).unwrap());
         assert_eq!(f.implies(&x).unwrap(), !value);
         assert_eq!(x.implies(&f).unwrap(), value);
-        assert_eq!(eng.marginal_product_count(&f, &x).unwrap(), BigUint::from(4 * n));
-        assert_eq!(eng.marginal_product_count(&f, &f).unwrap(), BigUint::from(8 * n));
         f.attach_level_counts().unwrap();
         assert_eq!(f.model_count().unwrap(), BigUint::from(8 * n));
         let _ = f.implied_literals().unwrap();

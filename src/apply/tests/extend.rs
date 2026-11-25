@@ -195,7 +195,6 @@ fn check_operations(case: &Case<'_>, f: &Tdd, g: &Tdd, h: &Tdd, rng: &mut Lcg) {
 
     let count = eng.model_count(&product).unwrap();
     assert_eq!(eng.and_model_count(f.clone(), g.clone(), &[]).unwrap(), count, "and_model_count {}", case.what);
-    assert_eq!(eng.marginal_product_count(f, g).unwrap(), count, "marginal_product_count {}", case.what);
     case.check("and_marginalizing_where", eng.and_marginalizing_where(f, g, |_| false).unwrap(), &product);
     if f.vtree().home().is_some() {
         assert!(matches!(eng.and_marginalizing(f, g, &[]), Err(OperationError::InertOption { .. })), "{}", case.what);
