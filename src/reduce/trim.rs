@@ -269,8 +269,11 @@ impl Shape {
         let mut gate = lim.gate();
         for t in vtree.bottomup() {
             let VtreeNode::Internal { left, right, .. } = *vtree.node(t) else {
+                // A region whose level is not summed out is one an operand
+                // was placed beside (`Free::Operand`), named true by every
+                // pair: a leaf the trim drops.
                 let marginal = summed && f.levels[t.idx()].is_marginal();
-                let kind = if marginal || summed && vtree.node(t).is_region() { Kind::Region } else { Kind::Leaf };
+                let kind = if marginal { Kind::Region } else { Kind::Leaf };
                 (shape.kind[t.idx()], shape.leaves[t.idx()], shape.kept[t.idx()]) = (kind, 1, 1);
                 if summed {
                     shape.adds[t.idx()] = marginal;

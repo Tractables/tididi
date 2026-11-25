@@ -9,4 +9,5 @@ mod region_canon;
 mod region_entries;
 mod region_ops;
 mod region_reduce;
+mod region_restrict;
 mod weighted_projection;

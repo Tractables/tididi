@@ -46,7 +46,7 @@ mod twins;
 mod twins_budget;
 mod twins_inline;
 mod trim;
-mod trim_regions;
+pub(crate) mod trim_regions;
 mod whole_diagrams;
 
 // The prune's test hooks: the sides of stored levels marked as bytes and as
