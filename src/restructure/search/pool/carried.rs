@@ -54,8 +54,12 @@ impl Tdd {
             }
             let top = self.vtree.home_node(VtreeIdx(t as u32));
             for c in [l, r] {
+                let extra = widths[c.idx()] as usize - 1;
+                if extra == 0 {
+                    continue;
+                }
                 let between = chain(hv, self.vtree.home_node(c), top).count().saturating_sub(1);
-                carried += between * (widths[c.idx()] as usize - 1);
+                carried += between * extra;
             }
         }
         pairs + carried
