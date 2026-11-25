@@ -140,12 +140,10 @@ impl Limits {
     /// only the level in flight is ever an estimate and the arena's slack
     /// cannot accumulate over the thousands of levels one conjunction walks.
     ///
-    /// The early-exit routes that skip the per-level tail never settle, so what
-    /// they charged comes off at the next boundary instead: the meter reads low
-    /// there, which is the direction a size floor tolerates. A level the
-    /// marginal-child route takes from the sparse-marginal route runs the tail
-    /// but does not settle either, so that it meters its pairs as the route it
-    /// replaces.
+    /// The conjunction's sweep settles every level it puts in the output,
+    /// whatever route built, copied or carried it, at the pairs the level
+    /// holds, one-pair nodes included: the meter reads the same pairs for
+    /// operands read through views as for operands placed on one vtree.
     #[inline]
     pub(crate) fn level_settled(&self, exact_pairs: u64) {
         let charged = self.pairs_level_charge.replace(0);

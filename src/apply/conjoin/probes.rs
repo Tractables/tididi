@@ -31,12 +31,6 @@ pub(super) enum WordNote {
 
 #[cfg(not(test))]
 #[inline(always)]
-pub(super) fn taken_levels_settled_forced() -> bool {
-    false
-}
-
-#[cfg(not(test))]
-#[inline(always)]
 pub(super) fn grid_lookups_forced() -> bool {
     false
 }
