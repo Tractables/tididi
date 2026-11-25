@@ -131,7 +131,7 @@ fn evaluate_levels(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx], vtree: &Vtree
 /// names. Returns them as a mask over `vtree`'s nodes and, ascending, the
 /// finished nodes that have a parent that is not finished, internal or a
 /// variable leaf `summable` names that `summed` does not, and the root if it
-/// is a finished internal node.
+/// is finished and one of those.
 pub(crate) fn finished(
     eng: &Engine,
     vtree: &Vtree,
@@ -148,8 +148,7 @@ pub(crate) fn finished(
             _ if vtree.node(t).is_region() || summed(t) => true,
             VtreeNode::Leaf { var, .. } => {
                 let done = summable(var);
-                // A root leaf stays: its output names a label, not a value.
-                if done && vtree.node(t).parent().is_some() {
+                if done {
                     lim.try_push(&mut leaves, t)?;
                 }
                 done
