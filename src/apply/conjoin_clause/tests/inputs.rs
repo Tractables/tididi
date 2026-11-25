@@ -95,7 +95,7 @@ fn a_long_clause_reads_its_repeats_and_conflicts_as_a_short_one_does() {
 
 #[test]
 fn empty_clause_gives_a_canonical_false() {
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = Home::new(Vtree::balanced(4));
     let eng = Engine::new();
     let f = Tdd::clause(&vtree, [1, 3]).unwrap();
     let empty: &[i32] = &[];
