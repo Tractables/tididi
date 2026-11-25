@@ -135,6 +135,8 @@ Added:
 
 Fixed:
 
+- `Vtree::same_tree` panicked on the empty projection. It now answers
+  whether both vtrees are empty.
 - `Tdd::marginalize_levels` and `Engine::marginalize_levels` on the root
   level of a diagram with several root nodes, as `TddBuilder` can build,
   could report another node's count when two root nodes had equal counts;
