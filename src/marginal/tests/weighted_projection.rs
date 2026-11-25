@@ -12,7 +12,7 @@ use crate::{Engine, Tdd};
 
 fn operand(eng: &Engine, home: &Home, vars: &[VarId], rng: &mut Lcg) -> (Tdd, String) {
     let vtree = Vtree::projection(home, vars.iter().copied()).unwrap();
-    let mut f = Tdd::one(&crate::vtree::Home::unchecked(&vtree));
+    let mut f = Tdd::one(&crate::vtree::Home::new(std::sync::Arc::clone(&vtree)));
     let mut name = String::new();
     for _ in 0..1 + rng.below(4) {
         let clause: Vec<i32> = (0..1 + rng.below(3))
@@ -157,10 +157,10 @@ fn minimizing_keeps_two_region_values_beside_one_partner() {
         .map(|(a, b, c, d)| LiteralWeights { negative: r(a, b), positive: r(c, d) });
     let home = Home::weighted(Vtree::random(7, 3258), Weights::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational)).unwrap();
     let on = |vars: &[u32]| Vtree::projection(&home, vars.iter().map(|&v| VarId(v))).unwrap();
-    let mut f = eng.and_clause(Tdd::one(&crate::vtree::Home::unchecked(&on(&[1, 2, 3, 5, 7]))), &[7, 2]).unwrap();
+    let mut f = eng.and_clause(Tdd::one(&crate::vtree::Home::new(std::sync::Arc::clone(&on(&[1, 2, 3, 5, 7])))), &[7, 2]).unwrap();
     f.minimize().unwrap();
     eng.trim(&mut f, &home).unwrap();
-    let mut g = Tdd::one(&crate::vtree::Home::unchecked(&on(&[3, 4, 5, 7])));
+    let mut g = Tdd::one(&crate::vtree::Home::new(std::sync::Arc::clone(&on(&[3, 4, 5, 7]))));
     for clause in [&[4, 7, 4][..], &[5, 7, -3], &[7, -3], &[7, 4]] {
         g = eng.and_clause(g, clause).unwrap();
     }
