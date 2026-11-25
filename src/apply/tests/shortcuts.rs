@@ -84,9 +84,9 @@ fn with_unreachable_twin(mut f: Tdd) -> Tdd {
 #[test]
 fn empty_substitution_and_renaming_preserve_storage_without_reserving() {
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(4));
-    let f = with_unreachable_twin(eng.clause(&tree, [1, 3]).unwrap());
-    for rename in [false, true] {
+    let on_root = with_unreachable_twin(eng.clause(&Arc::new(Vtree::balanced(4)), [1, 3]).unwrap());
+    let on_home = with_unreachable_twin(eng.clause(crate::vtree::Home::new(Vtree::balanced(4)).vtree(), [1, 3]).unwrap());
+    for (f, rename) in [(&on_root, false), (&on_root, true), (&on_home, false), (&on_home, true)] {
         let input = f.clone();
         let root = input.output().vtree;
         let ptr = input.level(root).nodes.stored().as_ptr();
@@ -96,7 +96,7 @@ fn empty_substitution_and_renaming_preserve_storage_without_reserving() {
         }.unwrap();
         assert_eq!(result.level(root).nodes.stored().as_ptr(), ptr);
         assert_eq!(result.level(root).nodes, f.level(root).nodes);
-        assert!(eng.equivalent(&result, &f).unwrap());
+        assert!(eng.equivalent(&result, f).unwrap());
     }
 }
 
