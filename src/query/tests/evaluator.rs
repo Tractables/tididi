@@ -106,6 +106,49 @@ fn unchanged_branches_are_cached_and_algebra_panics_are_retryable() {
 }
 
 #[test]
+fn unchanged_branches_are_cached_and_algebra_panics_are_retryable_on_a_home() {
+    let home = crate::vtree::Home::new(Vtree::balanced(8));
+    let f = Tdd::one(home.vtree());
+    assert_canonical(&f);
+    let calls = std::rc::Rc::new(Cell::new(0));
+    let panic = std::rc::Rc::new(Cell::new(false));
+    let mut e = f.evaluator(Tracked { calls: calls.clone(), panic: panic.clone() }).unwrap();
+    assert_eq!(e.value().unwrap(), 256);
+    calls.set(0);
+    assert_eq!(e.value().unwrap(), 256);
+    assert_eq!(calls.get(), 0);
+    e.observe([-1]).unwrap();
+    assert_eq!(e.value().unwrap(), 128);
+    // No column holds the home's variables: their factor is evaluated afresh.
+    assert_eq!(calls.get(), 8);
+    e.observe([2]).unwrap();
+    panic.set(true);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| e.value())).is_err());
+    e.observe([-3]).unwrap();
+    assert_eq!(e.value().unwrap(), 32);
+    e.clear_pins();
+    assert_eq!(e.value().unwrap(), 256);
+    // A clause on a projection that lacks six of the home's variables.
+    let f = Tdd::clause(home.vtree(), [1, 2]).unwrap();
+    let mut e = f.evaluator(Tracked { calls: calls.clone(), panic }).unwrap();
+    assert_eq!(e.value().unwrap(), 3 << 6);
+    calls.set(0);
+    assert_eq!(e.value().unwrap(), 3 << 6);
+    assert_eq!(calls.get(), 0);
+    e.observe([-1, 5]).unwrap();
+    assert_eq!(e.value().unwrap(), 1 << 5);
+    e.observe([5]).unwrap();
+    calls.set(0);
+    assert_eq!(e.value().unwrap(), 1 << 5);
+    assert_eq!(calls.get(), 0);
+    e.observe([-5]).unwrap();
+    assert_eq!(e.value().unwrap(), 1 << 5);
+    assert!(calls.get() > 0);
+    e.clear_pins();
+    assert_eq!(e.value().unwrap(), 3 << 6);
+}
+
+#[test]
 fn allocation_refusals_preserve_pins_and_retry_on_the_same_engine() {
     let vtree = Arc::new(Vtree::balanced(8));
     let f = Tdd::clause(&vtree, [1, 2]).unwrap();
