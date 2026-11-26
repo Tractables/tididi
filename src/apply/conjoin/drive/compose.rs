@@ -71,6 +71,35 @@ fn fit_operands(
     Some((described(f)?, described(g)?))
 }
 
+/// The description of a pass level's output (`take_pass_level`) where the
+/// passed child is complete, its product `(a, c)` at `a · stride + c`: the
+/// passing operand's `wp` nodes, node `i` one pair naming node `i` of the
+/// passed child and slot 0 of the child it is free at, taken with the
+/// carrier's level as [`plan`] takes two operand levels. The other child's
+/// products are the carrier's nodes, at stride 1. The conditions are
+/// [`plan`]'s, for the carrier's level of `wo` nodes.
+pub(in crate::apply::conjoin) fn plan_pass(
+    lim: &crate::limits::Limits,
+    carrier: &TddLevel,
+    (wp, wo): (usize, usize),
+    (carrier_f, passed_left): (bool, bool),
+    stride: usize,
+) -> Option<ImplicitLevel> {
+    let bound = carrier.pairs.len().max(carrier.nodes().len());
+    if !lim.memory_unbounded() || carrier.nodes().len() != wo || bound.saturating_mul(wp) < floor() {
+        return None;
+    }
+    let dc = match carrier.implicit() {
+        Some(d) => d.clone(),
+        None if carrier.closes_by_fit() => return None,
+        None => ImplicitLevel::fit(carrier)?,
+    };
+    let dp = ImplicitLevel::one_step(wp, (0, 0), if passed_left { (1, 0) } else { (0, 1) })?;
+    let stride = if passed_left { (stride, 1) } else { (1, stride) };
+    let (df, dg) = if carrier_f { (&dc, &dp) } else { (&dp, &dc) };
+    compose_described(df, dg, stride, false)
+}
+
 /// The product of `df` and `dg` at `stride` where its pairs reach the floor.
 fn compose_described(
     df: &ImplicitLevel,
@@ -191,7 +220,7 @@ fn work(nodes: (usize, usize), product: &ImplicitLevel) -> u64 {
 /// What the row loop charges a level of `product`'s shape: the work clock
 /// ([`work`]), and the output-pair meter, the doublings of the reserved
 /// capacity `charged` that the level's pairs pass, with their count.
-pub(super) fn charges(
+pub(in crate::apply::conjoin) fn charges(
     nodes: (usize, usize),
     product: &ImplicitLevel,
     charged: usize,
@@ -217,7 +246,7 @@ pub(super) fn charges(
 /// ([`Limits::cannot_stop_within`]).
 ///
 /// [`Limits::cannot_stop_within`]: crate::limits::Limits::cannot_stop_within
-pub(super) fn write(
+pub(in crate::apply::conjoin) fn write(
     eng: &Engine,
     product: ImplicitLevel,
     level: &mut TddLevel,

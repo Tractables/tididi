@@ -32,6 +32,8 @@ pub(crate) struct HomeIndex {
     /// By variable id: its leaf's rank, `u32::MAX` for an id with no leaf.
     rank_of: Vec<u32>,
     pub(super) gap_node: Vec<VtreeIdx>,
+    /// By node: its depth, the root's 0.
+    depth: Vec<u32>,
     /// By gap: `depth << 32 | gap`, so that the least word of a range of gaps
     /// is its shallowest gap's.
     gap_word: Vec<u64>,
@@ -59,10 +61,12 @@ impl HomeIndex {
         let n = home.num_leaves() as usize;
         let gaps = n.saturating_sub(1);
         let mut slot = vec![0; home.num_nodes()];
+        let mut node_depth = vec![0u32; home.num_nodes()];
         let (mut leaf_at, mut var_at, mut gap_node, mut gap_depth) =
             (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(gaps), Vec::<u32>::with_capacity(gaps));
         let mut stack = vec![(home.root(), 0u32, false)];
         while let Some((t, depth, left_done)) = stack.pop() {
+            node_depth[t.idx()] = depth;
             match *home.node(t) {
                 VtreeNode::Leaf { var, .. } => {
                     slot[t.idx()] = leaf_at.len() as u32;
@@ -122,7 +126,7 @@ impl HomeIndex {
         for (rank, var) in var_at.iter().enumerate() {
             rank_of[var.0 as usize] = rank as u32;
         }
-        HomeIndex { slot, leaf_at, var_at, rank_of, gap_node, gap_word, in_block, block_ends, block_least, blocks }
+        HomeIndex { slot, leaf_at, var_at, rank_of, gap_node, depth: node_depth, gap_word, in_block, block_ends, block_least, blocks }
     }
 
     /// The least word of gaps `lo..=last`, which lie in one block.
@@ -333,6 +337,12 @@ impl Home {
 
     pub(super) fn index(&self) -> &HomeIndex {
         self.0.index.home().expect("a home's root carries its index")
+    }
+
+    /// The depth of node `t` of the home's tree, the root's 0.
+    #[inline]
+    pub(crate) fn depth(&self, t: VtreeIdx) -> u32 {
+        self.index().depth[t.idx()]
     }
 
     /// The rank of `var`'s leaf; `None` when it has none.

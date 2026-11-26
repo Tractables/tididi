@@ -494,6 +494,38 @@ impl Products {
         Ok(true)
     }
 
+    /// Whether child level `c`'s listed products are the carrier's `width`
+    /// nodes there, `f`'s where `carrier_f` and else `g`'s, each the product
+    /// of carrier node `x` with one node of the other operand among its
+    /// first `rows`, numbered `x`: then `partner[x]` is that node.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::OverBudget`] when `partner`'s growth is refused.
+    pub(super) fn carrier_numbered(
+        &self,
+        eng: &Engine,
+        c: usize,
+        carrier_f: bool,
+        (rows, width): (usize, usize),
+        partner: &mut Vec<u32>,
+    ) -> Result<bool, OperationError> {
+        let list = &self.product_lists[c];
+        if list.len() != width {
+            return Ok(false);
+        }
+        partner.clear();
+        eng.limits().try_resize(partner, width, super::NO_PRODUCT)?;
+        for e in list {
+            let (x, other) = if carrier_f { (e.f_idx.idx(), e.g_idx.0) } else { (e.g_idx.idx(), e.f_idx.0) };
+            if e.prod_idx.0 as usize != x || other as usize >= rows || partner[x] != super::NO_PRODUCT {
+                return Ok(false);
+            }
+            partner[x] = other;
+        }
+        Ok(true)
+    }
+
     /// Child level `c`'s products along each of `rows` nodes of the narrow
     /// operand, one row of `width`, the carrier's nodes there, in `out`:
     /// with `carrier_f`, row `r` holds cell `(k, r)` at `k`, else `(r, k)`,

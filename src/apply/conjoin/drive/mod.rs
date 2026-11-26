@@ -32,7 +32,7 @@
 //! A self-conjunction `f ∧ f` returns `f` from `conjoin_checked` before
 //! the driver runs.
 
-mod compose;
+pub(super) mod compose;
 mod level;
 mod owed;
 mod region;
