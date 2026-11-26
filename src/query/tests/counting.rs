@@ -83,21 +83,10 @@ fn test_model_count_clause_all_vars() {
 
 // --- `node_counts` ---
 
-#[test]
-fn test_node_counts_basic() {
-    let eng = &crate::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(3));
-    let tdd = constant_one(eng, &vtree);
-    let counts = node_counts(&tdd);
-    // Output node should have count = 2^3 = 8
-    let out_count = &counts[tdd.output.vtree.idx()][tdd.output.local.idx()];
-    assert_eq!(*out_count, BigUint::from(8u32));
-}
-
 /// On a home a constant lies on the empty projection, which has no level:
 /// its node counts have no column, and its model count reads the home.
 #[test]
-fn test_node_counts_basic_on_a_home() {
+fn test_node_counts_basic() {
     let eng = &crate::Engine::new();
     let home = crate::vtree::Home::new(Vtree::balanced(3));
     for value in [false, true] {
@@ -214,10 +203,10 @@ fn test_apply_fallible_consumes_operands() {
     let eng = Engine::new();
     // Fold clauses into a diagram; every operand shares the same vtree Arc so the
     // conjoin's pointer-identical-vtree precondition holds.
-    fn build(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[&[i32]]) -> Tdd {
+    fn build(eng: &Engine, vtree: &Home, clauses: &[&[i32]]) -> Tdd {
         let mut acc = constant_one(eng, vtree);
         for clause in clauses {
-            let c = clause_to_tdd(&crate::vtree::Home::unchecked(vtree), &crate::test_helpers::literals(clause));
+            let c = clause_to_tdd(vtree, &crate::test_helpers::literals(clause));
             acc = apply_and(acc, c);
         }
         acc
@@ -276,28 +265,35 @@ fn batch_model_count_matches_ordinary_count_and_honors_the_stop_axis() {
 
 
 
+/// The output's node count saturates at `u128::MAX` and the model count
+/// is `exact`, before and after the variables under the root are summed out.
+fn saturates(mut f: Tdd, exact: BigUint) {
+    crate::test_helpers::assert_canonical(&f);
+    let output = f.output();
+    let counts = f.node_counts_u128().unwrap();
+    assert_eq!(counts[output.vtree.idx()][output.local.idx()], u128::MAX);
+    assert_eq!(f.model_count().unwrap(), exact);
+    let root = f.vtree().root();
+    f.marginalize(crate::test_helpers::summing(f.vtree(), &[root])).unwrap();
+    crate::test_helpers::assert_canonical(&f);
+    let level = f.level(f.output().vtree);
+    let slot = f.output().local.idx();
+    assert_eq!(level.marginal_counts().unwrap()[slot], u128::MAX);
+    assert_eq!(level.marginal_counts_big().unwrap().get(slot), Some(&exact));
+    assert_eq!(f.model_count().unwrap(), exact);
+}
+
 #[test]
 fn saturated_node_counts_include_the_exact_u128_maximum() {
+    let vtree = Home::new(Vtree::balanced(128));
+    saturates(Tdd::clause(&vtree, 1..=128).unwrap(), BigUint::from(u128::MAX));
+}
+
+// Padded form: a constant on a vtree with levels.
+#[test]
+fn saturated_node_counts_of_a_constant_on_levels_overflow_u128() {
     let vtree = Arc::new(Vtree::balanced(128));
-    let maximum = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), 1..=128).unwrap();
-    let overflow = Tdd::one(&crate::vtree::Home::unchecked(&vtree));
-    for (mut f, exact) in [
-        (maximum, BigUint::from(u128::MAX)),
-        (overflow, BigUint::from(u128::MAX) + BigUint::from(1u32)),
-    ] {
-        crate::test_helpers::assert_canonical(&f);
-        let output = f.output();
-        let counts = f.node_counts_u128().unwrap();
-        assert_eq!(counts[output.vtree.idx()][output.local.idx()], u128::MAX);
-        assert_eq!(f.model_count().unwrap(), exact);
-        f.marginalize(crate::test_helpers::summing(f.vtree(), &[vtree.root()])).unwrap();
-        crate::test_helpers::assert_canonical(&f);
-        let level = f.level(vtree.root());
-        let slot = f.output().local.idx();
-        assert_eq!(level.marginal_counts().unwrap()[slot], u128::MAX);
-        assert_eq!(level.marginal_counts_big().unwrap().get(slot), Some(&exact));
-        assert_eq!(f.model_count().unwrap(), exact);
-    }
+    saturates(Tdd::one(&crate::vtree::Home::unchecked(&vtree)), BigUint::from(u128::MAX) + BigUint::from(1u32));
 }
 
 /// The diagram over the right-linear vtree of four variables, `r = (x1, v)`,
@@ -308,21 +304,19 @@ fn saturated_node_counts_include_the_exact_u128_maximum() {
 /// levels are held as the description of their pairs. Returns the diagram
 /// and `v`.
 fn counted_levels(n: usize, k: usize) -> (Tdd, VtreeIdx) {
-    use crate::diagram::{ChildPair, NodeIdx, TddNodeId, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
-    let vtree = Arc::new(Vtree::linear(4));
-    let mut tdd = constant_one(&Engine::new(), &vtree);
+    use crate::diagram::{ChildPair, NodeIdx, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
+    let vtree = Home::new(Vtree::linear(4));
+    let mut tdd = crate::test_helpers::unfilled(&Engine::new(), &vtree);
     let r = vtree.root();
     let (_, v) = vtree.children(r);
     let (_, w) = vtree.children(v);
     let below = &mut tdd.levels[w.idx()];
-    below.clear();
     let shapes = [(POS_LEAF_IDX, POS_LEAF_IDX), (POS_LEAF_IDX, ONE_LEAF_IDX), (ONE_LEAF_IDX, ONE_LEAF_IDX)];
     for j in 0..k * n {
         let (a, b) = shapes[j % 3];
         below.push_internal_node(&[ChildPair::new(a, b)]);
     }
     let level = &mut tdd.levels[v.idx()];
-    level.clear();
     for i in 0..n {
         let label = |m: usize| if m.is_multiple_of(2) { POS_LEAF_IDX } else { NEG_LEAF_IDX };
         let pairs: Vec<ChildPair> = (0..k).map(|m| ChildPair::new(label(m), NodeIdx((k * i + m) as u32))).collect();
@@ -330,11 +324,9 @@ fn counted_levels(n: usize, k: usize) -> (Tdd, VtreeIdx) {
     }
     crate::test_helpers::describe(level);
     let root = &mut tdd.levels[r.idx()];
-    root.clear();
     let pairs: Vec<ChildPair> = (0..n).map(|i| ChildPair::new(POS_LEAF_IDX, NodeIdx(i as u32))).collect();
     root.push_internal_node(&pairs);
     crate::test_helpers::describe(root);
-    tdd.output = TddNodeId { vtree: r, local: NodeIdx(0) };
     (tdd, v)
 }
 
