@@ -190,6 +190,11 @@ fn leaf_sets_compare_and_unite() {
         if matches!(got, LeafSets::Equal(_)) {
             assert_eq!(vars.len(), other.len());
         }
+        match (Vtree::leaf_sets_unbuilt(&a, &b).unwrap(), &got) {
+            (None, LeafSets::Union(_)) => {}
+            (Some(LeafSets::Equal(_)), LeafSets::Equal(_)) | (Some(LeafSets::AInB), LeafSets::AInB) | (Some(LeafSets::BInA), LeafSets::BInA) => {}
+            (unbuilt, _) => panic!("unbuilt {unbuilt:?} where the leaf sets are {got:?}"),
+        }
         assert_eq!(matches!(Vtree::leaf_sets(&a, tree), Ok(LeafSets::AInB)), a.link_home().is_some());
         assert_eq!(matches!(Vtree::leaf_sets(tree, &b), Ok(LeafSets::BInA)), b.link_home().is_some());
         assert_eq!(Arc::ptr_eq(&a, tree), vars.len() == tree.num_leaves() as usize);

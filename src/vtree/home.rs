@@ -665,6 +665,13 @@ pub(crate) enum LeafSets {
     Union(Arc<Vtree>),
 }
 
+/// [`LeafSets`] before a union is built: the union case is the links of
+/// both operands and the number of leaves of their union.
+enum Compared<'v> {
+    Sets(LeafSets),
+    Union(&'v HomeLink, &'v HomeLink, usize),
+}
+
 /// What [`Vtree::leaf_sets_reading`] gives the nodes of a union to.
 pub(crate) trait UnionReader {
     /// The union has `k` childless nodes; called before any node is read.
@@ -985,6 +992,56 @@ impl Vtree {
         b: &Arc<Vtree>,
         mut read: Option<&mut impl UnionReader>,
     ) -> Result<LeafSets, OperationError> {
+        let (la, lb, k) = match Self::compare_leaf_sets(a, b)? {
+            Compared::Sets(sets) => return Ok(sets),
+            Compared::Union(la, lb, k) => (la, lb, k),
+        };
+        if let Some(read) = read.as_deref_mut() {
+            read.begin(k)?;
+        }
+        Ok(match read {
+            None => LeafSets::Union(Self::seated(&la.home, k, false, || Self::union_of((a, la), (b, lb), k, None::<&mut fn(VtreeIdx, [Reading; 2], u32)>))),
+            Some(read) if k == la.home.index().leaf_at.len() => {
+                let index = la.home.index();
+                // The union's nodes are the home's: each built node is
+                // read under the id of the home node it stands for.
+                let mut home_of = vec![VtreeIdx(0); 2 * k - 1];
+                let mut read_home = |t: VtreeIdx, readings: [Reading; 2], seat: u32| {
+                    let at = match t.idx() < k {
+                        true => index.leaf_at[seat as usize],
+                        false => index.gap_node[seat as usize],
+                    };
+                    home_of[t.idx()] = at;
+                    read.read(at, readings.map(|r| match r {
+                        Reading::Pass(c) => Reading::Pass(home_of[c.idx()]),
+                        r => r,
+                    }));
+                };
+                Self::union_of((a, la), (b, lb), k, Some(&mut read_home));
+                LeafSets::Union(Arc::clone(&la.home))
+            }
+            Some(read) => {
+                let mut read_own = |t: VtreeIdx, readings: [Reading; 2], _: u32| read.read(t, readings);
+                LeafSets::Union(Arc::new(Self::union_of((a, la), (b, lb), k, Some(&mut read_own))))
+            }
+        })
+    }
+
+    /// [`Vtree::leaf_sets`] where it builds no projection: `None` where the
+    /// leaf sets of `a` and `b`, which have no region, are neither equal
+    /// nor nested.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Vtree::leaf_sets`].
+    pub(crate) fn leaf_sets_unbuilt(a: &Arc<Vtree>, b: &Arc<Vtree>) -> Result<Option<LeafSets>, OperationError> {
+        Ok(match Self::compare_leaf_sets(a, b)? {
+            Compared::Sets(sets) => Some(sets),
+            Compared::Union(..) => None,
+        })
+    }
+
+    fn compare_leaf_sets<'v>(a: &'v Arc<Vtree>, b: &'v Arc<Vtree>) -> Result<Compared<'v>, OperationError> {
         Self::refuse_other_home(a, b)?;
         debug_assert_eq!(a.validate_home(), Ok(()));
         debug_assert_eq!(b.validate_home(), Ok(()));
@@ -995,60 +1052,30 @@ impl Vtree {
             );
             link.regions.first().map(|region| link.region_node(region))
         };
+        let sets = |sets| Ok(Compared::Sets(sets));
         let (la, lb) = match (a.home.as_ref(), b.home.as_ref()) {
-            (None, None) => return Ok(LeafSets::Equal(SameLayout::new(a, b))),
-            (Some(la), None) => return first_region(la).map_or(Ok(LeafSets::AInB), |t| Err(OperationError::MarginalLevel(t))),
-            (None, Some(lb)) => return first_region(lb).map_or(Ok(LeafSets::BInA), |t| Err(OperationError::MarginalLevel(t))),
+            (None, None) => return sets(LeafSets::Equal(SameLayout::new(a, b))),
+            (Some(la), None) => return first_region(la).map_or(sets(LeafSets::AInB), |t| Err(OperationError::MarginalLevel(t))),
+            (None, Some(lb)) => return first_region(lb).map_or(sets(LeafSets::BInA), |t| Err(OperationError::MarginalLevel(t))),
             (Some(la), Some(lb)) => (la, lb),
         };
         if !la.regions.is_empty() || !lb.regions.is_empty() {
-            return Self::region_leaf_sets((a, la), (b, lb), false);
+            return Self::region_leaf_sets((a, la), (b, lb), false).map(Compared::Sets);
         }
         if Arc::ptr_eq(a, b) {
-            return Ok(LeafSets::Equal(SameLayout::new(a, b)));
+            return sets(LeafSets::Equal(SameLayout::new(a, b)));
         }
         let (ra, rb) = (la.ranks(), lb.ranks());
         if ra == rb {
-            return Ok(LeafSets::Equal(SameLayout::new(a, b)));
+            return sets(LeafSets::Equal(SameLayout::new(a, b)));
         }
         let (short, long) = if ra.len() <= rb.len() { (ra, rb) } else { (rb, ra) };
         let common = common_ranks(short, long);
-        Ok(match (common == short.len(), ra.len() <= rb.len()) {
-            (true, true) => LeafSets::AInB,
-            (true, false) => LeafSets::BInA,
-            (false, _) => {
-                let k = long.len() + short.len() - common;
-                if let Some(read) = read.as_deref_mut() {
-                    read.begin(k)?;
-                }
-                match read {
-                    None => LeafSets::Union(Self::seated(&la.home, k, false, || Self::union_of((a, la), (b, lb), k, None::<&mut fn(VtreeIdx, [Reading; 2], u32)>))),
-                    Some(read) if k == la.home.index().leaf_at.len() => {
-                        let index = la.home.index();
-                        // The union's nodes are the home's: each built node is
-                        // read under the id of the home node it stands for.
-                        let mut home_of = vec![VtreeIdx(0); 2 * k - 1];
-                        let mut read_home = |t: VtreeIdx, readings: [Reading; 2], seat: u32| {
-                            let at = match t.idx() < k {
-                                true => index.leaf_at[seat as usize],
-                                false => index.gap_node[seat as usize],
-                            };
-                            home_of[t.idx()] = at;
-                            read.read(at, readings.map(|r| match r {
-                                Reading::Pass(c) => Reading::Pass(home_of[c.idx()]),
-                                r => r,
-                            }));
-                        };
-                        Self::union_of((a, la), (b, lb), k, Some(&mut read_home));
-                        LeafSets::Union(Arc::clone(&la.home))
-                    }
-                    Some(read) => {
-                        let mut read_own = |t: VtreeIdx, readings: [Reading; 2], _: u32| read.read(t, readings);
-                        LeafSets::Union(Arc::new(Self::union_of((a, la), (b, lb), k, Some(&mut read_own))))
-                    }
-                }
-            }
-        })
+        match (common == short.len(), ra.len() <= rb.len()) {
+            (true, true) => sets(LeafSets::AInB),
+            (true, false) => sets(LeafSets::BInA),
+            (false, _) => Ok(Compared::Union(la, lb, long.len() + short.len() - common)),
+        }
     }
 
     /// The projection on the `k` merged ranks of `a` and `b`, which have no
