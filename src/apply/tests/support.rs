@@ -6,8 +6,8 @@ use crate::Engine;
 use crate::diagram::Literal;
 use crate::test_helpers::clause;
 
-fn cls(vtree: &Arc<Vtree>, lits: &[(u32, bool)]) -> Tdd {
-    clause_to_tdd(&crate::vtree::Home::unchecked(vtree), &clause(lits))
+fn cls(vtree: &Home, lits: &[(u32, bool)]) -> Tdd {
+    clause_to_tdd(vtree, &clause(lits))
 }
 
 fn unit_forced_tdd() -> Tdd {
@@ -18,12 +18,11 @@ fn unit_forced_tdd() -> Tdd {
     apply_and(apply_and(c0, f), g)
 }
 
+// Padded form: the padded sum-out.
 fn xor2_tdd() -> (Arc<Vtree>, Tdd) {
     let vtree = Arc::new(Vtree::balanced(2));
-    let t = and2(
-        &cls(&vtree, &[(1, true), (2, true)]),
-        &cls(&vtree, &[(1, false), (2, false)]),
-    );
+    let home = crate::vtree::Home::unchecked(&vtree);
+    let t = and2(&cls(&home, &[(1, true), (2, true)]), &cls(&home, &[(1, false), (2, false)]));
     (vtree, t)
 }
 
@@ -79,6 +78,7 @@ fn condition_var_canonicalizes_a_dead_result() {
     assert!(count_is_zero(&and2(&dead, &t)));
 }
 
+// Padded form: the padded sum-out.
 #[test]
 fn condition_var_on_marginalized_leaf_fails_fast() {
     let eng = &Engine::new();
@@ -94,6 +94,7 @@ fn condition_var_on_marginalized_leaf_fails_fast() {
     );
 }
 
+// Padded form: the padded sum-out.
 #[test]
 fn condition_var_through_marginal_parent_fails_fast() {
     let eng = Engine::new();

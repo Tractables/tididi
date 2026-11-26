@@ -193,10 +193,9 @@ fn weighted_marginal_levels_keep_their_values() {
     let eng = Engine::new();
     let weights = vec![LiteralWeights { negative: rat(2, 1), positive: rat(3, 1) }; 8];
     let weights = Weights::new(RationalWeights::from_literals(&weights), Arithmetic::ExactRational);
-    let vtree = Arc::new(Vtree::balanced(8).with_weights(weights).unwrap());
-    let mut f = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &[vec![1, 3, -6], vec![-2, 5, 7], vec![4, -8]]);
-    let forgotten = vtree.children(vtree.root()).0;
-    crate::test_helpers::marginalize_under(&eng, &mut f, &[forgotten]).unwrap();
+    let home = Home::weighted(Vtree::balanced(8), weights).unwrap();
+    let mut f = compile_clauses(&home, &[vec![1, 3, -6], vec![-2, 5, 7], vec![4, -8]]);
+    eng.marginalize(&mut f, |v| v.0 <= 4).unwrap();
     assert_canonical(&f);
     let g = eng.renumber_top_down(&f).unwrap();
     assert_canonical(&g);
