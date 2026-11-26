@@ -242,6 +242,23 @@ impl ImplicitLevel {
         ImplicitLevel::new(self.nodes, self.per_node, (self.first.1, self.first.0), digits, self.within)
     }
 
+    /// The description of the same nodes and places with each child slot `s`
+    /// on `side` moved to `shift + scale · s`, in normal form. The caller
+    /// keeps the moved slots in reach of a side, and distinct where they
+    /// were, as `scale` 0 keeps them only where every pair names one slot.
+    pub(crate) fn mapped_on(&self, side: ChildSide, (scale, shift): (i64, i64)) -> ImplicitLevel {
+        let on = |d: &Digit| match side {
+            ChildSide::Left => Digit { left: d.left * scale, ..*d },
+            ChildSide::Right => Digit { right: d.right * scale, ..*d },
+        };
+        let first = match side {
+            ChildSide::Left => (shift + scale * self.first.0, self.first.1),
+            ChildSide::Right => (self.first.0, shift + scale * self.first.1),
+        };
+        let digits = self.digits.iter().map(on).collect();
+        ImplicitLevel::new(self.nodes, self.per_node, first, digits, self.within).normal()
+    }
+
     /// The description in normal form: the digits the greedy read takes off
     /// the pairs this one describes, which are those [`fit`](Self::fit)
     /// reads off the level. Reads the digits only, no pair.

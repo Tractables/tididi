@@ -21,8 +21,9 @@
 //! moved, whatever its size.
 
 use crate::apply::conjoin::held::Held;
-use crate::diagram::EncodedChildRef;
+use crate::diagram::{ChildSide, EncodedChildRef, ImplicitLevel};
 use super::identity::publish_identity_level;
+use super::drive::compose::PassedChild;
 use super::products::{FNodeIdx, GNodeIdx, Grid, ProductEntry, ProductNodeIdx};
 use super::*;
 
@@ -366,18 +367,40 @@ pub(super) fn take_pass_level(
         run.products.note_complete(ti);
         return Ok(());
     }
-    let cells = matches!(grid, Some(Grid::Cells));
-    if matches!(grid, Some(Grid::Lists))
+    let (lists, slab) = (matches!(grid, Some(Grid::Lists)), matches!(grid, Some(Grid::Slab(_))));
+    let composed = match grid {
+        Some(grid @ (Grid::Cells | Grid::Slab(_))) if pinned.is_none() && !pass_composed_forced_off() => {
+            let carrier = if carrier_f { f.level(ti) } else { g.level(ti) };
+            let side = if passed_left { ChildSide::Left } else { ChildSide::Right };
+            let w = widths.1;
+            let child = match grid {
+                Grid::Cells if literals.is_none() => PassedChild::Complete { width: w },
+                _ => PassedChild::Cells(|s: i64, i: i64| {
+                    let (s, i) = (s as usize, i as usize);
+                    if literals.is_some_and(|rows| rows >> i & 1 == 0) {
+                        return NO_PRODUCT;
+                    }
+                    let at = if carrier_f { s * w + i } else { i * w + s };
+                    match grid {
+                        Grid::Slab(slab) => slab[at],
+                        _ => at as u32,
+                    }
+                }),
+            };
+            super::drive::compose::plan_pass(lim, carrier, (wp, wo), (carrier_f, side), child)
+        }
+        _ => None,
+    };
+    if let Some(composed) = composed
+        && compose_pass(eng, run, shape, carrier_f, composed)?
+    {
+        note_pass_composed(slab);
+        return Ok(());
+    }
+    if lists
         && pinned.is_none()
         && !pass_numbered_forced_off()
         && carry_numbered(eng, run, f, g, shape, carrier_f, passed_left)?
-    {
-        return Ok(());
-    }
-    if cells
-        && pinned.is_none()
-        && !pass_composed_forced_off()
-        && compose_pass(eng, run, if carrier_f { f.level(ti) } else { g.level(ti) }, shape, (carrier_f, passed_left), widths.1)?
     {
         return Ok(());
     }
@@ -553,13 +576,12 @@ fn carry_numbered(
     Ok(true)
 }
 
-/// [`take_pass_level`] where the passed child is complete, its product
-/// `(a, c)` at `a · stride + c`, and the carrier's level is affine: every
-/// cell is live, and the level is the description the implicit route gives
-/// for the passing operand's nodes, each one pair, with the carrier's
-/// ([`plan_pass`](super::drive::compose::plan_pass)), written as that route
-/// writes it, the work clock charged what the emit would charge. False,
-/// with nothing built, where the route does not apply.
+/// [`take_pass_level`] where the passed child's cells the carrier reads are
+/// affine and the carrier's level is too: the level is the description
+/// `product` ([`plan_pass`](super::drive::compose::plan_pass)), the cells of
+/// the passing nodes `kept` names (count, first, step) live, written as the
+/// implicit route writes a level, the work clock charged what the emit
+/// would charge. False, with nothing built, where the route does not apply.
 ///
 /// # Errors
 ///
@@ -569,37 +591,56 @@ fn carry_numbered(
 fn compose_pass(
     eng: &Engine,
     run: &mut ApplyRun,
-    carrier: &TddLevel,
     shape: LevelShape,
-    (carrier_f, passed_left): (bool, bool),
-    stride: usize,
+    carrier_f: bool,
+    (product, kept): (ImplicitLevel, super::drive::compose::Kept),
 ) -> Result<bool, OperationError> {
     use super::drive::compose;
     let lim = eng.limits();
     let ti = shape.t.idx();
     let (wf, wg) = (shape.f.here, shape.g.here);
     let (wp, wo) = if carrier_f { (wg, wf) } else { (wf, wg) };
-    let Some(product) = compose::plan_pass(lim, carrier, (wp, wo), (carrier_f, passed_left), stride) else {
-        return Ok(false);
-    };
     let level = &mut run.levels[ti];
     if lim.bounded_growth() {
         return Ok(false);
     }
     let charged = level.pairs.capacity();
-    // The emit polls each cell's pairs: the work is the level's pairs.
     let (_, meter, doublings) = compose::charges((wf, wg), &product, charged);
-    let work = product.pairs() as u64;
+    // The emit polls each cell's pairs, a dead cell's too: the work is the
+    // carrier's pairs for every passing node.
+    let (n, first, step) = kept;
+    let work = (wp * (product.pairs() / n)) as u64;
     if !lim.cannot_stop_within(work, meter as u64) {
         return Ok(false);
     }
     let mut map = eng.scratch.apply.relabel_map.checkout(eng);
     map.clear();
     lim.try_resize(&mut map, wf * wg, NO_PRODUCT)?;
-    let size = (product.nodes(), product.arena_len());
-    compose::write(eng, product, level, size, &mut map, work, (meter, doublings))?;
-    note_pass_composed();
-    run.products.publish_cells(eng, ti, wg, &map, wf * wg)?;
+    let (nodes, size) = (product.nodes(), (product.nodes(), product.arena_len()));
+    compose::write(eng, product, level, size, &mut map[..nodes], work, (meter, doublings))?;
+    // `write` numbered every cell in order: so they are where every passing
+    // node keeps its cells.
+    if n < wp {
+        map.fill(NO_PRODUCT);
+        let kept = (0..n).map(|m| (m, first + m * step));
+        match carrier_f {
+            true => {
+                for (j, cells) in map.chunks_exact_mut(wp).enumerate() {
+                    for (m, i) in kept.clone() {
+                        cells[i] = (j * n + m) as u32;
+                    }
+                }
+            }
+            false => {
+                for (m, i) in kept {
+                    for (j, cell) in map[i * wo..(i + 1) * wo].iter_mut().enumerate() {
+                        *cell = (m * wo + j) as u32;
+                    }
+                }
+            }
+        }
+    }
+    run.products.publish_cells(eng, ti, wg, &map, nodes)?;
     Ok(true)
 }
 

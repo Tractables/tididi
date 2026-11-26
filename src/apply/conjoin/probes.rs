@@ -137,7 +137,7 @@ pub(super) fn pass_composed_forced_off() -> bool {
 
 #[cfg(not(test))]
 #[inline(always)]
-pub(super) fn note_pass_composed() {}
+pub(super) fn note_pass_composed(_slab: bool) {}
 
 #[cfg(not(test))]
 #[inline(always)]
