@@ -347,18 +347,17 @@ fn the_embedded_count_adds_the_home_nodes_a_diagram_has_no_level_at() {
     // home nodes below it.
     let g = on(&[1, 6], &[vec![1, 6], vec![-1, -6]]);
     assert_eq!(g.embedded_pair_count(), g.pair_count() + 4 + 4);
-    let root = |value| crate::build::constant_padded_on(&eng, &home, value).unwrap();
-    for (on_empty, on_root) in [(Tdd::one(&home), root(true)), (Tdd::zero(&home), root(false))] {
-        assert_eq!(on_empty.vtree().num_leaves(), 0);
-        assert_eq!(on_empty.embedded_pair_count(), on_root.pair_count());
+    for constant in [Tdd::one(&home), Tdd::zero(&home)] {
+        assert_eq!(constant.vtree().num_leaves(), 0);
+        assert_eq!(constant.embedded_pair_count(), 0);
     }
 }
 
-/// `f` on the home's root: padded, or the root's constant for a constant,
-/// which padding would give a level at every node.
+/// `f` padded onto the home's root; a constant stays on the empty
+/// projection, where padding would give it a level at every node.
 fn on_root(f: &Tdd, home: &Home) -> Tdd {
-    match (f.vtree().num_leaves(), f.is_one()) {
-        (0, value) => crate::build::constant_padded_on(&Engine::new(), home, value).unwrap(),
+    match f.vtree().num_leaves() {
+        0 => f.clone(),
         _ => crate::test_helpers::padded(f.clone(), home),
     }
 }
@@ -376,6 +375,7 @@ fn a_move_that_only_shortens_what_members_carry_is_kept() {
     for f in &mut own {
         let Ok(LeafSets::Equal(on)) = Vtree::leaf_sets(f.vtree(), &vtree) else { panic!("{}", f.vtree().to_text()) };
         f.reseat(&on);
+        f.minimize().unwrap();
     }
     let same = own[0].vtree().clone();
     for f in &mut own {

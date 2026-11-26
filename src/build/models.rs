@@ -124,7 +124,7 @@ impl Engine {
             // rows with the same width the level's nodes are indexed with.
             return Err(OperationError::IndexOverflow);
         }
-        let (vtree, layout) = match vars.len() < vtree.num_leaves() as usize {
+        let (vtree, layout) = match vtree.is_home() && vars.len() < vtree.num_leaves() as usize {
             true => {
                 let own = Vtree::projection(vtree, vars.iter().copied()).expect("the layout checked every variable");
                 let layout = Layout::new(lim, &own, vars)?;
