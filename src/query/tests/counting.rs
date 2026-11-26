@@ -192,12 +192,9 @@ fn test_output_is_satisfiable_agrees_with_model_count() {
         let t1 = clause_to_tdd(&v, &[Literal::pos(VarId(1)), Literal::pos(VarId(3))]);
         let t2 = clause_to_tdd(&v, &[Literal::neg(VarId(2)), Literal::pos(VarId(4))]);
         let mut t = apply_and(t1, t2);
-        crate::test_helpers::marginalize_subtree(&mut t, marginal_root);
+        crate::test_helpers::marginalize_under(eng, &mut t, &[marginal_root]).unwrap();
         t.minimize().unwrap();
-        assert!(
-            t.levels[marginal_root.idx()].is_marginal(),
-            "fixture must carry a marginal level"
-        );
+        assert!(t.has_marginal_level(), "fixture must carry a marginal level");
         check(&t, "marginalized subtree (SAT)");
     }
 }
