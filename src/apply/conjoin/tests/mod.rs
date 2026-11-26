@@ -17,6 +17,7 @@ mod marginal_orphan;
 mod marginal_subsumed;
 mod one_sided;
 mod owed;
+mod pair_floor;
 mod pair_rows;
 mod pass_rows;
 mod relabel;
@@ -689,24 +690,6 @@ pub(super) fn one_sided_masked_levels() -> u64 {
 /// checked against.
 pub(super) fn grid_lookups<R>(f: impl FnOnce() -> R) -> R {
     with_flag(&GRID_LOOKUPS, f)
-}
-
-thread_local! {
-    /// Whether a level the marginal-child route takes from the
-    /// sparse-marginal route settles its pairs on this thread
-    /// ([`taken_levels_settled`]).
-    static SETTLE_TAKEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-pub(super) fn taken_levels_settled_forced() -> bool {
-    SETTLE_TAKEN.with(std::cell::Cell::get)
-}
-
-/// Run `f` with every level the marginal-child route takes from the
-/// sparse-marginal route settling its pairs on the output-pair meter, as
-/// the other levels of that route do.
-pub(super) fn taken_levels_settled<R>(f: impl FnOnce() -> R) -> R {
-    with_flag(&SETTLE_TAKEN, f)
 }
 
 /// The levels on this thread so far that read a complete child side by

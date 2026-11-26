@@ -33,7 +33,9 @@ use rows::{words_per_row, distinct_rows};
 
 impl Tdd {
     /// The canonical diagram whose models are exactly `rows`, read as
-    /// assignments to `vars`, with every other variable of `vtree` free.
+    /// assignments to `vars`, with every other variable of `vtree` free: on
+    /// the projection of `vtree` on `vars` where they are not all its
+    /// variables.
     ///
     /// Rows are bit-packed, `vars.len().div_ceil(64).max(1)` words each: with
     /// `w` words per row, row `k` occupies `rows[k * w .. (k + 1) * w]`, and
@@ -122,11 +124,19 @@ impl Engine {
             // rows with the same width the level's nodes are indexed with.
             return Err(OperationError::IndexOverflow);
         }
+        let (vtree, layout) = match vars.len() < vtree.num_leaves() as usize {
+            true => {
+                let own = Vtree::projection(vtree, vars.iter().copied()).expect("the layout checked every variable");
+                let layout = Layout::new(lim, &own, vars)?;
+                (own, layout)
+            }
+            false => (Arc::clone(vtree), layout),
+        };
 
         // The split sorts through the same buffers the rows did.
         let mut radix = crate::sort::Radix::default();
         let sorted = distinct_rows(lim, &mut radix, vars.len(), &layout, rows, w)?;
-        build_sorted(self, vtree, &layout, sorted, w, radix)
+        build_sorted(self, &vtree, &layout, sorted, w, radix)
     }
 }
 

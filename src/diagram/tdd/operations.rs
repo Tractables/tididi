@@ -1105,7 +1105,9 @@ impl Tdd {
     /// Evaluate this diagram under its vtree's weights, if it has any.
     ///
     /// Structural levels are folded from literal weights; weighted marginal levels
-    /// contribute their stored values. The returned [`WeightValue`] uses the weights'
+    /// contribute their stored values. On a projection the value is times what
+    /// the weights' [`FreeWeight`](crate::diagram::FreeWeight) gives each free
+    /// variable. The returned [`WeightValue`] uses the weights'
     /// arithmetic. Returns `Ok(None)` on a vtree without weights. The borrowed diagram
     /// is unchanged. A zero value may come from zero or cancelling weights and does
     /// not establish Boolean unsatisfiability. [`evaluate`](Self::evaluate) takes

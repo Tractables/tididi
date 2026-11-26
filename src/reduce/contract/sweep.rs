@@ -106,11 +106,13 @@ fn contract_child(
     let t1_side = side_of(tdd, parent, t1);
     let side = t1_side as usize;
     let width = tdd.levels[t1.idx()].slot_count();
-    // The search reads the nodes `reach` names. Charged before a parent's
-    // description can answer for it, so a described level meters the work
-    // its written form does.
+    // The search reads the nodes `reach` names, and a screened one each of
+    // the parent's pairs, which on a diagram with a marginal level every
+    // search is. Charged before a parent's description can answer for it,
+    // so a described level meters the work its written form does.
     scratch.searched += match reach {
         Reach::Listed => scratch.reach[side].len(),
+        Reach::Whole if diagram_marginal(tdd, scratch) => tdd.levels[parent.idx()].live_pairs(),
         Reach::Whole => width,
     } as u64;
     // A parent held as the description of its pairs shows from its digits

@@ -1,7 +1,7 @@
-//! Pools on projections of one home: the search runs on the union of the
-//! members' projections and ends with every member on a projection of one
-//! new home, with the functions and counts of the search over the members
-//! on the home's root.
+//! Pools on projections of one home: the search runs on the home's leaves,
+//! scores each member as if it had a level at every home node, and ends with
+//! every member on a projection of one new home, with the functions, counts
+//! and moves of the search over the members on the home's root.
 
 use std::sync::Arc;
 
@@ -283,4 +283,160 @@ fn a_pool_move_on_projections_ends_on_one_home() {
         }
     }
     assert!(kept_moves > 40 && declined > 40, "{kept_moves} {declined}");
+}
+
+/// Members on random leaf sets and the same functions padded onto the home's
+/// root: each member's embedded count is its padded copy's pairs, and the
+/// search on the projections makes the moves of the search on the root, with
+/// the same totals.
+#[test]
+fn a_pool_on_projections_makes_the_moves_of_the_search_on_the_root() {
+    let eng = Engine::new();
+    let (mut moves, mut carried) = (0, 0);
+    for seed in 0..80u64 {
+        let mut rng = Lcg::new(seed ^ 0x3b1d_c0de);
+        let n = 2 + rng.below(40) as u32;
+        let home = random_home(n, seed, &mut rng);
+        let (own, _) = pools(&eng, &home, false, false, &mut rng);
+        let padded: Vec<Tdd> = own.iter().map(|f| on_root(f, &home)).collect();
+        for (f, p) in own.iter().zip(&padded) {
+            assert_eq!(f.embedded_pair_count(), p.pair_count(), "seed {seed}");
+            carried += f.embedded_pair_count() - f.pair_count();
+        }
+        let config = config(&mut rng);
+        let full = Vtree::projection(&home, (1..=n).map(VarId)).unwrap();
+        accepted();
+        let mut searched = own.clone();
+        let stats = with_members(&mut searched, |m| eng.pool_search(m, &config)).unwrap();
+        let on_home: Vec<PoolMove> = accepted()
+            .into_iter()
+            .map(|mv| PoolMove { rotation: RotationMove { pivot: full.home_node(mv.rotation.pivot), ..mv.rotation }, ..mv })
+            .collect();
+        let mut on_root = padded.clone();
+        let root_stats = with_members(&mut on_root, |m| eng.pool_search(m, &config)).unwrap();
+        assert_eq!(on_home, accepted(), "seed {seed}");
+        assert_eq!(
+            (stats.pairs_before, stats.pairs_after),
+            (root_stats.pairs_before, root_stats.pairs_after),
+            "seed {seed}"
+        );
+        moves += on_home.len();
+        check_pool(&eng, &own, &searched, &on_root, stats.accepts > 0);
+    }
+    assert!(moves > 40 && carried > 0, "{moves} {carried}");
+}
+
+/// Hand-counted: x6 ∧ (x1 xor x4) and x1 xor x6 on projections of the
+/// right-linear home over six variables.
+#[test]
+fn the_embedded_count_adds_the_home_nodes_a_diagram_has_no_level_at() {
+    let eng = Engine::new();
+    let home = Home::new(Vtree::linear(6));
+    let on = |vars: &[u32], clauses: &[Vec<i32>]| {
+        let f = compile(&eng, &home, clauses);
+        assert_eq!(f.vtree().leaf_bottomup().map(|(_, v)| v.0).collect::<std::collections::BTreeSet<_>>(), vars.iter().copied().collect());
+        let padded = crate::test_helpers::padded(f.clone(), &home);
+        assert_eq!(f.embedded_pair_count(), padded.pair_count());
+        f
+    };
+    // Three home nodes none of its own; its level over x4 and x6 has two
+    // nodes and two home nodes above it below the root; x6 is entailed.
+    let f = on(&[1, 4, 6], &[vec![6], vec![1, 4], vec![-1, -4]]);
+    assert_eq!(f.embedded_pair_count(), f.pair_count() + 3 + 2);
+    // Four home nodes none of its own; x6 takes two labels at the root, four
+    // home nodes below it.
+    let g = on(&[1, 6], &[vec![1, 6], vec![-1, -6]]);
+    assert_eq!(g.embedded_pair_count(), g.pair_count() + 4 + 4);
+    let root = |value| crate::build::constant_padded_on(&eng, &home, value).unwrap();
+    for (on_empty, on_root) in [(Tdd::one(&home), root(true)), (Tdd::zero(&home), root(false))] {
+        assert_eq!(on_empty.vtree().num_leaves(), 0);
+        assert_eq!(on_empty.embedded_pair_count(), on_root.pair_count());
+    }
+}
+
+/// `f` on the home's root: padded, or the root's constant for a constant,
+/// which padding would give a level at every node.
+fn on_root(f: &Tdd, home: &Home) -> Tdd {
+    match (f.vtree().num_leaves(), f.is_one()) {
+        (0, value) => crate::build::constant_padded_on(&Engine::new(), home, value).unwrap(),
+        _ => crate::test_helpers::padded(f.clone(), home),
+    }
+}
+
+/// x1 xor x2 and x1 ∨ x2 on the projection of (x1, (x2, x3)) on x1 and x2:
+/// the one move that gains has two parts for both members and changes
+/// none of their levels, only the home node x2 passes through. A search
+/// that scores the members' own pairs on their union keeps nothing.
+#[test]
+fn a_move_that_only_shortens_what_members_carry_is_kept() {
+    let eng = Engine::new();
+    let home = Home::new(Vtree::linear(3));
+    let vtree = Vtree::projection(&home, [VarId(1), VarId(2)]).unwrap();
+    let mut own = vec![compile(&eng, &home, &[vec![1, 2], vec![-1, -2]]), compile(&eng, &home, &[vec![1, 2]])];
+    for f in &mut own {
+        let Ok(LeafSets::Equal(on)) = Vtree::leaf_sets(f.vtree(), &vtree) else { panic!("{}", f.vtree().to_text()) };
+        f.reseat(&on);
+    }
+    let same = own[0].vtree().clone();
+    for f in &mut own {
+        assert!(Arc::ptr_eq(f.vtree(), &vtree));
+        assert!(f.is_canonical());
+    }
+    let before = own.clone();
+    let padded: Vec<Tdd> = own.iter().map(|f| on_root(f, &home)).collect();
+    let stats = with_members(&mut own, |m| eng.pool_search(m, &PoolSearchConfig::default())).unwrap();
+    assert_eq!(stats.accepts, 1);
+    assert_eq!(stats.pairs_before, padded.iter().map(Tdd::pair_count).sum::<usize>());
+    assert_eq!(stats.pairs_before - stats.pairs_after, 2);
+    let lifted = own[0].home();
+    assert_eq!(shape(&lifted, lifted.root()), "((1 2) 3)");
+    for f in &own {
+        assert!(f.is_canonical());
+        assert!(!Arc::ptr_eq(f.vtree(), &same));
+    }
+    check_pool(&eng, &before, &own, &padded, true);
+}
+
+/// Members on one projection share its allocation: a move kept through
+/// `rotate_pool_if` and a search that keeps moves end on one home with
+/// every function.
+#[test]
+fn a_pool_on_one_projection_keeps_moves() {
+    let eng = Engine::new();
+    let (mut rotated, mut searched) = (0, 0);
+    for seed in 0..40u64 {
+        let mut rng = Lcg::new(seed ^ 0x0e7e_5eed);
+        let n = 4 + rng.below(20) as u32;
+        let home = random_home(n, seed, &mut rng);
+        let leaves = subset(n, &mut rng);
+        let vtree = Vtree::projection(&home, leaves.iter().copied()).unwrap();
+        let mut own: Vec<Tdd> = Vec::new();
+        for _ in 0..2 + rng.below(3) {
+            let f = compile(&eng, &home, &clauses(&leaves, &mut rng));
+            if let Ok(LeafSets::Equal(same)) = Vtree::leaf_sets(f.vtree(), &vtree) {
+                let mut f = f;
+                f.reseat(&same);
+                own.push(f);
+            }
+        }
+        if own.len() < 2 || vtree.num_leaves() < 3 {
+            continue;
+        }
+        assert!(own.iter().all(|f| Arc::ptr_eq(f.vtree(), &vtree)));
+        let padded: Vec<Tdd> = own.iter().map(|f| on_root(f, &home)).collect();
+        let config = config(&mut rng);
+        let mut after = own.clone();
+        let stats = with_members(&mut after, |m| eng.pool_search(m, &config)).unwrap();
+        searched += usize::from(stats.accepts > 0);
+        check_pool(&eng, &own, &after, &padded, stats.accepts > 0);
+        for &t in vtree.internal_bottomup_slice() {
+            let pivot = vtree.home_node(t);
+            let mv = PoolMove { rotation: RotationMove { pivot, kind: RotationKind::Left }, crossed: rng.coin() };
+            let mut moved = own.clone();
+            let kept = with_members(&mut moved, |m| eng.rotate_pool_if(m, mv, usize::MAX, |_| true)).unwrap();
+            rotated += usize::from(kept);
+            check_pool(&eng, &own, &moved, &padded, kept);
+        }
+    }
+    assert!(rotated > 10 && searched > 5, "{rotated} {searched}");
 }

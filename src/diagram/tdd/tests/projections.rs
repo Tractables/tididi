@@ -10,7 +10,7 @@ use num_bigint::BigUint;
 use num_rational::BigRational;
 
 use crate::cnf::{ClauseSink, CnfScheme};
-use crate::diagram::{Arithmetic, ColumnAlgebra, LeafLabel, LiteralWeights, PairIndex, RationalWeights, SlotPairs, Weights};
+use crate::diagram::{Arithmetic, ColumnAlgebra, FreeWeight, LeafLabel, LiteralWeights, PairIndex, RationalWeights, SlotPairs, Weights};
 use crate::query::PinSemantics;
 use crate::restructure::search::{MinimizePairs, RotationSearchConfig};
 use crate::test_helpers::check::check_trimmed;
@@ -706,4 +706,114 @@ fn the_evaluation_oracle_reads_the_constants_on_no_node() {
         let f = if value { Tdd::one(&empty) } else { Tdd::zero(&empty) };
         assert_eq!(crate::test_helpers::eval(&f, &[false, true, false]), value);
     }
+}
+
+/// `g`'s value under `ws` taken on a root vtree over `g`'s leaves.
+fn own_value(g: &Tdd, ws: &Weights) -> BigRational {
+    let vars: Vec<VarId> = g.vtree().leaf_bottomup().map(|(_, var)| var).collect();
+    if vars.is_empty() {
+        return BigRational::from_integer(u8::from(g.is_one()).into());
+    }
+    let rows: Vec<u64> = (0..1u64 << vars.len())
+        .filter(|&a| {
+            let cube = vars.iter().enumerate().map(|(i, &var)| Literal { var, sign: a >> i & 1 == 1 });
+            g.clone().condition(cube).unwrap().is_sat().unwrap()
+        })
+        .collect();
+    let own = Home::weighted(Vtree::balanced_over(&vars).unwrap(), ws.clone()).unwrap();
+    let h = Tdd::from_models(&own, &vars, &rows).unwrap();
+    exact_weight(&h.weighted_value().unwrap().unwrap())
+}
+
+fn weighted_home(home: &Home, ws: &Weights) -> Home {
+    Home::weighted(Vtree::clone(home), ws.clone()).unwrap()
+}
+
+fn value_under(g: &Tdd, home: &Home, ws: &Weights) -> BigRational {
+    exact_weight(&reseated(g, &weighted_home(home, ws)).weighted_value().unwrap().unwrap())
+}
+
+fn probabilities(n: u32, rng: &mut Lcg) -> Weights {
+    let literals: Vec<_> = (0..=n)
+        .map(|_| {
+            let p = BigRational::new((rng.below(5) as i64).into(), 4.into());
+            LiteralWeights { negative: BigRational::from_integer(1.into()) - &p, positive: p }
+        })
+        .collect();
+    Weights::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational)
+}
+
+#[test]
+fn a_free_variable_weighs_its_total_or_one() {
+    let mut checked = 0;
+    for seed in 0..150u64 {
+        let mut rng = Lcg::new(seed ^ 0xf4ee);
+        let n = 2 + rng.below(11) as u32;
+        let home = Home::new(Vtree::random(n, seed));
+        let f = diagram(&home, n, &mut rng);
+        let mut g = f.clone();
+        g.trim(&Home::new(Arc::clone(&home))).unwrap();
+        let total = weights(n, &mut rng);
+        let one = total.clone().with_free(FreeWeight::One);
+        assert_eq!(value_under(&g, &home, &total), value_under(&f, &home, &total), "seed {seed}");
+        assert_eq!(value_under(&g, &home, &one), own_value(&g, &total), "seed {seed}");
+        let p = probabilities(n, &mut rng);
+        assert_eq!(value_under(&g, &home, &p), value_under(&g, &home, &p.clone().with_free(FreeWeight::One)), "seed {seed}");
+        assert_eq!(value_under(&g, &home, &p), value_under(&f, &home, &p), "seed {seed}");
+        checked += usize::from(g.vtree().free_leaves() > 0 && !g.is_zero());
+    }
+    assert!(checked > 50, "{checked} of 150 with a free variable");
+}
+
+#[test]
+fn a_free_variable_beside_a_region_weighs_its_total_or_one() {
+    let mut checked = 0;
+    for seed in 0..150u64 {
+        let mut rng = Lcg::new(seed ^ 0x5e61);
+        let n = 3 + rng.below(10) as u32;
+        let home = Home::new(Vtree::random(n, seed));
+        let f = diagram(&home, n, &mut rng);
+        let mut g = f.clone();
+        g.trim(&Home::new(Arc::clone(&home))).unwrap();
+        let internal: Vec<VtreeIdx> = g.vtree().bottomup().filter(|&t| !g.vtree().node(t).is_leaf()).collect();
+        if internal.len() < 2 || g.is_zero() {
+            continue;
+        }
+        let at = internal[rng.below(internal.len() as u64 - 1) as usize];
+        let summed: Vec<VarId> = g.vtree().subtree(at).filter_map(|t| match *g.vtree().node(t) {
+            crate::vtree::VtreeNode::Leaf { var, .. } => Some(var),
+            crate::vtree::VtreeNode::Internal { .. } => None,
+        }).collect();
+        for ws in [weights(n, &mut rng), probabilities(n, &mut rng)] {
+            let free = g.vtree().free_leaves();
+            let own = own_value(&g, &ws);
+            let (expected_total, expected_one) = (value_under(&f, &home, &ws), value_under(&g, &home, &ws.clone().with_free(FreeWeight::One)));
+            assert_eq!(expected_one, own, "seed {seed}");
+            for (store, expected) in [(ws.clone(), &expected_total), (ws.clone().with_free(FreeWeight::One), &own)] {
+                let mut h = reseated(&g, &weighted_home(&home, &store));
+                h.marginalize(|var| summed.contains(&var)).unwrap();
+                if h.vtree().free_leaves() != free {
+                    continue;
+                }
+                assert!(h.vtree().bottomup().any(|t| h.vtree().node(t).is_region()), "seed {seed}");
+                assert_eq!(&exact_weight(&h.weighted_value().unwrap().unwrap()), expected, "seed {seed}");
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 100, "{checked} checked");
+}
+
+#[test]
+fn weights_that_weigh_free_variables_differently_are_incompatible() {
+    let eng = Engine::new();
+    let (home, f, _) = x1_not_x3(&eng);
+    let total = Weights::new(RationalWeights::unit(4), Arithmetic::ExactRational);
+    assert_eq!(total.free(), FreeWeight::Total);
+    let mut summed = reseated(&f, &weighted_home(&home, &total));
+    summed.marginalize(|var| var.0 <= 2).unwrap();
+    assert!(summed.vtree().regions().next().is_some());
+    let one = weighted_home(&home, &total.clone().with_free(FreeWeight::One));
+    let r = eng.transport(&summed, &one, |v| v, 0).unwrap_err();
+    assert_eq!(r.error, crate::restructure::TransportError::Weights(crate::diagram::TddBuildError::IncompatibleWeights));
 }

@@ -647,6 +647,8 @@ pub(super) struct CompleteLevel {
     pub(super) nodes: u128,
     /// The units the build charges the work clock.
     pub(super) work: u128,
+    /// The pairs its nodes hold.
+    pub(super) pairs: u128,
     /// The pairs its arena holds: every pair, less those of the cells of
     /// two one-pair nodes, which are held inline.
     pub(super) arena: u128,
@@ -674,6 +676,7 @@ pub(super) fn complete_level(
     Some(CompleteLevel {
         nodes: fl * gl,
         work: fp * gp + fl * shape.g.here as u128,
+        pairs: fp * gp,
         arena: fp * gp - fs * gs,
     })
 }
@@ -683,7 +686,8 @@ pub(super) fn complete_level(
 /// conjunction's past the output-node cap, `before` being the nodes the
 /// levels under it hold, where its build could end no other way: no byte
 /// budget or memory hook can refuse it, no stop rule can fire within the
-/// work it would charge nor at the pairs it would put in flight, and its
+/// work it would charge nor at the pairs it would put in flight or settle
+/// at ([`Limits::level_settled`]), and its
 /// nodes fit a level. The built level would fail the cap check at the next
 /// level boundary; the work clock is charged the units the build would
 /// have charged, and that check is taken here, so the caller reads the
@@ -714,13 +718,14 @@ pub(super) fn refuse_past_cap(
     let emit = emit_pair_bound(here.f.t, here.g.t);
     // The meter rises by the arena's seed, the capacity the output level
     // holds from the pool doubled at most, and the doublings to the
-    // arena's pairs.
+    // arena's pairs, and then settles at the level's pairs.
     let held = run.levels[shape.t.idx()].pairs.capacity() as u128;
     let in_flight = held
         .saturating_mul(2)
         .saturating_add(emit)
         .saturating_add(level.arena.saturating_mul(2))
-        .saturating_add(8);
+        .saturating_add(8)
+        .max(level.pairs);
     let (Ok(total), Ok(work), Ok(in_flight)) =
         (u64::try_from(total), u64::try_from(level.work), u64::try_from(in_flight))
     else {

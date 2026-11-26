@@ -162,18 +162,9 @@ impl Engine {
         let _op = self.limits().enter()?;
         let Some(ws) = tdd.weight_table() else { return Ok(None); };
         let mut gate = self.limits().gate();
-        let mut value = if tdd.is_one() { None } else { Some(weighted_output_value(self, tdd, ws, &mut gate)?) };
-        if let Some(free) = tdd.vtree.free_set().filter(|_| !tdd.is_zero()) {
-            for var in free.vars() {
-                gate.poll(1)?;
-                let one = ws.leaf_val(var, LeafLabel::One);
-                value = Some(match value {
-                    Some(v) => v.mul(&one),
-                    None => one,
-                });
-            }
-        }
-        let value = value.expect("a home has a leaf");
+        let own = if tdd.is_one() { None } else { Some(weighted_output_value(self, tdd, ws, &mut gate)?) };
+        let value = ws.times_free(own, tdd.vtree.free_set().filter(|_| !tdd.is_zero()), &mut gate)?;
+        let value = value.unwrap_or_else(|| ws.wone());
         gate.finish()?;
         Ok(Some(value))
     }

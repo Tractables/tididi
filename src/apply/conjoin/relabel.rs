@@ -289,7 +289,6 @@ fn relabel_level(
     })?;
     gate.flush()?;
     level.shrink_arrays();
-    lim.level_settled(level.pairs.len() as u64);
     Ok(level.pairs.len() + inline)
 }
 
@@ -442,7 +441,6 @@ pub(super) fn take_pass_level(
     let (mut gate, inline) = (rows.gate, rows.inline);
     gate.flush()?;
     level.shrink_arrays();
-    lim.level_settled(level.pairs.len() as u64);
     let nodes = level.nodes().len();
     if run.plain {
         let pairs = level.pairs.len() + inline;
@@ -836,7 +834,6 @@ fn cross_level(
         }
     }
     level.shrink_arrays();
-    lim.level_settled(0);
     let nodes = level.nodes().len();
     if run.plain {
         level.leave_live_pairs(nodes);

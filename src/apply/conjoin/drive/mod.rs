@@ -113,6 +113,7 @@ fn sweep_levels(
         let before = output_nodes + cone.free_before(k);
         lim.level_done(before)?;
         build_level(eng, run, f, g, sweep, (t, left, right), before)?;
+        lim.level_settled(run.levels[t.idx()].live_pairs() as u64);
         let nodes = run.levels[t.idx()].slot_count();
         if nodes == 0 && run.plain && sweep.counted.is_none() {
             run.dead = true;
@@ -207,6 +208,7 @@ fn reach(
         super::identity::publish_identity_level(run.products, side, run.f_widths[side]);
         run.products.note_complete(side);
         f.carry(lim, side, &mut run.levels[side])?;
+        lim.level_settled(run.levels[side].live_pairs() as u64);
     }
     if lim.output_node_cap().is_some() {
         run.cone.free_nodes = run.cone.free_nodes.saturating_sub(run.f_widths[at] as u64);
@@ -287,15 +289,7 @@ fn build_level(
             &marginal,
             run.sparse_gate(shape, here.f.t, here.g.t),
         );
-        // A level taken from the sparse-marginal route meters its pairs as
-        // that route does, which returns before the per-level tail: what it
-        // charged the output-pair meter comes off at the next level that
-        // settles (`Limits::level_settled`). Settled, its pairs would stay in
-        // flight for the rest of the conjunction and could trip a pair floor
-        // the sparse-marginal route does not.
-        let mut settles = true;
         if describes_marginal_child(eng, run, here, sweep, shape, (&plan, &marginal), route) {
-            settles = route != Route::SparseMarg || taken_levels_settled_forced();
             route = Route::MarginalChild;
         }
         route.validate(here, shape, &marginal, run)?;
@@ -313,7 +307,7 @@ fn build_level(
             // Claims no grid of its own: the parent that densifies its
             // product list prices that grid.
             Route::SparseMarg => {
-                build_level_dense(eng, run, here, LevelBuild { shape, route, plan, settles }, sweep)?
+                build_level_dense(eng, run, here, LevelBuild { shape, route, plan }, sweep)?
             }
             _ => {
                 // Priced before its grid is claimed: a level that cannot fit
@@ -323,7 +317,7 @@ fn build_level(
                 #[cfg(debug_assertions)]
                 let predicted = super::price::complete_level(run, here, shape, route)
                     .map(|level| (level, eng.limits().mark()));
-                build_level_dense(eng, run, here, LevelBuild { shape, route, plan, settles }, sweep)?;
+                build_level_dense(eng, run, here, LevelBuild { shape, route, plan }, sweep)?;
                 #[cfg(debug_assertions)]
                 if let Some((level, mark)) = predicted {
                     let built = run.levels[t.idx()].slot_count() as u128;
@@ -709,6 +703,7 @@ fn apply_and_held(
         super::leaf_seed::carry_region_leaves(lim, &vtree, cone.leaves, run.levels, f, g)?;
     }
     let carried = region::take_regions(&vtree, lim, &mut run, f, g, closed)?;
+    lim.level_settled(carried as u64);
     let mut sweep = Sweep {
         vtree: &vtree,
         targets,
