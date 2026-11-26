@@ -206,11 +206,11 @@ fn apply_and_rejects_marginalize_schedule_violation() {
     use crate::test_helpers::marginalize_subtree;
     use crate::vtree::VtreeIdx;
     let nvars = 6u32;
-    let vtree = Arc::new(Vtree::balanced(nvars));
+    let vtree = Home::new(Vtree::balanced(nvars));
     let build = |cls: &[&[(u32, bool)]]| -> Tdd {
         let mut acc: Option<Tdd> = None;
         for literals in cls {
-            let cl = clause_to_tdd(&crate::vtree::Home::unchecked(&vtree), &crate::test_helpers::clause(literals));
+            let cl = clause_to_tdd(&vtree, &crate::test_helpers::clause(literals));
             acc = Some(match acc {
                 None => cl,
                 Some(a) => and2(&a, &cl),
@@ -234,8 +234,7 @@ fn apply_and_rejects_marginalize_schedule_violation() {
     let mut fm = f_raw.clone();
     marginalize_subtree(&mut fm, ra);
     fm.minimize().unwrap();
-    let has_marginal = (0..vtree.num_nodes())
-        .any(|i| fm.levels[i].is_marginal());
+    let has_marginal = fm.has_marginal_level();
     // Which variables does marginalizing node `ra` sum out (the leaves under ra)?
     // Production only marginalizes PRIVATE vars — vars no partner references. If any
     // of these is in partner's support, this is the restore-a-needed-variable case,
@@ -291,7 +290,7 @@ fn projecting_across_a_marginal_sibling_is_refused() {
     let mut fm = apply_and(t1, t2);
     let ab = leaf_parent(&vtree, 1, 2);
     crate::test_helpers::marginalize_subtree(&mut fm, ab);
-    assert!(fm.levels[ab.idx()].is_marginal());
+    assert!(fm.has_marginal_level());
     assert!(matches!(fm.exists_var(VarId(3)), Err(crate::OperationError::MarginalLevel(_))));
 }
 
