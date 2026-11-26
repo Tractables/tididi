@@ -34,7 +34,7 @@ fn weighted_closure_root(
     vtree: &Arc<Vtree>,
     algebra: RationalWeights,
 ) -> BigRational {
-    let vtree = &Arc::new(Vtree::clone(vtree).with_weights(Weights::new(algebra, Arithmetic::ExactRational)).unwrap());
+    let vtree = &crate::vtree::Home::new(Vtree::clone(vtree).with_weights(Weights::new(algebra, Arithmetic::ExactRational)).unwrap());
     let (a, b) = vtree.children(vtree.root());
     let mut tdd = compile_clauses(vtree, clauses);
     crate::marginal::tests::marginalize_levels(eng, &mut tdd, &[a, b])
@@ -64,7 +64,7 @@ fn weighted_closure_root(
 fn weighted_closure_unit_weights_matches_model_count() {
     let eng = Engine::new();
     let clauses = closure_cluster_clauses();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(4));
     let mc = BigRational::from(BigInt::from(
         (compile_clauses(&vtree, &clauses)).model_count().unwrap(),
     ));
@@ -76,7 +76,7 @@ fn weighted_closure_unit_weights_matches_model_count() {
 fn weighted_closure_nonunit_weights_matches_evaluate() {
     let eng = Engine::new();
     let clauses = closure_cluster_clauses();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(4));
     let weights = vec![
         LiteralWeights {
             negative: rat(1, 2),
@@ -142,7 +142,7 @@ fn nested_marginal_levels(tdd: &Tdd) -> Vec<usize> {
 #[test]
 fn integer_marginalize_leaves_no_subsumed_data() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(5));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(5));
     let mut tdd = compile_clauses(&vtree, &nested_region_clauses());
     let mc_before = tdd.model_count().unwrap();
     let targets: Vec<_> = vtree
@@ -176,7 +176,7 @@ fn integer_marginalize_leaves_no_subsumed_data() {
 #[test]
 fn weighted_marginalize_leaves_no_subsumed_data() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(5).with_weights(Weights::new(
+    let vtree = crate::vtree::Home::new(Vtree::balanced(5).with_weights(Weights::new(
         RationalWeights::unit(5),
         Arithmetic::ExactRational,
     )).unwrap());

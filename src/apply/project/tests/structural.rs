@@ -154,7 +154,7 @@ fn the_prune_after_the_sweep_drops_what_a_whole_prune_drops() {
         for (name, tree) in bare_roots(vtree_shapes(nvars)) {
             for _ in 0..6 {
                 let clauses = rand_cnf(&mut rng, nvars, CnfShape { clauses: 2 * nvars as usize, width: 3 });
-                let f = compile_clauses(&tree, &clauses);
+                let f = compile_clauses(&crate::vtree::Home::unchecked(&tree), &clauses);
                 let leaves: Vec<VtreeIdx> = (1..=nvars)
                     .filter(|_| rng.below(3) == 0)
                     .map(|v| tree.leaf_of(VarId(v)).unwrap())
@@ -314,7 +314,7 @@ fn regrouping_matches_the_owner_set_rule() {
         let num_vars = 6 + round % 9;
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 4 + round as usize, width: 4 });
         for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
-            let f = compile_clauses(&vtree, &clauses);
+            let f = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &clauses);
             if f.is_zero() { continue; }
             for &parent in vtree.bottomup_slice() {
                 let level = &f.levels[parent.idx()];
@@ -394,7 +394,7 @@ fn a_level_of_one_atom_per_pair_follows_the_owner_set_rule() {
         let rows: Vec<bool> = (0..1u64 << num_vars).map(|_| rng.below(1 << num_vars) < 3 * u64::from(num_vars)).collect();
         let vars: Vec<VarId> = (1..=num_vars).map(VarId).collect();
         for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
-            for f in [compile_clauses(&vtree, &clauses), or_of_cubes(&vtree, &vars, |row| rows[row])] {
+            for f in [compile_clauses(&crate::vtree::Home::unchecked(&vtree), &clauses), or_of_cubes(&crate::vtree::Home::unchecked(&vtree), &vars, |row| rows[row])] {
                 if f.is_zero() { continue; }
                 for &parent in vtree.bottomup_slice() {
                     let level = &f.levels[parent.idx()];
@@ -455,7 +455,7 @@ fn a_level_of_one_node_is_written_alike_run_by_run() {
         let num_vars = 6 + round % 9;
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 4 + round as usize, width: 4 });
         for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
-            let f = compile_clauses(&vtree, &clauses);
+            let f = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &clauses);
             if f.is_zero() { continue; }
             for &parent in vtree.bottomup_slice() {
                 let level = &f.levels[parent.idx()];
@@ -534,7 +534,7 @@ fn a_level_of_one_node_with_unsorted_runs_is_written_in_order() {
         let num_vars = 6 + round % 9;
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 4 + round as usize, width: 4 });
         for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
-            let f = compile_clauses(&vtree, &clauses);
+            let f = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &clauses);
             if f.is_zero() { continue; }
             for &parent in vtree.bottomup_slice() {
                 if vtree.node(parent).is_leaf() || f.levels[parent.idx()].nodes().len() != 1 { continue; }
@@ -628,7 +628,7 @@ fn written_by_rows() -> Vec<Tdd> {
         let num_vars = 6 + round % 9;
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 4 + round as usize, width: 4 });
         for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
-            let f = compile_clauses(&vtree, &clauses);
+            let f = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &clauses);
             if f.is_zero() { continue; }
             for &parent in vtree.bottomup_slice() {
                 let level = &f.levels[parent.idx()];
@@ -964,7 +964,7 @@ fn exists_above_a_summed_out_level_is_refused() {
     let mut wrong = Vec::new();
     for (text, clauses) in homes {
         let tree = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::from_text(text).unwrap()));
-        let mut f = compile_clauses(&tree, &clauses);
+        let mut f = compile_clauses(&crate::vtree::Home::unchecked(&tree), &clauses);
         f.marginalize(crate::test_helpers::summing(f.vtree(), &[tree.leaf_of(VarId(1)).unwrap()])).unwrap();
         assert_eq!(f.model_count().unwrap(), 3u32.into());
         for quantify in [Tdd::exists_var as fn(Tdd, VarId) -> _, |f: Tdd, x| f.exists_vars(&[x])] {

@@ -70,7 +70,7 @@ fn an_accepted_rotation_keeps_the_fusion_records_it_left_alone() {
         for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
             let eng = Engine::new();
             let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 2 * num_vars as usize, width: 3 });
-            let mut f = compile_clauses_on(&eng, &vtree, &clauses);
+            let mut f = compile_clauses_on(&eng, &crate::vtree::Home::unchecked(&vtree), &clauses);
             if f.is_zero() {
                 continue;
             }

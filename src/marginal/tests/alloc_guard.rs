@@ -73,7 +73,7 @@ fn marginal_refusals(weighted: bool, overflow: bool) {
     let original = if overflow {
         Tdd::one(&crate::vtree::Home::unchecked(&vtree))
     } else {
-        compile_clauses(&vtree, &[
+        compile_clauses(&crate::vtree::Home::unchecked(&vtree), &[
             vec![1, 2, -5], vec![-2, 3, 6], vec![4, -7, 8], vec![-1, 5, -8],
         ])
     };

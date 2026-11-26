@@ -33,7 +33,7 @@ fn draw_vars(rng: &mut Lcg, vars: &Range<u32>) -> u32 {
 /// second.
 pub fn chain() -> (Tdd, [VtreeIdx; 3]) {
     let eng = Engine::new();
-    let vtree = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::linear(4)));
+    let vtree = crate::vtree::Home::new(Vtree::linear(4));
     let root = vtree.root();
     let a = vtree.children(root).1;
     let b = vtree.children(a).1;
@@ -169,6 +169,7 @@ pub fn random_diagrams(seed: u64, count: usize, vars: Range<u32>) -> Vec<Tdd> {
         let shape = CnfShape { clauses: n as usize, width: 4 };
         for (_, vtree) in bare_roots(vtree_shapes(n)) {
             let eng = Engine::new();
+            let vtree = crate::vtree::Home::unchecked(&vtree);
             let f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, shape));
             assert_canonical(&f);
             if out.len() % 2 == 1 {
@@ -194,6 +195,7 @@ pub fn marginal_diagrams(seed: u64, count: usize, vars: Range<u32>) -> Vec<(Tdd,
         let shape = CnfShape { clauses: n as usize, width: 4 };
         for (_, vtree) in bare_roots(vtree_shapes(n)) {
             let eng = Engine::new();
+            let vtree = crate::vtree::Home::unchecked(&vtree);
             let mut f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, shape));
             let inner: Vec<VtreeIdx> = vtree.internal_bottomup().map(|(t, _, _)| t).filter(|&t| t != vtree.root()).collect();
             if f.is_zero() || inner.is_empty() { continue; }

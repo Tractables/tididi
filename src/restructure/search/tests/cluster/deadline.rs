@@ -49,7 +49,7 @@ pub(super) fn one_candidate_tdd() -> (Tdd, VtreeIdx) {
     ];
     let mut acc: Option<Tdd> = None;
     for c in &clauses {
-        let clause = clause_to_tdd(&vtree, c);
+        let clause = clause_to_tdd(&crate::vtree::Home::unchecked(&vtree), c);
         acc = Some(match acc {
             Some(prev) => {
                 let mut r = apply_and(prev, clause);
@@ -121,7 +121,7 @@ pub(super) fn worthwhile_candidate_tdd() -> (Tdd, VtreeIdx) {
     };
     let mut acc: Option<Tdd> = None;
     for _ in 0..38 {
-        let clause = clause_to_tdd(&vtree, &[lit(1..11), lit(11..15), lit(15..24)]);
+        let clause = clause_to_tdd(&crate::vtree::Home::unchecked(&vtree), &[lit(1..11), lit(11..15), lit(15..24)]);
         acc = Some(match acc {
             Some(prev) => {
                 let mut r = apply_and(prev, clause);

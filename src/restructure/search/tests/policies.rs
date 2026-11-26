@@ -23,7 +23,7 @@ fn bounded() -> RotationSearchConfig {
 fn plateau() -> Tdd {
     let vtree = Arc::new(Vtree::balanced(7));
     let mut tdd = compile_clauses(
-        &vtree,
+        &crate::vtree::Home::unchecked(&vtree),
         &[vec![5], vec![3, -4], vec![5, 1, 7], vec![-6, 7, 5], vec![-7, -2]],
     );
     tdd.minimize().expect("an unarmed engine refuses nothing");

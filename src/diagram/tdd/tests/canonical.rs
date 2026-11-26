@@ -140,7 +140,7 @@ mod producers {
             let mut rng = Lcg::new(seed ^ 0x51b);
             let n = 2 + rng.below(6) as u32;
             let vtree = Arc::new(Vtree::random(n, seed));
-            let f = rand_conj(&vtree, n, 4, 3, false, &mut rng);
+            let f = rand_conj(&crate::vtree::Home::unchecked(&vtree), n, 4, 3, false, &mut rng);
             for key in vtree.bottomup().filter(|&t| t != vtree.root()) {
                 let g = eng.project_to_subtree(&f, key).unwrap();
                 certified(&g, &format!("seed {seed}: project_to_subtree at {}", key.0));

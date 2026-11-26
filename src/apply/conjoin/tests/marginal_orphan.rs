@@ -20,7 +20,7 @@ fn a_zero_width_marginal_orphan_conjoins_to_the_same_count() {
     // Both operands constrain only the left half, so marginalizing the right
     // subtree gives them the same mass there.
     let fixture = |clauses: &[Vec<i32>]| {
-        let mut t = crate::test_helpers::compile_clauses(&vtree, clauses);
+        let mut t = crate::test_helpers::compile_clauses(&crate::vtree::Home::unchecked(&vtree), clauses);
         crate::test_helpers::marginalize_subtree(&mut t, right);
         t
     };

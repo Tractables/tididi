@@ -120,7 +120,7 @@ fn case(eng: &Engine, seed: u64, rng: &mut Lcg) -> Case {
     let vtree = match rng.below(3) {
         0 => {
             let own = Vtree::projection(&dest, vars.iter().map(|v| back[v.idx()])).unwrap();
-            Arc::clone(&Home::new(renamed_mirrored(&own, &perm, n, rng)))
+            std::sync::Arc::clone(&Home::new(renamed_mirrored(&own, &perm, n, rng)))
         }
         _ => Vtree::projection(&source_home, vars).unwrap(),
     };
@@ -265,7 +265,7 @@ fn a_refused_rotation_hands_back_f_as_it_was() {
     let kept = [1u32, 2, 3, 5, 6, 8, 9];
     let own = Vtree::projection(&home, kept.map(VarId)).unwrap();
     let eng = Engine::new();
-    let f = crate::test_helpers::rand_conj_over(&own, &kept, 8, 3, false, &mut rng);
+    let f = crate::test_helpers::rand_conj_over(&home, &kept, 8, 3, false, &mut rng);
     let f = crate::test_helpers::embedded(&f, &own, |v| v).unwrap().0;
     let order = [1, 10, 2, 9, 3, 8, 4, 7, 5, 6].map(VarId);
     let other = Home::new(Vtree::balanced_over(&order).unwrap());

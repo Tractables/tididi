@@ -2,7 +2,6 @@
 //! `One` and no constant with a node. Their results are not minimized, so a
 //! leaf the result does not depend on goes at the next minimize.
 
-use std::sync::Arc;
 
 use crate::test_helpers::check::{check_loose_levels, check_trimmed};
 use crate::vtree::{Home, VarId, Vtree};
@@ -39,7 +38,7 @@ fn assert_all(failed: Vec<String>) {
 fn and_clause_on_a_home_ends_trimmed() {
     let eng = Engine::new();
     let home = Home::new(Vtree::join(&leaf(1), &leaf(2)).unwrap());
-    let two = Arc::clone(&home);
+    let two = home.clone();
     let y = trimmed(&home, eng.literal(&crate::vtree::Home::new(std::sync::Arc::clone(&two)), 2).unwrap());
     let x_or_y = eng.clause(&crate::vtree::Home::new(std::sync::Arc::clone(&two)), [1, 2]).unwrap();
     let cases: [(&str, Tdd, &[i32], Tdd); 5] = [
@@ -61,7 +60,7 @@ fn and_clause_on_a_home_ends_trimmed() {
 fn or_cube_on_a_home_ends_trimmed() {
     let eng = Engine::new();
     let home = Home::new(Vtree::join(&Vtree::join(&leaf(1), &leaf(2)).unwrap(), &leaf(3)).unwrap());
-    let xyz = Arc::clone(&home);
+    let xyz = home.clone();
     let x_or_z = trimmed(&home, eng.clause(&crate::vtree::Home::new(std::sync::Arc::clone(&xyz)), [1, 3]).unwrap());
     let x = trimmed(&home, eng.literal(&crate::vtree::Home::new(std::sync::Arc::clone(&xyz)), 1).unwrap());
     let cases: [(&str, Tdd, &[i32], Tdd); 4] = [

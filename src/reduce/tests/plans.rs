@@ -100,14 +100,14 @@ fn a_content_scan_between_conjunctions_moves_a_count_diagram_s_fixpoint() {
         f.reduce(ReductionPlan::Full(twins)).unwrap();
     };
     let summed = |clauses: &[Vec<i32>], scan: bool| {
-        let mut f = compile_clauses(&vtree, clauses);
+        let mut f = compile_clauses(&crate::vtree::Home::unchecked(&vtree), clauses);
         f.marginalize(crate::test_helpers::summing(f.vtree(), &[h])).unwrap();
         full(&mut f, scan);
         f
     };
     let orders = |scan: bool| {
         let at_once = summed(&[f1.clone(), f2.clone()].concat(), scan);
-        let mut staged = crate::and(summed(&f1, scan), compile_clauses(&vtree, &f2)).unwrap();
+        let mut staged = crate::and(summed(&f1, scan), compile_clauses(&crate::vtree::Home::unchecked(&vtree), &f2)).unwrap();
         full(&mut staged, scan);
         assert_eq!(at_once.model_count().unwrap(), staged.model_count().unwrap());
         (at_once, staged)

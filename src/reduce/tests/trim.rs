@@ -20,7 +20,7 @@ fn weights(num_vars: u32, rng: &mut Lcg) -> Weights {
 
 /// A diagram over `home` after random conditioning, forgetting,
 /// conjunction and minimization.
-fn random_diagram(home: &Arc<Vtree>, n: u32, rng: &mut Lcg) -> Tdd {
+fn random_diagram(home: &crate::vtree::Home, n: u32, rng: &mut Lcg) -> Tdd {
     let mut f = rand_conj(home, n, 4, 3, false, rng);
     for _ in 0..rng.below(4) {
         let var = VarId(1 + rng.below(n as u64) as u32);
@@ -67,7 +67,7 @@ fn trimmed_copies_answer_as_the_original() {
         let mut rng = Lcg::new(seed);
         let n = 2 + rng.below(8) as u32;
         let hm = Home::new(Vtree::random(n, seed));
-        let home = Arc::clone(&hm);
+        let home = hm.clone();
         let f = random_diagram(&home, n, &mut rng);
         let label = format!("seed {seed}, {n} variables");
 
@@ -95,13 +95,13 @@ fn trimmed_copies_answer_as_the_original() {
 #[test]
 fn constants_have_no_leaf() {
     let hm = Home::new(Vtree::balanced(5));
-    let home = Arc::clone(&hm);
-    let mut zero = crate::test_helpers::padded(Tdd::zero(&crate::vtree::Home::new(std::sync::Arc::clone(&home))), &home);
+    let home = hm.clone();
+    let mut zero = crate::test_helpers::padded(Tdd::zero(&home.clone()), &home);
     assert!(zero.trim(&hm).unwrap());
     assert!(zero.is_zero() && zero.vtree().num_nodes() == 0);
     assert_eq!(zero.model_count().unwrap(), 0u32.into());
 
-    let mut one = crate::test_helpers::padded(Tdd::one(&crate::vtree::Home::new(std::sync::Arc::clone(&home))), &home);
+    let mut one = crate::test_helpers::padded(Tdd::one(&home.clone()), &home);
     assert!(one.trim(&hm).unwrap());
     assert!(one.is_one() && !one.is_zero());
     assert_eq!(one.vtree().num_nodes(), 0);
@@ -112,7 +112,7 @@ fn constants_have_no_leaf() {
     assert!(!one.trim(&hm).unwrap());
     check_trimmed(&one, true).unwrap();
 
-    let mut x = crate::test_helpers::padded(literal(&crate::vtree::Home::new(std::sync::Arc::clone(&home)), 3).unwrap(), &home);
+    let mut x = crate::test_helpers::padded(literal(&home.clone(), 3).unwrap(), &home);
     assert!(x.trim(&hm).unwrap());
     assert_eq!(x.vtree().num_nodes(), 1);
     assert_eq!(x.model_count().unwrap(), 16u32.into());
@@ -142,7 +142,7 @@ fn own_at_finds_the_top_own_node_under_a_home_node() {
         let mut rng = Lcg::new(seed);
         let n = 1 + rng.below(12) as u32;
         let hm = Home::new(Vtree::random(n, seed));
-        let home = Arc::clone(&hm);
+        let home = hm.clone();
         let mut vars = var_subset(n, &mut rng);
         if vars.is_empty() {
             vars.push(VarId(1));
@@ -160,7 +160,7 @@ fn own_at_finds_the_top_own_node_under_a_home_node() {
 #[test]
 fn counts_on_a_projection_are_over_the_home() {
     let hm = Home::new(Vtree::balanced(6));
-    let home = Arc::clone(&hm);
+    let home = hm.clone();
     let own = Vtree::projection(&hm, [VarId(2), VarId(5)]).unwrap();
     let f = Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&own)), [2, 5]).unwrap();
     assert_eq!(f.model_count().unwrap(), (3u32 << 4).into());
@@ -169,7 +169,7 @@ fn counts_on_a_projection_are_over_the_home() {
     let all: Vec<VarId> = (1..=6).map(VarId).collect();
     assert_eq!(f.projected_model_count(&all).unwrap(), f.model_count().unwrap());
     assert!(matches!(f.projected_model_count(&[VarId(7)]), Err(crate::OperationError::VariableNotInVtree(_))));
-    let mut on_home = Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&home)), [2, 5]).unwrap();
+    let mut on_home = Tdd::clause(&home.clone(), [2, 5]).unwrap();
     on_home.minimize().unwrap();
     assert_eq!(on_home.model_count().unwrap(), f.model_count().unwrap());
 }
@@ -180,7 +180,7 @@ fn merged_nodes_and_leaves_named_by_both_literals() {
     let eng = Engine::new();
     // x1 ↔ x2, its two nodes under one root node beside true over x3, x4.
     let hm = Home::new(Vtree::balanced(4));
-    let home = Arc::clone(&hm);
+    let home = hm.clone();
     let (l, r) = home.children(home.root());
     let mut b = Tdd::builder(&eng, &home).unwrap();
     let same = b.push(&eng, l, &[ChildPair::new(POS_LEAF_IDX, POS_LEAF_IDX)]).unwrap();
@@ -200,7 +200,7 @@ fn merged_nodes_and_leaves_named_by_both_literals() {
     // (x1 ∨ ¬x1) beside true: x1 is named by both literals, and goes in a
     // second round.
     let hm = Home::new(Vtree::balanced(2));
-    let two = Arc::clone(&hm);
+    let two = hm.clone();
     let mut b = Tdd::builder(&eng, &two).unwrap();
     let root = b
         .push(&eng, two.root(), &[ChildPair::new(POS_LEAF_IDX, ONE_LEAF_IDX), ChildPair::new(NEG_LEAF_IDX, ONE_LEAF_IDX)])
@@ -217,7 +217,7 @@ fn counters_count_over_the_home() {
         let mut rng = Lcg::new(seed);
         let n = 2 + rng.below(7) as u32;
         let hm = Home::new(Vtree::random(n, seed));
-        let home = Arc::clone(&hm);
+        let home = hm.clone();
         let f = random_diagram(&home, n, &mut rng);
         let mut g = f.clone();
         g.trim(&hm).unwrap();
@@ -241,7 +241,7 @@ fn counters_count_over_the_home() {
 /// `dropped` named true: each internal level's nodes split a random subset
 /// of the pairs of its children's nodes, or, at random, hold the whole grid
 /// one pair a node in row order, which a seat describes.
-fn built_diagram(home: &Arc<Vtree>, dropped: &[bool], rng: &mut Lcg) -> Tdd {
+fn built_diagram(home: &crate::vtree::Home, dropped: &[bool], rng: &mut Lcg) -> Tdd {
     use crate::diagram::{ChildPair, NodeIdx, TddNodeId, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
     let eng = Engine::new();
     let mut b = Tdd::builder(&eng, home).unwrap();
@@ -319,7 +319,7 @@ fn in_place_against_rebuild(seed: u64, seen: &mut [usize; 6]) {
         true => Home::weighted(Vtree::random(n, seed), weights(n, &mut rng)).unwrap(),
         false => Home::new(Vtree::random(n, seed)),
     };
-    let home = Arc::clone(&hm);
+    let home = hm.clone();
     let mut f = if seed.is_multiple_of(2) {
         random_diagram(&home, n, &mut rng)
     } else {

@@ -53,7 +53,7 @@ fn rand_unminimized_cnf(eng: &Engine, vtree: &Arc<Vtree>, nvars: u32, rng: &mut 
     let shape = CnfShape { clauses: 4, width: nvars as usize };
     let mut acc = constant_one(eng, vtree);
     for clause in rand_cnf(rng, nvars, shape) {
-        let cl = clause_to_tdd(vtree, &literals(&clause));
+        let cl = clause_to_tdd(&crate::vtree::Home::unchecked(vtree), &literals(&clause));
         acc = apply_and(acc, cl);
     }
     acc
@@ -149,7 +149,7 @@ fn six_var_diagram(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
     ];
     let mut acc = constant_one(eng, vtree);
     for clause in &clauses {
-        acc = apply_and(acc, clause_to_tdd(vtree, &literals(clause)));
+        acc = apply_and(acc, clause_to_tdd(&crate::vtree::Home::unchecked(vtree), &literals(clause)));
     }
     acc.minimize().unwrap();
     assert!(!acc.is_zero(), "the fixture must be satisfiable");

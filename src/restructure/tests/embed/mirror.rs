@@ -44,7 +44,7 @@ fn renamed(clauses: &[Vec<i32>], rename: impl Fn(VarId) -> VarId) -> Vec<Vec<i32
 fn a_mirrored_copy_is_the_diagram_compiled_on_the_mirrored_tree() {
     for (num_vars, clauses) in test_cases() {
         for (name, vtree) in bare_roots(vtree_shapes(num_vars)) {
-            let f = compile_clauses(&vtree, &clauses);
+            let f = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &clauses);
             let rename = |v: VarId| VarId(num_vars + 1 - v.0);
             for pick in 0..3u32 {
                 let swap = |t: VtreeIdx| match pick {
@@ -55,7 +55,7 @@ fn a_mirrored_copy_is_the_diagram_compiled_on_the_mirrored_tree() {
                 let into = Arc::new(mirrored_shape(&vtree, rename, swap, num_vars));
                 let (g, levels) = crate::test_helpers::embedded(&f, &into, rename).unwrap();
                 assert_canonical(&g);
-                let direct = compile_clauses(&into, &renamed(&clauses, rename));
+                let direct = compile_clauses(&crate::vtree::Home::unchecked(&into), &renamed(&clauses, rename));
                 assert!(g.equivalent(&direct).unwrap(), "{name}, mirror set {pick}");
                 assert_eq!(g.node_count(), direct.node_count(), "{name}, mirror set {pick}");
                 // Every level is copied pair for pair.

@@ -157,8 +157,8 @@ fn leaf_parent(vtree: &Vtree, x: u32, y: u32) -> crate::vtree::VtreeIdx {
 fn apply_and_zero_width_marginal_levels() {
     let vtree = Arc::new(Vtree::balanced(8));
     // Baseline: var4 ∧ var5 over 8 vars = 2^6 models.
-    let b1 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(5, true)]));
-    let b2 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(6, true)]));
+    let b1 = clause_to_tdd(&crate::vtree::Home::unchecked(&vtree), &crate::test_helpers::clause(&[(5, true)]));
+    let b2 = clause_to_tdd(&crate::vtree::Home::unchecked(&vtree), &crate::test_helpers::clause(&[(6, true)]));
     let baseline = (apply_and(b1, b2)).model_count().unwrap();
     assert_eq!(baseline, BigUint::from(64u32));
 
@@ -167,8 +167,8 @@ fn apply_and_zero_width_marginal_levels() {
     let c = vtree.node(a).parent().expect("A has a parent");
     assert_eq!(vtree.node(b).parent(), Some(c), "C must be Internal(A,B)");
 
-    let mut f = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(5, true)]));
-    let mut g = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(6, true)]));
+    let mut f = clause_to_tdd(&crate::vtree::Home::unchecked(&vtree), &crate::test_helpers::clause(&[(5, true)]));
+    let mut g = clause_to_tdd(&crate::vtree::Home::unchecked(&vtree), &crate::test_helpers::clause(&[(6, true)]));
     for t in [&mut f, &mut g] {
         t.levels[a.idx()].become_marginal(vec![], None); // 0-width orphan
         t.levels[b.idx()].become_marginal(vec![4], None);
@@ -210,7 +210,7 @@ fn apply_and_rejects_marginalize_schedule_violation() {
     let build = |cls: &[&[(u32, bool)]]| -> Tdd {
         let mut acc: Option<Tdd> = None;
         for literals in cls {
-            let cl = clause_to_tdd(&vtree, &crate::test_helpers::clause(literals));
+            let cl = clause_to_tdd(&crate::vtree::Home::unchecked(&vtree), &crate::test_helpers::clause(literals));
             acc = Some(match acc {
                 None => cl,
                 Some(a) => and2(&a, &cl),

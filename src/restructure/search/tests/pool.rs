@@ -50,11 +50,11 @@ pub(super) fn replays_refusal() -> bool {
 fn pool() -> Vec<Tdd> {
     let vtree = Arc::new(Vtree::balanced(VARS));
     let mut members = vec![
-        compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3], vec![3, 4], vec![-4, 5], vec![5, -6], vec![1, -6]]),
-        compile_clauses(&vtree, &[vec![1, 6], vec![2, -5], vec![-3, 4]]),
-        compile_clauses(&vtree, &[vec![-1, -4], vec![2, 5], vec![3, 6], vec![-2, -3]]),
-        compile_clauses(&vtree, &[]),
-        compile_clauses(&vtree, &[vec![-4]]),
+        compile_clauses(&crate::vtree::Home::unchecked(&vtree), &[vec![1, 2], vec![-2, 3], vec![3, 4], vec![-4, 5], vec![5, -6], vec![1, -6]]),
+        compile_clauses(&crate::vtree::Home::unchecked(&vtree), &[vec![1, 6], vec![2, -5], vec![-3, 4]]),
+        compile_clauses(&crate::vtree::Home::unchecked(&vtree), &[vec![-1, -4], vec![2, 5], vec![3, 6], vec![-2, -3]]),
+        compile_clauses(&crate::vtree::Home::unchecked(&vtree), &[]),
+        compile_clauses(&crate::vtree::Home::unchecked(&vtree), &[vec![-4]]),
     ];
     for m in &mut members {
         m.minimize().expect("an unarmed engine refuses nothing");
@@ -68,7 +68,7 @@ fn truth_table(f: &Tdd) -> Vec<bool> {
     (0..1u32 << VARS)
         .map(|bits| {
             let literals: Vec<(u32, bool)> = (0..VARS).map(|i| (i + 1, bits >> i & 1 == 1)).collect();
-            !and2(f, &cube(f.vtree(), &literals)).is_zero()
+            !and2(f, &cube(&crate::vtree::Home::unchecked(f.vtree()), &literals)).is_zero()
         })
         .collect()
 }
@@ -243,7 +243,7 @@ fn a_crossed_move_changes_the_order_of_the_leaves() {
 fn members_on_different_vtrees_are_refused() {
     let mut a = pool();
     let other = Arc::new(Vtree::balanced(VARS));
-    let mut b = compile_clauses(&other, &[vec![1, 2]]);
+    let mut b = compile_clauses(&crate::vtree::Home::unchecked(&other), &[vec![1, 2]]);
     let eng = crate::Engine::new();
     let mut refs: Vec<&mut Tdd> = vec![&mut a[0], &mut b];
     let mv = moves(refs[0].vtree())[0];
@@ -419,7 +419,7 @@ fn search_stops_before_another_applicable_move() {
 fn a_declined_move_puts_every_member_back() {
     let eng = crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(VARS));
-    let mut original = vec![Tdd::one(&crate::vtree::Home::unchecked(&vtree)), Tdd::one(&crate::vtree::Home::unchecked(&vtree)), compile_clauses(&vtree, &[vec![-4]])];
+    let mut original = vec![Tdd::one(&crate::vtree::Home::unchecked(&vtree)), Tdd::one(&crate::vtree::Home::unchecked(&vtree)), compile_clauses(&crate::vtree::Home::unchecked(&vtree), &[vec![-4]])];
     for m in &mut original {
         m.minimize().unwrap();
     }
@@ -793,7 +793,7 @@ fn seeded_pool(
     use crate::test_helpers::{compile_clauses_on, rand_cnf};
     (0..4)
         .map(|_| {
-            let mut f = compile_clauses_on(eng, vtree, &rand_cnf(rng, n, shape));
+            let mut f = compile_clauses_on(eng, &crate::vtree::Home::unchecked(vtree), &rand_cnf(rng, n, shape));
             f.minimize().expect("an unarmed engine refuses nothing");
             f
         })
@@ -1012,7 +1012,7 @@ fn a_pool_search_makes_the_moves_and_charges_it_made_before() {
         for (_, vtree) in bare_roots(vtree_shapes(n)) {
             let mut members = seeded_pool(&eng, &mut rng, &vtree, n, CnfShape { clauses: n as usize, width: 3 });
             for clauses in [vec![vec![2]], vec![], vec![vec![1, -(n as i32)]]] {
-                let mut f = compile_clauses_on(&eng, &vtree, &clauses);
+                let mut f = compile_clauses_on(&eng, &crate::vtree::Home::unchecked(&vtree), &clauses);
                 f.minimize().expect("an unarmed engine refuses nothing");
                 members.push(f);
             }

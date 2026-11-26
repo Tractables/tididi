@@ -45,7 +45,7 @@ fn the_rebuild_charges_the_pairs_it_reads_and_writes() {
     for (name, vtree) in bare_roots(vtree_shapes(n)) {
         for case in 0..6 {
             let eng = Engine::new();
-            let f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, CnfShape { clauses: 24, width: 3 }));
+            let f = compile_clauses_on(&eng, &crate::vtree::Home::unchecked(&vtree), &rand_cnf(&mut rng, n, CnfShape { clauses: 24, width: 3 }));
             let mut vars: Vec<u32> = (1..=n).collect();
             let width = 2 + case % 2;
             for k in 0..width {

@@ -103,14 +103,14 @@ fn true_marginal_care_multiregion() -> Vec<Tdd> {
     let mut fold_count_fail = 0;
     let mut first_fold_fail: Option<String> = None;
     for case in 0..800 {
-        let mut fm = rand_conj_over(&vtree, &f_vars, 6, 3, false, &mut rng);
+        let mut fm = rand_conj_over(&crate::vtree::Home::unchecked(&vtree), &f_vars, 6, 3, false, &mut rng);
         if fm.is_zero() {
             continue;
         }
         marginalize_subtree(&mut fm, r_f);
         fm.minimize().unwrap();
 
-        let mut care = rand_conj_over(&vtree, &care_vars, 6, 3, false, &mut rng);
+        let mut care = rand_conj_over(&crate::vtree::Home::unchecked(&vtree), &care_vars, 6, 3, false, &mut rng);
         if count_is_zero(&care) {
             continue;
         }
@@ -296,7 +296,7 @@ fn restrict_marginal_care_same_regions(
     let mut checked = 0;
     let mut pruned = 0;
     for case in 0..800 {
-        let f = rand_conj(&vtree, nvars, 6, 3, false, &mut rng);
+        let f = rand_conj(&crate::vtree::Home::unchecked(&vtree), nvars, 6, 3, false, &mut rng);
         if f.is_zero() {
             continue;
         }
@@ -305,7 +305,7 @@ fn restrict_marginal_care_same_regions(
         if n_marginal_internal(&fm) < want_regions {
             continue;
         }
-        let care0 = rand_conj(&vtree, nvars, 6, 3, false, &mut rng);
+        let care0 = rand_conj(&crate::vtree::Home::unchecked(&vtree), nvars, 6, 3, false, &mut rng);
         if count_is_zero(&care0) {
             continue;
         }
@@ -405,7 +405,7 @@ fn marginal_f() -> Vec<Tdd> {
         // bottom). That interleaving is what exercises a non-marginal node sitting
         // BELOW a marginal one.
         let all_vars: Vec<u32> = (1..=nvars).collect();
-        let mut f = rand_conj_over(&vtree, &all_vars, 6, 3, false, &mut rng);
+        let mut f = rand_conj_over(&crate::vtree::Home::unchecked(&vtree), &all_vars, 6, 3, false, &mut rng);
         if f.is_zero() {
             continue;
         }
@@ -426,7 +426,7 @@ fn marginal_f() -> Vec<Tdd> {
         f.close_levels();
         // care constrains only NON-marginal vars ⇒ identity at f's marginal levels,
         // so the conjoin stays legal and #(f∧care) is well-defined.
-        let care = rand_conj_over(&vtree, &care_vars, 6, 3, false, &mut rng);
+        let care = rand_conj_over(&crate::vtree::Home::unchecked(&vtree), &care_vars, 6, 3, false, &mut rng);
         if care.is_zero() {
             continue;
         }

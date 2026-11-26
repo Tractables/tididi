@@ -72,7 +72,7 @@ impl Sparse {
     fn compile(&self, vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
         let mut acc = constant_one(&self.eng, vtree);
         for clause in clauses {
-            let cl = clause_to_tdd(vtree, &literals(clause));
+            let cl = clause_to_tdd(&crate::vtree::Home::unchecked(vtree), &literals(clause));
             acc = self.and(acc, cl, None);
             self.eng.reduce(&mut acc, ReductionPlan::default())
                 .expect("an unarmed engine refuses nothing");

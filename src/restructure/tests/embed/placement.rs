@@ -215,7 +215,7 @@ fn every_shape_embeds_beside_the_variables_it_leaves_free() {
             let (embedded, levels) = crate::test_helpers::embedded(&f, &big, rename).unwrap();
 
             assert_at_fixpoint(&embedded);
-            let expected = compile_clauses(&big, &renamed);
+            let expected = compile_clauses(&crate::vtree::Home::unchecked(&big), &renamed);
             assert!(embedded.equivalent(&expected).unwrap(), "{label}");
             assert_eq!(
                 embedded.model_count().unwrap(),

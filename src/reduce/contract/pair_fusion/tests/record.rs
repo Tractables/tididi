@@ -116,7 +116,7 @@ fn a_skipped_fusion_is_one_that_finds_no_group() {
                     width: 3,
                 },
             );
-            let mut kept = compile_clauses_on(&eng, &vtree, &clauses);
+            let mut kept = compile_clauses_on(&eng, &crate::vtree::Home::unchecked(&vtree), &clauses);
             if kept.is_zero() {
                 continue;
             }
@@ -243,7 +243,7 @@ fn a_conjunction_records_the_levels_it_builds_beside_a_recorded_carrier() {
                     width: 3,
                 },
             );
-            let mut f = compile_clauses_on(&eng, &vtree, &clauses);
+            let mut f = compile_clauses_on(&eng, &crate::vtree::Home::unchecked(&vtree), &clauses);
             if f.is_zero() {
                 continue;
             }
@@ -266,7 +266,7 @@ fn a_conjunction_records_the_levels_it_builds_beside_a_recorded_carrier() {
             let b = outside.iter().copied().find(|&x| x != a).unwrap();
             let mut sign = |x: i32| if rng.below(2) == 0 { x } else { -x };
             let clause = vec![sign(a), sign(b)];
-            let g = compile_clauses_on(&eng, &vtree, std::slice::from_ref(&clause));
+            let g = compile_clauses_on(&eng, &crate::vtree::Home::unchecked(&vtree), std::slice::from_ref(&clause));
             let label = format!("{shape} over {num_vars} variables");
 
             let kept = eng.and(f.clone(), g.clone()).unwrap();

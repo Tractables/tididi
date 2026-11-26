@@ -1,7 +1,5 @@
 //! Turning a formula, or a hand-written pair list, into a diagram.
 
-use std::sync::Arc;
-
 use num_rational::BigRational;
 
 
@@ -10,7 +8,7 @@ use crate::diagram::{ChildPair, Literal, NodeIdx, Tdd, WeightValue};
 use crate::Engine;
 
 use super::r#gen::Lcg;
-use crate::vtree::{VarId, Vtree};
+use crate::vtree::{Home, VarId};
 
 /// DIMACS-style literals (`±var`) to `Literal`s.
 pub fn literals(clause: &[i32]) -> Vec<Literal> {
@@ -25,14 +23,14 @@ pub fn clause(literals: &[(u32, bool)]) -> Vec<Literal> {
 
 /// Conjoin DIMACS-style clauses one at a time, minimizing after each, on a
 /// fresh engine.
-pub fn compile_clauses(vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
+pub fn compile_clauses(vtree: &Home, clauses: &[Vec<i32>]) -> Tdd {
     compile_clauses_on(&crate::Engine::new(), vtree, clauses)
 }
 
 /// Conjoin DIMACS-style clauses as a pairwise tree, neighbours first and then
 /// their results, and minimize once: a second route to the diagram
 /// [`compile_clauses`] reaches by a left fold.
-pub fn compile_clauses_pairwise(vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
+pub fn compile_clauses_pairwise(vtree: &Home, clauses: &[Vec<i32>]) -> Tdd {
     let mut queue: Vec<Tdd> = clauses.iter().map(|c| clause_to_tdd(vtree, &literals(c))).collect();
     while queue.len() > 1 {
         let mut next = Vec::with_capacity(queue.len().div_ceil(2));
@@ -53,7 +51,7 @@ pub fn compile_clauses_pairwise(vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd
 /// The disjunction of one cube per true row of a truth table over `vars`:
 /// row `r` is in when `truth(r)`, and takes `vars[i]` positive when bit `i`
 /// of `r` is set. Every other variable stays free.
-pub fn or_of_cubes(vtree: &Arc<Vtree>, vars: &[VarId], truth: impl Fn(usize) -> bool) -> Tdd {
+pub fn or_of_cubes(vtree: &Home, vars: &[VarId], truth: impl Fn(usize) -> bool) -> Tdd {
     let mut f = vtree.context().run(|eng| crate::build::constant_zero(eng, vtree));
     for row in 0..1usize << vars.len() {
         if truth(row) {
@@ -70,7 +68,7 @@ pub fn or_of_cubes(vtree: &Arc<Vtree>, vars: &[VarId], truth: impl Fn(usize) -> 
 
 /// [`compile_clauses`] on a caller's engine, so a test that installed its own
 /// thresholds gets every conjunction and reduction of the fold decided by them.
-pub fn compile_clauses_on(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
+pub fn compile_clauses_on(eng: &Engine, vtree: &Home, clauses: &[Vec<i32>]) -> Tdd {
     let mut acc = constant_one(eng, vtree);
     for clause in clauses {
         let cl = clause_to_tdd(vtree, &literals(clause));
@@ -118,7 +116,7 @@ pub fn and2(a: &Tdd, b: &Tdd) -> Tdd {
 
 /// A cube — a conjunction of literals — as a diagram, folded one unit clause
 /// at a time.
-pub fn cube(vtree: &Arc<Vtree>, literals: &[(u32, bool)]) -> Tdd {
+pub fn cube(vtree: &Home, literals: &[(u32, bool)]) -> Tdd {
     let mut acc = clause_to_tdd(vtree, &clause(&[literals[0]]));
     for &l in &literals[1..] {
         acc = and2(&acc, &clause_to_tdd(vtree, &clause(&[l])));
@@ -135,7 +133,7 @@ pub fn cube(vtree: &Arc<Vtree>, literals: &[(u32, bool)]) -> Tdd {
 /// ends and so roots the result at the vtree root — the same-root shape
 /// restriction needs to do anything at all.
 pub fn rand_conj_over(
-    vtree: &Arc<Vtree>,
+    vtree: &Home,
     vars: &[u32],
     nclauses_max: u64,
     width_max: u64,
@@ -172,7 +170,7 @@ pub fn rand_conj_over(
 
 /// [`rand_conj_over`] across every variable of an `nvars` vtree.
 pub fn rand_conj(
-    vtree: &Arc<Vtree>,
+    vtree: &Home,
     nvars: u32,
     nclauses_max: u64,
     width_max: u64,
@@ -184,6 +182,6 @@ pub fn rand_conj(
 }
 
 /// Build an unlimited clause fixture independently of the operation's armed engine.
-pub(crate) fn clause_to_tdd(vtree: &std::sync::Arc<crate::vtree::Vtree>, clause: &[crate::Literal]) -> crate::Tdd {
+pub(crate) fn clause_to_tdd(vtree: &Home, clause: &[crate::Literal]) -> crate::Tdd {
     vtree.context().run(|eng| eng.clause_on(vtree, clause)).unwrap()
 }

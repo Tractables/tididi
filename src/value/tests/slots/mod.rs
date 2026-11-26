@@ -13,7 +13,7 @@ fn refused_weight_slot_preserves_values_and_width() {
     let eng = Engine::new();
     let weights = Weights::new(RationalWeights::unit(4), Arithmetic::ExactRational);
     let vtree = Arc::new(Vtree::balanced(4).with_weights(weights).unwrap());
-    let mut tdd = compile_clauses(&vtree, &[
+    let mut tdd = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &[
         vec![1, 2], vec![-2, 3], vec![3, 4], vec![-1, -4],
     ]);
     assert_canonical(&tdd);

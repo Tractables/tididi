@@ -239,7 +239,7 @@ fn placed(eng: &crate::Engine, rng: &mut crate::test_helpers::Lcg, wide: &Arc<Vt
     use crate::vtree::VarId;
     let (vars, small) = restricted(rng, wide);
     let k = vars.len() as u32;
-    let mut f = compile_clauses_on(eng, &small, &rand_cnf(rng, k, CnfShape { clauses: k as usize, width: 4 }));
+    let mut f = compile_clauses_on(eng, &crate::vtree::Home::unchecked(&small), &rand_cnf(rng, k, CnfShape { clauses: k as usize, width: 4 }));
     eng.minimize(&mut f).unwrap();
     crate::test_helpers::moved(eng, f, wide, |v| VarId(vars[v.idx()])).unwrap().0
 }
@@ -261,7 +261,7 @@ fn an_embedding_lists_the_levels_holding_an_unnamed_node() {
         for case in 0..40 {
             let (vars, small) = restricted(&mut rng, &wide);
             let k = vars.len() as u32;
-            let [mut f, mut g] = [(); 2].map(|()| compile_clauses_on(eng, &small, &rand_cnf(&mut rng, k, CnfShape { clauses: k as usize, width: 3 })));
+            let [mut f, mut g] = [(); 2].map(|()| compile_clauses_on(eng, &crate::vtree::Home::unchecked(&small), &rand_cnf(&mut rng, k, CnfShape { clauses: k as usize, width: 3 })));
             eng.minimize(&mut f).unwrap();
             eng.minimize(&mut g).unwrap();
             let source = eng.and(f, g).unwrap();
@@ -950,7 +950,7 @@ fn the_unnamed_count_is_the_nodes_no_pair_of_the_parent_level_names() {
             }
             eng.minimize(&mut f).unwrap();
             assert_canonical(&f);
-            assert_same_shape(&f, &compile_clauses(&vtree, &clauses), &format!("seed {seed}, {label}"));
+            assert_same_shape(&f, &compile_clauses(&crate::vtree::Home::unchecked(&vtree), &clauses), &format!("seed {seed}, {label}"));
         }
     }
     // A clause conjunction drops most of the nodes it leaves unnamed, so
@@ -1007,7 +1007,7 @@ fn the_unnamed_count_is_the_nodes_no_pair_of_the_parent_level_names_on_a_home() 
             }
             eng.minimize(&mut f).unwrap();
             assert_canonical(&f);
-            assert_same_shape(&f, &compile_clauses(&vtree, &clauses), &format!("seed {seed}, {label}"));
+            assert_same_shape(&f, &compile_clauses(&crate::vtree::Home::unchecked(&vtree), &clauses), &format!("seed {seed}, {label}"));
         }
     }
     // A clause conjunction drops most of the nodes it leaves unnamed, so
@@ -1020,7 +1020,7 @@ fn the_unnamed_count_is_the_nodes_no_pair_of_the_parent_level_names_on_a_home() 
 fn a_marginal_level_leaves_the_unnamed_count_unknown() {
     let eng = crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(6));
-    let mut f = compile_clauses(&vtree, &[vec![1, 2, -3], vec![-4, 5], vec![3, -6]]);
+    let mut f = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &[vec![1, 2, -3], vec![-4, 5], vec![3, -6]]);
     assert!(eng.unnamed_nodes(&mut f).unwrap().is_some());
     let below = vtree.children(vtree.root()).0;
     crate::test_helpers::marginalize_under(&eng, &mut f, &[below]).unwrap();

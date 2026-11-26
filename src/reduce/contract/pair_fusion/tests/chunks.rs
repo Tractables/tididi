@@ -1,7 +1,6 @@
 //! A boundary fused a chunk of plans at a time leaves the level and the
 //! store one chunk leaves, pair for pair and slot for slot.
 
-use crate::test_helpers::bare_roots;
 use super::*;
 use crate::test_helpers::{compile_clauses_on, rand_cnf, vtree_shapes, CnfShape};
 use crate::vtree::rng::Lcg;
@@ -36,7 +35,7 @@ fn a_level_fused_in_chunks_is_the_level_fused_whole() {
     let mut rng = Lcg::new(31);
     let chunked_before = chunked_boundaries();
     for num_vars in 4..9u32 {
-        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
+        for (shape, vtree) in vtree_shapes(num_vars) {
             let eng = Engine::new();
             let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 2 * num_vars as usize, width: 3 });
             let mut chunked = compile_clauses_on(&eng, &vtree, &clauses);

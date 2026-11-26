@@ -219,8 +219,8 @@ fn the_streamed_levels_read_by_vectors_fold_what_the_row_loop_folds() {
                 clauses: 40,
                 width: 3,
             };
-            let f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, 16, shape));
-            let g = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, 16, shape));
+            let f = compile_clauses_on(&eng, &crate::vtree::Home::unchecked(&vtree), &rand_cnf(&mut rng, 16, shape));
+            let g = compile_clauses_on(&eng, &crate::vtree::Home::unchecked(&vtree), &rand_cnf(&mut rng, 16, shape));
             operands.push((
                 format!("{name}, formulas, case {case}"),
                 Arc::clone(&vtree),

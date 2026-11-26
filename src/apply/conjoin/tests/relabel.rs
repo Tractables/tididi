@@ -28,7 +28,7 @@ pub(super) fn vars_under(vtree: &Vtree, t: VtreeIdx) -> Vec<u32> {
 
 /// A random function of `vars`, minimized.
 pub(super) fn function_of(vtree: &Arc<Vtree>, vars: &[u32], rng: &mut Lcg) -> Tdd {
-    let mut f = rand_conj_over(vtree, vars, 8, 3, false, rng);
+    let mut f = rand_conj_over(&crate::vtree::Home::unchecked(vtree), vars, 8, 3, false, rng);
     f.minimize().unwrap();
     f
 }

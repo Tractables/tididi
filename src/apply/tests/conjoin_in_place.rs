@@ -26,7 +26,7 @@ fn vars_under(vtree: &Vtree, t: VtreeIdx) -> Vec<VarId> {
 
 /// A random set of codes over the variables under a random internal node,
 /// as the disjunction of one cube per code, `⊤` over every other variable.
-fn local_set(vtree: &Arc<Vtree>, rng: &mut Lcg) -> Tdd {
+fn local_set(vtree: &crate::vtree::Home, rng: &mut Lcg) -> Tdd {
     let internal: Vec<VtreeIdx> = vtree.internal_bottomup().map(|(t, _, _)| t).collect();
     let t = internal[rng.below(internal.len() as u64) as usize];
     let mut vars = vars_under(vtree, t);
@@ -187,7 +187,7 @@ fn a_node_inside_the_filter_is_kept_whole() {
     assert!(got.level(left).nodes().len() <= before, "no product was appended under the filter's block");
 }
 
-fn random_model_tdd(vtree: &Arc<Vtree>, vars: &[VarId], nvars: u32, count: usize, rng: &mut Lcg) -> Tdd {
+fn random_model_tdd(vtree: &crate::vtree::Home, vars: &[VarId], nvars: u32, count: usize, rng: &mut Lcg) -> Tdd {
     let rows: Vec<u64> = (0..count).map(|_| rng.below(1 << nvars)).collect();
     Tdd::from_models(&crate::vtree::Home::new(std::sync::Arc::clone(vtree)), vars, &rows).unwrap()
 }
@@ -195,7 +195,7 @@ fn random_model_tdd(vtree: &Arc<Vtree>, vars: &[VarId], nvars: u32, count: usize
 /// A random set of codes over every variable under a random internal vtree
 /// node: each code kept with probability `1 / every`, as the disjunction of
 /// one cube per code.
-fn block_set(vtree: &Arc<Vtree>, every: u64, rng: &mut Lcg) -> Tdd {
+fn block_set(vtree: &crate::vtree::Home, every: u64, rng: &mut Lcg) -> Tdd {
     let internal: Vec<VtreeIdx> = vtree.internal_bottomup().map(|(t, _, _)| t).collect();
     let t = internal[rng.below(internal.len() as u64) as usize];
     let vars = vars_under(vtree, t);

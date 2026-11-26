@@ -3,7 +3,6 @@
 //! on a certified result.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::Arc;
 
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
 use crate::test_helpers::{assert_canonical, compile_clauses_on, rand_cnf, rat, vtree_shapes, CnfShape, Lcg};
@@ -49,7 +48,7 @@ fn summed(rng: &mut Lcg, eng: &Engine) -> Option<(Tdd, String)> {
         };
         return Some((r, label));
     }
-    let vtree = Arc::new(match table {
+    let vtree = crate::vtree::Home::new(match table {
         Some(w) => Vtree::clone(base).with_weights(w).ok()?,
         None => Vtree::clone(base),
     });

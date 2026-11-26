@@ -49,8 +49,8 @@ fn assert_routes_agree_on(
 /// the results.
 fn both_routes_agree(eng: &Engine, vtree: &Arc<Vtree>, num_vars: u32, clauses: &[Vec<i32>], what: &str) -> Vec<Tdd> {
     let mid = clauses.len().div_ceil(2);
-    let f = compile_clauses(vtree, &clauses[..mid]);
-    let g = compile_clauses(vtree, &clauses[mid..]);
+    let f = compile_clauses(&crate::vtree::Home::unchecked(vtree), &clauses[..mid]);
+    let g = compile_clauses(&crate::vtree::Home::unchecked(vtree), &clauses[mid..]);
     let mut out = Vec::new();
     for vars in quantified_subsets(num_vars) {
         out.extend(assert_routes_agree_on(eng, &f, &g, &vars, what));
@@ -287,8 +287,8 @@ fn pushed(f: &Tdd, g: &Tdd, vars: &[VarId]) -> (bool, bool, Tdd, Tdd) {
 fn a_quantified_subtree_one_operand_ignores_is_pushed_whole() {
     // Leaves 1..=8 left to right: the root splits 1..=4 from 5..=8.
     let vtree = Arc::new(Vtree::balanced(8));
-    let f = compile_clauses(&vtree, &[vec![1, 2], vec![-3, 4]]);
-    let g = compile_clauses(&vtree, &[vec![1, 5], vec![-2, 6, 7], vec![3, -8], vec![5, -6, 8]]);
+    let f = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &[vec![1, 2], vec![-3, 4]]);
+    let g = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &[vec![1, 5], vec![-2, 6, 7], vec![3, -8], vec![5, -6, 8]]);
     let vars: Vec<VarId> = (5..=8).map(VarId).collect();
     let (f_changed, g_changed, _, g2) = pushed(&f, &g, &vars);
     assert!(!f_changed && g_changed, "the block went into the operand that constrains it");
@@ -312,13 +312,13 @@ fn a_far_larger_operand_is_left_to_the_product() {
     let equal = |pairs: &[(i32, i32)]| -> Vec<Vec<i32>> {
         pairs.iter().flat_map(|&(a, b)| [vec![-a, b], vec![a, -b]]).collect()
     };
-    let f = compile_clauses(&vtree, &equal(&[(1, 9), (2, 10), (3, 11), (4, 12), (5, 13), (6, 14), (7, 15)]));
+    let f = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &equal(&[(1, 9), (2, 10), (3, 11), (4, 12), (5, 13), (6, 14), (7, 15)]));
     // Small, and free over the quantified subtree.
-    let free = compile_clauses(&vtree, &[vec![1], vec![-2]]);
+    let free = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &[vec![1], vec![-2]]);
     // Small, and the only one to constrain 16.
-    let tail = compile_clauses(&vtree, &[vec![1], vec![-16]]);
+    let tail = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &[vec![1], vec![-16]]);
     // Within sixteen times `f`'s size, and free over the quantified subtree.
-    let near = compile_clauses(&vtree, &equal(&[(1, 5), (2, 6), (3, 7), (4, 8)]));
+    let near = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &equal(&[(1, 5), (2, 6), (3, 7), (4, 8)]));
     let pairs = |t: &Tdd| t.pair_count();
     for small in [&free, &tail] {
         assert!(pairs(&f) > 16 * pairs(small), "{} pairs against {}", pairs(&f), pairs(small));
@@ -350,9 +350,9 @@ fn low_bits_inside_a_quantified_block_stay_in_the_product() {
     let vtree = Arc::new(Vtree::balanced(8));
     // `f` is "the code is below 12": it tests bits 1 and 2 and is constant
     // over 3 and 4, the subtree the block's lower half sits in.
-    let f = compile_clauses(&vtree, &[vec![-1, -2]]);
+    let f = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &[vec![-1, -2]]);
     // `g` relates every bit of the block to the other block.
-    let g = compile_clauses(&vtree, &[
+    let g = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &[
         vec![-1, 5], vec![1, -5], vec![-2, 6], vec![2, -6],
         vec![-3, 7], vec![3, -7], vec![-4, 8], vec![4, -8],
     ]);

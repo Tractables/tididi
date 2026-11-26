@@ -4,13 +4,11 @@
 //! (its walks asking the cache ahead or not, and its routed lookups
 //! pipelined or not) and with none. All give the same levels, the same
 //! minimized diagram and the same count.
-use std::sync::Arc;
 
 use super::{ForcedPrefetch, ForcedThresholds, SparseThresholds};
 use crate::apply::conjoin::conjoin_either;
 use crate::diagram::Tdd;
 use crate::test_helpers::{assert_canonical, normalized_levels, rand_conj_over, vtree_shapes, Lcg};
-use crate::vtree::Vtree;
 use crate::Engine;
 
 /// Every level of every conjunction takes the sparse route.
@@ -45,7 +43,7 @@ fn some_vars(n: u32, rng: &mut Lcg) -> Vec<u32> {
 
 /// A random conjunction of clauses over a random subset of the variables,
 /// minimized.
-fn operand(vtree: &Arc<Vtree>, n: u32, rng: &mut Lcg) -> Tdd {
+fn operand(vtree: &crate::vtree::Home, n: u32, rng: &mut Lcg) -> Tdd {
     let vars = some_vars(n, rng);
     let mut t = rand_conj_over(vtree, &vars, 8, 4, false, rng);
     t.minimize().unwrap();

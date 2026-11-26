@@ -173,7 +173,7 @@ fn the_node_filter_agrees_with_the_rebuild_from_marks() {
             let eng = Engine::new();
             let f = compile_clauses_on(
                 &eng,
-                &vtree,
+                &crate::vtree::Home::unchecked(&vtree),
                 &rand_cnf(
                     &mut rng,
                     n,

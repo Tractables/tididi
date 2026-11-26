@@ -34,7 +34,7 @@ fn local_set(vtree: &Arc<Vtree>, rng: &mut Lcg) -> Tdd {
     vars.truncate(4);
     let rows = 1usize << vars.len();
     let keep: Vec<bool> = (0..rows).map(|_| rng.below(3) != 0).collect();
-    or_of_cubes(vtree, &vars, |r| keep[r])
+    or_of_cubes(&crate::vtree::Home::unchecked(vtree), &vars, |r| keep[r])
 }
 
 /// `got` has the models of `f ∧ g` over the whole truth table, keeps the
@@ -267,12 +267,12 @@ fn sum_indexed_is_the_conjunctions_value() {
                 for round in 0..3 {
                     let label = format!("{shape} n={nvars} at {} round {round}", t.idx());
                     let f = match round {
-                        0 => rand_conj(&vtree, nvars, 4, 3, true, &mut rng),
+                        0 => rand_conj(&crate::vtree::Home::unchecked(&vtree), nvars, 4, 3, true, &mut rng),
                         1 => local_set(&vtree, &mut rng),
-                        _ => eng.and(rand_conj(&vtree, nvars, 3, 3, false, &mut rng), local_set(&vtree, &mut rng)).unwrap(),
+                        _ => eng.and(rand_conj(&crate::vtree::Home::unchecked(&vtree), nvars, 3, 3, false, &mut rng), local_set(&vtree, &mut rng)).unwrap(),
                     };
-                    let any = rand_conj(&vtree, nvars, 4, 3, false, &mut rng);
-                    let inside = rand_conj_over(&vtree, &under.iter().map(|v| v.0).collect::<Vec<_>>(), 4, 3, false, &mut rng);
+                    let any = rand_conj(&crate::vtree::Home::unchecked(&vtree), nvars, 4, 3, false, &mut rng);
+                    let inside = rand_conj_over(&crate::vtree::Home::unchecked(&vtree), &under.iter().map(|v| v.0).collect::<Vec<_>>(), 4, 3, false, &mut rng);
                     for alg in [&count, &sum] {
                         let index = PairIndex::new(&any).unwrap();
                         let col = eng.sum_indexed(&f, &any, &index, t, alg).unwrap();
@@ -406,7 +406,7 @@ fn the_index_finds_each_pair_by_its_sides() {
     let eng = Engine::new();
     let mut rng = Lcg::new(0x1d_2026_1011);
     for (shape, vtree) in bare_roots(vtree_shapes(6)) {
-        let mut g = rand_conj(&vtree, 6, 5, 3, true, &mut rng);
+        let mut g = rand_conj(&crate::vtree::Home::unchecked(&vtree), 6, 5, 3, true, &mut rng);
         g.minimize().unwrap();
         let index = PairIndex::new(&g).unwrap();
         assert_eq!(index.pair_count(), g.pair_count(), "{shape}");

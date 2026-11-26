@@ -5,7 +5,6 @@
 //! The reference exists where each region stands for one home node whose
 //! leaves the diagram all had, so the cases are built that way.
 
-use std::sync::Arc;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -334,7 +333,7 @@ fn audit_case(a: &mut Audit, eng: &Engine, home: &Home, f: &Tdd, g: &Tdd, n: u32
     a.runs("substitute", || literal_x.clone().and_then(|l| g.clone().substitute(&[(var(&mut Lcg::new(x.0.into())), &l)])));
 
     a.check("transport", || eng.transport(g, home, |v| v, 0).map(|(t, _)| t).map_err(|r| r.error), || Ok(f.clone()), same_value);
-    a.runs("restructure_to", || g.clone().restructure_to(&Arc::new(Vtree::random(n, rng.below(1000))), usize::MAX));
+    a.runs("restructure_to", || g.clone().restructure_to(&crate::vtree::Home::new(Vtree::random(n, rng.below(1000))), usize::MAX));
     a.runs("Vtree::to_text", || Vtree::from_text(&g.vtree().to_text()));
     a.runs("Vtree::join", || Vtree::join(g.vtree(), &Vtree::leaf(VarId(n + 1))));
     a.runs("Vtree::graft", || Vtree::graft(&[Vtree::clone(g.vtree())], &[VarId(n + 1)]));

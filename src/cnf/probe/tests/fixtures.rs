@@ -97,7 +97,7 @@ fn an_encoded_prefix_is_probed() {
         let outcome = host.probe(&f, &encoding, rounds, witness);
         assert!(outcome.stats().dead >= 2, "rounds {rounds}: {:?}", outcome.stats());
         assert!(!outcome.is_dead(f.output()));
-        let unit = compile_clauses(f.vtree(), &[vec![-1]]);
+        let unit = compile_clauses(&crate::vtree::Home::unchecked(f.vtree()), &[vec![-1]]);
         assert_eq!(crate::and(filtered(&f, &outcome), unit).unwrap().model_count().unwrap(), BigUint::from(1u32));
     }
 }

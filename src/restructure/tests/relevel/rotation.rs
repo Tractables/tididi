@@ -33,7 +33,7 @@ use std::sync::Arc;
 fn left_rotation_preserves_model_count() {
     let eng_lim = crate::limits::Limits::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let mut tdd = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3], vec![-3, 4]]);
+    let mut tdd = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &[vec![1, 2], vec![-2, 3], vec![-3, 4]]);
     let mc_before = tdd.model_count().unwrap();
 
     let mut vt = (*vtree).clone();
@@ -52,7 +52,7 @@ fn left_rotation_preserves_model_count() {
 #[test]
 fn every_reservation_of_a_rebuild_can_be_refused() {
     let vtree = Arc::new(Vtree::balanced(6));
-    let original = compile_clauses(&vtree, &[vec![1, 2, 3], vec![4, -5, 6], vec![-1, 4]]);
+    let original = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &[vec![1, 2, 3], vec![4, -5, 6], vec![-1, 4]]);
     let mut vt = (*vtree).clone();
     let root = vt.root();
     let info = rotate_left(&mut vt, root).unwrap();
@@ -92,7 +92,7 @@ fn right_rotation_preserves_model_count() {
     // Right rotation is applicable only after a left rotation has been made,
     // so start from a linear vtree and make one.
     let vtree = Arc::new(Vtree::linear(4));
-    let mut tdd = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3], vec![-3, 4]]);
+    let mut tdd = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &[vec![1, 2], vec![-2, 3], vec![-3, 4]]);
     let mc_before = tdd.model_count().unwrap();
 
     let mut vt = (*vtree).clone();
@@ -115,7 +115,7 @@ fn right_rotation_preserves_model_count() {
 fn left_rotation_unsat_stays_unsat() {
     let eng_lim = crate::limits::Limits::new();
     let vtree = Arc::new(Vtree::balanced(2));
-    let mut tdd = compile_clauses(&vtree, &[vec![1], vec![-1]]);
+    let mut tdd = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &[vec![1], vec![-1]]);
     let mc_before = tdd.model_count().unwrap();
     assert_eq!(mc_before, num_bigint::BigUint::ZERO);
     let mut vt = (*vtree).clone();
@@ -150,7 +150,7 @@ fn marginal_cluster_fixture(
     let (a_idx, w_idx) = vtree.children(root);
     let (b_idx, _c_idx) = vtree.children(w_idx);
     let mut tdd = compile_clauses(
-        &vtree,
+        &crate::vtree::Home::unchecked(&vtree),
         &[vec![1, 2], vec![-2, 3], vec![3, 4], vec![-4, 5], vec![1, -5]],
     );
     let mc_bool = tdd.model_count().unwrap();
@@ -282,7 +282,7 @@ fn fuzz_search_preserves_marginal_count() {
             clauses.push(literals);
         }
         let vtree = Arc::new(Vtree::balanced(num_vars));
-        let mut tdd = compile_clauses(&vtree, &clauses);
+        let mut tdd = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &clauses);
 
         let internals: Vec<VtreeIdx> = vtree
             .internal_bottomup()
@@ -336,7 +336,7 @@ fn gc1_sweep_undercount_repro() {
         vec![8, 1, 2], vec![-6, -4],
     ];
     let vtree = Arc::new(Vtree::balanced(8));
-    let mut tdd = compile_clauses(&vtree, &clauses);
+    let mut tdd = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &clauses);
     marginalize_batch(&eng, &mut tdd, &[VtreeIdx(9)], &vtree).expect("no wall is installed in a test");
     // `marginalize_batch` collapses distinct equal-count children to the same
     // inline ref, manufacturing twin nodes (n0≡n2) that are count-correct but
@@ -443,7 +443,7 @@ fn rotation_locality_left_at_root_balanced5() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(5));
     let mut tdd = compile_clauses(
-        &vtree,
+        &crate::vtree::Home::unchecked(&vtree),
         &[
             vec![1, 2, 3], vec![-2, 4], vec![3, -4, 5],
             vec![-1, 5], vec![1, -3, 4],
@@ -459,7 +459,7 @@ fn rotation_locality_right_after_left_balanced5() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(5));
     let mut tdd = compile_clauses(
-        &vtree,
+        &crate::vtree::Home::unchecked(&vtree),
         &[
             vec![1, 2, 3], vec![-2, 4], vec![3, -4, 5],
             vec![-1, 5], vec![1, -3, 4],
@@ -482,7 +482,7 @@ fn rotation_locality_linear_left_chain() {
     // rotations interact.
     let vtree = Arc::new(Vtree::linear(6));
     let mut tdd = compile_clauses(
-        &vtree,
+        &crate::vtree::Home::unchecked(&vtree),
         &[
             vec![1, 2], vec![-2, 3], vec![-3, 4],
             vec![-4, 5], vec![-5, 6], vec![1, -6],
@@ -505,7 +505,7 @@ fn rotation_locality_unsat_left() {
     // locality invariant still applies (vacuously: every level is empty,
     // and empty == empty).
     let vtree = Arc::new(Vtree::balanced(3));
-    let mut tdd = compile_clauses(&vtree, &[vec![1], vec![-1], vec![2, 3]]);
+    let mut tdd = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &[vec![1], vec![-1], vec![2, 3]]);
     let root = tdd.vtree.root();
     if rotate_left_and_check_locality(&eng, &mut tdd, root).is_some() {
         // Asserted internally.

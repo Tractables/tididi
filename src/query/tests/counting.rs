@@ -220,7 +220,7 @@ fn test_apply_fallible_consumes_operands() {
     fn build(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[&[i32]]) -> Tdd {
         let mut acc = constant_one(eng, vtree);
         for clause in clauses {
-            let c = clause_to_tdd(vtree, &crate::test_helpers::literals(clause));
+            let c = clause_to_tdd(&crate::vtree::Home::unchecked(vtree), &crate::test_helpers::literals(clause));
             acc = apply_and(acc, c);
         }
         acc

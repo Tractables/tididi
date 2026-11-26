@@ -61,7 +61,7 @@ fn returned_and_unwound_batches_release_callback_captures() {
     for unwind in [false, true] {
         let context = Arc::new(Context::new());
         let tree = context.bind(Vtree::balanced(2));
-        let captured = Arc::clone(&tree);
+        let captured = tree.clone();
         let weak = Arc::downgrade(&tree);
         let callback = StopCallback::new(move |_, _| {
             assert_eq!(captured.num_leaves(), 2);
@@ -133,7 +133,7 @@ fn stop_callback_can_reenter_the_same_context() {
     let calls = Arc::new(AtomicUsize::new(0));
     let callback = {
         let context = Arc::clone(&context);
-        let tree = Arc::clone(&tree);
+        let tree = tree.clone();
         let calls = Arc::clone(&calls);
         StopCallback::new(move |_, _| {
             context.run(|engine| {
@@ -175,7 +175,7 @@ fn ordinary_diagram_methods_can_reenter_from_a_stop_callback() {
     let tree = Home::new(Vtree::balanced(3));
     let calls = Arc::new(AtomicUsize::new(0));
     let callback = {
-        let tree = Arc::clone(&tree);
+        let tree = tree.clone();
         let calls = Arc::clone(&calls);
         StopCallback::new(move |_, _| {
             let x = crate::literal(&crate::vtree::Home::unchecked(&tree), 1).unwrap();

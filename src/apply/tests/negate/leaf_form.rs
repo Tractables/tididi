@@ -60,7 +60,7 @@ fn a_fill_on_a_one_form_level_is_emitted_as_one() {
         for (_name, vtree) in crate::test_helpers::bare_roots(crate::test_helpers::vtree_shapes(num_vars)) {
             for _ in 0..12 {
                 let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 6, width: 3 });
-                let tdd = compile_clauses_on(eng, &vtree, &clauses);
+                let tdd = compile_clauses_on(eng, &crate::vtree::Home::unchecked(&vtree), &clauses);
                 if tdd.is_zero() {
                     continue;
                 }

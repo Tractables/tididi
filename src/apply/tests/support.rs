@@ -7,7 +7,7 @@ use crate::diagram::Literal;
 use crate::test_helpers::clause;
 
 fn cls(vtree: &Arc<Vtree>, lits: &[(u32, bool)]) -> Tdd {
-    clause_to_tdd(vtree, &clause(lits))
+    clause_to_tdd(&crate::vtree::Home::unchecked(vtree), &clause(lits))
 }
 
 fn unit_forced_tdd() -> Tdd {

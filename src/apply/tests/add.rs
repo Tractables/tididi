@@ -105,8 +105,8 @@ fn random_marginal_pair(
     shape: CnfShape,
     summed: &[VtreeIdx],
 ) -> (Tdd, Tdd) {
-    let mut f = compile_clauses_on(eng, vtree, &rand_cnf(rng, n, shape));
-    let mut g = compile_clauses_on(eng, vtree, &rand_cnf(rng, n, shape));
+    let mut f = compile_clauses_on(eng, &crate::vtree::Home::unchecked(vtree), &rand_cnf(rng, n, shape));
+    let mut g = compile_clauses_on(eng, &crate::vtree::Home::unchecked(vtree), &rand_cnf(rng, n, shape));
     for d in [&mut f, &mut g] {
         eng.marginalize(d, crate::test_helpers::summing(vtree, summed)).unwrap();
         eng.minimize(d).unwrap();

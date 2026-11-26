@@ -34,7 +34,7 @@ fn operand(eng: &Engine, rng: &mut Lcg, home: &Home) -> Tdd {
         false => Vtree::projection(home, kept.iter().map(|&v| VarId(v))).unwrap(),
     };
     let k = kept.len() as u32;
-    let cnf = |rng: &mut Lcg| compile_clauses_on(eng, &vtree, &renamed_cnf(rand_cnf(rng, k, CnfShape { clauses: 1 + k as usize, width: 3 }), &kept));
+    let cnf = |rng: &mut Lcg| compile_clauses_on(eng, home, &renamed_cnf(rand_cnf(rng, k, CnfShape { clauses: 1 + k as usize, width: 3 }), &kept));
     let f = cnf(rng);
     // A conjunction's result, which owes contraction passes.
     match rng.below(2) {
@@ -124,7 +124,7 @@ fn a_view_reads_as_the_placed_operand() {
     let (mut viewed, mut owing) = (0, 0);
     for case in 0..300u64 {
         let home = Home::new(Vtree::random(3 + rng.below(8) as u32, case));
-        let u = Arc::clone(&home);
+        let u = home.clone();
         let f = operand(&eng, &mut rng, &home);
         if Arc::ptr_eq(f.vtree(), &u) || f.is_zero() {
             continue;
@@ -153,7 +153,7 @@ fn views_conjoin_onto_as_placed_operands_do() {
     let (mut refusals, mut viewed) = (0, 0);
     for case in 0..120u64 {
         let home = Home::new(Vtree::random(3 + rng.below(8) as u32, case));
-        let u = Arc::clone(&home);
+        let u = home.clone();
         let f = operand(&eng, &mut rng, &home);
         let g = operand(&eng, &mut rng, &home);
         let c: Case<'_> = (&f, &g, &u);

@@ -54,8 +54,8 @@ fn the_seeded_prune_leaves_the_diagram_the_whole_walk_leaves() {
                 for _ in 0..12 {
                     let ca = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 6, width: 3 });
                     let cb = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 3, width: 2 });
-                    let f = compile_clauses_on(eng, &vtree, &ca);
-                    let g = compile_clauses_on(eng, &vtree, &cb);
+                    let f = compile_clauses_on(eng, &crate::vtree::Home::unchecked(&vtree), &ca);
+                    let g = compile_clauses_on(eng, &crate::vtree::Home::unchecked(&vtree), &cb);
                     if f.is_zero() || g.is_zero() {
                         continue;
                     }

@@ -25,7 +25,7 @@ fn fold_clauses(vtree: &Arc<Vtree>, clauses: &[&[i32]], minimize_each: bool) -> 
             .iter()
             .map(|&l| Literal::new(VarId(l.unsigned_abs()), l > 0))
             .collect();
-        acc = apply_and(acc, clause_to_tdd(vtree, &clause));
+        acc = apply_and(acc, clause_to_tdd(&crate::vtree::Home::unchecked(vtree), &clause));
         if minimize_each {
             acc.minimize().unwrap();
         }

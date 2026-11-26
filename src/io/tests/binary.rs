@@ -551,7 +551,7 @@ fn resealed_corruption(with_counts: bool) {
 #[test]
 fn a_marginal_diagram_is_not_written() {
     let eng = crate::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(4));
     let mut f = crate::test_helpers::compile_clauses_on(&eng, &vtree, &[vec![1, 2], vec![-2, 3]]);
     let (left, _) = vtree.children(vtree.root());
     let (target, _) = vtree.children(left);
