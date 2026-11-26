@@ -80,7 +80,7 @@ fn leaf(v: u32) -> Vtree {
 }
 
 /// `codes` on `into`'s `code_vars`.
-fn coded(into: &Arc<Vtree>, code_vars: &[VarId], codes: Vec<u64>) -> FoldCodes {
+fn coded(into: &Home, code_vars: &[VarId], codes: Vec<u64>) -> FoldCodes {
     FoldCodes {
         into: into.clone(),
         code_vars: code_vars.to_vec(),
@@ -156,14 +156,14 @@ impl Blocks {
         }
     }
 
-    fn vtrees(&self, shape: Shape) -> (Arc<Vtree>, Arc<Vtree>) {
+    fn vtrees(&self, shape: Shape) -> (Arc<Vtree>, Home) {
         let vtree = around(
             shape,
             &self.keys,
             chain(&self.order, balanced(&self.values)),
         );
         let into = around(shape, &self.keys, chain(&self.order, balanced(&self.codes)));
-        (Arc::clone(&crate::vtree::Home::new(vtree)), Arc::clone(&crate::vtree::Home::new(into)))
+        (Arc::clone(&Home::new(vtree)), Home::new(into))
     }
 
     fn vars(list: &[u32]) -> Vec<VarId> {
@@ -527,7 +527,7 @@ fn a_count_reads_a_value_block_wider_than_a_code() {
     let eng = Engine::new();
     for shape in SHAPES {
         let vtree = std::sync::Arc::clone(&crate::vtree::Home::new(around(shape, &keys, chain(&order, balanced(&rows_block)))));
-        let into = std::sync::Arc::clone(&crate::vtree::Home::new(around(shape, &keys, chain(&order, balanced(&codes)))));
+        let into = Home::new(around(shape, &keys, chain(&order, balanced(&codes))));
         let lit = |v: u32, on: bool| if on { v as i32 } else { -(v as i32) };
         // Row `r`'s bit `i`: a bijection of `r` over the first 64, `r` itself
         // over the rest.
@@ -819,7 +819,7 @@ fn layouts_the_fold_cannot_read_are_refused() {
         Blocks::vars(&blocks.values),
         Blocks::vars(&blocks.codes),
     );
-    let run = |order: &[VarId], value_vars: &[VarId], into: &Arc<Vtree>, code_vars: &[VarId]| {
+    let run = |order: &[VarId], value_vars: &[VarId], into: &Home, code_vars: &[VarId]| {
         eng.prefix_fold(
             &f,
             &f,
@@ -842,11 +842,11 @@ fn layouts_the_fold_cannot_read_are_refused() {
     assert!(layout(run(&[], &value_vars, &into, &code_vars)));
     let wide: Vec<VarId> = (100..165).map(VarId).collect();
     assert!(layout(run(&order, &value_vars, &into, &wide)));
-    // `into` not the vtree around its code subtree, or other code variables.
+    // `into` not the vtree around its code subtree, or without a code variable.
     let (_, other) = blocks.vtrees(Shape::Right);
     assert!(layout(run(&order, &value_vars, &other, &code_vars)));
-    assert!(layout(run(&order, &value_vars, &into, &code_vars[..2])));
-    let renamed = Arc::new(around(
+    assert!(layout(run(&order, &value_vars, &into, &[code_vars[0], code_vars[1], VarId(99)])));
+    let renamed = Home::new(around(
         Shape::Left,
         &[2, 1],
         chain(&blocks.order, balanced(&blocks.codes)),
@@ -1133,5 +1133,40 @@ fn check_unminimized(f: &Tdd, label: &str) {
         if let Err(e) = r {
             panic!("{label}: {checker}: {e}");
         }
+    }
+}
+
+/// The result lies on the home of `into`: on the projection of the
+/// variables it keeps, so a variable of that home the fold does not reach
+/// is left out.
+#[test]
+fn the_result_lies_on_the_home_of_into() {
+    let blocks = Blocks::new(2, 2, 1, 2);
+    let (vtree, into) = blocks.vtrees(Shape::Left);
+    let eng = Engine::new();
+    let rows = [blocks.row(1, 0, 1), blocks.row(1, 2, 1), blocks.row(2, 3, 0)];
+    let f = eng.from_models(&Home::new(vtree), &blocks.all_vars(), &rows).unwrap();
+    let (order, value_vars, code_vars) = (
+        Blocks::vars(&blocks.order),
+        Blocks::vars(&blocks.values),
+        Blocks::vars(&blocks.codes),
+    );
+    let out = Blocks::vars(&[&blocks.keys[..], &blocks.order[..], &blocks.codes[..]].concat());
+    let counts = [blocks.row(1, 0, 1), blocks.row(1, 2, 2), blocks.row(2, 3, 1)];
+    // A third code variable and a variable beside the layout, neither read.
+    let wide = Home::new(join(
+        around(Shape::Left, &blocks.keys, chain(&blocks.order, balanced(&[5, 6, 7]))),
+        leaf(20),
+    ));
+    for home in [&into, &wide] {
+        let got = eng
+            .prefix_fold(&f, &f, &order, &value_vars, FoldRange::AtMost, &Count, |n: &[u64]| {
+                coded(home, &code_vars, n.to_vec())
+            })
+            .unwrap();
+        assert!(Arc::ptr_eq(&got.home(), home));
+        assert_eq!(got.vtree().num_leaves() as usize, out.len());
+        assert!(eng.equivalent(&got, &eng.from_models(home, &out, &counts).unwrap()).unwrap());
+        assert_canonical(&got);
     }
 }

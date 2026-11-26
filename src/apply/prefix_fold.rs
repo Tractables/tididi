@@ -19,7 +19,7 @@ use crate::diagram::{
     POS_LEAF_IDX, SlotPairs, Tdd, TddNodeId,
 };
 use crate::limits::{Limits, OperationError, PollGate};
-use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx};
+use crate::vtree::{Home, VarId, Vtree, VtreeError, VtreeIdx};
 
 use super::runs::Runs;
 
@@ -111,14 +111,17 @@ impl FoldRange {
     }
 }
 
-/// How a prefix fold codes its folds ([`Engine::prefix_fold`]): the vtree
+/// How a prefix fold codes its folds ([`Engine::prefix_fold`]): the home
 /// the result lies on, the code block, and a code per fold.
 #[derive(Clone, Debug)]
 pub struct FoldCodes {
-    /// The operands' vtree with the value subtree replaced by a subtree
-    /// whose leaves are exactly `code_vars`; the code block may reuse the
-    /// value block's variables.
-    pub into: Arc<Vtree>,
+    /// The home of the result, which lies on its projection on the
+    /// operands' variables outside the value subtree and on `code_vars`.
+    /// That projection is the operands' vtree with the value subtree
+    /// replaced by a subtree whose leaves are exactly `code_vars`; the code
+    /// block may reuse the value block's variables, and the home may hold
+    /// variables of neither.
+    pub into: Home,
     /// The code block: bit `i` of a code is the value of `code_vars[i]`.
     pub code_vars: Vec<VarId>,
     /// One code per fold, in the order the folds were given. Two folds may
@@ -135,7 +138,8 @@ pub enum PrefixFoldError {
     /// its codes is wider than 64 variables, a value block read by its
     /// counts ([`FoldMonoid::count`]) wider than 127, the order block's leaves are not
     /// the left children of a right-linear chain whose last right child
-    /// holds exactly the value block, or the coding's `into` is not the
+    /// holds exactly the value block, or the coding's `into` lacks one of
+    /// the variables the result keeps or its projection on them is not the
     /// vtree with that value subtree replaced by one whose leaves are exactly
     /// its code variables.
     Layout(String),
@@ -214,18 +218,21 @@ impl Engine {
     ///
     /// `coding` is called once with the distinct folds, in an unspecified
     /// order (none where no point keeps a fold), and returns how they are
-    /// coded ([`FoldCodes`]): a vtree `into`, a code block and one code per
+    /// coded ([`FoldCodes`]): a home `into`, a code block and one code per
     /// fold, so the block can be as wide as the folds need. The result, on
-    /// `into`, holds `(k, e, c)` for each point that keeps a fold, `c` the
-    /// code of its fold, and nothing else.
+    /// the projection of `into` on the key, the order and the code block,
+    /// holds `(k, e, c)` for each point that keeps a fold, `c` the code of
+    /// its fold, and nothing else.
     ///
     /// The fold reads its blocks off the vtree: the leaves of the order block
     /// are the left children of a right-linear chain, `order[0]` at the
     /// chain's top node `t`, and the right child of its last node is the
     /// subtree of the value block, whose leaves are exactly `value_vars`. The
     /// key lies outside `t`'s subtree, on either side of the path to it.
-    /// The coding's `into` is the same vtree with the value subtree replaced
-    /// by a subtree whose leaves are exactly its code variables.
+    /// The coding's `into`, projected on the variables outside the value
+    /// subtree and on its code variables, is the same vtree with the value
+    /// subtree replaced by a subtree whose leaves are exactly its code
+    /// variables.
     ///
     /// The walk reads `points` and `values` together from the root: above
     /// `t` as their conjunction on the key (built from the key's leaves up
@@ -244,7 +251,6 @@ impl Engine {
     ///
     /// ```
     /// # use tididi::vtree::Home;
-    /// use std::sync::Arc;
     /// use tididi::{Engine, Tdd, Vtree};
     /// use tididi::apply::{FoldCodes, FoldMonoid, FoldRange};
     /// use tididi::vtree::VarId;
@@ -276,7 +282,7 @@ impl Engine {
     /// let engine = Engine::new();
     /// let (order, amount) = ([VarId(2), VarId(3)], [VarId(4), VarId(5)]);
     /// let coding = |totals: &[u64]| FoldCodes {
-    ///     into: Arc::clone(&into),
+    ///     into: into.clone(),
     ///     code_vars: vec![VarId(4), VarId(5), VarId(6)],
     ///     codes: totals.to_vec(),
     /// };
@@ -299,7 +305,7 @@ impl Engine {
     ///     fn count(&self, n: u128) -> Option<u64> { u64::try_from(n).ok() }
     /// }
     /// let coding = |counts: &[u64]| FoldCodes {
-    ///     into: Arc::clone(&into),
+    ///     into: into.clone(),
     ///     code_vars: vec![VarId(4), VarId(5), VarId(6)],
     ///     codes: counts.to_vec(),
     /// };
@@ -318,9 +324,10 @@ impl Engine {
     /// block or a value block read by its codes holds more than 64
     /// variables, a counted value block more than 127, an order variable is not the left child of the chain's
     /// next node, the value subtree's leaves are not exactly `value_vars`, or
-    /// the coding's `into` differs from the vtree outside the value subtree
-    /// or has other leaves than its code variables in its place (checked once
-    /// the folds are known); [`PrefixFoldError::Variables`] when a variable is
+    /// the coding's `into` lacks a variable outside the value subtree or a
+    /// code variable, or its projection on them differs from the vtree
+    /// outside the value subtree or has other leaves than its code variables
+    /// in its place (checked once the folds are known); [`PrefixFoldError::Variables`] when a variable is
     /// named twice in `order` and `value_vars` together, or twice in the code
     /// block; [`PrefixFoldError::Codes`] when the coding has other than one
     /// code per fold, or a code with a bit at or past its code block's
@@ -357,6 +364,7 @@ impl Engine {
                 code_vars,
                 codes,
             } = coding(&[]);
+            let into = result_vtree(vtree, layout.value_root, &into, &code_vars)?;
             Coding::new(lim, vtree, layout.value_root, &into, &code_vars, &codes, 0)?;
             return Ok(crate::build::constant_zero(self, &into));
         }
@@ -392,6 +400,7 @@ impl Engine {
             code_vars,
             codes,
         } = coding(&folds);
+        let into = result_vtree(vtree, layout.value_root, &into, &code_vars)?;
         let mapped = Coding::new(
             lim,
             vtree,
@@ -426,6 +435,20 @@ struct Coding {
     image: Vec<VtreeIdx>,
     /// Per node of `into`, the bit of a code its leaf reads.
     code_bit: Vec<u8>,
+}
+
+/// The projection of `home` on the variables of `vtree` outside the value
+/// subtree at `value_root` and on `code_vars`.
+fn result_vtree(vtree: &Vtree, value_root: VtreeIdx, home: &Home, code_vars: &[VarId]) -> Result<Arc<Vtree>, PrefixFoldError> {
+    let outside = vtree
+        .bottomup()
+        .filter(|&t| vtree.node(t).is_leaf() && !vtree.in_subtree(t, value_root))
+        .map(|t| vtree.leaf_var(t));
+    let vars: Vec<VarId> = outside.chain(code_vars.iter().copied()).collect();
+    if let Some(v) = vars.iter().find(|&&v| home.rank(v).is_none()) {
+        return Err(PrefixFoldError::Layout(format!("`into` has no leaf for variable {}", v.0)));
+    }
+    Vtree::projection(home, vars).map_err(|e| PrefixFoldError::Layout(e.to_string()))
 }
 
 /// A block's refusal: empty, or past `most` variables.
