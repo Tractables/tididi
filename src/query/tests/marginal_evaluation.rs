@@ -301,6 +301,7 @@ fn a_count_past_u128_is_valued_exactly() {
     }
 }
 
+// Padded form: a padded fixture.
 #[test]
 fn hand_built_marginal_levels_read_their_counts() {
     let eng = Engine::new();
@@ -329,6 +330,7 @@ fn hand_built_marginal_levels_read_their_counts() {
     }
 }
 
+// Padded form: a padded fixture.
 #[test]
 fn an_algebra_without_counts_is_refused_a_marginal_level() {
     struct Plain;

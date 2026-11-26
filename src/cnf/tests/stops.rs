@@ -64,6 +64,7 @@ fn assert_cuts(f: &Tdd, sound: bool) {
     }
 }
 
+// Padded form: three of the four are padded fixtures.
 #[test]
 fn every_poll_cuts_the_hand_built_diagrams() {
     assert_cuts(&chain().0, true);
@@ -73,6 +74,7 @@ fn every_poll_cuts_the_hand_built_diagrams() {
     }
 }
 
+// Padded form: the padded sum-out.
 #[test]
 fn every_poll_cuts_seeded_diagrams() {
     for f in random_diagrams(0x7a11, 12, 3..6) { assert_cuts(&f, true); }
