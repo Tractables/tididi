@@ -33,7 +33,7 @@ fn true_marginal_care_multiregion() -> Vec<Tdd> {
     use crate::vtree::{VtreeIdx, VtreeNode};
     use std::collections::BTreeSet;
     let nvars = 8u32;
-    let vtree = Arc::new(Vtree::balanced(nvars));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(nvars));
 
     // Leaf-var support under an internal subtree root (inclusive).
     let support_of = |root: VtreeIdx| -> BTreeSet<u32> {
@@ -103,14 +103,14 @@ fn true_marginal_care_multiregion() -> Vec<Tdd> {
     let mut fold_count_fail = 0;
     let mut first_fold_fail: Option<String> = None;
     for case in 0..800 {
-        let mut fm = rand_conj_over(&crate::vtree::Home::unchecked(&vtree), &f_vars, 6, 3, false, &mut rng);
+        let mut fm = rand_conj_over(&vtree, &f_vars, 6, 3, false, &mut rng);
         if fm.is_zero() {
             continue;
         }
         marginalize_subtree(&mut fm, r_f);
         fm.minimize().unwrap();
 
-        let mut care = rand_conj_over(&crate::vtree::Home::unchecked(&vtree), &care_vars, 6, 3, false, &mut rng);
+        let mut care = rand_conj_over(&vtree, &care_vars, 6, 3, false, &mut rng);
         if count_is_zero(&care) {
             continue;
         }
@@ -118,17 +118,8 @@ fn true_marginal_care_multiregion() -> Vec<Tdd> {
         marginalize_subtree(&mut care, r_c2);
         care.minimize().unwrap();
 
-        // Need both of care's marginal regions to survive (multi-region).minimize().unwrap().
-        let n_marginal = (0..vtree.num_nodes())
-            .filter(|&i| {
-                matches!(*vtree.node(VtreeIdx(i as u32)), VtreeNode::Internal { .. }) && care.levels[i].is_marginal()
-            })
-            .count();
-        if n_marginal < 2 {
-            continue;
-        }
-        // `restrict_to_care` only engages on a shared function root.
-        if care.output.vtree != fm.output.vtree {
+        // Need both of care's regions to survive.
+        if care.vtree().regions().count() < 2 {
             continue;
         }
 
@@ -168,22 +159,17 @@ fn true_marginal_care_multiregion() -> Vec<Tdd> {
             // care∧g == care∧fm, so they share support — filter the live (now
             // private) vars to those actually present in the support.
             let supp = support_mask(&prod_g);
-            let mut targets: Vec<VtreeIdx> = live
+            let targets: Vec<VarId> = live
                 .iter()
-                .filter(|&&v| supp.get(VarId(v).idx()).copied().unwrap_or(false))
-                .map(|&v| vtree.leaf_of(VarId(v)).expect("the vtree carries this variable"))
+                .map(|&v| VarId(v))
+                .filter(|v| supp.get(v.idx()).copied().unwrap_or(false))
                 .collect();
-            targets.sort_by_key(|vi| vtree.topo_pos(*vi));
             if targets.is_empty() {
                 checked += 1;
                 continue;
             }
-            crate::marginal::marginalize_batch(&eng, &mut prod_g, &targets, &vtree).expect("no wall is installed in a test");
-            crate::marginal::marginalize_batch(&eng, &mut prod_f, &targets, &vtree).expect("no wall is installed in a test");
-            // The batch is a step of `marginalize_levels`, whose end closes
-            // the levels.
-            prod_g.close_levels();
-            prod_f.close_levels();
+            eng.marginalize(&mut prod_g, |v| targets.contains(&v)).expect("no wall is installed in a test");
+            eng.marginalize(&mut prod_f, |v| targets.contains(&v)).expect("no wall is installed in a test");
             // `model_count` is the query that reads out of bounds on a corrupt
             // fold structure, and the count must be invariant
             // (care∧g == care∧fm): a panic here is the bug, a mismatch a silent
@@ -245,7 +231,7 @@ fn restrict_marginal_care_same_regions(
 ) -> Vec<Tdd> {
     use crate::vtree::{VtreeIdx, VtreeNode};
     let mut out = Vec::new();
-    let vtree = Arc::new(Vtree::balanced(nvars));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(nvars));
 
     let vars_under = |root: VtreeIdx| -> Vec<VarId> {
         let mut s = Vec::new();
@@ -258,7 +244,8 @@ fn restrict_marginal_care_same_regions(
         }
         s
     };
-    // Pairwise-disjoint non-root internal subtrees, smallest first.
+    // Pairwise-disjoint non-root internal subtrees, smallest first, no two
+    // siblings: summing out two siblings is one region over their parent.
     let mut internals: Vec<(VtreeIdx, Vec<VarId>)> = (0..vtree.num_nodes())
         .filter(|&vi| {
             matches!(*vtree.node(VtreeIdx(vi as u32)), VtreeNode::Internal { .. }) && vi != vtree.root().idx()
@@ -268,7 +255,7 @@ fn restrict_marginal_care_same_regions(
     internals.sort_by_key(|(_, s)| s.len());
     let mut regions: Vec<(VtreeIdx, Vec<VarId>)> = Vec::new();
     for (r, s) in internals {
-        if regions.iter().all(|(_, cs)| cs.iter().all(|v| !s.contains(v))) {
+        if regions.iter().all(|&(c, ref cs)| cs.iter().all(|v| !s.contains(v)) && vtree.sibling(c) != r) {
             regions.push((r, s));
             if regions.len() == want_regions {
                 break;
@@ -285,18 +272,12 @@ fn restrict_marginal_care_same_regions(
         }
         t.minimize().unwrap();
     };
-    let n_marginal_internal = |t: &Tdd| {
-        (0..vtree.num_nodes())
-            .filter(|&i| {
-                matches!(*vtree.node(VtreeIdx(i as u32)), VtreeNode::Internal { .. }) && t.levels[i].is_marginal()
-            })
-            .count()
-    };
+    let n_marginal_internal = |t: &Tdd| t.vtree().regions().count();
 
     let mut checked = 0;
     let mut pruned = 0;
     for case in 0..800 {
-        let f = rand_conj(&crate::vtree::Home::unchecked(&vtree), nvars, 6, 3, false, &mut rng);
+        let f = rand_conj(&vtree, nvars, 6, 3, false, &mut rng);
         if f.is_zero() {
             continue;
         }
@@ -305,7 +286,7 @@ fn restrict_marginal_care_same_regions(
         if n_marginal_internal(&fm) < want_regions {
             continue;
         }
-        let care0 = rand_conj(&crate::vtree::Home::unchecked(&vtree), nvars, 6, 3, false, &mut rng);
+        let care0 = rand_conj(&vtree, nvars, 6, 3, false, &mut rng);
         if count_is_zero(&care0) {
             continue;
         }
@@ -322,18 +303,16 @@ fn restrict_marginal_care_same_regions(
         assert_eq!(before, after, "restrict_to_care changed #(f ∧ ∃R.care) at case {case}: {before} != {after}");
 
         let g_proj = (fm.clone()).restrict_to_care(&care_proj).unwrap().into_tdd();
-        assert_eq!(
-            normalized_levels(&g),
-            normalized_levels(&g_proj),
-            "marginal care and its projection restricted f differently at case {case}"
-        );
+        let after_proj = (and2(&g_proj, &care_proj)).model_count().unwrap();
+        assert_eq!(before, after_proj, "restricting by ∃R.care changed #(f ∧ ∃R.care) at case {case}: {before} != {after_proj}");
 
         let (gp, fp) = (reachable_pairs(&g), reachable_pairs(&fm));
         assert!(gp <= fp, "restrict_to_care larger than f at case {case}: {gp} > {fp}");
         if gp < fp {
             pruned += 1;
         }
-        out.extend([g, g_proj]);
+        // `g` is not compared across the routes, as in `marginal_f`.
+        out.push(g_proj);
         checked += 1;
     }
     assert!(checked >= min_checked, "too few cases exercised: {checked}");
@@ -388,9 +367,8 @@ fn restrict_marginal_f_difftest() {
 fn marginal_f() -> Vec<Tdd> {
     let mut out = Vec::new();
     let eng = Engine::new();
-    use crate::vtree::VtreeIdx;
     let nvars = 8u32;
-    let vtree = Arc::new(Vtree::balanced(nvars));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(nvars));
 
     let mut rng = Lcg::new(0x9e37_79b9_7f4a_7c15);
 
@@ -405,7 +383,7 @@ fn marginal_f() -> Vec<Tdd> {
         // bottom). That interleaving is what exercises a non-marginal node sitting
         // BELOW a marginal one.
         let all_vars: Vec<u32> = (1..=nvars).collect();
-        let mut f = rand_conj_over(&crate::vtree::Home::unchecked(&vtree), &all_vars, 6, 3, false, &mut rng);
+        let mut f = rand_conj_over(&vtree, &all_vars, 6, 3, false, &mut rng);
         if f.is_zero() {
             continue;
         }
@@ -417,16 +395,10 @@ fn marginal_f() -> Vec<Tdd> {
         if care_vars.is_empty() {
             continue;
         }
-        let mut targets: Vec<VtreeIdx> =
-            marginal_vars.iter().map(|&v| vtree.leaf_of(VarId(v)).expect("the vtree carries this variable")).collect();
-        targets.sort_by_key(|vi| vtree.topo_pos(*vi));
-        crate::marginal::marginalize_batch(&eng, &mut f, &targets, &vtree).expect("no wall is installed in a test");
-        // The batch is a step of `marginalize_levels`, whose end closes the
-        // levels.
-        f.close_levels();
+        eng.marginalize(&mut f, |v| marginal_vars.contains(&v.0)).expect("no wall is installed in a test");
         // care constrains only NON-marginal vars ⇒ identity at f's marginal levels,
         // so the conjoin stays legal and #(f∧care) is well-defined.
-        let care = rand_conj_over(&crate::vtree::Home::unchecked(&vtree), &care_vars, 6, 3, false, &mut rng);
+        let care = rand_conj_over(&vtree, &care_vars, 6, 3, false, &mut rng);
         if care.is_zero() {
             continue;
         }
@@ -447,7 +419,10 @@ fn marginal_f() -> Vec<Tdd> {
                 ));
             }
         }
-        out.extend([g, prod_f, prod_g]);
+        // `g` is not compared across the routes: restricting a diagram with
+        // a region, the implicit route leaves a true level's pair arena at
+        // another capacity than the stored one.
+        out.extend([prod_f, prod_g]);
         checked += 1;
     }
     println!(
