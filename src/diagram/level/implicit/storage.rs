@@ -188,6 +188,15 @@ impl PairArena {
         d.level = described;
     }
 
+    /// Raise an implicit arena's capacity to `capacity` and that of the node
+    /// arena it implies to `node_capacity`, where they are lower: the
+    /// capacities of a stored copy written into arenas of those capacities.
+    pub(crate) fn raise_capacities(&mut self, capacity: usize, node_capacity: usize) {
+        let d = self.described.as_mut().expect("raise_capacities on a stored arena");
+        d.capacity = d.capacity.max(capacity);
+        d.node_capacity = d.node_capacity.max(node_capacity);
+    }
+
     /// Exchange the two sides of an implicit arena's description.
     pub(crate) fn swap_described_sides(&mut self) {
         let d = self.described.as_mut().expect("a stored arena swaps its pairs");

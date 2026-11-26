@@ -419,10 +419,7 @@ fn marginal_f() -> Vec<Tdd> {
                 ));
             }
         }
-        // `g` is not compared across the routes: restricting a diagram with
-        // a region, the implicit route leaves a true level's pair arena at
-        // another capacity than the stored one.
-        out.extend([prod_f, prod_g]);
+        out.extend([g, prod_f, prod_g]);
         checked += 1;
     }
     println!(
