@@ -104,7 +104,7 @@ It omits the witness, replacement observation and minimization demonstrations.
 
 ### Instances
 
-- [Rust walkthrough](examples/configurations.md) <!-- reviewed: 385e8d2c3bfb4c824925a9376d2ce44f6cc08cea0b8e4e46de2b99da3f2d70d8 -->
+- [Rust walkthrough](examples/configurations.md) <!-- reviewed: 43dd9c2a35308a92b436e63540b97ae32167be1454e27b3c0715ee81c284f33c -->
 - [Rust program](../examples/configurations.rs) <!-- reviewed: 7fdacbb62eab3fe20f71a031b2e3cf15800f7c576be3232dd8f2e0c7d9ec294a -->
 - [Python walkthrough and program](../bindings/python/examples/01_configurations.py) <!-- reviewed: 6a369c0d5f4dd63db5fe776ae2f5699ac0d370d32925b2a9bc6a9e9c6ae67006 -->
 - [C configurations](../bindings/c/docs/configurations.rst) <!-- reviewed: ac03abce92815601a4e6410435e1724f471e5ffcd9be87a436fae77a9fd2e392 -->
@@ -203,8 +203,8 @@ witness; the reachable-set semantics are unchanged.
 
 ### Instances
 
-- [Rust walkthrough](examples/reachability.md) <!-- reviewed: 2fd33324297606f656649274338b40c7cd0a31287e88c4ca137310d89ec5b58b -->
-- [Rust program](../examples/reachability.rs) <!-- reviewed: ca00b29c9b6f458c6d9090f9bc960790dcf3edb5a7b3018efa9324781172dbd6 -->
+- [Rust walkthrough](examples/reachability.md) <!-- reviewed: d8708b80ad8898f348ec352babf22cfa63deddd98d8ce8b9aa1dc4bb3928da26 -->
+- [Rust program](../examples/reachability.rs) <!-- reviewed: 730c3db45da14f350ae7f2c50639419e01914abc032398391f49e0cf59036d64 -->
 - [Python walkthrough and program](../bindings/python/examples/03_reachability.py) <!-- reviewed: b2629b1916204112a4814714a701974b0969c5d75faa5a5bf9413fe9fc9daa2d -->
 - [Shared directed graph](reachability.svg) <!-- reviewed: 1ca4b73d89b0d1a06015d9bc9922b5dec95429ba70d2b3f64f246008741ac159 -->
 - [C reachability](../bindings/c/docs/reachability.rst) <!-- reviewed: 87064390b5ee82227931a0eb4a1df51d331d5ed32c011d8079f2ca8eda400775 -->
@@ -258,7 +258,7 @@ equivalence and malformed input are checked separately by the C consumer tests.
 
 ### Instances
 
-- [Rust walkthrough](examples/persistence.md) <!-- reviewed: 4b05fd512b7c06b272e18c96870965e6adf7f5b7a987a7f9d8b0dfc1a239fbf5 -->
+- [Rust walkthrough](examples/persistence.md) <!-- reviewed: 04bad2847ea9cd6d67da576cc07b107d2f32578c257ff54a2cf2c1c91faf93f3 -->
 - [Rust program](../examples/persistence.rs) <!-- reviewed: 85ae38a2976381de6da135e291e23a0d0cfab24d03e6658ccadcb7bac73762e7 -->
 - [Python walkthrough and program](../bindings/python/examples/05_persistence.py) <!-- reviewed: fdfc429df95bf755e261e8e64ea77c1c8b1f33aff50b6c5f90565b88b15f49bc -->
 - [C persistence](../bindings/c/docs/persistence.rst) <!-- reviewed: 8e370a6820cbd48a418cb57a186c7bb4f37c2ae2587b1144c8c71c6e691ade28 -->
@@ -280,8 +280,8 @@ constructors without adding another construction to the introductory comparison.
 
 ### Instances
 
-- [Rust walkthrough](examples/vtrees.md) <!-- reviewed: 45a364b9253022b0c67bef041761d6a6dcb2b3dcaf778ce4c184b89321d4c8ef -->
-- [Rust program](../examples/vtrees.rs) <!-- reviewed: 65fdbeb03bdd084d9a560dca50520c83dbccf4b91bf7734ded878ea44d171a48 -->
+- [Rust walkthrough](examples/vtrees.md) <!-- reviewed: 7fa96f571770a58e7584614ab5c51b2e2ebe4985c345e84a3fdf4516478f3f67 -->
+- [Rust program](../examples/vtrees.rs) <!-- reviewed: b76ab47005caff16eae7bc0563ce408813daaf4c75c76e0b69c7ea6605fc8ddc -->
 - [Python walkthrough and program](../bindings/python/examples/06_vtrees.py) <!-- reviewed: eb7e3d5cdcd211eee86994d058fa5e1ea745bc8dc15ade88141a5c963eb02113 -->
 - [Shared grouping figure](vtree-grouping.svg) <!-- reviewed: e9c0efa139f3728e27c1073aeef91573670de9ded84b519b2a2264f4d1a87e9c -->
 - [C vtrees](../bindings/c/docs/vtrees.rst) <!-- reviewed: ca64314bd76037516607c6dfdb4afae61e993b23963d52bb4ce77771431541f7 -->
@@ -396,7 +396,7 @@ owns the circuit until finish; unlike Python, freeing the handle ends all checks
 
 ### Instances
 
-- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: ae107973f00cdb171d2fe26331acd692f6ba217230f5a8220714e0832d89eee1 -->
+- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: 4591e9f9f6428ed09d9b530275ddaa12caa7264bf969357b299c6c22fc9ecc9a -->
 - [Python ownership guide](../bindings/python/docs/ownership.rst) <!-- reviewed: 685e0b6279a4115660efab3cb519c70bfca9eac7320a8c905dd5f720637b2723 -->
 - [C ownership](../bindings/c/docs/ownership.rst) <!-- reviewed: 39ab8a8f865680890f676f3022da9389bf6a3c18cdac1c388f3333b4df0757b9 -->
 
@@ -417,7 +417,7 @@ evaluation has its own rational-string interface.
 
 ### Instances
 
-- [Rust API overview](api-guide.md) <!-- reviewed: 3dbb7384ff0118d3711c348a0e6694eb1fcbdcdbeed85bba39c53942eeb04444 -->
+- [Rust API overview](api-guide.md) <!-- reviewed: 174d5b956fab17b87b1694134d633a9d4fbd6217b6a132f1a243cd01d6719867 -->
 - [Python API reference](../bindings/python/docs/api.rst) <!-- reviewed: 619c8cf6bbe3d4b720da766850817f34b4fdf92c866f3c6cd9828cd555fdcd39 -->
 - [C api](../bindings/c/docs/api.rst) <!-- reviewed: a4cc0ac9db6cd02097704bc1e4d3dd2fed3acb087decd2073142fbaf614ea9cc -->
 
@@ -436,7 +436,7 @@ invariants and marginal levels; Python concentrates on using shared vtrees.
 
 ### Instances
 
-- [Rust data model](tdd.md) <!-- reviewed: 7ff553c55c52ff3a7a3be1a092ed3f3bc7b8a29784bf487b655e67759b336be7 -->
+- [Rust data model](tdd.md) <!-- reviewed: 4a10a668d2c825c37603f5a4adcf6d90d884f3792ffe397ba894a277578100dd -->
 - [Python data model](../bindings/python/docs/representation.rst) <!-- reviewed: ed52b71f88c82caf64b54c6227acbe5de4215ce34886e327f1b102cdd338b20c -->
 - [Shared decomposition figure](tdd-basics.svg) <!-- reviewed: 5f2ab1677522a6a53385289841534c2a0096087bc65c8ce7f6c51d3be0e83c12 -->
 
@@ -464,7 +464,7 @@ there is no separate Python implementation to describe.
 
 ### Instances
 
-- [Rust architecture reference](architecture.md) <!-- reviewed: 9af8c3dedd78d237f528dfc214ceed19032ec364308103b4fa3264b2bc0230eb -->
+- [Rust architecture reference](architecture.md) <!-- reviewed: b8d343027da820495673e67d24774afee5978754444077e9e01e21bea1a2db3f -->
 
 ## Invariants
 
@@ -481,7 +481,7 @@ is no separate Python implementation to describe.
 
 ### Instances
 
-- [Rust invariants reference](invariants.md) <!-- reviewed: fe0483acdeee084e0cc7d4730bd2513d5ddd8161a5c2fb7bd7bd786ab7da660a -->
+- [Rust invariants reference](invariants.md) <!-- reviewed: 685183fbcbe028c0058dcf61a77f59d63e4985d632af20b659381f755ee66a92 -->
 
 ## Reusable components
 
@@ -502,8 +502,8 @@ Do not invent a language counterpart that rebuilds the rule instead of reusing i
 
 ### Instances
 
-- [Rust walkthrough](examples/composition.md) <!-- reviewed: 1fd27e3151c5f93fc0d532bed0e31e79fcc2e1b79b6a32c887c0fd53f6d565a9 -->
-- [Rust program](../examples/composition.rs) <!-- reviewed: 10ec94bac5cba9f32e18c558a07c56d21d1b2e6dd7875b3fea9399c55f701544 -->
+- [Rust walkthrough](examples/composition.md) <!-- reviewed: ea240e9703fae287e281f7b92a880e06bb853d0e580731c0a512f837de6a7faf -->
+- [Rust program](../examples/composition.rs) <!-- reviewed: f4c322b4e0e6f06bb2ea9abc63ca02973ba93711928921040636afdefa0b2718 -->
 
 ## Care sets
 
@@ -524,7 +524,7 @@ care-set restriction yet.
 
 ### Instances
 
-- [Rust walkthrough](examples/care.md) <!-- reviewed: ef5cb054b9f2f51df8c7430fa215e8de6ccc3c0ea9105a24c75cd1a0d0a1647e -->
+- [Rust walkthrough](examples/care.md) <!-- reviewed: a828ec8a0faa948bdd5deb1d6cbc77d25bcf00bb47d194c44057d6aae6668711 -->
 - [Rust program](../examples/care.rs) <!-- reviewed: 2ad5fd3442c8462746d5592f630c06c3865d87ba4e602158acb5c6eb3cfb42fc -->
 
 ## Keeping values
@@ -535,17 +535,17 @@ stays 9, while the original projected onto B has 3 choices. Observing R_B in
 the summarized circuit gives 6; observing R_A raises MarginalLevel. Keeping the
 original allows observing both remote options, giving 4 configurations.
 
-For the weighted version, build the rules again on a vtree of the same shape
+For the weighted version, build the rules again on a home of the same shape
 that carries independent probability-1/2 weights in exact rational arithmetic,
 then marginalize A.
 The weighted value stays 9/16. Change every probability to 1/3 and evaluate the
 original: 25/81. Evaluating the summarized circuit with a new algebra is refused
 because assignments were discarded. Do not suggest that changing a weight table
 can reconstruct a stored sum, or that projection and marginalization count the
-same thing. Select a vtree subtree, not variable IDs. Rust-only: the bindings
+same thing. Select A's variables, the leaves of its subtree. Rust-only: the bindings
 currently expose structural evaluation, not marginalization or weighted vtrees.
 
 ### Instances
 
-- [Rust walkthrough](examples/marginalization.md) <!-- reviewed: a6e0970b7b4203be5e734150d0668aec9008e0876f625c0343ad4f1f3061254a -->
-- [Rust program](../examples/marginalization.rs) <!-- reviewed: 201e65083fe27d51b96601ff1a9428d221aecec91ca3907ce3488e2a86811caa -->
+- [Rust walkthrough](examples/marginalization.md) <!-- reviewed: eb741620896e8ad7667318aecb5cfd6a80295a8924ee54410d4ea0dcb762d257 -->
+- [Rust program](../examples/marginalization.rs) <!-- reviewed: 6636c934ab277d099b07a9e6f241b08d462fffc42c1a98b0d9096158a775c3e0 -->
