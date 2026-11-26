@@ -44,19 +44,35 @@ impl Tdd {
         let hv: &Vtree = home;
         let pairs = pairs + not_own(self, hv.num_leaves());
         let kids = children_table(&self.vtree);
-        let mut widths = vec![1u32; kids.len()];
-        own_widths(self, &kids, &mut widths);
         let mut carried = 0usize;
         for (t, &(l, r)) in kids.iter().enumerate() {
             if l.idx() == t {
                 continue;
             }
             let top = self.vtree.home_node(VtreeIdx(t as u32));
-            for c in [l, r] {
+            let between = [l, r].map(|c| {
                 let below = self.vtree.home_node(c);
                 debug_assert_eq!(home.depth(below) - home.depth(top), chain(hv, below, top).count() as u32);
-                let between = (home.depth(below) - home.depth(top) - 1) as usize;
-                carried += between * (widths[c.idx()] as usize - 1);
+                (home.depth(below) - home.depth(top) - 1) as usize
+            });
+            // A child right under its parent in the home carries nothing,
+            // so its width, which reads its level or its parent's pairs, is
+            // read only for a child with home nodes above it.
+            if between == [0, 0] {
+                continue;
+            }
+            let leaves = [kids[l.idx()].0 == l, kids[r.idx()].0 == r];
+            let labelled = [0, 1].map(|s| leaves[s] && between[s] > 0);
+            let labels = match labelled {
+                [false, false] => [0; 2],
+                _ => leaf_labels(&self.levels, t, [l, r], labelled).0,
+            };
+            for (side, c) in [l, r].into_iter().enumerate() {
+                let width = match leaves[side] {
+                    true => labels[side].max(1),
+                    false => level_width(&self.levels[c.idx()]),
+                };
+                carried += between[side] * (width as usize - 1);
             }
         }
         pairs + carried
