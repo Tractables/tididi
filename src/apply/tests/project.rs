@@ -153,6 +153,7 @@ fn leaf_parent(vtree: &Vtree, x: u32, y: u32) -> crate::vtree::VtreeIdx {
     p
 }
 
+// Padded form: hand-built marginal levels on a bare root.
 #[test]
 fn apply_and_zero_width_marginal_levels() {
     let vtree = Arc::new(Vtree::balanced(8));
