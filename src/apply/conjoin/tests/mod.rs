@@ -817,6 +817,11 @@ thread_local! {
     /// The pass levels on this thread so written, over a complete passed
     /// child and over a slab ([`pass_composed_census`]).
     static PASS_COMPOSED: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0; 2]) };
+    /// Whether no level over a child grid that is not complete is written
+    /// as its description ([`block_composed_off`]).
+    static BLOCK_COMPOSED_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The levels on this thread so written ([`block_composed_census`]).
+    static BLOCK_COMPOSED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 pub(super) fn pass_listed_forced_off() -> bool {
@@ -860,6 +865,26 @@ pub(super) fn pass_composed_off<R>(f: impl FnOnce() -> R) -> R {
 /// over a complete passed child and over a slab.
 pub(super) fn pass_composed_census() -> [u64; 2] {
     PASS_COMPOSED.with(std::cell::Cell::get)
+}
+
+pub(super) fn block_composed_forced_off() -> bool {
+    BLOCK_COMPOSED_OFF.with(std::cell::Cell::get)
+}
+
+pub(super) fn note_block_composed() {
+    BLOCK_COMPOSED.with(|c| c.set(c.get() + 1));
+}
+
+/// Run `f` with no level over a child grid that is not complete written as
+/// its description: the oracle that route is checked against.
+pub(super) fn block_composed_off<R>(f: impl FnOnce() -> R) -> R {
+    with_flag(&BLOCK_COMPOSED_OFF, f)
+}
+
+/// The levels on this thread so far written as their description over a
+/// child grid that is not complete.
+pub(super) fn block_composed_census() -> u64 {
+    BLOCK_COMPOSED.with(std::cell::Cell::get)
 }
 
 pub(super) fn pass_numbered_forced_off() -> bool {

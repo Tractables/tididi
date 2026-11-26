@@ -141,6 +141,16 @@ pub(super) fn note_pass_composed(_slab: bool) {}
 
 #[cfg(not(test))]
 #[inline(always)]
+pub(super) fn block_composed_forced_off() -> bool {
+    false
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+pub(super) fn note_block_composed() {}
+
+#[cfg(not(test))]
+#[inline(always)]
 pub(super) fn relay_forced_off() -> bool {
     false
 }

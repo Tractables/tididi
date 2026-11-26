@@ -739,6 +739,17 @@ fn plain_lookups(route: Route, complete: Sides<bool>) -> PlainLookups {
     }
 }
 
+/// `lookups` with the pair capacity the meters were charged for set to
+/// `charged`, where it has one.
+fn with_charged(lookups: PlainLookups, charged: usize) -> PlainLookups {
+    match lookups {
+        PlainLookups::Grid => PlainLookups::Grid,
+        PlainLookups::CompleteLeft { .. } => PlainLookups::CompleteLeft { charged },
+        PlainLookups::CompleteRight { .. } => PlainLookups::CompleteRight { charged },
+        PlainLookups::Complete { .. } => PlainLookups::Complete { charged },
+    }
+}
+
 /// Reserve the arenas of a level with a complete child side to what its
 /// row loop writes where no candidate dies ([`complete_level_size`]), and
 /// return the pair capacity the output-pair meter has been charged for (see
@@ -965,8 +976,10 @@ pub(super) fn build_level_dense(
         }
         build_level_prefilter_masks(eng, run, g_t, shape, &plan, bases, (lookups, pair_table))?;
     }
-    // A level of two complete sides whose operand levels are affine takes
-    // the implicit route. Under bounded-precision weights a level of the
+    // A level of the plain routes whose child grids' live cells are blocks,
+    // complete ones or not, and whose operand levels are affine takes the
+    // implicit route; a masked level keeps its row loop. Under
+    // bounded-precision weights a level of the
     // marginal-child route takes it too, over child sides that are each
     // complete or carried: its marginal sides name slots of value columns,
     // which the end of the apply leaves as they are. Any other level reads
@@ -978,8 +991,20 @@ pub(super) fn build_level_dense(
         || crate::diagram::stored_levels_forced()
     {
         None
-    } else if matches!(lookups, PlainLookups::Complete { .. }) {
-        super::compose::plan(lim, f_t, g_t, shape, grouped)
+    } else if plain && !masked && !grid_lookups_forced() {
+        let slab = run.products.arena.slab();
+        let block = |side: ChildSide| {
+            let (complete, base, (f_width, g_width)) = match side {
+                ChildSide::Left => (complete.left, bases.left, (fw.left, gw.left)),
+                ChildSide::Right => (complete.right, bases.right, (fw.right, gw.right)),
+            };
+            match complete {
+                true => Some(super::compose::Block::complete(f_width, g_width)),
+                false if super::super::block_composed_forced_off() => None,
+                false => super::compose::Block::read(&slab[base.idx()..][..f_width * g_width], g_width),
+            }
+        };
+        super::compose::plan(lim, f_t, g_t, shape, grouped, block)
     } else if route == Route::MarginalChild
         && !grid_lookups_forced()
         && sweep.ws.as_ref().is_some_and(|w| w.is_bounded())
@@ -1022,7 +1047,7 @@ pub(super) fn build_level_dense(
                 level.pairs.capacity()
             };
             if plain {
-                note_lookups(PlainLookups::Complete { charged });
+                note_lookups(with_charged(lookups, charged));
             }
             let (work, meter, doublings) =
                 super::compose::charges((fw.here, gw.here), &product, charged);
@@ -1043,14 +1068,16 @@ pub(super) fn build_level_dense(
                     work,
                     (meter, doublings),
                 )?;
+                if plain && !(complete.left && complete.right) {
+                    super::super::note_block_composed();
+                }
                 break 'routes;
             }
             // A level of the marginal-child route reads its sides from their
             // grids and grows its arenas as the row loop writes them.
-            opened = Some(if plain {
-                Some(reserve_complete_level(lim, f_t, g_t, level)?)
-            } else {
-                None
+            opened = Some(match lookups {
+                PlainLookups::Grid => None,
+                _ => Some(reserve_complete_level(lim, f_t, g_t, level)?),
             });
         }
 
@@ -1089,15 +1116,12 @@ pub(super) fn build_level_dense(
         );
 
         match opened {
-            Some(Some(charged)) => lookups = PlainLookups::Complete { charged },
+            Some(Some(charged)) => lookups = with_charged(lookups, charged),
             Some(None) => note_lookups(lookups),
             None => {
                 open_level_arenas(lim, (f_t, g_t), shape, level, route)?;
-                if let PlainLookups::Complete { charged }
-                | PlainLookups::CompleteLeft { charged }
-                | PlainLookups::CompleteRight { charged } = &mut lookups
-                {
-                    *charged = reserve_complete_level(lim, f_t, g_t, level)?;
+                if lookups != PlainLookups::Grid {
+                    lookups = with_charged(lookups, reserve_complete_level(lim, f_t, g_t, level)?);
                 }
                 note_lookups(lookups);
             }
