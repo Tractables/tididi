@@ -184,6 +184,8 @@ Fixed:
   unless a level under it is marginal, where a repeated pair is a legal
   multiplicity. The binary reader trusts the levels it reads and does not
   check.
+- In debug builds, `equivalent` panicked on a diagram whose output is below
+  its projection's root.
 
 ## 0.2.0
 
