@@ -693,15 +693,14 @@ fn the_word_passes_number_and_keep_every_marked_slot() {
 /// root's level names node 0, so that every node below the root is named,
 /// as the walk below the root requires. Returns the diagram, `v` and `w`.
 fn two_decisions(eng: &crate::Engine, implicit: bool, named: bool) -> (crate::diagram::Tdd, crate::vtree::VtreeIdx, crate::vtree::VtreeIdx) {
-    use crate::diagram::{ChildPair, NodeIdx, TddNodeId, NEG_LEAF_IDX, POS_LEAF_IDX};
+    use crate::diagram::{ChildPair, NodeIdx, NEG_LEAF_IDX, POS_LEAF_IDX};
 
     let vtree = Home::new(Vtree::linear(4));
     let r = vtree.root();
     let (_, v) = vtree.children(r);
     let (_, w) = vtree.children(v);
     assert!(!vtree.node(w).is_leaf() && vtree.node(vtree.children(w).0).is_leaf());
-    let output = TddNodeId { vtree: r, local: NodeIdx(0) };
-    let mut tdd = crate::diagram::Tdd::from_levels_unchecked(Arc::clone(&vtree), crate::diagram::take_levels(eng, vtree.num_nodes()), output);
+    let mut tdd = crate::test_helpers::unfilled(eng, &vtree);
     let literal = [POS_LEAF_IDX, NEG_LEAF_IDX];
     let below = &mut tdd.levels[w.idx()];
     for m in 0..4 {
