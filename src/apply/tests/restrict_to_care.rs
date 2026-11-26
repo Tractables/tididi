@@ -3,7 +3,6 @@
 //! Fixtures come from `crate::test_helpers`, re-exported by the parent.
 
 use super::*;
-use crate::diagram::ChildSide;
 
 use crate::Engine;
 use crate::vtree::Home;
@@ -328,10 +327,10 @@ fn brute_force_randomized_multi_vtree() -> Vec<Tdd> {
     let mut total = 0;
     let mut shrinks = 0;
     for &nvars in &[2u32, 3, 4] {
-        let vtree = Arc::new(Vtree::balanced(nvars));
+        let vtree = crate::vtree::Home::new(Vtree::balanced(nvars));
         for _ in 0..120 {
-            let f = rand_conj(&crate::vtree::Home::unchecked(&vtree), nvars, 3, nvars as u64, false, &mut rng);
-            let c = rand_conj(&crate::vtree::Home::unchecked(&vtree), nvars, 3, nvars as u64, false, &mut rng);
+            let f = rand_conj(&vtree, nvars, 3, nvars as u64, false, &mut rng);
+            let c = rand_conj(&vtree, nvars, 3, nvars as u64, false, &mut rng);
             if count_is_zero(&c) {
                 continue;
             }
@@ -381,10 +380,10 @@ fn output_is_orphan_free() -> Vec<Tdd> {
     let mut total = 0u64;
     let mut shrinks = 0u64;
     for &nvars in &[5u32, 6, 7, 8] {
-        let vtree = Arc::new(Vtree::balanced(nvars));
+        let vtree = crate::vtree::Home::new(Vtree::balanced(nvars));
         for _ in 0..150 {
-            let mut f = rand_conj(&crate::vtree::Home::unchecked(&vtree), nvars, 4, nvars as u64, false, &mut rng);
-            let mut c = rand_conj(&crate::vtree::Home::unchecked(&vtree), nvars, 4, nvars as u64, false, &mut rng);
+            let mut f = rand_conj(&vtree, nvars, 4, nvars as u64, false, &mut rng);
+            let mut c = rand_conj(&vtree, nvars, 4, nvars as u64, false, &mut rng);
             if count_is_zero(&c) {
                 continue;
             }
@@ -444,11 +443,11 @@ fn raw_output_is_apply_safe() -> Vec<Tdd> {
     let mut rng = Lcg::new(0x0bad_f00d_1337_c0de);
     let mut conjoined = 0;
     for &nvars in &[2u32, 3, 4, 5] {
-        let vtree = Arc::new(Vtree::balanced(nvars));
+        let vtree = crate::vtree::Home::new(Vtree::balanced(nvars));
         for _ in 0..150 {
-            let f = rand_conj(&crate::vtree::Home::unchecked(&vtree), nvars, 4, nvars as u64, false, &mut rng);
-            let c = rand_conj(&crate::vtree::Home::unchecked(&vtree), nvars, 4, nvars as u64, false, &mut rng);
-            let other = rand_conj(&crate::vtree::Home::unchecked(&vtree), nvars, 4, nvars as u64, false, &mut rng);
+            let f = rand_conj(&vtree, nvars, 4, nvars as u64, false, &mut rng);
+            let c = rand_conj(&vtree, nvars, 4, nvars as u64, false, &mut rng);
+            let other = rand_conj(&vtree, nvars, 4, nvars as u64, false, &mut rng);
             if count_is_zero(&c) || f.is_zero() {
                 continue;
             }
@@ -459,11 +458,7 @@ fn raw_output_is_apply_safe() -> Vec<Tdd> {
             if other.is_zero() || g.is_zero() {
                 continue;
             }
-            let mut ga = g.clone();
-            let mut ob = other.clone();
-            ga.vtree = f.vtree.clone();
-            ob.vtree = f.vtree.clone();
-            let mut p = apply_and(ga, ob);
+            let mut p = apply_and(g.clone(), other.clone());
             p.minimize().unwrap();
             check_all_fast(&p, "apply(restrict_to_care-raw, other)+minimize");
             out.extend([g, p]);
@@ -581,17 +576,17 @@ fn keeps_exactly_the_pairs_models_use() -> Vec<Tdd> {
     for &nvars in &[3u32, 4, 5, 6, 7] {
         let shapes = [Vtree::balanced(nvars), Vtree::linear(nvars), Vtree::random(nvars, u64::from(nvars) * 31 + 7)];
         for vtree in shapes {
-            let vtree = Arc::new(vtree);
+            let vtree = crate::vtree::Home::new(vtree);
             for _ in 0..60 {
-                let mut f = rand_conj(&crate::vtree::Home::unchecked(&vtree), nvars, 4, 3, true, &mut rng);
-                let mut c = rand_conj(&crate::vtree::Home::unchecked(&vtree), nvars, 4, 3, true, &mut rng);
+                let mut f = rand_conj(&vtree, nvars, 4, 3, true, &mut rng);
+                let mut c = rand_conj(&vtree, nvars, 4, 3, true, &mut rng);
                 if rng.coin() {
                     f.minimize().unwrap();
                 }
                 if rng.coin() {
                     c.minimize().unwrap();
                 }
-                if f.is_zero() || count_is_zero(&c) || f.output.vtree != c.output.vtree {
+                if f.is_zero() || count_is_zero(&c) || at_home(&f) != at_home(&c) {
                     continue;
                 }
                 let g = (f.clone()).restrict_to_care(&c).unwrap().into_tdd();
@@ -632,7 +627,7 @@ fn care_on_one_subtree_keeps_exactly_the_pairs_models_use() -> Vec<Tdd> {
     for &nvars in &[4u32, 5, 6, 7] {
         let shapes = [Vtree::balanced(nvars), Vtree::linear(nvars), Vtree::random(nvars, u64::from(nvars) * 17 + 3)];
         for vtree in shapes {
-            let vtree = Arc::new(vtree);
+            let vtree = crate::vtree::Home::new(vtree);
             let lows: Vec<Vec<u32>> = vtree
                 .subtree(vtree.root())
                 .filter(|&u| u != vtree.root())
@@ -644,16 +639,16 @@ fn care_on_one_subtree_keeps_exactly_the_pairs_models_use() -> Vec<Tdd> {
                 })
                 .collect();
             for _ in 0..60 {
-                let mut f = rand_conj(&crate::vtree::Home::unchecked(&vtree), nvars, 4, 3, true, &mut rng);
+                let mut f = rand_conj(&vtree, nvars, 4, 3, true, &mut rng);
                 let vars = &lows[(rng.next_u64() as usize) % lows.len()];
-                let mut c = rand_conj_over(&crate::vtree::Home::unchecked(&vtree), vars, 3, 2, false, &mut rng);
+                let mut c = rand_conj_over(&vtree, vars, 3, 2, false, &mut rng);
                 if rng.coin() {
                     f.minimize().unwrap();
                 }
                 if rng.coin() {
                     c.minimize().unwrap();
                 }
-                if f.is_zero() || count_is_zero(&c) || f.output.vtree != c.output.vtree {
+                if f.is_zero() || count_is_zero(&c) {
                     continue;
                 }
                 let g = (f.clone()).restrict_to_care(&c).unwrap().into_tdd();
@@ -678,23 +673,6 @@ fn at_home(t: &Tdd) -> crate::vtree::VtreeIdx {
     t.vtree.home_node(t.output.vtree)
 }
 
-/// `care` moved down from the root to `u`, one child at a time: `None` where
-/// a node on the way holds more than one pair (`care` reads a variable off
-/// the path, which it does not when it reads only `u`'s).
-fn rooted_at(care: &Tdd, u: crate::vtree::VtreeIdx) -> Option<Tdd> {
-    let mut t = care.clone();
-    while t.output.vtree != u {
-        let at = t.output.vtree;
-        if t.levels[at.idx()].pairs_vec(t.output.local.idx()).len() != 1 {
-            return None;
-        }
-        let (left, _) = t.vtree.children(at);
-        let side = if t.vtree.lca(u, left) == left { ChildSide::Left } else { ChildSide::Right };
-        t = reroot_to_child(&t, side);
-    }
-    Some(t)
-}
-
 /// On implicit levels and on stored ones alike ([`same_as_stored`]).
 #[test]
 fn restrict_to_a_care_rooted_lower_keeps_exactly_the_pairs_models_use() {
@@ -716,7 +694,7 @@ fn care_rooted_lower_keeps_exactly_the_pairs_models_use() -> Vec<Tdd> {
     for &nvars in &[4u32, 5, 6, 7] {
         let shapes = [Vtree::linear(nvars), Vtree::balanced(nvars), Vtree::random(nvars, u64::from(nvars) * 13 + 5)];
         for vtree in shapes {
-            let vtree = Arc::new(vtree);
+            let vtree = crate::vtree::Home::new(vtree);
             let lows: Vec<crate::vtree::VtreeIdx> =
                 vtree.subtree(vtree.root()).filter(|&u| u != vtree.root() && !vtree.node(u).is_leaf()).collect();
             if lows.is_empty() {
@@ -725,17 +703,20 @@ fn care_rooted_lower_keeps_exactly_the_pairs_models_use() -> Vec<Tdd> {
             for _ in 0..80 {
                 let u = lows[(rng.next_u64() as usize) % lows.len()];
                 let vars: Vec<u32> = vtree.subtree(u).filter(|&x| vtree.node(x).is_leaf()).map(|x| vtree.leaf_var(x).0).collect();
-                let mut c = rand_conj_over(&crate::vtree::Home::unchecked(&vtree), &vars, 3, 2, false, &mut rng);
+                let mut c = rand_conj_over(&vtree, &vars, 3, 2, false, &mut rng);
                 c.minimize().unwrap();
                 if count_is_zero(&c) {
                     continue;
                 }
-                let Some(c) = rooted_at(&c, u) else { continue };
-                let mut f = rand_conj(&crate::vtree::Home::unchecked(&vtree), nvars, 4, 3, true, &mut rng);
+                let u = at_home(&c);
+                if vtree.node(u).is_leaf() {
+                    continue;
+                }
+                let mut f = rand_conj(&vtree, nvars, 4, 3, true, &mut rng);
                 if rng.coin() {
                     f.minimize().unwrap();
                 }
-                if f.is_zero() || f.output.vtree != vtree.root() {
+                if f.is_zero() || at_home(&f) != vtree.root() {
                     continue;
                 }
                 let g = (f.clone()).restrict_to_care(&c).unwrap().into_tdd();
@@ -779,7 +760,7 @@ fn care_rooted_above_f_keeps_exactly_the_pairs_models_use() -> Vec<Tdd> {
     for &nvars in &[4u32, 5, 6, 7] {
         let shapes = [Vtree::linear(nvars), Vtree::balanced(nvars), Vtree::random(nvars, u64::from(nvars) * 11 + 9)];
         for vtree in shapes {
-            let vtree = Arc::new(vtree);
+            let vtree = crate::vtree::Home::new(vtree);
             let lows: Vec<crate::vtree::VtreeIdx> =
                 vtree.subtree(vtree.root()).filter(|&u| u != vtree.root() && !vtree.node(u).is_leaf()).collect();
             if lows.is_empty() {
@@ -789,23 +770,29 @@ fn care_rooted_above_f_keeps_exactly_the_pairs_models_use() -> Vec<Tdd> {
             for _ in 0..80 {
                 let u = lows[(rng.next_u64() as usize) % lows.len()];
                 let vars: Vec<u32> = vtree.subtree(u).filter(|&x| vtree.node(x).is_leaf()).map(|x| vtree.leaf_var(x).0).collect();
-                let mut f = rand_conj_over(&crate::vtree::Home::unchecked(&vtree), &vars, 4, 3, false, &mut rng);
+                let mut f = rand_conj_over(&vtree, &vars, 4, 3, false, &mut rng);
                 f.minimize().unwrap();
                 if f.is_zero() {
                     continue;
                 }
-                let Some(f) = rooted_at(&f, u) else { continue };
+                let u = at_home(&f);
+                if vtree.node(u).is_leaf() {
+                    continue;
+                }
                 let some = rng.coin();
                 let care_vars: Vec<u32> = if some { all.iter().copied().filter(|_| rng.coin()).collect() } else { all.clone() };
                 if care_vars.len() < 2 {
                     continue;
                 }
-                let mut c = rand_conj_over(&crate::vtree::Home::unchecked(&vtree), &care_vars, 4, 3, true, &mut rng);
+                let mut c = rand_conj_over(&vtree, &care_vars, 4, 3, true, &mut rng);
                 if rng.coin() {
                     c.minimize().unwrap();
                 }
-                let r = c.output.vtree;
-                if count_is_zero(&c) || r == u || vtree.lca(r, u) != r {
+                if count_is_zero(&c) || c.vtree.num_nodes() == 0 {
+                    continue;
+                }
+                let r = at_home(&c);
+                if r == u || vtree.lca(r, u) != r {
                     continue;
                 }
                 let g = (f.clone()).restrict_to_care(&c).unwrap().into_tdd();
@@ -852,23 +839,26 @@ fn f_rooted_above_the_care_holds_on_the_care() -> Vec<Tdd> {
     for &nvars in &[4u32, 5, 6, 7] {
         let shapes = [Vtree::linear(nvars), Vtree::balanced(nvars), Vtree::random(nvars, u64::from(nvars) * 7 + 1)];
         for vtree in shapes {
-            let vtree = Arc::new(vtree);
+            let vtree = crate::vtree::Home::new(vtree);
             let lows: Vec<crate::vtree::VtreeIdx> =
                 vtree.subtree(vtree.root()).filter(|&u| u != vtree.root() && !vtree.node(u).is_leaf()).collect();
             if lows.is_empty() {
                 continue;
             }
-            for _ in 0..80 {
+            for _ in 0..180 {
                 let u = lows[(rng.next_u64() as usize) % lows.len()];
                 let vars: Vec<u32> = vtree.subtree(u).filter(|&x| vtree.node(x).is_leaf()).map(|x| vtree.leaf_var(x).0).collect();
-                let mut c = rand_conj_over(&crate::vtree::Home::unchecked(&vtree), &vars, 3, 2, false, &mut rng);
+                let mut c = rand_conj_over(&vtree, &vars, 3, 2, false, &mut rng);
                 c.minimize().unwrap();
                 if count_is_zero(&c) {
                     continue;
                 }
-                let Some(c) = rooted_at(&c, u) else { continue };
-                let mut f = rand_conj(&crate::vtree::Home::unchecked(&vtree), nvars, 4, 3, true, &mut rng);
-                if f.is_zero() || f.output.vtree != vtree.root() {
+                let u = at_home(&c);
+                if vtree.node(u).is_leaf() {
+                    continue;
+                }
+                let mut f = rand_conj(&vtree, nvars, 4, 3, true, &mut rng);
+                if f.is_zero() || at_home(&f) != vtree.root() {
                     continue;
                 }
                 // Summed out: an ancestor of `u` below the root, or a node
@@ -886,7 +876,7 @@ fn f_rooted_above_the_care_holds_on_the_care() -> Vec<Tdd> {
                 }
                 let holds_u = w.is_some_and(|w| vtree.lca(w, u) == w);
                 if let Some(w) = w {
-                    crate::test_helpers::marginalize_under(&eng, &mut f, &[w]).unwrap();
+                    eng.marginalize(&mut f, crate::test_helpers::summing(&vtree, &[w])).unwrap();
                 }
                 eng.minimize(&mut f).unwrap();
                 if f.is_zero() || f.levels[f.output.vtree.idx()].is_marginal() {
@@ -922,7 +912,8 @@ fn f_rooted_above_the_care_holds_on_the_care() -> Vec<Tdd> {
 }
 
 /// The walk's two ways to its marks and its joins of a spine and by the
-/// products of both children, each taken by the cases above: a
+/// products of both children, each taken by the cases above or by
+/// [`care_beside_a_free_subtree`]: a
 /// care rooted at or under the operand with one node a level down to what
 /// it reads is marked off the listings without the descent from the root,
 /// any other by the descent, and every way keeps exactly the pairs models
@@ -934,6 +925,7 @@ fn restrict_marks_off_the_listings_where_each_node_has_one_product() {
     keeps_exactly_the_pairs_models_use();
     care_on_one_subtree_keeps_exactly_the_pairs_models_use();
     care_rooted_lower_keeps_exactly_the_pairs_models_use();
+    care_beside_a_free_subtree();
     let after = restrict_paths();
     let [listings, descents, spines, paired, beside_top] =
         [0, 1, 2, 3, 4].map(|k| after[k] - before[k]);
@@ -946,6 +938,28 @@ fn restrict_marks_off_the_listings_where_each_node_has_one_product() {
     assert!(spines >= 100, "too few levels joined as a spine: {spines}");
     assert!(paired >= 10, "too few levels joined by both children's products: {paired}");
     assert!(beside_top >= 1, "too few levels paired beside `⊤`: {beside_top}");
+}
+
+/// A `care` placed beside a subtree it does not read, on the home
+/// `((x1 x2) (x3 x4)) (x5 x6)`: its level over `x1 … x4` holds two nodes,
+/// one for each of its nodes over `x3 x4`, and the level over `x1 x2` is
+/// `⊤`. Each `f` node over `x3 x4` meets one `care` node there, so that
+/// level is joined by its products beside `⊤`. The restriction drops the
+/// models of `f` that `care` excludes.
+fn care_beside_a_free_subtree() {
+    let eng = Engine::new();
+    let home = Home::new(
+        Vtree::from_text("vtree 11\nL 0 1\nL 1 2\nI 2 0 1\nL 3 3\nL 4 4\nI 5 3 4\nI 6 2 5\nL 7 5\nL 8 6\nI 9 7 8\nI 10 6 9\n")
+            .unwrap(),
+    );
+    let any = |cubes: &[&[i32]]| {
+        cubes.iter().fold(Tdd::zero(&home), |t, &cube| eng.or(t, eng.cube(&home, cube.iter().copied()).unwrap()).unwrap())
+    };
+    let f = any(&[&[1, 3, 4, 5], &[1, -3, -4, 5], &[2, 3, -4, 6], &[1, 2, -3, 4, 5, 6]]);
+    let care = any(&[&[3, 4, 5], &[-3, -4, 5], &[3, -4, 6]]);
+    let g = f.clone().restrict_to_care(&care).unwrap().into_tdd();
+    assert!(reachable_pairs(&g) < reachable_pairs(&f));
+    assert_eq!(and2(&g, &care).model_count().unwrap(), and2(&f, &care).model_count().unwrap());
 }
 
 /// Each reservation of a restriction refused in turn, on implicit levels,
@@ -1025,17 +1039,17 @@ fn has_implicit(t: &Tdd, p: impl Fn(&crate::diagram::TddLevel) -> bool) -> bool 
 }
 
 /// `f = x1 ∨ (x3 ⇔ x5)` and `care = (all even) ∨ (no even)`, on the
-/// right-linear vtree of `2k` variables, `k` at least 3: one operand is
-/// marginal on each leaf, and the restriction joins a `care` level of one
-/// node as a spine.
+/// right-linear home of `2k` variables, `k` at least 3: `care`'s root, at
+/// `x2`, is one node below `f`'s, and the restriction joins it as a spine
+/// once `care` is placed under `f`.
 fn alternating_operands(k: u32) -> (Tdd, Tdd) {
     let engine = Engine::new();
-    let vtree = Arc::new(Vtree::linear(2 * k));
-    let same = crate::test_helpers::minimized(&engine, engine.or(engine.cube(&crate::vtree::Home::unchecked(&vtree), [3, 5]).unwrap(), engine.cube(&crate::vtree::Home::unchecked(&vtree), [-3, -5]).unwrap()));
-    let f = crate::test_helpers::minimized(&engine, engine.or(engine.cube(&crate::vtree::Home::unchecked(&vtree), [1]).unwrap(), same));
+    let vtree = crate::vtree::Home::new(Vtree::linear(2 * k));
+    let same = crate::test_helpers::minimized(&engine, engine.or(engine.cube(&vtree, [3, 5]).unwrap(), engine.cube(&vtree, [-3, -5]).unwrap()));
+    let f = crate::test_helpers::minimized(&engine, engine.or(engine.cube(&vtree, [1]).unwrap(), same));
     let evens = (1..=k).map(|i| (2 * i) as i32);
-    let all = engine.cube(&crate::vtree::Home::unchecked(&vtree), evens.clone()).unwrap();
-    let none = engine.cube(&crate::vtree::Home::unchecked(&vtree), evens.map(|x| -x)).unwrap();
+    let all = engine.cube(&vtree, evens.clone()).unwrap();
+    let none = engine.cube(&vtree, evens.map(|x| -x)).unwrap();
     (f, crate::test_helpers::minimized(&engine, engine.or(all, none)))
 }
 
@@ -1050,11 +1064,15 @@ fn refusals_in_a_spine_join_on_an_implicit_level_reach_the_caller() {
             let (mut f, mut c) = alternating_operands(k);
             describe_affine(&mut f);
             describe_affine(&mut c);
+            let root = &c.levels[c.output.vtree.idx()];
             assert!(
-                has_implicit(&c, |l| l.nodes().len() == 1 && l.pair_count_at(0) <= 8),
-                "alternating {k}: no care level of one implicit node",
+                root.implicit().is_some() && root.nodes().len() == 1 && root.pair_count_at(0) <= 8,
+                "alternating {k}: care's root is not one implicit node",
             );
+            assert_ne!(at_home(&c), at_home(&f));
+            let spines = crate::test_helpers::restrict_paths()[2];
             refuse_each_reservation(&f, &c, 2 * k, &format!("alternating {k}"));
+            assert!(crate::test_helpers::restrict_paths()[2] > spines, "alternating {k}: no spine joined");
         }
     });
 }
@@ -1089,10 +1107,10 @@ fn refusals_beside_a_join_given_up_reach_the_caller() {
             let mut rng = Lcg::new(0xca9d_0f0c);
             for &nvars in &[4u32, 5, 6] {
                 for (shape, vtree) in [("balanced", Vtree::balanced(nvars)), ("linear", Vtree::linear(nvars))] {
-                    let vtree = Arc::new(vtree);
+                    let vtree = crate::vtree::Home::new(vtree);
                     for case in 0..8 {
-                        let mut f = rand_conj(&crate::vtree::Home::unchecked(&vtree), nvars, 6, nvars as u64, true, &mut rng);
-                        let mut c = rand_conj(&crate::vtree::Home::unchecked(&vtree), nvars, 6, nvars as u64, true, &mut rng);
+                        let mut f = rand_conj(&vtree, nvars, 6, nvars as u64, true, &mut rng);
+                        let mut c = rand_conj(&vtree, nvars, 6, nvars as u64, true, &mut rng);
                         if count_is_zero(&f) || count_is_zero(&c) {
                             continue;
                         }
@@ -1213,3 +1231,4 @@ fn restrict_output_on_a_home_conjoins() {
     }
     assert!(conjoined >= 100, "too few conjunctions across projections: {conjoined}");
 }
+
