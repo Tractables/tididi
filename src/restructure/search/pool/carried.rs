@@ -31,8 +31,8 @@ impl Tdd {
     /// // x1 ∧ x3 on the projection of a right-linear home of three leaves
     /// // pays for the home's node over x2 and x3, which it has no level at.
     /// let home = Home::new(Vtree::linear(3));
-    /// let own = Vtree::projection(&home, [VarId(1), VarId(3)])?;
-    /// let f = Tdd::clause(&own, [1])? & Tdd::clause(&own, [3])?;
+    /// let f = Tdd::clause(&home, [1])? & Tdd::clause(&home, [3])?;
+    /// assert_eq!(f.vtree().leaf_bottomup().map(|(_, v)| v).collect::<Vec<_>>(), [VarId(1), VarId(3)]);
     /// assert!(f.embedded_pair_count() > f.pair_count());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```

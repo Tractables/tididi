@@ -220,7 +220,7 @@ fn work(nodes: (usize, usize), product: &ImplicitLevel) -> u64 {
 /// What the row loop charges a level of `product`'s shape: the work clock
 /// ([`work`]), and the output-pair meter, the doublings of the reserved
 /// capacity `charged` that the level's pairs pass, with their count.
-pub(in crate::apply::conjoin) fn charges(
+pub(super) fn charges(
     nodes: (usize, usize),
     product: &ImplicitLevel,
     charged: usize,

@@ -586,9 +586,12 @@ fn compose_pass(
     if lim.bounded_growth() {
         return Ok(false);
     }
-    let charged = level.pairs.capacity();
+    // The capacities and the meter are those of the emit's reservation, every
+    // cell and every carrier pair per passing node, which the emit keeps
+    // after writing the level unless `shrink_arrays` hands it back.
+    let size = (wf * wg, wp * carrier.pairs.len() + 1);
+    let meter = size.1.saturating_sub(level.pairs.capacity());
     // The emit polls each cell's pairs: the work is the level's pairs.
-    let (_, meter, doublings) = compose::charges((wf, wg), &product, charged);
     let work = product.pairs() as u64;
     if !lim.cannot_stop_within(work, meter as u64) {
         return Ok(false);
@@ -596,8 +599,8 @@ fn compose_pass(
     let mut map = eng.scratch.apply.relabel_map.checkout(eng);
     map.clear();
     lim.try_resize(&mut map, wf * wg, NO_PRODUCT)?;
-    let size = (product.nodes(), product.arena_len());
-    compose::write(eng, product, level, size, &mut map, work, (meter, doublings))?;
+    compose::write(eng, product, level, size, &mut map, work, (meter, 0))?;
+    level.shrink_arrays();
     note_pass_composed();
     run.products.publish_cells(eng, ti, wg, &map, wf * wg)?;
     Ok(true)

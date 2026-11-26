@@ -1439,8 +1439,8 @@ impl Vtree {
     ///
     /// let engine = Engine::new();
     /// let home = Home::new(Vtree::balanced(4));
-    /// let f = Tdd::clause(&Vtree::projection(&home, [VarId(1), VarId(2)])?, [1, 2])?;
-    /// let g = Tdd::clause(&Vtree::projection(&home, [VarId(2), VarId(3)])?, [-2, 3])?;
+    /// let f = Tdd::clause(&home, [1, 2])?;
+    /// let g = Tdd::clause(&home, [-2, 3])?;
     /// let summed = engine.and_marginalizing_where(&f, &g, |v| v != VarId(3))?;
     /// let region = summed.vtree().region_of(VarId(1)).expect("1 is summed out");
     /// assert_eq!(summed.vtree().region_of(VarId(2)), Some(region));
