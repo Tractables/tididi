@@ -70,6 +70,7 @@ fn assert_same_slot_counts(
     }
 }
 
+// Padded form: a bare root, placed by tree matching.
 #[test]
 fn a_whole_subtree_image_matches_a_direct_build() {
     let small = Arc::new(Vtree::balanced(4));
@@ -93,6 +94,7 @@ fn a_whole_subtree_image_matches_a_direct_build() {
     assert_same_slot_counts(&f, &embedded, &levels, "subtree image");
 }
 
+// Padded form: a bare root, placed by tree matching.
 #[test]
 fn leaves_spread_along_a_spine_match_a_direct_build() {
     let small = Arc::new(Vtree::linear(4));
@@ -191,6 +193,7 @@ fn a_constant_true_diagram_embeds() {
     assert_eq!(embedded.model_count().unwrap(), 32u32.into());
 }
 
+// Padded form: a bare root, placed by tree matching.
 #[test]
 fn every_shape_embeds_beside_the_variables_it_leaves_free() {
     for (num_vars, clauses) in test_cases() {
