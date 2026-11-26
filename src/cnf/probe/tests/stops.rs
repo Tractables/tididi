@@ -5,6 +5,7 @@ use super::*;
 use crate::diagram::LeafLabel;
 use crate::limits::{LimitConfig, StopAt, StopRules};
 
+// Padded form: three of the five are padded fixtures.
 /// Diagrams with clauses that imply them, where a probe makes every kind of
 /// call.
 fn fixtures() -> Vec<(Tdd, Vec<Vec<i32>>)> {
@@ -25,6 +26,7 @@ fn result(outcome: &ProbeOutcome) -> (ProbeStats, Vec<Vec<bool>>) {
     (outcome.stats(), outcome.dead().to_vec())
 }
 
+// Padded form: a padded fixture.
 #[test]
 fn a_break_at_each_poll_ends_what_the_poll_names() {
     for (f, phi) in fixtures() {
@@ -135,6 +137,7 @@ fn a_fresh_variable_the_table_cannot_hold_is_refused() {
     }
 }
 
+// Padded form: a padded fixture.
 #[test]
 #[should_panic(expected = "the encoding does not have the probed diagram's shape")]
 fn an_encoding_of_another_diagram_panics() {
@@ -145,6 +148,7 @@ fn an_encoding_of_another_diagram_panics() {
     let _ = f.probe_nodes(&encoding, ProbeOrder::BottomUp { counts: &counts }, 0, Witness::None, &mut host);
 }
 
+// Padded form: a padded fixture.
 #[test]
 #[should_panic(expected = "the counts do not have the probed diagram's shape")]
 fn counts_of_another_diagram_panic() {

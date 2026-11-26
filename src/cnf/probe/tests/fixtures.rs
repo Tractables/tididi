@@ -21,6 +21,7 @@ fn filtered(f: &Tdd, outcome: &ProbeOutcome) -> Tdd {
     }
 }
 
+// Padded form: a padded fixture.
 #[test]
 fn inline_summed_out_sides_are_probed_and_filtered_natively() {
     // The count-0 node dies by its count; the node with count 5 lives and
@@ -49,6 +50,7 @@ fn boundary(second: LeafLabel) -> (Tdd, CnfEncoding, ProbeOutcome) {
     (f, encoding, outcome)
 }
 
+// Padded form: a padded fixture.
 #[test]
 fn the_enumeration_sees_every_slice_on_a_certified_boundary() {
     // With distinct primes the nodes of v4 read as x1 and ¬x1 once the slots
@@ -61,6 +63,7 @@ fn the_enumeration_sees_every_slice_on_a_certified_boundary() {
     assert_eq!((stats.rounds_sat, stats.rounds_unsat, stats.round_witnesses, stats.probes), (2, 1, 4, 0));
 }
 
+// Padded form: a padded fixture.
 #[test]
 fn the_enumeration_kills_nothing_on_a_shared_prime_boundary() {
     // With a shared prime both nodes of v4 read as x1, so the slices nest:
@@ -97,7 +100,7 @@ fn an_encoded_prefix_is_probed() {
         let outcome = host.probe(&f, &encoding, rounds, witness);
         assert!(outcome.stats().dead >= 2, "rounds {rounds}: {:?}", outcome.stats());
         assert!(!outcome.is_dead(f.output()));
-        let unit = compile_clauses(&crate::vtree::Home::unchecked(f.vtree()), &[vec![-1]]);
+        let unit = compile_clauses(&f.home(), &[vec![-1]]);
         assert_eq!(crate::and(filtered(&f, &outcome), unit).unwrap().model_count().unwrap(), BigUint::from(1u32));
     }
 }
