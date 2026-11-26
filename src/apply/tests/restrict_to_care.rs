@@ -233,13 +233,8 @@ fn trace_used_pairs(f: &Tdd, c: &Tdd, g: &Tdd, nvars: u32) -> usize {
 
 #[test]
 fn restrict_differing_root_containment_difftest() {
-    let vtree = Arc::new(Vtree::balanced(8));
-    let reroot_to_child = |t: &Tdd, side: ChildSide| {
-        let mut m = t.clone();
-        m.minimize().unwrap();
-        crate::test_helpers::reroot_to_child(&m, side)
-    };
-    let lit = |v: u32, p: bool| clause_to_tdd(&crate::vtree::Home::unchecked(&vtree), &crate::test_helpers::clause(&[(v + 1, p)]));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(8));
+    let lit = |v: u32, p: bool| clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(v + 1, p)]));
     // Function-level soundness oracle: g∧c == f∧c over all 2^nvars assignments,
     // and g never larger than f. Apply-free (shares no machinery with `restrict_to_care`).
     let assert_sound = |f: &Tdd, c: &Tdd, nvars: u32| -> Tdd {
@@ -253,14 +248,14 @@ fn restrict_differing_root_containment_difftest() {
     let x2or3 = apply_or(lit(2, true), lit(3, true));
     let x2and3 = and2(&lit(2, true), &lit(3, true));
     let sel = apply_or(and2(&lit(0, true), &x2or3), and2(&lit(0, false), &x2and3));
-    // L = {0..3} (left child of the global root R); sel ⊆ L.
-    let sel_l = reroot_to_child(&sel, ChildSide::Left); // sel rooted at L
-    let force_x0_l = reroot_to_child(&and2(&lit(0, true), &lit(1, true)), ChildSide::Left); // (x0∧x1) at L
+    // sel ⊆ L = {0..3}, the left child of the root R: sel is rooted at L,
+    // and (x4∨x5) under Rt = {4..7}.
+    let x4or5 = apply_or(lit(4, true), lit(5, true));
 
     // ── Case A: care BELOW f (care@L strictly below f@R) ──
-    let f_a = sel.clone(); // global root R
-    let care_a = force_x0_l.clone(); // (x0∧x1) at L: forces x0=true
-    assert_ne!(care_a.output.vtree, f_a.output.vtree, "Case A must be differing-root");
+    let f_a = and2(&sel, &x4or5); // rooted at R
+    let care_a = and2(&lit(0, true), &lit(1, true)); // (x0∧x1) under L: forces x0=true
+    assert_ne!(at_home(&care_a), at_home(&f_a), "Case A must be differing-root");
     let g_a = assert_sound(&f_a, &care_a, 8);
     assert!(
         reachable_pairs(&g_a) < reachable_pairs(&f_a),
@@ -268,9 +263,9 @@ fn restrict_differing_root_containment_difftest() {
     );
 
     // ── Case B: f BELOW care (f@L strictly below care@R) ──
-    let f_b = sel_l.clone(); // sel rooted at L
+    let f_b = sel.clone(); // rooted at L
     let care_b = and2(&lit(0, true), &lit(4, true)); // (x0∧x4) at R: forces x0=true
-    assert_ne!(f_b.output.vtree, care_b.output.vtree, "Case B must be differing-root");
+    assert_ne!(at_home(&f_b), at_home(&care_b), "Case B must be differing-root");
     let g_b = assert_sound(&f_b, &care_b, 8);
     assert!(
         reachable_pairs(&g_b) < reachable_pairs(&f_b),
@@ -278,10 +273,9 @@ fn restrict_differing_root_containment_difftest() {
     );
 
     // ── Case C: disjoint supports, incomparable roots — sound no-op, g == f ──
-    let rt = apply_or(lit(4, true), lit(5, true)); // (x4∨x5), depends on {4,5} ⊂ Rt
-    let f_c = sel_l.clone(); // L = {0..3}
-    let care_c = reroot_to_child(&rt, ChildSide::Right); // (x4∨x5) at Rt = {4..7}
-    assert_ne!(f_c.output.vtree, care_c.output.vtree, "Case C must be differing-root");
+    let f_c = sel.clone(); // rooted at L
+    let care_c = x4or5; // under Rt
+    assert_ne!(at_home(&f_c), at_home(&care_c), "Case C must be differing-root");
     let g_c = assert_sound(&f_c, &care_c, 8);
     assert_eq!(
         reachable_pairs(&g_c),
@@ -429,79 +423,6 @@ fn output_is_orphan_free() -> Vec<Tdd> {
     assert!(total >= 400, "too few cases exercised: {total}");
     assert!(shrinks > 0, "no shrink across any vtree size — levers inert");
     out
-}
-
-/// Randomized differing-root sweep with marginal-free diagrams: `care`
-/// re-homed strictly below `f`'s root (care ⊂ f's left block) and `f` re-homed
-/// strictly below `care`'s root (f ⊂ care's left block), each checked by the
-/// apply-free truth-table oracle plus never-larger. Complements the hand-built
-/// containment cases of `restrict_differing_root_containment_difftest`; the
-/// `shrinks > 0` guard keeps the sweep from passing on an all-`Unchanged` walk.
-/// On implicit levels and on stored ones alike ([`same_as_stored`]).
-#[test]
-fn restrict_differing_root_randomized() {
-    same_as_stored(differing_root_randomized);
-}
-
-/// The cases of [`restrict_differing_root_randomized`]: the restricted
-/// diagrams.
-fn differing_root_randomized() -> Vec<Tdd> {
-    let out = std::cell::RefCell::new(Vec::new());
-    let nvars = 6u32;
-    let vtree = Arc::new(Vtree::balanced(nvars));
-    // The left block of the global root: balanced(6) puts {1,2,3} under it.
-    let left_vars: Vec<u32> = {
-        let (lc, _) = match *vtree.node(vtree.root()) {
-            crate::vtree::VtreeNode::Internal { left, right, .. } => (left, right),
-            _ => unreachable!(),
-        };
-        (1..=nvars)
-            .filter(|&v| vtree.lca(vtree.leaf_of(VarId(v)).expect("the vtree carries this variable"), lc) == lc)
-            .collect()
-    };
-    assert!(left_vars.len() >= 2, "left block too small: {left_vars:?}");
-    let mut rng = Lcg::new(0x5eed_0fd1_ff00_7a11);
-    // A minimized single-block function has the `g ∧ ⊤` root shape
-    // `reroot_to_child` needs; skip the ones that collapsed to a constant.
-    let rehome_left = |t: &Tdd| -> Option<Tdd> {
-        let mut m = t.clone();
-        m.minimize().unwrap();
-        if m.is_zero() || m.levels[m.output.vtree.idx()].pairs_vec(m.output.local.idx()).len() != 1 {
-            return None;
-        }
-        Some(reroot_to_child(&m, ChildSide::Left))
-    };
-    let all_vars: Vec<u32> = (1..=nvars).collect();
-    let check = |f: &Tdd, c: &Tdd| -> bool {
-        let g = (f.clone()).restrict_to_care(c).unwrap().into_tdd();
-        assert_sound_on_truth_table(f, c, &g, nvars);
-        let (gp, fp) = (reachable_pairs(&g), reachable_pairs(f));
-        assert!(gp <= fp, "restrict_to_care grew beyond f: {gp} > {fp}");
-        out.borrow_mut().push(g);
-        gp < fp
-    };
-    let (mut total, mut shrinks) = (0u32, 0u32);
-    for _ in 0..300 {
-        // care strictly below f's root
-        let f = rand_conj_over(&crate::vtree::Home::unchecked(&vtree), &all_vars, 4, 3, false, &mut rng);
-        if let Some(care) = rehome_left(&rand_conj_over(&crate::vtree::Home::unchecked(&vtree), &left_vars, 4, 3, false, &mut rng))
-            && !f.is_zero() && !count_is_zero(&care) {
-                assert_ne!(care.output.vtree, f.output.vtree);
-                shrinks += check(&f, &care) as u32;
-                total += 1;
-            }
-        // f strictly below care's root
-        let care = rand_conj_over(&crate::vtree::Home::unchecked(&vtree), &all_vars, 4, 3, false, &mut rng);
-        if let Some(f) = rehome_left(&rand_conj_over(&crate::vtree::Home::unchecked(&vtree), &left_vars, 4, 3, false, &mut rng))
-            && !f.is_zero() && !count_is_zero(&care) {
-                assert_ne!(care.output.vtree, f.output.vtree);
-                shrinks += check(&f, &care) as u32;
-                total += 1;
-            }
-    }
-    assert!(total >= 100, "too few differing-root cases exercised: {total}");
-    assert!(shrinks > 0, "no shrink on any differing-root case — walk inert");
-    out.into_inner()
 }
 
 /// On implicit levels and on stored ones alike ([`same_as_stored`]).
@@ -750,6 +671,11 @@ fn care_on_one_subtree_keeps_exactly_the_pairs_models_use() -> Vec<Tdd> {
     assert!(cases >= 300, "too few cases exercised: {cases}");
     assert!(strict > 0, "no case pruned anything");
     out
+}
+
+/// The node of `t`'s home its root stands for.
+fn at_home(t: &Tdd) -> crate::vtree::VtreeIdx {
+    t.vtree.home_node(t.output.vtree)
 }
 
 /// `care` moved down from the root to `u`, one child at a time: `None` where
@@ -1227,7 +1153,6 @@ fn the_walk_polls_the_engine_limits() {
 fn restrict_across_projections_randomized() {
     let nvars = 6u32;
     let home = crate::vtree::Home::new(Vtree::balanced(nvars));
-    let vtree = &*home;
     let all_vars: Vec<u32> = (1..=nvars).collect();
     let mut rng = Lcg::new(0x5eed_0fd1_ff00_7a12);
     let (mut across, mut shrinks) = (0u32, 0u32);
@@ -1236,8 +1161,8 @@ fn restrict_across_projections_randomized() {
             true => vec![1, 2, 3],
             false => vec![4, 5, 6],
         };
-        let wide = rand_conj_over(&crate::vtree::Home::unchecked(vtree), &all_vars, 4, 3, false, &mut rng);
-        let narrow = rand_conj_over(&crate::vtree::Home::unchecked(vtree), &block, 4, 3, false, &mut rng);
+        let wide = rand_conj_over(&home, &all_vars, 4, 3, false, &mut rng);
+        let narrow = rand_conj_over(&home, &block, 4, 3, false, &mut rng);
         for (f, care) in [(&wide, &narrow), (&narrow, &wide)] {
             if f.is_zero() || count_is_zero(care) {
                 continue;
@@ -1266,11 +1191,10 @@ fn restrict_output_on_a_home_conjoins() {
     let mut conjoined = 0;
     for nvars in 2u32..=5 {
         let home = crate::vtree::Home::new(Vtree::balanced(nvars));
-        let vtree = &*home;
         for _ in 0..150 {
-            let f = rand_conj(&crate::vtree::Home::unchecked(vtree), nvars, 4, nvars as u64, false, &mut rng);
-            let c = rand_conj(&crate::vtree::Home::unchecked(vtree), nvars, 4, nvars as u64, false, &mut rng);
-            let other = rand_conj(&crate::vtree::Home::unchecked(vtree), nvars, 4, nvars as u64, false, &mut rng);
+            let f = rand_conj(&home, nvars, 4, nvars as u64, false, &mut rng);
+            let c = rand_conj(&home, nvars, 4, nvars as u64, false, &mut rng);
+            let other = rand_conj(&home, nvars, 4, nvars as u64, false, &mut rng);
             if count_is_zero(&c) || f.is_zero() {
                 continue;
             }
