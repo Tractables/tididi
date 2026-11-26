@@ -200,27 +200,66 @@ fn sealed(body: &[u8]) -> Vec<u8> {
     bytes
 }
 
+/// The body of a binary file over ((x1 x2) x3) whose level (x1 x2) holds
+/// ¬x1 ∧ x2 twice, with the root's records `root`.
+fn twice_below(root: &[u8]) -> Vec<u8> {
+    // The postorder 1 2 0 3 0, the output, the level (x1 x2): two one-pair
+    // nodes, each (2, 1) in two bits a side.
+    let lower = [2, 0, 2, 1, 2 | 1 << 2 | 2 << 4 | 1 << 6];
+    sealed(&[3, 5, 1, 2, 0, 3, 0, 1].iter().chain(&lower).chain(root).copied().collect::<Vec<u8>>())
+}
+
 #[test]
-fn a_pair_repeated_in_a_level_is_refused() {
-    // ((x1 x2) x3): the level (x1 x2) holds ¬x1 ∧ x2 twice; the root reads
-    // the second copy, or both.
+fn a_pair_repeated_in_a_level_is_refused_where_the_trim_would_count_it() {
+    // The root reads the second copy, or both: x3 is named, the trim drops
+    // nothing, and the binary reader trusts the levels, where the text
+    // reader refuses them.
     let home = Home::new(Vtree::from_text("vtree 5\nL 0 1\nL 1 2\nI 2 0 1\nL 3 3\nI 4 2 3\n").unwrap());
     let texts = ["I 4 2 3 1 1\n", "I 4 2 3 0 1 1 1\n"].map(|root| format!("p tdd 1 3 5 4 0\nL 0 1\nL 1 2\nI 2 0 1 2 1\nI 2 0 1 2 1\nL 3 3\n{root}"));
-    // The postorder 1 2 0 3 0, the output, the level (x1 x2): two one-pair
-    // nodes, each (2, 1) in two bits a side; the root: one node.
-    let lower = [2, 0, 2, 1, 2 | 1 << 2 | 2 << 4 | 1 << 6];
     let roots: [&[u8]; 2] = [&[1, 0, 1, 1, 1 | 1 << 1], &[1, 1, 2, 1, 1, 0, 1 << 3 | 1 << 5 | 1 << 6]];
     for (file, root) in texts.iter().zip(roots) {
         match read_tdd(&mut file.as_bytes(), &home) {
             Err(IoError::Format(m)) => assert!(m.contains("twice"), "{m}"),
             other => panic!("{:?}", other.map(|_| ())),
         }
-        let body: Vec<u8> = [3, 5, 1, 2, 0, 3, 0, 1].iter().chain(&lower).chain(root).copied().collect();
-        let bytes = sealed(&body);
-        match crate::io::read_tdd_binary(&mut bytes.as_slice(), &home) {
-            Err(IoError::Format(m)) => assert!(m.contains("twice"), "{m}"),
-            other => panic!("{:?}", other.map(|_| ())),
-        }
+        let bytes = twice_below(root);
+        let seated = crate::io::read_tdd_binary(&mut bytes.as_slice(), &home).expect("trusted on a home");
+        assert!(seated.vtree().is_on(&home));
+        assert_eq!(seated.vtree().num_leaves(), 3, "untrimmed");
+    }
+    // The root names x3 `One`: the trim drops it and would count the
+    // repeated pair once, so the reader refuses the file.
+    let bytes = twice_below(&[1, 0, 1, 1, 1]);
+    match crate::io::read_tdd_binary(&mut bytes.as_slice(), &home) {
+        Err(IoError::Format(m)) => assert!(m.contains("twice"), "{m}"),
+        other => panic!("{:?}", other.map(|_| ())),
+    }
+}
+
+// Padded form: the files a padded diagram wrote.
+#[test]
+fn only_a_file_that_names_every_leaf_of_its_projection_skips_the_trim() {
+    use crate::reduce::keeps_every_leaf;
+    let eng = Engine::new();
+    let home = Home::new(Vtree::balanced(6));
+    let f = Tdd::clause(&home, [2, -5]).unwrap().and_clause([3, 5]).unwrap();
+    assert_eq!(f.vtree().num_leaves(), 3);
+    assert!(keeps_every_leaf(&f));
+    let back = read_tdd_binary(&mut binary(&f).as_slice(), &home).unwrap();
+    assert!(keeps_every_leaf(&back));
+    assert_same_nodes(&back, &f, "on its projection");
+    assert!(keeps_every_leaf(&Tdd::clause(&home, [2]).unwrap()));
+    let root = Home::unchecked(&Arc::new(Vtree::clone(&home)));
+    assert!(!keeps_every_leaf(&Tdd::zero(&root)));
+    assert!(!keeps_every_leaf(&Tdd::one(&Home::unchecked(&Arc::new(Vtree::balanced(1))))));
+    let wide = Tdd::clause(&root, [2]).unwrap();
+    let padded = x1_x3_padded(&eng, &Arc::new(Vtree::balanced(4))).unwrap();
+    for (old, home) in [(wide, home), (padded, Home::new(Vtree::balanced(4)))] {
+        assert!(!keeps_every_leaf(&old));
+        let back = read_tdd_binary(&mut binary(&old).as_slice(), &home).unwrap();
+        assert!(keeps_every_leaf(&back), "trimmed");
+        assert!(back.vtree().num_leaves() < old.vtree().num_leaves());
+        assert_eq!(back.model_count().unwrap(), old.model_count().unwrap());
     }
 }
 

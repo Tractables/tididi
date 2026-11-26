@@ -198,14 +198,15 @@ impl<'a> Reduction<'a> {
 
     /// Run the passes again, every level owed, on a summed diagram the close
     /// trimmed onto a smaller projection: the trim can leave a node two pairs
-    /// over the same children, a fusion group no pass has seen.
+    /// over the same children, a fusion group no pass has seen, and the
+    /// fusion can fill a region, which the close of that run drops.
     #[cold]
     #[inline(never)]
     fn passes_after_trim(&mut self) -> Result<(), OperationError> {
         let vtree = std::sync::Arc::clone(&self.tdd.vtree);
         let internal = vtree.internal_bottomup_slice().iter().copied();
         self.tdd.dirty = crate::diagram::Dirty::default().seeded(&vtree, internal, Some(self.eng))?;
-        self.eng.reduce_plain(self.tdd, ReductionPlan::default())
+        self.eng.reduce(self.tdd, ReductionPlan::default())
     }
 
     /// Drop the recorded leaves and the seed's in a closing reduction

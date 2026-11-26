@@ -367,9 +367,10 @@ fn a_pair_repeated_in_a_level_is_refused() {
         if pruned != r.as_ref().is_ok() && !r.as_ref().is_err_and(|e| e.to_string().contains("twice")) {
             wrong.push(format!("{inner:?} {root:?}: text reader {:?}", r.map(|g| g.model_count().unwrap())));
         }
+        // The binary reader trusts the levels of a file that names every
+        // leaf: it gives back what was written.
         match crate::io::read_tdd_binary(&mut binary.as_slice(), &home) {
-            Ok(g) if pruned && g.model_count().unwrap() == f.model_count().unwrap() => {}
-            Err(e) if e.to_string().contains("twice") => {}
+            Ok(g) if g.model_count().unwrap() == f.model_count().unwrap() => {}
             r => wrong.push(format!("{inner:?} {root:?}: binary reader {:?}", r.map(|g| g.model_count().unwrap()))),
         }
     }

@@ -306,6 +306,18 @@ pub fn assert_canonical(tdd: &Tdd) {
     }
 }
 
+/// The checks of [`assert_canonical`], named by `label`, and that a
+/// `minimize` of `tdd` leaves its vtree and its levels as they are.
+pub fn assert_minimized(tdd: &Tdd, label: &str) {
+    use crate::test_helpers::check::{check_all_fast, check_certified};
+    check_certified(tdd).unwrap_or_else(|e| panic!("{label}: {e}"));
+    check_all_fast(tdd, label);
+    let mut again = tdd.clone();
+    again.minimize().unwrap_or_else(|e| panic!("{label}: minimize: {e}"));
+    assert_eq!(again.vtree().to_text(), tdd.vtree().to_text(), "{label}: minimize moved the diagram");
+    assert_eq!(normalized_levels(&again), normalized_levels(tdd), "{label}: minimize changed the levels");
+}
+
 /// [`assert_canonical`] and canonical form
 /// ([`check_canonicity`](crate::test_helpers::check::check_canonicity)) on a
 /// diagram the test minimized and expects to have marginalized: panics first

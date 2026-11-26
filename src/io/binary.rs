@@ -170,8 +170,10 @@ pub fn load_tdd_binary(path: impl AsRef<Path>, vtree: &crate::vtree::Home) -> Re
 /// ([format](crate::io#binary-format)).
 ///
 /// The reader seats the levels and their counts over the projection the
-/// file declares, refuses a pair repeated in a level, as the text reader
-/// does, and moves the result by the trim of
+/// file declares. A file whose pairs name every leaf of it by a literal, as
+/// a trimmed diagram's do, is read with its levels trusted. Otherwise the
+/// reader refuses a pair repeated in a level, as the text reader does, since
+/// the trim would count it once, and moves the result by the trim of
 /// [`TddBuilder::finish`](crate::diagram::TddBuilder::finish) to the
 /// projection on the leaves its pairs use, the counts with it.
 ///
@@ -270,8 +272,9 @@ fn check_header(bytes: &[u8]) -> Result<(usize, u32), IoError> {
 }
 
 /// [`decode_levels`] onto the projection of `vtree`'s home on the leaves the
-/// file declares; the seated diagram, its counts attached, is checked for a
-/// repeated pair and then trimmed, which rescales the counts.
+/// file declares. A seated diagram the trim would change, its counts
+/// attached, is checked for a repeated pair and then trimmed, which rescales
+/// the counts.
 // The header is checked here a second time rather than in a helper shared
 // with `decode_levels`: a second caller of anything inlined there changes
 // the code of the level reader, by about 1% of a query that reads its
@@ -297,6 +300,9 @@ fn decode(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
         return decode_without_leaf(bytes, &own);
     }
     let mut tdd = decode_levels(bytes, &own)?;
+    if crate::reduce::keeps_every_leaf(&tdd) {
+        return Ok(tdd);
+    }
     let built = |e: crate::diagram::TddBuildError| malformed(format!("the records do not form a diagram: {e}"));
     match tdd.weights() {
         None => crate::diagram::check_seated_pairs(&tdd),

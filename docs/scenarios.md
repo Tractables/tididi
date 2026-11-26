@@ -464,7 +464,7 @@ there is no separate Python implementation to describe.
 
 ### Instances
 
-- [Rust architecture reference](architecture.md) <!-- reviewed: f659b70d86ef52a74c8235b7322821a39f1b7af25784a3315c43dc9b9ae25f42 -->
+- [Rust architecture reference](architecture.md) <!-- reviewed: 9af8c3dedd78d237f528dfc214ceed19032ec364308103b4fa3264b2bc0230eb -->
 
 ## Invariants
 

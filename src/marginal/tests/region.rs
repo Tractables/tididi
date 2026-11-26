@@ -667,3 +667,100 @@ fn evaluating_at_every_level_composes_to_the_root_beside_regions() {
     }
     assert!(beside > 60 && weighted > 100, "{beside} cases had a region beside a lacked variable, {weighted} weighted");
 }
+
+/// `out` in valid storage, and minimized to a diagram a second `minimize`
+/// leaves as it is.
+fn check_reduces(out: &Tdd, what: &str) {
+    check_regions_summed(out, what);
+    crate::test_helpers::check::check_all_fast(out, what);
+    let mut m = out.clone();
+    m.minimize().unwrap_or_else(|e| panic!("{what}: minimize: {e}"));
+    crate::test_helpers::assert_minimized(&m, &format!("{what}, minimized"));
+}
+
+/// A diagram with a region has a summed-out level, so that the entries
+/// that need structure refuse it, and true with no level is on a vtree with
+/// no node.
+fn check_regions_summed(out: &Tdd, what: &str) {
+    assert!(!out.is_one() || out.vtree().num_nodes() == 0, "{what}: true on a vtree with nodes");
+    if out.vtree().regions().next().is_some() {
+        assert!(out.has_marginal_level(), "{what}: a region and no summed-out level");
+        let key = out.home().root();
+        let key = out.home().children(key).0;
+        let refused = Engine::new().at_least_distinct(out, key, 1);
+        assert!(matches!(refused, Err(crate::restructure::DistinctError::Operation(OperationError::MarginalLevel(_)))), "{what}: {refused:?}");
+    }
+}
+
+/// Every operation that can drop a region as full, on random projections of
+/// random homes with regions: a second sum-out, the sum of a diagram with
+/// itself and with another summed out alike, a conjunction summing out as
+/// it goes, and a conjunction and a disjunction with a Boolean operand.
+/// Each result is in valid storage and minimizes to a fixed point, and the
+/// sum-outs count as on the home.
+#[test]
+fn every_operation_that_can_drop_a_region_leaves_valid_storage() {
+    let eng = Engine::new();
+    let width = |d: &Tdd| d.vtree().regions().map(|t| d.vtree().region_at(t).1.iter().map(|&(lo, hi)| hi - lo).sum::<u32>()).sum::<u32>();
+    let mut dropped = [0usize; 3];
+    for case in 0..1500u64 {
+        let mut rng = Lcg::new(case);
+        let n = 3 + rng.below(8) as u32;
+        let home = Home::new(Vtree::random(n, case));
+        let mut vars = || -> Vec<VarId> { (1..=n).filter(|_| rng.below(4) != 0).map(VarId).collect() };
+        let (fv, gv) = (vars(), vars());
+        let (f0, g0) = (operand(&eng, &home, &fv, &mut rng), operand(&eng, &home, &gv, &mut rng));
+        let root = Arc::clone(&home);
+        let first = targets(&root, &[], &mut rng);
+        let second = targets(&root, &first, &mut rng);
+        let what = format!("case {case}, {n} variables, targets {first:?} then {second:?}");
+        // Sum-outs, against the same sum-outs on the home.
+        let (mut f, mut g, mut fr) = (f0.clone(), g0.clone(), on_root_copy(&f0, &root));
+        eng.marginalize(&mut f, under(&home, &first)).unwrap();
+        eng.marginalize(&mut g, under(&home, &first)).unwrap();
+        crate::marginal::tests::marginalize_levels(&eng, &mut fr, &first).unwrap();
+        check_reduces(&f, &format!("{what}: marginalize"));
+        let had = width(&f);
+        let mut f2 = f.clone();
+        eng.marginalize(&mut f2, under(&home, &second)).unwrap();
+        crate::marginal::tests::marginalize_levels(&eng, &mut fr, &second).unwrap();
+        check_reduces(&f2, &format!("{what}: second marginalize"));
+        check_values(&f2, &fr, n, None, &format!("{what}: second marginalize"));
+        // Sums.
+        // A sum is minimized where an operand has a summed-out level.
+        let sum_of = |a: &Tdd, b: &Tdd, what: String| {
+            let sum = eng.add(a.clone(), b.clone()).unwrap();
+            match a.has_marginal_level() || b.has_marginal_level() {
+                true => {
+                    check_regions_summed(&sum, &what);
+                    crate::test_helpers::assert_minimized(&sum, &what);
+                }
+                false => check_reduces(&sum, &what),
+            }
+        };
+        if eng.add(f.clone(), f.clone()).is_ok() {
+            sum_of(&f, &f, format!("{what}: f + f"));
+            dropped[0] += usize::from(width(&eng.add(f.clone(), f.clone()).unwrap()) < had);
+        }
+        if let Ok(sum) = eng.add(f.clone(), g.clone()) {
+            sum_of(&f, &g, format!("{what}: f + g"));
+            dropped[0] += usize::from(width(&sum) < had.max(width(&g)));
+        }
+        // A conjunction summing out as it goes, against the conjunction
+        // summed out after.
+        let summed = eng.and_marginalizing_where(&f0, &g0, under(&home, &first)).unwrap();
+        let mut after = eng.and(&f0, &g0).unwrap();
+        eng.marginalize(&mut after, under(&home, &first)).unwrap();
+        check_reduces(&summed, &format!("{what}: and_marginalizing_where"));
+        check_values(&summed, &after, n, None, &format!("{what}: and_marginalizing_where"));
+        dropped[1] += usize::from(width(&summed) < width(&after));
+        // A summed-out operand with a Boolean one.
+        for (op, out) in [("and", eng.and(&f, &g0)), ("or", eng.or(f.clone(), g0.clone()))] {
+            if let Ok(out) = out {
+                check_reduces(&out, &format!("{what}: {op}"));
+                dropped[2] += usize::from(width(&out) < had);
+            }
+        }
+    }
+    assert!(dropped.iter().all(|&d| d > 20), "regions dropped by sums, conjunctions summing out, Boolean operations: {dropped:?}");
+}

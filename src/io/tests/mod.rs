@@ -57,8 +57,8 @@ fn also_on_home(f: &Tdd, vtree: &crate::vtree::Home, read: impl Fn(&Arc<Vtree>) 
     let home = Home::new(Vtree::clone(vtree));
     let g = match read(&home) {
         Ok(g) => g,
-        // The binary reader looks for a repeated pair only on a home, where
-        // the trim would count it once.
+        // The binary reader looks for a repeated pair only on a home, in a
+        // file whose trim would count it once.
         Err(IoError::Format(m)) if m.contains("twice") => return,
         Err(e) => panic!("read over the root, refused on a home: {e}"),
     };

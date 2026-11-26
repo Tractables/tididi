@@ -158,29 +158,6 @@ fn adds_a_diagram_to_itself() {
     assert!(added > 0, "no diagram with a region added");
 }
 
-/// A sum that drops a region it fills (`2^k` everywhere for its `k`
-/// variables) is minimized as any sum with a summed-out level.
-#[test]
-#[ignore = "add of a diagram to itself whose region it drops as full keeps two equal pairs on a level above the region (linear interleaved, 5 variables: level 6 holds pair (2, 1) twice); the values are right and the sum passes check_trimmed; minimize leaves the pair twice"]
-fn a_sum_that_drops_its_region_is_canonical() {
-    let mut rng = Lcg::new(5);
-    let mut dropped = 0;
-    for n in 3..=6 {
-        for (_, vtree) in vtree_shapes(n) {
-            let eng = Engine::new();
-            let mut f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, CnfShape { clauses: n as usize, width: 3 }));
-            eng.marginalize(&mut f, crate::test_helpers::summing(&vtree, &targets(&mut rng, &vtree))).unwrap();
-            eng.minimize(&mut f).unwrap();
-            let Ok(twice) = eng.add(f.clone(), f.clone()) else { continue };
-            if width(&twice) < width(&f) {
-                assert_canonical(&twice);
-                dropped += 1;
-            }
-        }
-    }
-    assert!(dropped > 0, "no sum dropped a region");
-}
-
 /// With no summed-out level, functions with no common model add to their
 /// disjunction.
 #[test]
@@ -491,4 +468,37 @@ fn operands_on_two_projections_add_where_they_summed_out_alike() {
         apart += usize::from(differ);
     }
     assert!(apart > 100 && refused > 10,"{added} added, {apart} on two projections, {refused} refused");
+}
+
+/// A sum that fills a region of its operands (`2^k` everywhere for its `k`
+/// variables) drops it only where no level above holds a multiple the
+/// region carried: the sum is minimized, on every vtree shape.
+#[test]
+fn a_sum_that_drops_its_region_is_canonical() {
+    use crate::marginal::tests::region::under as within;
+    let width = |d: &Tdd| d.vtree().regions().map(|t| d.vtree().region_at(t).1.iter().map(|&(lo, hi)| hi - lo).sum::<u32>()).sum::<u32>();
+    let (mut dropped, mut kept) = (0, 0);
+    for seed in 0..30 {
+        let mut rng = Lcg::new(seed);
+        for n in 3..=7 {
+            for (name, vtree) in vtree_shapes(n) {
+                let eng = Engine::new();
+                let home = Home::new(Vtree::clone(&vtree));
+                let mut f = compile_clauses_on(&eng, &home, &rand_cnf(&mut rng, n, CnfShape { clauses: n as usize, width: 3 }));
+                let hs = targets(&mut rng, &home);
+                eng.marginalize(&mut f, within(&home, &hs)).unwrap();
+                eng.minimize(&mut f).unwrap();
+                let label = format!("seed {seed}, {n} variables, {name}, summed {hs:?}");
+                let Ok(twice) = eng.add(f.clone(), f.clone()) else { continue };
+                let gone = width(&f) - width(&twice);
+                for bits in 0..1u64 << n {
+                    assert_eq!(value(&twice, n, bits) << gone, value(&f, n, bits) << 1, "{label}: assignment {bits:b}");
+                }
+                crate::test_helpers::assert_minimized(&twice, &label);
+                dropped += usize::from(gone > 0);
+                kept += usize::from(gone == 0 && width(&f) > 0);
+            }
+        }
+    }
+    assert!(dropped > 100 && kept > 100, "{dropped} sums dropped a region, {kept} kept one");
 }

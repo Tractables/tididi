@@ -152,6 +152,29 @@ pub(crate) fn trim_summed(eng: &Engine, f: &mut Tdd, home: &Home) -> Result<bool
     trim(eng, f, home, None, &tops)
 }
 
+/// Whether [`trim`] leaves `f`, which has no marginal level, as it is: `f`
+/// is not false, its output is not a leaf's `One`, and no leaf is named `One`
+/// by the pairs of its parent. Time goes by the vtree's nodes.
+pub(crate) fn keeps_every_leaf(f: &Tdd) -> bool {
+    debug_assert!(!f.has_marginal_level(), "a diagram with a summed-out level");
+    let vtree = &*f.vtree;
+    if vtree.num_nodes() == 0 {
+        return true;
+    }
+    if f.is_zero() {
+        return false;
+    }
+    if vtree.node(vtree.root()).is_leaf() {
+        return f.output.local != ONE_LEAF_IDX;
+    }
+    vtree.internal_bottomup().all(|(t, left, right)| {
+        let Some(first) = f.levels[t.idx()].pairs_iter_of_idx(0).next() else { return false };
+        [(left, ChildSide::Left), (right, ChildSide::Right)]
+            .into_iter()
+            .all(|(c, side)| !vtree.node(c).is_leaf() || side_ref(first, side) != ONE_LEAF_IDX.0)
+    })
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
     /// No kept leaf under the node.
@@ -189,7 +212,9 @@ struct Shape {
     /// A node of a chain ending at a leaf held more than one pair.
     merged: bool,
     /// A dropped node stands for a multiple of a label or of true, which
-    /// only a region dropped as full carried.
+    /// only a region dropped as full carried, or the drop would leave a
+    /// level with nothing summed out under it holding a pair twice or
+    /// naming a leaf both true and as a literal.
     multiplied: bool,
 }
 
@@ -326,7 +351,14 @@ impl Shape {
                     }
                     Kind::True
                 }
-                (true, true) => Kind::Both,
+                (true, true) => {
+                    // A pair held twice is a multiple, legal while a
+                    // summed-out level is under it.
+                    if summed && full_under[t.idx()] && !shape.adds[t.idx()] && repeats_a_pair(eng, level, &mut gate)? {
+                        shape.multiplied = true;
+                    }
+                    Kind::Both
+                }
                 _ => {
                     let (c, side) = if kl { (left, ChildSide::Left) } else { (right, ChildSide::Right) };
                     let values = over_values(c);
@@ -354,6 +386,12 @@ impl Shape {
                                 *h |= bits;
                             }
                             shape.merged |= read > 1;
+                        }
+                        // Two nodes the drop leaves equal, or one true beside
+                        // a literal, which the level above would name in
+                        // both forms.
+                        if summed && !keep_full && full_under[t.idx()] && !distinct_forms(&held) {
+                            shape.multiplied = true;
                         }
                         shape.labels[t.idx()] = held;
                         Kind::LeafChain(side)
@@ -527,6 +565,30 @@ fn names_only_full_counts(f: &Tdd, t: VtreeIdx, gate: &mut PollGate<'_>) -> Resu
         }
     }
     Ok(true)
+}
+
+/// Whether the labels `held` by the nodes of a chain's top are distinct,
+/// and true is held only where no literal is.
+fn distinct_forms(held: &[u8]) -> bool {
+    let mut seen = [false; 4];
+    for &h in held {
+        if std::mem::replace(&mut seen[usize::from(h)], true) {
+            return false;
+        }
+    }
+    !(seen[usize::from(BOTH)] && (seen[usize::from(POS)] || seen[usize::from(NEG)]))
+}
+
+/// Whether two pairs of `level`, in one node or in two, are equal.
+#[cold]
+#[inline(never)]
+fn repeats_a_pair(eng: &Engine, level: &TddLevel, gate: &mut PollGate<'_>) -> Result<bool, OperationError> {
+    let mut pairs = Vec::new();
+    eng.limits().reserve_exact(&mut pairs, level.pair_counts().sum())?;
+    level.for_each_node_pair(|_, p| pairs.push((p.left.raw(), p.right.raw())));
+    gate.poll(pairs.len() as u64)?;
+    pairs.sort_unstable();
+    Ok(pairs.windows(2).any(|w| w[0] == w[1]))
 }
 
 /// How the level of an own internal node is had from the levels of `f`.
@@ -930,6 +992,11 @@ fn merge(
             held[o as usize + 1] += 1;
         }
     }
+    // A node holding two nodes of `end` holds their sum, which no merge of
+    // pair lists holds where nothing is summed out under `end`.
+    if !shape.adds.is_empty() && !keep_full && !shape.adds[end.idx()] && held[1..].iter().any(|&h| h > 1) {
+        return Ok(None);
+    }
     if held[1..].iter().all(|&h| h == 1) {
         if width == owner.len() && owner.iter().enumerate().all(|(j, &o)| o == j as u32) {
             return Ok(Some(Form::Moved));
@@ -1021,7 +1088,8 @@ fn merge_counted(
         t = child(vtree, t, side);
     }
     gate.flush()?;
-    if summed && !shape.adds[end.idx()] && members.iter().any(|&(_, k)| k > 1) {
+    let several = || starts.windows(2).any(|w| w[1] - w[0] > 1);
+    if summed && !shape.adds[end.idx()] && (members.iter().any(|&(_, k)| k > 1) || !keep_full && several()) {
         if !keep_full {
             return Ok(None);
         }
