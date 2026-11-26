@@ -133,23 +133,9 @@ mod producers {
         check_certified(t).unwrap_or_else(|e| panic!("{what}: {e}"));
     }
 
-    #[test]
-    fn projections_to_a_subtree_are_certified() {
-        let eng = Engine::new();
-        for seed in 0..100u64 {
-            let mut rng = Lcg::new(seed ^ 0x51b);
-            let n = 2 + rng.below(6) as u32;
-            let vtree = Arc::new(Vtree::random(n, seed));
-            let f = rand_conj(&crate::vtree::Home::unchecked(&vtree), n, 4, 3, false, &mut rng);
-            for key in vtree.bottomup().filter(|&t| t != vtree.root()) {
-                let g = eng.project_to_subtree(&f, key).unwrap();
-                certified(&g, &format!("seed {seed}: project_to_subtree at {}", key.0));
-            }
-        }
-    }
-
-    /// The same on homes, including a key whose subtree holds every leaf of
-    /// the operand's projection (seed 6, key 2: a literal).
+    /// Projections to each subtree are certified, including a key whose
+    /// subtree holds every leaf of the operand's projection (seed 6, key 2:
+    /// a literal).
     #[test]
     fn projections_to_a_subtree_on_a_home_are_certified() {
         let eng = Engine::new();
