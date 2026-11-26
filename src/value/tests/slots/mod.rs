@@ -3,6 +3,7 @@ use super::*;
 mod sum;
 mod compaction;
 
+// Padded form: the padded sum-out.
 #[test]
 fn refused_weight_slot_preserves_values_and_width() {
     use std::sync::Arc;

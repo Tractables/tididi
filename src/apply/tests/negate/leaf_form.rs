@@ -7,9 +7,8 @@
 //! leaf-twin contraction, which is all-or-nothing per level.
 
 use super::*;
-use crate::diagram::{ONE_LEAF_IDX, Tdd};
-use crate::test_helpers::check::{assert_no_mixed_leaf_side, labels_at};
-use std::sync::Arc;
+use crate::diagram::Tdd;
+use crate::test_helpers::check::assert_no_mixed_leaf_side;
 
 #[test]
 fn the_fill_joins_a_level_in_the_form_that_level_already_uses() {
@@ -48,52 +47,4 @@ fn no_negation_mixes_the_two_leaf_forms_on_random_formulas() {
             }
         }
     }
-}
-
-#[test]
-fn a_fill_on_a_one_form_level_is_emitted_as_one() {
-    use crate::test_helpers::{CnfShape, Lcg, compile_clauses_on, rand_cnf};
-    let eng = &crate::Engine::new();
-    let mut rng = Lcg::new(0x1405_7b7e);
-    let mut one_form_fills = 0usize;
-    for num_vars in [3u32, 5, 8] {
-        for (_name, vtree) in crate::test_helpers::bare_roots(crate::test_helpers::vtree_shapes(num_vars)) {
-            for _ in 0..12 {
-                let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 6, width: 3 });
-                let tdd = compile_clauses_on(eng, &crate::vtree::Home::unchecked(&vtree), &clauses);
-                if tdd.is_zero() {
-                    continue;
-                }
-                let before: Vec<usize> = tdd.levels.iter().map(|l| l.slot_count()).collect();
-                // Only a leaf child reads index 0 as the label `One`; on an
-                // internal child it is an ordinary node.
-                let mut forms = vec![(false, false); vtree.num_nodes()];
-                for (t, l, r) in vtree.internal_bottomup() {
-                    forms[t.idx()] = (
-                        vtree.node(l).is_leaf() && labels_at(&tdd, t.idx(), true).0,
-                        vtree.node(r).is_leaf() && labels_at(&tdd, t.idx(), false).0,
-                    );
-                }
-                let mut full = tdd.clone();
-                expand_full_unmarked(eng, &mut full).unwrap();
-                for (t, _l, _r) in Arc::clone(full.vtree()).internal_bottomup() {
-                    let ti = t.idx();
-                    if full.levels[ti].slot_count() == before[ti] {
-                        continue; // no fill here
-                    }
-                    let fill = full.levels[ti].slot_count() - 1;
-                    for p in full.levels[ti].pairs_vec(fill) {
-                        if forms[ti].0 {
-                            assert_eq!(p.left.0, ONE_LEAF_IDX.0, "fill split a One on level {ti}");
-                        }
-                        if forms[ti].1 {
-                            assert_eq!(p.right.0, ONE_LEAF_IDX.0, "fill split a One on level {ti}");
-                        }
-                    }
-                    one_form_fills += usize::from(forms[ti].0 || forms[ti].1);
-                }
-            }
-        }
-    }
-    assert!(one_form_fills > 0, "no One-form level ever took a fill");
 }

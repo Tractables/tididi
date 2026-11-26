@@ -1,7 +1,6 @@
 //! The prune a negation ends with, seeded from the root, against the walk over
 //! the whole diagram.
 
-use crate::test_helpers::bare_roots;
 use crate::diagram::ChildPair;
 use crate::reduce::prune::{PruneScope, below_root_walk_applies};
 use crate::reduce::ReductionPlan;
@@ -50,12 +49,12 @@ fn the_seeded_prune_leaves_the_diagram_the_whole_walk_leaves() {
         let mut cases = 0usize;
         let mut out = Vec::new();
         for num_vars in [3u32, 5, 8] {
-            for (_name, vtree) in bare_roots(vtree_shapes(num_vars)) {
+            for (_name, vtree) in vtree_shapes(num_vars) {
                 for _ in 0..12 {
                     let ca = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 6, width: 3 });
                     let cb = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 3, width: 2 });
-                    let f = compile_clauses_on(eng, &crate::vtree::Home::unchecked(&vtree), &ca);
-                    let g = compile_clauses_on(eng, &crate::vtree::Home::unchecked(&vtree), &cb);
+                    let f = compile_clauses_on(eng, &vtree, &ca);
+                    let g = compile_clauses_on(eng, &vtree, &cb);
                     if f.is_zero() || g.is_zero() {
                         continue;
                     }
@@ -63,7 +62,9 @@ fn the_seeded_prune_leaves_the_diagram_the_whole_walk_leaves() {
                     // shapes a Tp-compilation consumer negates.
                     let conj = crate::and(f.clone(), g).unwrap();
                     for operand in [f, conj] {
-                        if operand.is_zero() {
+                        // On a projection of one variable the root is a leaf,
+                        // where the seeded walk does not start.
+                        if operand.is_zero() || operand.vtree().node(operand.vtree().root()).is_leaf() {
                             continue;
                         }
                         cases += 1;
