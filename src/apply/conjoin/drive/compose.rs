@@ -98,8 +98,9 @@ impl Block {
 /// it: the engine's memory is unbounded (so the route's skipping the row
 /// loop's scratch cannot change a later decision), both operand levels hold
 /// every node of their width with the same number of pairs, both are affine,
-/// the live cells of each child grid are a block (`block`, asked only once
-/// the rest holds) holding every slot the operands name there, a grouped
+/// the live cells of each child grid are a block holding every slot the
+/// operands name there (`block`, asked before the operands are read for a
+/// fit, which costs a stored one its pairs), a grouped
 /// level's runs are digits, and the product holds at least the floor's
 /// pairs (`FLOOR`). No pair dies on such a level. `grouped` says the
 /// level's N×M cells may take the grouped walk.
@@ -111,24 +112,23 @@ pub(super) fn plan(
     grouped: bool,
     block: impl Fn(ChildSide) -> Option<Block>,
 ) -> Option<ImplicitLevel> {
-    let (df, dg) = fit_operands(lim, f, g, shape)?;
-    if df.pairs().saturating_mul(dg.pairs()) < floor() {
-        return None;
-    }
-    let (left, right) = (block(ChildSide::Left)?, block(ChildSide::Right)?);
+    let blocks = || Some((block(ChildSide::Left)?, block(ChildSide::Right)?));
+    let (df, dg, (left, right)) = fit_operands(lim, f, g, shape, blocks)?;
     let (df, dg) = left.moved(ChildSide::Left, df, dg)?;
     let (df, dg) = right.moved(ChildSide::Right, df, dg)?;
     compose_described(&df, &dg, (left.width(), right.width()), grouped)
 }
 
 /// The descriptions of `f` and `g` where the implicit route can build
-/// `shape`'s level from them.
-fn fit_operands(
+/// `shape`'s level from them, with what `first` gives, asked once their
+/// shapes allow it and before either is read for a fit.
+fn fit_operands<B>(
     lim: &crate::limits::Limits,
     f: &TddLevel,
     g: &TddLevel,
     shape: LevelShape,
-) -> Option<(ImplicitLevel, ImplicitLevel)> {
+    first: impl FnOnce() -> Option<B>,
+) -> Option<(ImplicitLevel, ImplicitLevel, B)> {
     // A level that fits a description holds its arena's length in pairs or,
     // at one pair a node, its nodes' count, so the product of the two bounds
     // bounds the product's pairs: under the floor, the row loop writes the
@@ -142,7 +142,8 @@ fn fit_operands(
     {
         return None;
     }
-    Some((described(f)?, described(g)?))
+    let b = first()?;
+    Some((described(f)?, described(g)?, b))
 }
 
 /// The passed child of a pass level (`take_pass_level`), whose product of
@@ -319,7 +320,7 @@ pub(super) fn plan_marginal(
     bases: Sides<Option<GridBase>>,
 ) -> Option<ImplicitLevel> {
     use crate::apply::conjoin::marginal_plan::Carrier;
-    let (df, dg) = fit_operands(lim, f, g, shape)?;
+    let (df, dg, ()) = fit_operands(lim, f, g, shape, || Some(()))?;
     let (fl, fh) = df.slot_range();
     let (gl, gh) = dg.slot_range();
     let in_cell_order = |complete: bool, base: Option<GridBase>, cells: usize| {
