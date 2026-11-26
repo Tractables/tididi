@@ -4,8 +4,9 @@ use crate::vtree::Home;
 
 #[test]
 fn canonical_guarantee_follows_storage_and_output() {
-    let vtree = Arc::new(Vtree::balanced(3));
-    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap();
+    let home = Home::new(Vtree::balanced(3));
+    let mut f = Tdd::clause(&home, [1, 2]).unwrap();
+    let vtree = Arc::clone(f.vtree());
     f.minimize().unwrap();
     assert!(f.levels.is_canonical(f.output));
     assert!(f.clone().levels.is_canonical(f.output));
@@ -39,6 +40,8 @@ fn builder_and_marginal_storage_are_not_certified() {
     assert!(!rebuilt.levels.is_canonical(rebuilt.output));
 }
 
+// Padded form: a constant on a vtree with levels, which a copy must
+// allocate.
 #[test]
 fn certified_leaf_queries_borrow_and_still_honor_cancellation() {
     use crate::OperationError;
