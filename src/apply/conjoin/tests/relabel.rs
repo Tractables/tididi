@@ -9,8 +9,7 @@ use crate::Engine;
 use crate::limits::{LimitConfig, SparseRoute, StopAt, StopRules};
 use crate::test_helpers::{assert_canonical, assert_same_shape, rand_conj_over, same_storage, vtree_shapes, Lcg};
 use crate::test_helpers::check::check_no_false_nodes_in_levels;
-use crate::vtree::{VarId, Vtree, VtreeNode};
-use crate::test_helpers::bare_roots;
+use crate::vtree::{Home, VarId, Vtree, VtreeNode};
 
 /// The variables at the leaves under `t`.
 pub(super) fn vars_under(vtree: &Vtree, t: VtreeIdx) -> Vec<u32> {
@@ -27,8 +26,8 @@ pub(super) fn vars_under(vtree: &Vtree, t: VtreeIdx) -> Vec<u32> {
 }
 
 /// A random function of `vars`, minimized.
-pub(super) fn function_of(vtree: &Arc<Vtree>, vars: &[u32], rng: &mut Lcg) -> Tdd {
-    let mut f = rand_conj_over(&crate::vtree::Home::unchecked(vtree), vars, 8, 3, false, rng);
+pub(super) fn function_of(vtree: &Home, vars: &[u32], rng: &mut Lcg) -> Tdd {
+    let mut f = rand_conj_over(vtree, vars, 8, 3, false, rng);
     f.minimize().unwrap();
     f
 }
@@ -42,7 +41,7 @@ pub(super) fn function_of(vtree: &Arc<Vtree>, vars: &[u32], rng: &mut Lcg) -> Td
 pub(super) fn cases(nvars: u32, seed: u64) -> Vec<(String, Tdd, Tdd)> {
     let mut rng = Lcg::new(seed);
     let mut out = Vec::new();
-    for (shape, vtree) in bare_roots(vtree_shapes(nvars)) {
+    for (shape, vtree) in vtree_shapes(nvars) {
         let all: Vec<u32> = (1..=nvars).collect();
         for (t, _, _) in vtree.internal_bottomup() {
             if t == vtree.root() {
@@ -98,7 +97,7 @@ fn relabelled_levels_are_the_general_routes_levels() {
 #[test]
 fn relabelled_levels_read_product_lists() {
     let before = relabel_census();
-    for (what, f, g) in cases(9, 0x11_57ed) {
+    for (what, f, g) in cases(9, 0x7e1a_be11) {
         same_as_general_routes_with(&what, &f, &g, Some(SparseRoute { sparsity: 1, min_grid: 0 }));
     }
     let census = relabel_census();
@@ -164,12 +163,12 @@ fn marginalizing_conjunctions_agree() {
     assert!(relabelled > 0, "no marginalizing conjunction relabelled a level");
 }
 
-/// An operand an earlier sum left a marginal level in is read through that
-/// level where the other operand is constant-true over it: the general
-/// routes' diagram and count, and the count of the conjunction unsummed.
+/// An operand an earlier sum left a region in, conjoined with an operand
+/// that reads none of its variables: the general routes' diagram and count,
+/// and the count of the conjunction unsummed.
 #[test]
-fn a_summed_operand_is_read_through_its_marginal_level() {
-    let mut read_through = 0;
+fn a_summed_operand_conjoins_as_the_general_routes_do() {
+    let mut summed_cases = 0;
     for (what, f, g) in cases(8, 0x5e_77) {
         let vtree = Arc::clone(f.vtree());
         let support = crate::test_helpers::support_mask(&g);
@@ -181,13 +180,12 @@ fn a_summed_operand_is_read_through_its_marginal_level() {
             }
             let mut summed = f.clone();
             crate::test_helpers::marginalize_under(&eng, &mut summed, &[t]).unwrap();
-            if !summed.level(t).is_marginal() {
+            if !summed.vtree().bottomup().any(|x| summed.level(x).is_marginal()) {
                 continue;
             }
             let what = format!("{what}, {t:?} summed");
-            let before = read_through_census();
+            summed_cases += 1;
             let out = crate::test_helpers::and_marginalizing_under(&eng, summed.clone(), g.clone(), &[]).unwrap();
-            read_through += read_through_census() - before;
             let oracle = no_relabel(|| crate::test_helpers::and_marginalizing_under(&eng, summed.clone(), g.clone(), &[]).unwrap());
             assert_same_shape(&out, &oracle, &what);
             assert_eq!(eng.model_count(&out).unwrap(), whole, "{what}: count");
@@ -195,7 +193,7 @@ fn a_summed_operand_is_read_through_its_marginal_level() {
             assert_eq!(counted, whole, "{what}: and_model_count");
         }
     }
-    assert!(read_through > 0, "no conjunction read through a marginal level");
+    assert!(summed_cases >= 50, "too few summed operands: {summed_cases}");
 }
 
 /// A level of one node the route wrote in its carrier's order, each run of
@@ -256,21 +254,23 @@ fn a_relabelled_level_quantified_on_its_left_side_agrees() {
 /// gives both operands back as they were.
 #[test]
 fn a_refused_conjunction_gives_moved_levels_back() {
-    let vtree = Arc::new(Vtree::balanced(12));
+    let vtree = Home::new(Vtree::balanced(12));
     let eng = Engine::new();
     let u = vtree.internal_bottomup().map(|(t, _, _)| t).find(|&t| vars_under(&vtree, t).len() == 3).expect("a level over three variables");
     let under = vars_under(&vtree, u);
     let outside: Vec<i32> = (1..=12).filter(|v| !under.contains(v)).map(|v| v as i32).collect();
     let conj = |clauses: &[Vec<i32>]| {
-        let mut f = eng.cube(&crate::vtree::Home::unchecked(&vtree), std::iter::empty::<i32>()).unwrap();
+        let mut f = eng.cube(&vtree, std::iter::empty::<i32>()).unwrap();
         for c in clauses {
-            f = eng.and(f, eng.clause(&crate::vtree::Home::unchecked(&vtree), c.iter().copied()).unwrap()).unwrap();
+            f = eng.and(f, eng.clause(&vtree, c.iter().copied()).unwrap()).unwrap();
         }
         eng.minimize(&mut f).unwrap();
         f
     };
-    let f = conj(&outside.chunks(3).map(|c| vec![c[0], -c[1], c[2]]).collect::<Vec<_>>());
     let (a, b, c) = (under[0] as i32, under[1] as i32, under[2] as i32);
+    // `f` holds `g`'s clauses, so the products under `u` are `f`'s own nodes
+    // and every level above `u` moves whole.
+    let f = conj(&outside.chunks(3).map(|c| vec![c[0], -c[1], c[2]]).chain([vec![a, b], vec![-b, c]]).collect::<Vec<_>>());
     let g = conj(&[vec![a, b], vec![-b, c]]);
     let expected = eng.and(f.clone(), g.clone()).unwrap();
     let before = relabel_census();

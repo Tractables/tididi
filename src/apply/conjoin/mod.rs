@@ -1203,7 +1203,7 @@ use tests::{
     note_ahead, note_as_operand, note_closed_in_sweep, note_complete_side, note_held_tight,
     note_implied_walk, note_lent, note_lone_columns, note_lookups,
     note_one_sided_masks, note_pair_row_unrolled, note_pair_rows, note_pairs_grown,
-    note_pass_listed, note_reach_columns_row, note_reach_tables, note_read_through, note_relabelled,
+    note_pass_listed, note_reach_columns_row, note_reach_tables, note_relabelled,
     note_relayed, pass_listed_forced_off,
     note_route, note_row_columns_row, note_scheduled_charge, note_single_rows,
     note_whole_row, note_word_cells,

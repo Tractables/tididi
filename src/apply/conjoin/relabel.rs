@@ -151,9 +151,6 @@ pub(super) fn take_relabel_level(
     if (marginal.left_any && !carried(left)) || (marginal.right_any && !carried(right)) {
         return Ok(false);
     }
-    if marginal.left_any || marginal.right_any {
-        note_read_through();
-    }
 
     let vtree = sweep.vtree;
     let pools = &eng.scratch.apply;
