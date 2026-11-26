@@ -73,10 +73,6 @@ pub(super) const CLOSE_IN_SWEEP_PAIRS: usize = 1 << 20;
 /// only the levels that fit no description, the small ones and the level it
 /// is building. The node count and the arena's length and capacity read as
 /// before, and the close charges nothing.
-///
-/// A level that does not `settle` leaves what it charged the output-pair
-/// meter to come off at the next level that does, as the sparse routes it
-/// replaces leave theirs.
 #[expect(clippy::too_many_arguments)]
 pub(super) fn finalize_level(
     eng: &Engine,
@@ -85,11 +81,9 @@ pub(super) fn finalize_level(
     output_grid_base: GridBase,
     passthrough: Sides<bool>,
     close: bool,
-    settle: bool,
     run: &mut ApplyRun,
     sweep: &mut Sweep<'_>,
 ) {
-    let lim = eng.limits();
     let (t, t_idx) = (shape.t, shape.t.idx());
     let ApplyRun { levels, products, stream_cache, .. } = run;
     // Commit streaming-marginal emit: convert the level to `marginal_counts`,
@@ -113,12 +107,6 @@ pub(super) fn finalize_level(
     }
 
     levels[t_idx].shrink_arrays();
-
-    // Output-pair meter: this level is done, so its arena's capacity estimate
-    // gives way to the pairs it actually holds.
-    if settle {
-        lim.level_settled(levels[t_idx].pairs.len() as u64);
-    }
 
     mark_passthrough_inlined(&mut levels[t_idx], passthrough);
 

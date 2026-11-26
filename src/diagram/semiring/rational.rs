@@ -41,6 +41,8 @@ pub struct RationalWeights {
     w_pos: Vec<BigRational>,
     /// Negative-literal weight of each variable, indexed by `VarId`.
     w_neg: Vec<BigRational>,
+    /// Whether every variable's two weights sum to exactly one.
+    totals_one: bool,
 }
 
 impl std::fmt::Debug for RationalWeights {
@@ -52,6 +54,16 @@ impl std::fmt::Debug for RationalWeights {
 }
 
 impl RationalWeights {
+    fn new(w_pos: Vec<BigRational>, w_neg: Vec<BigRational>) -> Self {
+        let totals_one = w_pos.iter().zip(&w_neg).all(|(pos, neg)| (pos + neg).is_one());
+        RationalWeights { w_pos, w_neg, totals_one }
+    }
+
+    /// Whether every variable's two weights sum to exactly one.
+    pub(crate) fn totals_one(&self) -> bool {
+        self.totals_one
+    }
+
     /// The number of variables covered by the literal table.
     pub(crate) fn num_vars(&self) -> usize {
         self.w_pos.len()
@@ -78,7 +90,7 @@ impl RationalWeights {
             w_neg.push(weight.negative.clone());
             w_pos.push(weight.positive.clone());
         }
-        RationalWeights { w_pos, w_neg }
+        Self::new(w_pos, w_neg)
     }
 
     /// Build from named polarity columns indexed by variable, returning `None` for unequal lengths.
@@ -94,7 +106,7 @@ impl RationalWeights {
     /// ```
     pub fn from_polarities(weights: LiteralWeights<Vec<BigRational>>) -> Option<Self> {
         let LiteralWeights { negative: w_neg, positive: w_pos } = weights;
-        (w_pos.len() == w_neg.len()).then_some(RationalWeights { w_pos, w_neg })
+        (w_pos.len() == w_neg.len()).then(|| Self::new(w_pos, w_neg))
     }
 
     /// The positive-literal weight of `var`.
@@ -119,10 +131,7 @@ impl RationalWeights {
     /// `tdd.evaluate(&semiring)?` equals the (integer) model count of `tdd`,
     /// as an exact `BigRational` with denominator 1.
     pub fn unit(num_vars: usize) -> Self {
-        RationalWeights {
-            w_pos: vec![BigRational::one(); num_vars],
-            w_neg: vec![BigRational::one(); num_vars],
-        }
+        Self::new(vec![BigRational::one(); num_vars], vec![BigRational::one(); num_vars])
     }
 
     /// This table restated in another variable numbering: variable
@@ -160,10 +169,10 @@ impl RationalWeights {
         if let Some(&var) = local_to_global.iter().find(|var| var.0 == 0 || var.idx() >= self.num_vars()) {
             return Err(TddBuildError::MissingVariableWeight(var));
         }
-        Ok(RationalWeights {
-            w_pos: local_to_global.iter().map(|&var| self.w_pos[var.idx()].clone()).collect(),
-            w_neg: local_to_global.iter().map(|&var| self.w_neg[var.idx()].clone()).collect(),
-        })
+        Ok(Self::new(
+            local_to_global.iter().map(|&var| self.w_pos[var.idx()].clone()).collect(),
+            local_to_global.iter().map(|&var| self.w_neg[var.idx()].clone()).collect(),
+        ))
     }
 }
 

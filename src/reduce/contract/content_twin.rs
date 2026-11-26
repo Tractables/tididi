@@ -128,6 +128,7 @@ fn merge_levels<const SAMPLED: bool>(
     // grouping with a node's own pairs as its entries, and no contraction
     // sweep runs while this pass does.
     let mut scratch = eng.scratch.reduce.contract.checkout(eng);
+    let mut gate = lim.gate();
 
     // The pairs the sample's levels held and their duplicates' pairs, until
     // the sample is complete.
@@ -167,6 +168,7 @@ fn merge_levels<const SAMPLED: bool>(
             continue;
         }
         let entries = ContentEntries(level, tdd.levels.known_live_pairs(level_idx));
+        gate.poll(entries.len() as u64)?;
         if SAMPLED && let Some((seen, _)) = sample.as_mut() {
             *seen += entries.len();
         }

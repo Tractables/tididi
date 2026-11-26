@@ -290,6 +290,21 @@ impl TddLevel {
         });
     }
 
+    /// The values the level's pairs name on each side, left then right, as
+    /// bits: value `k` at bit `k` and every value from 7 up at bit 7, so
+    /// exact on a side whose child is a structural leaf
+    /// ([`LeafLabel`](crate::diagram::LeafLabel)); and the pairs
+    /// read. Not valid on a marginal level.
+    pub(crate) fn leaf_label_bits(&self) -> ([u8; 2], u64) {
+        let (mut bits, mut read) = ([0u8; 2], 0u64);
+        self.for_each_node_pair(|_, p| {
+            read += 1;
+            bits[0] |= 1 << p.left.0.min(7);
+            bits[1] |= 1 << p.right.0.min(7);
+        });
+        (bits, read)
+    }
+
     /// Calls `f(i, pairs)` with every node `i` of `range` and its pairs, in
     /// node order, up to the first `Err`, which it returns: a stored level's
     /// pairs as slices of its arena; an implicit level's generated a chunk

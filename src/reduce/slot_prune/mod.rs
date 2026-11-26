@@ -61,6 +61,7 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Result<Vec<u32>,
     let mut remap = eng.scratch.reduce.slot_prune_remap.checkout(eng);
     // The output level's store is the result; never touch it.
     let out_v = tdd.output.vtree;
+    let mut read = tdd.vtree.num_nodes() as u64;
     for (v, parent, side) in boundary_marginal_levels(tdd) {
         if v == out_v {
             continue;
@@ -102,6 +103,7 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Result<Vec<u32>,
         slots.reserve(lim, store_len)?;
         remap.clear();
         lim.try_resize(&mut remap, store_len, u32::MAX)?;
+        read += tdd.levels[parent.idx()].live_pairs() as u64;
         let referenced =
             referenced_marginal_slots(&tdd.levels[parent.idx()], side, &mut slots);
         debug_assert!(
@@ -135,9 +137,9 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Result<Vec<u32>,
     }
 
     // It rewrites stores in place and polls for no stop: it stops only where
-    // a level's buffers are refused, at a level boundary. Charging keeps the
-    // walk on the work clock.
-    lim.charge_work(tdd.vtree.num_nodes() as u64);
+    // a level's buffers are refused, at a level boundary. Charging the nodes
+    // and every parent pair it reads keeps the walk on the work clock.
+    lim.charge_work(read);
 
     Ok(merged_levels)
 }

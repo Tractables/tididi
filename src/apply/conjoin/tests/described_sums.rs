@@ -377,11 +377,9 @@ fn one_summed_child(n: u32, seed: u64) -> (Tdd, Tdd, Vec<VtreeIdx>) {
 }
 
 /// A level the marginal-child route takes from the sparse-marginal route
-/// leaves what it charged the output-pair meter to come off at the next
-/// level that settles, as that route does: the least pair floor the
+/// meters the pairs it holds, as that route does: the least pair floor the
 /// conjunction finishes under is the one it has with the sparse-marginal
-/// route kept, and another with the taken levels settled, with the same
-/// value.
+/// route kept.
 #[test]
 fn levels_taken_from_the_sparse_marginal_route_meter_as_that_route() {
     use crate::limits::SparseRoute;
@@ -420,6 +418,4 @@ fn levels_taken_from_the_sparse_marginal_route_meter_as_that_route() {
     };
     let floor = least();
     assert_eq!(floor, grid_lookups(least), "the sparse-marginal route kept");
-    assert_ne!(floor, taken_levels_settled(least), "the taken levels settled");
-    assert_eq!(run(None), taken_levels_settled(|| run(None)));
 }
