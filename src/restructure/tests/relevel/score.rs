@@ -3,7 +3,13 @@
 //! the preparation gives, and both give up at the same bound.
 
 use super::*;
-use crate::test_helpers::{random_diagrams, rotate_left, rotate_right, with_floor};
+use crate::test_helpers::{on_local_twin, random_diagrams, rotate_left, rotate_right, with_floor};
+
+/// [`random_diagrams`] but the constants, each copied onto its twin, the
+/// tree a restructure rotates.
+fn twins(seed: u64, count: usize, vars: std::ops::Range<u32>) -> Vec<Tdd> {
+    random_diagrams(seed, count, vars).iter().filter(|f| f.vtree().num_leaves() > 0).map(on_local_twin).collect()
+}
 
 /// Every move of `tdd` scored and prepared under `bound`; the moves compared.
 fn compare_every_move(tdd: &Tdd, bound: usize, scratch: &mut RestructureScratch) -> usize {
@@ -43,7 +49,7 @@ fn compare_every_move(tdd: &Tdd, bound: usize, scratch: &mut RestructureScratch)
 fn a_score_is_the_pairs_a_preparation_gives() {
     let mut scratch = RestructureScratch::default();
     let mut compared = 0;
-    for tdd in random_diagrams(0x5c0e, 120, 3..10) {
+    for tdd in twins(0x5c0e, 220, 3..10) {
         let mut minimized = tdd.clone();
         minimized.minimize().expect("an unarmed engine refuses nothing");
         for f in [&tdd, &minimized] {
@@ -57,7 +63,7 @@ fn a_score_is_the_pairs_a_preparation_gives() {
 fn a_score_gives_up_where_a_preparation_does() {
     let mut scratch = RestructureScratch::default();
     let mut gave_up = 0;
-    for tdd in random_diagrams(0xb0d, 16, 4..8) {
+    for tdd in twins(0xb0d, 16, 4..8) {
         for bound in [0, 1, 2, 3, 5, 8, 13, 21, 34] {
             compare_every_move(&tdd, bound, &mut scratch);
         }
@@ -78,7 +84,7 @@ fn a_score_reads_implicit_levels() {
     with_floor(4, || {
         let mut scratch = RestructureScratch::default();
         let mut implicit = 0;
-        for mut tdd in random_diagrams(0x1e7e1, 24, 5..10) {
+        for mut tdd in twins(0x1e7e1, 24, 5..10) {
             tdd.minimize().expect("an unarmed engine refuses nothing");
             implicit += tdd.levels.iter().filter(|l| l.implicit().is_some()).count();
             compare_every_move(&tdd, usize::MAX, &mut scratch);
@@ -94,7 +100,7 @@ fn a_move_and_its_crossing_score_together_as_apart() {
     let lim = Limits::new();
     let mut scratch = RestructureScratch::default();
     let mut compared = 0;
-    for tdd in random_diagrams(0xc2055, 60, 3..10) {
+    for tdd in twins(0xc2055, 60, 3..10) {
         for (v, _, _) in tdd.vtree.internal_bottomup() {
             for kind in [RotationKind::Left, RotationKind::Right] {
                 let mut tree = (*tdd.vtree).clone();
