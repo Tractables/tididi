@@ -1,6 +1,4 @@
-use std::sync::Arc;
 use crate::vtree::Home;
-use crate::test_helpers::bare_roots;
 use super::*;
 use std::collections::HashMap;
 use crate::limits::{LimitConfig, StopAt, StopRules};
@@ -56,18 +54,20 @@ fn regrouping_polls_inside_a_level() {
 
 #[test]
 fn freeing_a_whole_subtree_matches_one_variable_at_a_time() {
-    let tree = Arc::new(Vtree::balanced(6));
-    let f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, -2, 3]).unwrap() & Tdd::clause(&crate::vtree::Home::unchecked(&tree), [-4, 5, 6]).unwrap();
+    let tree = crate::vtree::Home::new(Vtree::balanced(6));
+    let f = Tdd::clause(&tree, [1, -2, 3]).unwrap() & Tdd::clause(&tree, [-4, 5, 6]).unwrap();
     let mut f = f;
     f.minimize().unwrap();
     assert_canonical(&f);
     // The balanced vtree over six variables groups 1..=3 under one subtree.
-    let block: Vec<VtreeIdx> = [1, 2, 3].iter().map(|&v| tree.leaf_of(VarId(v)).unwrap()).collect();
+    let block: Vec<VtreeIdx> = [1, 2, 3].iter().map(|&v| f.vtree().leaf_of(VarId(v)).unwrap()).collect();
     let eng = Engine::new();
     let at_once = exists_leaves_structural(&eng, f.clone(), &block, Some(ReductionPlan::default())).unwrap();
     assert_canonical(&at_once);
     let mut one_at_a_time = f;
-    for &leaf in &block {
+    for v in [1, 2, 3] {
+        // A step can drop the leaves of variables a clause it satisfied read.
+        let Some(leaf) = one_at_a_time.vtree().leaf_of(VarId(v)) else { continue };
         one_at_a_time = exists_leaves_structural(&eng, one_at_a_time, &[leaf], Some(ReductionPlan::default())).unwrap();
     }
     assert_canonical(&one_at_a_time);
@@ -151,15 +151,15 @@ fn the_prune_after_the_sweep_drops_what_a_whole_prune_drops() {
     let eng = Engine::new();
     let mut rng = Lcg::new(0x0001_005e_5ee9);
     for nvars in [6u32, 9] {
-        for (name, tree) in bare_roots(vtree_shapes(nvars)) {
+        for (name, tree) in vtree_shapes(nvars) {
             for _ in 0..6 {
                 let clauses = rand_cnf(&mut rng, nvars, CnfShape { clauses: 2 * nvars as usize, width: 3 });
-                let f = compile_clauses(&crate::vtree::Home::unchecked(&tree), &clauses);
+                let f = compile_clauses(&tree, &clauses);
                 let leaves: Vec<VtreeIdx> = (1..=nvars)
                     .filter(|_| rng.below(3) == 0)
-                    .map(|v| tree.leaf_of(VarId(v)).unwrap())
+                    .filter_map(|v| f.vtree().leaf_of(VarId(v)))
                     .collect();
-                if leaves.is_empty() || leaves.len() == nvars as usize {
+                if leaves.is_empty() || leaves.len() == f.vtree().num_leaves() as usize {
                     continue;
                 }
                 let canonical = exists_leaves_structural(&eng, f.clone(), &leaves, Some(ReductionPlan::default())).unwrap();
@@ -216,21 +216,21 @@ fn a_quantification_under_contract_leaves_every_node_reached() {
 #[test]
 fn a_root_union_under_contract_is_the_root_alone() {
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(6));
-    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, -2, 3]).unwrap()
-        & Tdd::clause(&crate::vtree::Home::unchecked(&tree), [-1, 4, 5]).unwrap()
-        & Tdd::clause(&crate::vtree::Home::unchecked(&tree), [2, -4, 6]).unwrap();
+    let tree = crate::vtree::Home::new(Vtree::balanced(6));
+    let mut f = Tdd::clause(&tree, [1, -2, 3]).unwrap()
+        & Tdd::clause(&tree, [-1, 4, 5]).unwrap()
+        & Tdd::clause(&tree, [2, -4, 6]).unwrap();
     f.minimize().unwrap();
     let vars = [VarId(1), VarId(4)];
     let mut canonical = eng.exists_vars(f.clone(), &vars).unwrap();
     canonical.minimize().unwrap();
-    let root = tree.root();
+    let root = f.vtree().root();
     let pairs: Vec<ChildPair> = f.levels[root.idx()].pairs_iter_of_idx(f.output.local.idx()).collect();
     f.levels[root.idx()].push_node(eng.limits(), &pairs).unwrap();
     f.dirty.set_loose(None);
     assert!(f.dirty.is_empty(), "no pass is owed, so the sweep does not prune first");
     let mut out = eng.exists_vars_with(f, &vars, ReductionPlan::Contract).unwrap();
-    assert_eq!(out.levels[root.idx()].nodes().len(), 1, "a root cell outside the union stays");
+    assert_eq!(out.levels[out.vtree().root().idx()].nodes().len(), 1, "a root cell outside the union stays");
     out.minimize().unwrap();
     assert_canonical(&out);
     assert_eq!(out.node_count(), canonical.node_count());
@@ -313,9 +313,10 @@ fn regrouping_matches_the_owner_set_rule() {
     for round in 0..24u32 {
         let num_vars = 6 + round % 9;
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 4 + round as usize, width: 4 });
-        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
-            let f = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &clauses);
+        for (shape, vtree) in vtree_shapes(num_vars) {
+            let f = compile_clauses(&vtree, &clauses);
             if f.is_zero() { continue; }
+            let vtree = std::sync::Arc::clone(f.vtree());
             for &parent in vtree.bottomup_slice() {
                 let level = &f.levels[parent.idx()];
                 if vtree.node(parent).is_leaf() || level.nodes().is_empty() { continue; }
@@ -393,9 +394,10 @@ fn a_level_of_one_atom_per_pair_follows_the_owner_set_rule() {
         // About three models a variable, drawn once for every vtree.
         let rows: Vec<bool> = (0..1u64 << num_vars).map(|_| rng.below(1 << num_vars) < 3 * u64::from(num_vars)).collect();
         let vars: Vec<VarId> = (1..=num_vars).map(VarId).collect();
-        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
-            for f in [compile_clauses(&crate::vtree::Home::unchecked(&vtree), &clauses), or_of_cubes(&crate::vtree::Home::unchecked(&vtree), &vars, |row| rows[row])] {
+        for (shape, vtree) in vtree_shapes(num_vars) {
+            for f in [compile_clauses(&vtree, &clauses), or_of_cubes(&vtree, &vars, |row| rows[row])] {
                 if f.is_zero() { continue; }
+                let vtree = std::sync::Arc::clone(f.vtree());
                 for &parent in vtree.bottomup_slice() {
                     let level = &f.levels[parent.idx()];
                     if vtree.node(parent).is_leaf() || level.nodes().len() < 2 { continue; }
@@ -454,9 +456,10 @@ fn a_level_of_one_node_is_written_alike_run_by_run() {
     for round in 0..24u32 {
         let num_vars = 6 + round % 9;
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 4 + round as usize, width: 4 });
-        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
-            let f = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &clauses);
+        for (shape, vtree) in vtree_shapes(num_vars) {
+            let f = compile_clauses(&vtree, &clauses);
             if f.is_zero() { continue; }
+            let vtree = std::sync::Arc::clone(f.vtree());
             for &parent in vtree.bottomup_slice() {
                 let level = &f.levels[parent.idx()];
                 if vtree.node(parent).is_leaf() || level.nodes().len() != 1 { continue; }
@@ -530,12 +533,13 @@ fn a_level_of_one_node_with_unsorted_runs_is_written_in_order() {
     let mut rng = Lcg::new(0x0f2_5011);
     let eng = Engine::new();
     let mut levels = 0usize;
-    for round in 0..48u32 {
+    for round in 0..64u32 {
         let num_vars = 6 + round % 9;
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 4 + round as usize, width: 4 });
-        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
-            let f = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &clauses);
+        for (shape, vtree) in vtree_shapes(num_vars) {
+            let f = compile_clauses(&vtree, &clauses);
             if f.is_zero() { continue; }
+            let vtree = std::sync::Arc::clone(f.vtree());
             for &parent in vtree.bottomup_slice() {
                 if vtree.node(parent).is_leaf() || f.levels[parent.idx()].nodes().len() != 1 { continue; }
                 let mut pairs = f.levels[parent.idx()].pairs_vec(0);
@@ -627,9 +631,10 @@ fn written_by_rows() -> Vec<Tdd> {
     for round in 0..24u32 {
         let num_vars = 6 + round % 9;
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 4 + round as usize, width: 4 });
-        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
-            let f = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &clauses);
+        for (shape, vtree) in vtree_shapes(num_vars) {
+            let f = compile_clauses(&vtree, &clauses);
             if f.is_zero() { continue; }
+            let vtree = std::sync::Arc::clone(f.vtree());
             for &parent in vtree.bottomup_slice() {
                 let level = &f.levels[parent.idx()];
                 if vtree.node(parent).is_leaf() || level.nodes().len() != 1 { continue; }
@@ -765,9 +770,9 @@ fn a_row_reads_back_its_columns_in_order_however_wide() {
 fn a_wide_level_of_one_node_is_written_by_rows_as_the_owner_set_rule_says() {
     let mut rng = Lcg::new(20260928);
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(4));
-    let host = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1, -2, 3]).unwrap();
-    let parent = tree.root();
+    let tree = crate::vtree::Home::new(Vtree::balanced(4));
+    let host = Tdd::clause(&tree, [1, -2, 3]).unwrap();
+    let parent = host.vtree().root();
     for (keys, cells, width, count) in [(3usize, 2u32, 1u32 << 13, 40usize), (50, 30, 1 << 19, 2000), (400, 5, 1 << 20, 6000)] {
         let mut pairs: Vec<ChildPair> = (0..count)
             .map(|_| ChildPair::new(
@@ -963,9 +968,9 @@ fn exists_above_a_summed_out_level_is_refused() {
     ];
     let mut wrong = Vec::new();
     for (text, clauses) in homes {
-        let tree = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::from_text(text).unwrap()));
-        let mut f = compile_clauses(&crate::vtree::Home::unchecked(&tree), &clauses);
-        f.marginalize(crate::test_helpers::summing(f.vtree(), &[tree.leaf_of(VarId(1)).unwrap()])).unwrap();
+        let tree = crate::vtree::Home::new(Vtree::from_text(text).unwrap());
+        let mut f = compile_clauses(&tree, &clauses);
+        f.marginalize(crate::test_helpers::summing(&tree, &[tree.leaf_of(VarId(1)).unwrap()])).unwrap();
         assert_eq!(f.model_count().unwrap(), 3u32.into());
         for quantify in [Tdd::exists_var as fn(Tdd, VarId) -> _, |f: Tdd, x| f.exists_vars(&[x])] {
             match quantify(f.clone(), VarId(2)) {
