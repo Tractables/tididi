@@ -175,6 +175,22 @@ fn free_variables_in_the_middle_of_the_vtree_multiply_the_count() {
 }
 
 #[test]
+fn on_a_home_the_diagram_is_on_the_projection_of_its_variables() {
+    let constrained = [VarId(2), VarId(5), VarId(7)];
+    let table = vec![vec![false, false, true], vec![true, true, true], vec![true, false, false]];
+    for (name, home) in vtree_shapes(8) {
+        let f = Tdd::from_models(&home, &constrained, &pack_table(&table)).unwrap();
+        let projection = Vtree::projection(&home, constrained).unwrap();
+        assert!(f.vtree().is_on(&home), "{name}");
+        assert!(f.vtree().same_tree(&projection), "{name}");
+        assert_eq!(f.model_count().unwrap(), (3u32 * 32).into(), "{name}");
+
+        let all = Tdd::from_models(&home, &vars(8), &[0, 0xff]).unwrap();
+        assert!(std::sync::Arc::ptr_eq(all.vtree(), &home), "{name}");
+    }
+}
+
+#[test]
 fn the_canonicity_gap_of_four_nodes_and_six_edges() {
     // The relation a direct construction first got wrong, emitting overlapping
     // nodes: four values, two bits per endpoint, six edges.

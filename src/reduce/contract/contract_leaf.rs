@@ -312,14 +312,16 @@ fn classify(
     Ok(finish_classify(pos, neg, has_one))
 }
 
-/// Whether every node of `parent`'s level names its leaf on `side` by a
-/// literal only, holding `(Pos, S)` exactly as often as `(Neg, S)`: a side
-/// the rewrite below would name true.
+/// Whether `parent`'s level holds a node and every node names its leaf on
+/// `side` by a literal only, holding `(Pos, S)` exactly as often as
+/// `(Neg, S)`: a side the rewrite below would name true. An empty level, such
+/// as one outside the subtree of an output below the root, has no such side,
+/// as [`try_contract_leaf_twins`] contracts nothing there.
 #[cfg(debug_assertions)]
 pub(crate) fn is_full_twin_side(tdd: &Tdd, parent: VtreeIdx, side: ChildSide) -> bool {
     let level = &tdd.levels[parent.idx()];
     let (pos_label, neg_label): (EncodedChildRef, EncodedChildRef) = (POS_LEAF_IDX.into(), NEG_LEAF_IDX.into());
-    (0..level.slot_count()).all(|i| {
+    level.slot_count() > 0 && (0..level.slot_count()).all(|i| {
         let (mut pos, mut neg) = (Vec::new(), Vec::new());
         for p in level.pairs_iter_of_idx(i) {
             match split_leaf_side(p, side) {

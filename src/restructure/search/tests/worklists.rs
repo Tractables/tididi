@@ -1,5 +1,4 @@
 //! What a rotation trial does with the reduction obligations it inherits.
-use crate::test_helpers::bare_roots;
 use crate::vtree::Home;
 
 use std::sync::Arc;
@@ -8,8 +7,7 @@ use crate::Engine;
 use crate::diagram::{Dirty, Pass, Tdd};
 use crate::restructure::search::{MinimizePairs, MultistartConfig, PoolMove, RotationMove, RotationSearchConfig};
 use crate::restructure::search::probe::rotate_if_on;
-use crate::test_helpers::check::marginal::check_pair_fusion_saturation;
-use crate::test_helpers::{assert_canonical, assert_same_shape, compile_clauses_on, rand_cnf, vtree_shapes, CnfShape};
+use crate::test_helpers::{assert_canonical, compile_clauses_on, rand_cnf, vtree_shapes, CnfShape};
 use crate::vtree::rng::Lcg;
 use crate::vtree::{RotationKind, Vtree, VtreeIdx};
 
@@ -57,59 +55,50 @@ fn recorded(tdd: &Tdd) -> Vec<VtreeIdx> {
     (0..tdd.vtree.num_nodes() as u32).map(VtreeIdx).filter(|&t| tdd.dirty.is_fused(t.0)).collect()
 }
 
-/// Random formulas on every vtree shape with a level marginalized and the
-/// result minimized, then rotated at random pivots: an accepted rotation
-/// keeps the records of levels it neither rebuilt nor pushed, each of those
-/// levels has no fusion left to find, and minimizing gives the diagram
-/// minimizing with every record forgotten gives.
+/// Random formulas on every home shape with a subtree summed out and the
+/// result minimized. A fusion record sits only over a summed-out level, which
+/// on a home is a region, and a rotation of a diagram with a region is
+/// refused naming it, so no accepted rotation meets a record: the refused one
+/// leaves the levels and the records as they were.
 #[test]
-fn an_accepted_rotation_keeps_the_fusion_records_it_left_alone() {
+fn a_rotation_refuses_a_region_and_keeps_its_fusion_records() {
     let mut rng = Lcg::new(41);
-    let mut kept_records = 0;
+    let mut refused = 0;
     for num_vars in 5..9u32 {
-        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
+        for (shape, home) in vtree_shapes(num_vars) {
             let eng = Engine::new();
             let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 2 * num_vars as usize, width: 3 });
-            let mut f = compile_clauses_on(&eng, &crate::vtree::Home::unchecked(&vtree), &clauses);
-            if f.is_zero() {
-                continue;
-            }
+            let mut f = compile_clauses_on(&eng, &home, &clauses);
+            let vtree = Arc::clone(&f.vtree);
             let inner: Vec<VtreeIdx> = (0..vtree.num_nodes() as u32)
                 .map(VtreeIdx)
                 .filter(|&t| t != vtree.root() && !vtree.node(t).is_leaf())
                 .collect();
+            if f.is_zero() || inner.is_empty() {
+                continue;
+            }
             let target = inner[rng.below(inner.len() as u64) as usize];
             crate::test_helpers::marginalize_under(&eng, &mut f, &[target]).unwrap();
             eng.minimize(&mut f).unwrap();
-            let count = f.model_count().unwrap();
-            for step in 0..6 {
-                let label = format!("{shape} over {num_vars} variables, step {step}");
-                let before = recorded(&f);
-                let pivots: Vec<VtreeIdx> = (0..f.vtree.num_nodes() as u32)
-                    .map(VtreeIdx)
-                    .filter(|&t| !f.vtree.node(t).is_leaf())
-                    .collect();
-                let pivot = pivots[rng.below(pivots.len() as u64) as usize];
-                let kind = if rng.below(2) == 0 { RotationKind::Left } else { RotationKind::Right };
-                if rotate_if_on(&eng, &mut f, &[RotationMove { pivot, kind }], usize::MAX, |_| true) != Ok(true) {
-                    continue;
+            let records = recorded(&f);
+            let regions: Vec<VtreeIdx> = f.vtree.regions().collect();
+            let label = format!("{shape} over {num_vars} variables");
+            assert!(!records.is_empty() && !regions.is_empty(), "{label}: records {records:?}, regions {regions:?}");
+            let own = Arc::clone(&f.vtree);
+            for pivot in (0..own.num_nodes() as u32).map(VtreeIdx).filter(|&t| !own.node(t).is_leaf()) {
+                for kind in [RotationKind::Left, RotationKind::Right] {
+                    let before = f.clone();
+                    match rotate_if_on(&eng, &mut f, &[RotationMove { pivot, kind }], usize::MAX, |_| true) {
+                        Err(crate::OperationError::MarginalLevel(t)) => assert!(regions.contains(&t), "{label}: refused at {t:?}"),
+                        other => panic!("{label}: rotation at {pivot:?} gave {other:?}"),
+                    }
+                    assert!(f.same_levels(&before) && recorded(&f) == records, "{label}: the refusal changed the diagram");
+                    refused += 1;
                 }
-                let after = recorded(&f);
-                kept_records += before.iter().filter(|t| after.contains(t)).count();
-                if let Err(e) = check_pair_fusion_saturation(&f, Some(&after)) {
-                    panic!("{label}: {e}");
-                }
-                let mut forced = f.clone();
-                forced.dirty.forget_all_fused();
-                eng.minimize(&mut f).unwrap();
-                eng.minimize(&mut forced).unwrap();
-                forced.dirty.forget_all_fused();
-                assert_same_shape(&f, &forced, &label);
-                assert_eq!(f.model_count().unwrap(), count, "{label}");
             }
         }
     }
-    assert!(kept_records > 0, "no rotation kept a record");
+    assert!(refused > 0, "no rotation was tried");
 }
 
 #[test]
@@ -232,3 +221,4 @@ fn a_rotation_of_a_canonical_diagram_keeps_the_certificate() {
         assert_eq!(tally.spurious, 0, "{name}: canonical results left uncertified");
     }
 }
+

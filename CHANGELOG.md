@@ -124,8 +124,7 @@ Breaking changes:
   projection of it; variables that are not exactly one node's leaves give
   `DistinctError::Key`. `Engine::tag_level` into a vtree on a home returns a diagram on the
   projection of that home on the tagged and code variables, the code
-  subtree on either side of its root. Diagrams on root vtrees are
-  unchanged.
+  subtree on either side of its root.
 - On a home or a projection of one, a constant is on the home's empty
   projection: `Tdd::one`, `Tdd::zero`, `Engine::one`, `Engine::zero` and
   every operation that returns true or false. `literal`, `Tdd::cube` and
@@ -149,7 +148,8 @@ Breaking changes:
   `finish` reports a refused allocation in that trim as the new
   `TddBuildError::OverBudget`, and the readers as the new
   `IoError::OverBudget`. `TddBuilder::finish_unchecked` does not
-  trim. Diagrams on root vtrees are unchanged.
+  trim. Since `Tdd::builder` refuses a vtree on no home and the readers
+  take a `Home`, this covers every diagram they return.
 - On a home, `Maintenance` updates accept a variable of the home the
   diagram has no leaf for, and a rebuild or the removal of the last model
   can move the diagram to another projection of the home.
@@ -184,6 +184,8 @@ Fixed:
   unless a level under it is marginal, where a repeated pair is a legal
   multiplicity. The binary reader trusts the levels it reads and does not
   check.
+- In debug builds, `equivalent` panicked on a diagram whose output is below
+  its projection's root.
 
 ## 0.2.0
 
