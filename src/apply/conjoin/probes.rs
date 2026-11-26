@@ -131,6 +131,16 @@ pub(super) fn pass_tight_forced_off() -> bool {
 
 #[cfg(not(test))]
 #[inline(always)]
+pub(super) fn pass_composed_forced_off() -> bool {
+    false
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+pub(super) fn note_pass_composed() {}
+
+#[cfg(not(test))]
+#[inline(always)]
 pub(super) fn relay_forced_off() -> bool {
     false
 }

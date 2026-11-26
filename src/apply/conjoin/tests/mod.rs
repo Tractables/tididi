@@ -20,6 +20,7 @@ mod owed;
 mod pair_floor;
 mod pair_rows;
 mod pass_numbered;
+mod pass_composed;
 mod pass_rows;
 mod relabel;
 mod probe;
@@ -810,6 +811,11 @@ thread_local! {
     static PASS_TIGHT_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The pass levels on this thread so carried ([`pass_numbered_census`]).
     static PASS_NUMBERED: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0; 2]) };
+    /// Whether no pass level on this thread over a complete passed child is
+    /// written as its description ([`pass_composed_off`]).
+    static PASS_COMPOSED_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The pass levels on this thread so written ([`pass_composed_census`]).
+    static PASS_COMPOSED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 pub(super) fn pass_listed_forced_off() -> bool {
@@ -829,6 +835,25 @@ pub(super) fn note_pass_listed(carrier_f: bool, cells: usize, grid: usize) {
 /// listed pass levels are checked against.
 pub(super) fn pass_listed_off<R>(f: impl FnOnce() -> R) -> R {
     with_flag(&PASS_LISTED_OFF, f)
+}
+
+pub(super) fn pass_composed_forced_off() -> bool {
+    PASS_COMPOSED_OFF.with(std::cell::Cell::get)
+}
+
+pub(super) fn note_pass_composed() {
+    PASS_COMPOSED.with(|c| c.set(c.get() + 1));
+}
+
+/// Run `f` with no pass level written as its description: the oracle that
+/// route is checked against.
+pub(super) fn pass_composed_off<R>(f: impl FnOnce() -> R) -> R {
+    with_flag(&PASS_COMPOSED_OFF, f)
+}
+
+/// The pass levels on this thread so far written as their description.
+pub(super) fn pass_composed_census() -> u64 {
+    PASS_COMPOSED.with(std::cell::Cell::get)
 }
 
 pub(super) fn pass_numbered_forced_off() -> bool {

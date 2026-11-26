@@ -366,10 +366,18 @@ pub(super) fn take_pass_level(
         run.products.note_complete(ti);
         return Ok(());
     }
+    let cells = matches!(grid, Some(Grid::Cells));
     if matches!(grid, Some(Grid::Lists))
         && pinned.is_none()
         && !pass_numbered_forced_off()
         && carry_numbered(eng, run, f, g, shape, carrier_f, passed_left)?
+    {
+        return Ok(());
+    }
+    if cells
+        && pinned.is_none()
+        && !pass_composed_forced_off()
+        && compose_pass(eng, run, if carrier_f { f.level(ti) } else { g.level(ti) }, shape, (carrier_f, passed_left), widths.1)?
     {
         return Ok(());
     }
@@ -542,6 +550,56 @@ fn carry_numbered(
     note_carried_as_operand(run, ti, carrier_f);
     note_pass_numbered(true);
     run.products.publish_listed(ti, (wf, wg), list, wo)?;
+    Ok(true)
+}
+
+/// [`take_pass_level`] where the passed child is complete, its product
+/// `(a, c)` at `a · stride + c`, and the carrier's level is affine: every
+/// cell is live, and the level is the description the implicit route gives
+/// for the passing operand's nodes, each one pair, with the carrier's
+/// ([`plan_pass`](super::drive::compose::plan_pass)), written as that route
+/// writes it, the work clock charged what the emit would charge. False,
+/// with nothing built, where the route does not apply.
+///
+/// # Errors
+///
+/// [`OperationError::OverBudget`] when the cell map's growth or a charge is
+/// refused, [`OperationError::IndexOverflow`] past the level width cap, and
+/// [`OperationError::Stopped`] when the stop fires.
+fn compose_pass(
+    eng: &Engine,
+    run: &mut ApplyRun,
+    carrier: &TddLevel,
+    shape: LevelShape,
+    (carrier_f, passed_left): (bool, bool),
+    stride: usize,
+) -> Result<bool, OperationError> {
+    use super::drive::compose;
+    let lim = eng.limits();
+    let ti = shape.t.idx();
+    let (wf, wg) = (shape.f.here, shape.g.here);
+    let (wp, wo) = if carrier_f { (wg, wf) } else { (wf, wg) };
+    let Some(product) = compose::plan_pass(lim, carrier, (wp, wo), (carrier_f, passed_left), stride) else {
+        return Ok(false);
+    };
+    let level = &mut run.levels[ti];
+    if lim.bounded_growth() {
+        return Ok(false);
+    }
+    let charged = level.pairs.capacity();
+    // The emit polls each cell's pairs: the work is the level's pairs.
+    let (_, meter, doublings) = compose::charges((wf, wg), &product, charged);
+    let work = product.pairs() as u64;
+    if !lim.cannot_stop_within(work, meter as u64) {
+        return Ok(false);
+    }
+    let mut map = eng.scratch.apply.relabel_map.checkout(eng);
+    map.clear();
+    lim.try_resize(&mut map, wf * wg, NO_PRODUCT)?;
+    let size = (product.nodes(), product.arena_len());
+    compose::write(eng, product, level, size, &mut map, work, (meter, doublings))?;
+    note_pass_composed();
+    run.products.publish_cells(eng, ti, wg, &map, wf * wg)?;
     Ok(true)
 }
 
