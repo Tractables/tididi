@@ -10,7 +10,10 @@
 //! cell is live and the level's pairs are the product description
 //! [`ImplicitLevel::product`] gives, in the row loop's order. This route
 //! charges the work clock and the meters what the row loop would, and keeps
-//! the level as the description of its pairs, which implies its nodes.
+//! the level as the description of its pairs, which implies its nodes. A child
+//! grid whose live cells are a block ([`Block`]), as a pass level that keeps
+//! some of its passing nodes leaves one, is read the same way where every slot
+//! the operands name there lies in the block: no pair dies.
 //!
 //! A level of the marginal-child route takes the same description where each
 //! child side is complete or carried from one operand ([`plan_marginal`]),
@@ -19,34 +22,113 @@
 
 use crate::apply::conjoin::cell::GROUPED_MIN_PAIRS;
 use crate::apply::conjoin::*;
-use crate::diagram::{ChildPair, EncodedNode, ImplicitLevel, floor};
+use crate::diagram::{ChildPair, ChildSide, EncodedNode, ImplicitLevel, floor};
+
+/// The live cells of a child grid where they are a block: `rows` of `f`'s
+/// nodes at the child by `cols` of `g`'s, each a half-open range, cell
+/// `(a, c)` in it holding product `(a - rows.0) · (cols.1 - cols.0) + c -
+/// cols.0` and every cell outside it dead. A complete grid is the block of
+/// all its cells; a level over a pass level that keeps some of its passing
+/// nodes reads a smaller one.
+#[derive(Clone, Copy)]
+pub(super) struct Block {
+    rows: (i64, i64),
+    cols: (i64, i64),
+}
+
+impl Block {
+    /// The block of every cell of a complete grid of `f_width` by `g_width`.
+    pub(super) fn complete(f_width: usize, g_width: usize) -> Block {
+        Block { rows: (0, f_width as i64), cols: (0, g_width as i64) }
+    }
+
+    /// The block of the live cells of the grid `cells`, rows of `g_width`,
+    /// when they are one. Reads each cell once.
+    pub(super) fn read(cells: &[u32], g_width: usize) -> Option<Block> {
+        let first = cells.iter().position(|&p| p != NO_PRODUCT)?;
+        let last = cells.iter().rposition(|&p| p != NO_PRODUCT)?;
+        let (r0, c0) = (first / g_width, first % g_width);
+        let r1 = last / g_width + 1;
+        let width = cells[first..first + g_width - c0].iter().take_while(|&&p| p != NO_PRODUCT).count();
+        let mut next = 0u32;
+        let held = cells.chunks_exact(g_width).enumerate().all(|(a, row)| {
+            let inside = (r0..r1).contains(&a);
+            row.iter().enumerate().all(|(c, &p)| match inside && (c0..c0 + width).contains(&c) {
+                true => {
+                    next += 1;
+                    p == next - 1
+                }
+                false => p == NO_PRODUCT,
+            })
+        });
+        held.then_some(Block {
+            rows: (r0 as i64, r1 as i64),
+            cols: (c0 as i64, (c0 + width) as i64),
+        })
+    }
+
+    /// `df` and `dg` with their child slots on `side` moved to their places
+    /// in the block's rows and columns, when every slot each names lies in
+    /// them.
+    fn moved(&self, side: ChildSide, df: ImplicitLevel, dg: ImplicitLevel) -> Option<(ImplicitLevel, ImplicitLevel)> {
+        let on = |d: &ImplicitLevel| {
+            let (lo, hi) = d.slot_range();
+            match side {
+                ChildSide::Left => (lo.0, hi.0),
+                ChildSide::Right => (lo.1, hi.1),
+            }
+        };
+        let within = |d: &ImplicitLevel, (start, end): (i64, i64)| {
+            let (lo, hi) = on(d);
+            start <= lo && hi < end
+        };
+        if !within(&df, self.rows) || !within(&dg, self.cols) {
+            return None;
+        }
+        let shift = |d: ImplicitLevel, start: i64| if start == 0 { d } else { d.mapped_on(side, (1, -start)) };
+        Some((shift(df, self.rows.0), shift(dg, self.cols.0)))
+    }
+
+    fn width(&self) -> usize {
+        (self.cols.1 - self.cols.0) as usize
+    }
+}
 
 /// The description of level `t`'s output, when the implicit route can build
 /// it: the engine's memory is unbounded (so the route's skipping the row
 /// loop's scratch cannot change a later decision), both operand levels hold
 /// every node of their width with the same number of pairs, both are affine,
-/// a grouped level's runs are digits, and the product holds at least the
-/// floor's pairs (`FLOOR`). `grouped` says the level's N×M cells may take
-/// the grouped walk.
+/// the live cells of each child grid are a block holding every slot the
+/// operands name there (`block`, asked before the operands are read for a
+/// fit, which costs a stored one its pairs), a grouped
+/// level's runs are digits, and the product holds at least the floor's
+/// pairs (`FLOOR`). No pair dies on such a level. `grouped` says the
+/// level's N×M cells may take the grouped walk.
 pub(super) fn plan(
     lim: &crate::limits::Limits,
     f: &TddLevel,
     g: &TddLevel,
     shape: LevelShape,
     grouped: bool,
+    block: impl Fn(ChildSide) -> Option<Block>,
 ) -> Option<ImplicitLevel> {
-    let (df, dg) = fit_operands(lim, f, g, shape)?;
-    compose_described(&df, &dg, (shape.g.left, shape.g.right), grouped)
+    let blocks = || Some((block(ChildSide::Left)?, block(ChildSide::Right)?));
+    let (df, dg, (left, right)) = fit_operands(lim, f, g, shape, blocks)?;
+    let (df, dg) = left.moved(ChildSide::Left, df, dg)?;
+    let (df, dg) = right.moved(ChildSide::Right, df, dg)?;
+    compose_described(&df, &dg, (left.width(), right.width()), grouped)
 }
 
 /// The descriptions of `f` and `g` where the implicit route can build
-/// `shape`'s level from them.
-fn fit_operands(
+/// `shape`'s level from them, with what `first` gives, asked once their
+/// shapes allow it and before either is read for a fit.
+fn fit_operands<B>(
     lim: &crate::limits::Limits,
     f: &TddLevel,
     g: &TddLevel,
     shape: LevelShape,
-) -> Option<(ImplicitLevel, ImplicitLevel)> {
+    first: impl FnOnce() -> Option<B>,
+) -> Option<(ImplicitLevel, ImplicitLevel, B)> {
     // A level that fits a description holds its arena's length in pairs or,
     // at one pair a node, its nodes' count, so the product of the two bounds
     // bounds the product's pairs: under the floor, the row loop writes the
@@ -60,44 +142,143 @@ fn fit_operands(
     {
         return None;
     }
-    // A stored operand that closing reads a fit of fits none, by the
-    // canonical form: only one of nodes of one pair, or of fewer pairs than
-    // the floor, is read for a fit.
-    let described = |l: &TddLevel| match l.implicit() {
-        Some(d) => Some(d.clone()),
-        None if l.closes_by_fit() => None,
-        None => ImplicitLevel::fit(l),
-    };
-    Some((described(f)?, described(g)?))
+    let b = first()?;
+    Some((described(f)?, described(g)?, b))
 }
 
-/// The description of a pass level's output (`take_pass_level`) where the
-/// passed child is complete, its product `(a, c)` at `a · stride + c`: the
-/// passing operand's `wp` nodes, node `i` one pair naming node `i` of the
-/// passed child and slot 0 of the child it is free at, taken with the
-/// carrier's level as [`plan`] takes two operand levels. The other child's
-/// products are the carrier's nodes, at stride 1. The conditions are
-/// [`plan`]'s, for the carrier's level of `wo` nodes.
+/// The passed child of a pass level (`take_pass_level`), whose product of
+/// the carrier's slot `s` there with passing node `i` is a cell of its
+/// grid.
+pub(in crate::apply::conjoin) enum PassedChild<F> {
+    /// Every cell live, `(a, c)` for slots `a` of `f` and `c` of `g` at
+    /// `a · width + c`.
+    Complete { width: usize },
+    /// Cell `(s, i)` read, the product or `NO_PRODUCT`.
+    Cells(F),
+}
+
+/// The passing nodes of a pass level that keep their cells: `(count,
+/// first, step)`.
+pub(in crate::apply::conjoin) type Kept = (usize, usize, usize);
+
+/// The description of a pass level's output (`take_pass_level`) where
+/// every cell of the passed child the carrier's pairs read is an affine
+/// function of the two slots it is read at, and the carrier's level is
+/// affine (described, or fitting one), with the passing nodes that keep
+/// their cells: `(count, first, step)`.
+///
+/// The passing nodes that keep a product with every slot the carrier's
+/// pairs name on the passed side, the others none, must step evenly, and
+/// the products be `at + a · s + b · i` over them
+/// ([`read_passed`]). The level is then the carrier's, its passed side so
+/// moved, taken with one pair a kept passing node, the cells of the others
+/// dead. The other conditions are [`plan`]'s, for the carrier's level of
+/// `wo` nodes.
 pub(in crate::apply::conjoin) fn plan_pass(
     lim: &crate::limits::Limits,
     carrier: &TddLevel,
     (wp, wo): (usize, usize),
-    (carrier_f, passed_left): (bool, bool),
-    stride: usize,
-) -> Option<ImplicitLevel> {
+    (carrier_f, passed): (bool, ChildSide),
+    child: PassedChild<impl Fn(i64, i64) -> u32>,
+) -> Option<(ImplicitLevel, Kept)> {
     let bound = carrier.pairs.len().max(carrier.nodes().len());
     if !lim.memory_unbounded() || carrier.nodes().len() != wo || bound.saturating_mul(wp) < floor() {
         return None;
     }
-    let dc = match carrier.implicit() {
-        Some(d) => d.clone(),
-        None if carrier.closes_by_fit() => return None,
-        None => ImplicitLevel::fit(carrier)?,
+    let dc = described(carrier)?;
+    let ((n, i0, step), (at, a, b)) = match child {
+        PassedChild::Complete { width } => {
+            let w = width as i64;
+            ((wp, 0, 1), if carrier_f { (0, w, 1) } else { (0, 1, w) })
+        }
+        PassedChild::Cells(cell) => read_passed(&slots_on(&dc, passed), wp, cell)?,
     };
-    let dp = ImplicitLevel::one_step(wp, (0, 0), if passed_left { (1, 0) } else { (0, 1) })?;
-    let stride = if passed_left { (stride, 1) } else { (1, stride) };
-    let (df, dg) = if carrier_f { (&dc, &dp) } else { (&dp, &dc) };
-    compose_described(df, dg, stride, false)
+    let first = at + b * i0 as i64;
+    let product = if n == 1 {
+        Some(dc.mapped_on(passed, (a, first))).filter(|p| p.pairs() >= floor())
+    } else {
+        let slot = b * step as i64;
+        let dp = match passed {
+            ChildSide::Left => ImplicitLevel::one_step(n, (first, 0), (slot, 0))?,
+            ChildSide::Right => ImplicitLevel::one_step(n, (0, first), (0, slot))?,
+        };
+        let dc = dc.mapped_on(passed, (a, 0));
+        let (df, dg) = if carrier_f { (&dc, &dp) } else { (&dp, &dc) };
+        compose_described(df, dg, (1, 1), false)
+    };
+    product.map(|p| (p, (n, i0, step)))
+}
+
+/// The passing nodes of `0..wp` that keep a product with the carrier's
+/// slots `slots`, as `(count, first, step)`, and `(at, a, b)` with
+/// `cell(s, i) = at + a · s + b · i` over them, where each passing node
+/// keeps a product with every slot or with none and those that keep them
+/// step evenly. Reads each cell of the slots and the passing nodes once at
+/// most, not each pair.
+fn read_passed(
+    slots: &[i64],
+    wp: usize,
+    cell: impl Fn(i64, i64) -> u32,
+) -> Option<(Kept, (i64, i64, i64))> {
+    let &s0 = slots.first()?;
+    let mut kept = (0..wp as i64).filter(|&i| cell(s0, i) != NO_PRODUCT);
+    let i0 = kept.next()?;
+    let step = kept.next().map_or(1, |i1| i1 - i0);
+    let n = 1 + (0..wp as i64).filter(|&i| i > i0 && cell(s0, i) != NO_PRODUCT).count();
+    let live = |i: i64| i >= i0 && (i - i0) % step == 0 && (i - i0) / step < n as i64;
+    if (0..wp as i64).any(|i| live(i) != (cell(s0, i) != NO_PRODUCT)) {
+        return None;
+    }
+    let kept: Vec<i64> = (0..n as i64).map(|m| i0 + m * step).collect();
+    let affine = affine_cells(slots, &kept, &cell)?;
+    let dead = slots[1..].iter().all(|&s| (0..wp as i64).filter(|&i| !live(i)).all(|i| cell(s, i) == NO_PRODUCT));
+    dead.then_some(((n, i0 as usize, step as usize), affine))
+}
+
+/// The distinct child slots on `side` that the pairs `d` describes name, in
+/// order.
+fn slots_on(d: &ImplicitLevel, side: ChildSide) -> Vec<i64> {
+    let mut slots = Vec::new();
+    d.each_slot_on(side, |s, _| slots.push(s));
+    slots.sort_unstable();
+    slots.dedup();
+    slots
+}
+
+/// The offset and slopes `(at, a, b)` with `cell(s, c) = at + a · s + b · c`
+/// at every slot `s` of `ss` and `c` of `cs`, each in order and distinct,
+/// every such cell live: read off the first cells, then checked at each.
+/// A slope is never 0 where its side has two slots: two pairs would then
+/// have one product.
+fn affine_cells(ss: &[i64], cs: &[i64], cell: impl Fn(i64, i64) -> u32) -> Option<(i64, i64, i64)> {
+    let (&s0, &c0) = (ss.first()?, cs.first()?);
+    let value = |s: i64, c: i64| Some(cell(s, c)).filter(|&p| p != NO_PRODUCT).map(i64::from);
+    let slope = |rise: i64, run: i64| (rise != 0 && rise % run == 0).then(|| rise / run);
+    let v0 = value(s0, c0)?;
+    let a = match ss.get(1) {
+        Some(&s1) => slope(value(s1, c0)? - v0, s1 - s0)?,
+        None => 0,
+    };
+    let b = match cs.get(1) {
+        Some(&c1) => slope(value(s0, c1)? - v0, c1 - c0)?,
+        None => 0,
+    };
+    let at = v0 - a * s0 - b * c0;
+    ss.iter()
+        .all(|&s| cs.iter().all(|&c| value(s, c) == Some(at + a * s + b * c)))
+        .then_some((at, a, b))
+}
+
+/// The description of an operand level the implicit route reads: its own,
+/// or the one it fits. A stored level that closing reads a fit of fits
+/// none, by the canonical form: only one of nodes of one pair, or of fewer
+/// pairs than the floor, is read for a fit.
+fn described(l: &TddLevel) -> Option<ImplicitLevel> {
+    match l.implicit() {
+        Some(d) => Some(d.clone()),
+        None if l.closes_by_fit() => None,
+        None => ImplicitLevel::fit(l),
+    }
 }
 
 /// The product of `df` and `dg` at `stride` where its pairs reach the floor.
@@ -139,7 +320,7 @@ pub(super) fn plan_marginal(
     bases: Sides<Option<GridBase>>,
 ) -> Option<ImplicitLevel> {
     use crate::apply::conjoin::marginal_plan::Carrier;
-    let (df, dg) = fit_operands(lim, f, g, shape)?;
+    let (df, dg, ()) = fit_operands(lim, f, g, shape, || Some(()))?;
     let (fl, fh) = df.slot_range();
     let (gl, gh) = dg.slot_range();
     let in_cell_order = |complete: bool, base: Option<GridBase>, cells: usize| {
