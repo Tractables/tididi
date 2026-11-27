@@ -1,4 +1,3 @@
-use crate::test_helpers::bare_roots;
 use crate::diagram::ChildDecoder;
 
 use super::*;
@@ -243,19 +242,19 @@ fn a_clause_reads_its_literals_as_a_set() {
 #[test]
 fn constructors_come_out_certified_at_their_reduction_fixpoint() {
     let eng = &crate::Engine::new();
-    for (shape, vtree) in bare_roots(vtree_shapes(5)) {
+    for (shape, vtree) in vtree_shapes(5) {
         let built = [
             constant_one(eng, &vtree),
             constant_zero(eng, &vtree),
-            eng.cube(&crate::vtree::Home::unchecked(&vtree), std::iter::empty::<Literal>()).unwrap(),
-            eng.cube(&crate::vtree::Home::unchecked(&vtree), [1, -3, 5]).unwrap(),
+            eng.cube(&vtree, std::iter::empty::<Literal>()).unwrap(),
+            eng.cube(&vtree, [1, -3, 5]).unwrap(),
             eng.from_models(
-                &crate::vtree::Home::unchecked(&vtree),
+                &vtree,
                 &[VarId(1), VarId(3), VarId(5)],
                 &[0b101, 0b010, 0b111],
             )
             .unwrap(),
-            eng.from_models(&crate::vtree::Home::unchecked(&vtree), &[], &[0]).unwrap(),
+            eng.from_models(&vtree, &[], &[0]).unwrap(),
             constant_like(eng, &constant_one(eng, &vtree), false).unwrap(),
         ];
         for f in built {
