@@ -42,6 +42,9 @@ Breaking changes:
   of `Tdd::restructure_to` and `Engine::restructure_to` refuse a vtree
   that is neither a home's root nor a projection, with the new variant
   `OperationError::NotOnHome`.
+- `Engine::at_least_distinct` refuses a diagram on no home with
+  `DistinctError::Operation(OperationError::NotOnHome)`; before, it
+  counted over the diagram's own vtree.
 - `Tdd::expand_variables` and `Engine::expand_variables` return a diagram
   on a new home: the class tree grafted over a tree of the constants and
   the free variables. A free variable is a leaf of the home and of no
