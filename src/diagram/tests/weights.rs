@@ -24,8 +24,8 @@ fn copy_levels(eng: &Engine, vtree: &Arc<Vtree>, f: &Tdd) -> crate::diagram::Tdd
 #[test]
 fn a_weighted_leaf_requires_its_store() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(1).with_weights(Weights::new(RationalWeights::unit(1), Arithmetic::ExactRational)).unwrap());
-    let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1]).unwrap();
+    let vtree = crate::vtree::Home::weighted(Vtree::balanced(1), Weights::new(RationalWeights::unit(1), Arithmetic::ExactRational)).unwrap();
+    let mut f = Tdd::clause(&vtree, [1]).unwrap();
     crate::marginal::tests::marginalize_levels(&eng, &mut f, &[vtree.root()]).unwrap();
     crate::test_helpers::assert_canonical(&f);
     assert!(crate::diagram::builder::check_levels(&vtree, &f.levels, f.output(), None).is_err());
@@ -87,6 +87,7 @@ fn a_weighted_level_cannot_be_copied_without_its_weights() {
     assert!(crate::diagram::LevelView::unweighted(f.level(left)).is_none());
 }
 
+// Padded form: the padded sum-out at the root leaves the empty levels it checks.
 #[test]
 fn subsumed_empty_columns_remain_valid_in_both_arithmetics() {
     for arithmetic in [
@@ -123,6 +124,7 @@ fn a_column_of_another_arithmetic_fails_the_level_check() {
     crate::test_helpers::assert_canonical(&f);
 }
 
+// Padded form: the padded sum-out of a leaf, copied level by level.
 #[test]
 fn copied_pinned_leaf_columns_are_checked_in_both_arithmetics() {
     for arithmetic in [
@@ -153,16 +155,12 @@ fn copied_pinned_leaf_columns_are_checked_in_both_arithmetics() {
 #[test]
 fn negation_preserves_weights_for_structural_and_constant_results() {
     for n in [1, 4] {
-        let tree = Arc::new(
-            Vtree::balanced(n)
-                .with_weights(Weights::new(RationalWeights::unit(n as usize), Arithmetic::ExactRational))
-                .unwrap(),
-        );
+        let tree = crate::vtree::Home::weighted(Vtree::balanced(n), Weights::new(RationalWeights::unit(n as usize), Arithmetic::ExactRational)).unwrap();
         let eng = Engine::new();
         for f in [
-            Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1]).unwrap(),
-            Tdd::zero(&crate::vtree::Home::unchecked(&tree)),
-            Tdd::one(&crate::vtree::Home::unchecked(&tree)),
+            Tdd::clause(&tree, [1]).unwrap(),
+            Tdd::zero(&tree),
+            Tdd::one(&tree),
         ] {
             crate::test_helpers::assert_canonical(&f);
             let before = f
@@ -235,6 +233,7 @@ fn weight_columns_reject_either_length_mismatch() {
     assert_eq!(empty, RationalWeights::from_literals(&[]));
 }
 
+// Padded form: the padded sum-out of a weighted level.
 /// The false result of a conjunction of weighted operands, carried on by
 /// `or` and `negate`, then conjoined again in both orders with a diagram
 /// summed out at the same level.
