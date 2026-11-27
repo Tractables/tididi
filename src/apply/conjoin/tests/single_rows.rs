@@ -80,6 +80,7 @@ fn conjoin_stopped(f: &Tdd, g: &Tdd, stop: Option<u64>) -> (bool, u64) {
     (done, eng.limits().work_units())
 }
 
+// Padded form: relayed right children occur only on padded levels; on homes none in 6 cases.
 /// Random functions over 12 variables on a linear vtree that do not read
 /// some of them, under a floor of 4 pairs: at a level of a variable
 /// neither reads, both operands' nodes relay their right children, and the

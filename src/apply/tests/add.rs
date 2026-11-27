@@ -96,6 +96,7 @@ fn targets(rng: &mut Lcg, vtree: &Vtree) -> Vec<VtreeIdx> {
     }
 }
 
+// Padded form: the padded sum-out.
 /// Compile two random formulas on `vtree`, marginalize `summed`, and minimize both.
 fn random_marginal_pair(
     eng: &Engine,

@@ -67,6 +67,7 @@ struct Star {
     models: BigUint,
 }
 
+// Padded form: it reads the pass-through levels by the full vtree's nodes.
 fn star(eng: &Engine, bits: u32, keys: u64, b_first: bool, rows: Rows) -> Star {
     let (blocks, vtree) = blocks_and_vtree(bits, b_first);
     let [a, b, c] = &blocks;

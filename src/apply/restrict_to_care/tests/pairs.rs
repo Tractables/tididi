@@ -1,9 +1,10 @@
-use std::sync::Arc;
 use crate::vtree::Home;
 use super::*;
 use crate::Vtree;
 use crate::test_helpers::assert_canonical;
+use std::sync::Arc;
 
+// Padded form: it reads pair marks by the full vtree's nodes.
 #[test]
 fn pair_marks_union_contexts_across_word_boundaries() {
     let tree = Arc::new(Vtree::balanced(2));

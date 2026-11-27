@@ -14,6 +14,7 @@ use crate::diagram::Literal;
 use crate::vtree::{VarId, Vtree};
 use num_bigint::BigUint;
 
+// Padded form: on a home a summed-out level is a region, which a conjunction does not refuse.
 /// Build a diagram by folding clauses with `apply_and` — every operand shares
 /// the same `vtree` `Arc` (`clause_to_tdd` / `constant_one` clone it), so the
 /// final conjoin's pointer-identical-vtree precondition holds.

@@ -72,7 +72,7 @@ impl Sparse {
     fn compile(&self, vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
         let mut acc = constant_one(&self.eng, vtree);
         for clause in clauses {
-            let cl = clause_to_tdd(&crate::vtree::Home::unchecked(vtree), &literals(clause));
+            let cl = clause_to_tdd(&vtree.home().unwrap(), &literals(clause));
             acc = self.and(acc, cl, None);
             self.eng.reduce(&mut acc, ReductionPlan::default())
                 .expect("an unarmed engine refuses nothing");
@@ -175,7 +175,7 @@ fn all_test_cases_sparse() {
     for (num_vars, clauses) in test_cases() {
         let expected = BigUint::from(brute_force_count(num_vars, &clauses));
         for vtree in [Vtree::balanced(num_vars), Vtree::linear(num_vars)] {
-            let vtree = Arc::new(vtree);
+            let vtree = Arc::clone(&crate::vtree::Home::new(vtree));
             assert_eq!(
                 (sparse.compile(&vtree, &clauses)).model_count().unwrap(),
                 expected,
@@ -194,7 +194,7 @@ fn pipelined_equivalence_all_cases() {
     for (num_vars, clauses) in test_cases() {
         let expected = BigUint::from(brute_force_count(num_vars, &clauses));
         for vtree in [Vtree::balanced(num_vars), Vtree::linear(num_vars)] {
-            let vtree = Arc::new(vtree);
+            let vtree = Arc::clone(&crate::vtree::Home::new(vtree));
             let written = sparse.compile(&vtree, &clauses);
             let walked = pipelined.compile(&vtree, &clauses);
             assert_eq!(written.model_count().unwrap(), expected, "n={num_vars} clauses={clauses:?}");
@@ -248,12 +248,13 @@ fn streaming_implicit_equivalence_all_cases() {
     for (num_vars, clauses) in test_cases() {
         let expected = BigUint::from(brute_force_count(num_vars, &clauses));
         for vtree in [Vtree::balanced(num_vars), Vtree::linear(num_vars)] {
-            let vtree = Arc::new(vtree);
+            let vtree = Arc::clone(&crate::vtree::Home::new(vtree));
             let mid = clauses.len() / 2;
             let f = dense.compile(&vtree, &clauses[..mid]);
             let g = dense.compile(&vtree, &clauses[mid..]);
+            let (f, g) = crate::test_helpers::on_one(&crate::Engine::new(), f, g);
             let normal = dense.and(f.clone(), g.clone(), None);
-            let targets = vec![true; vtree.num_nodes()];
+            let targets = vec![true; f.vtree().num_nodes()];
             let streamed = dense.and(f, g, Some(&targets));
             assert_eq!(normal.model_count().unwrap(), expected, "dense: n={num_vars} clauses={clauses:?}");
             assert_eq!(streamed.model_count().unwrap(), expected, "streamed: n={num_vars} clauses={clauses:?}");
@@ -293,7 +294,7 @@ fn mixed_sparse_dense_min_grid_sweep() {
 fn a_root_below_built_levels_is_read_off_its_grid() {
     let clauses: Vec<Vec<i32>> =
         vec![vec![1, 2, 3], vec![-1, 4, 5], vec![2, -3, 6], vec![-4, -5, 1], vec![3, -6, -2], vec![-1, -2, 4]];
-    let vtree = Arc::new(Vtree::balanced(6));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(6));
     let never = Sparse::never();
     let f = never.compile(&vtree, &clauses);
     let below = vtree.children(vtree.root()).0;

@@ -19,6 +19,7 @@ const SPINE: u32 = 20_000;
 /// The stack of the thread that restricts: the default of a spawned thread.
 const STACK: usize = 2 << 20;
 
+// Padded form: the deep run of levels decided on demand exists only on the full vtree.
 /// `f = y1 ∨ y2` with `x1 … xm` summed out, and `care = (x1 ∧ … ∧ xm) ∨
 /// (¬x1 ∧ … ∧ ¬xm)`, on the right-linear vtree over `x1 … xm, y1, y2`.
 pub(super) fn spine_operands(m: u32) -> (Tdd, Tdd) {

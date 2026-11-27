@@ -74,6 +74,7 @@ fn shared_block_models(rng: &mut Lcg) -> (Vec<u64>, Vec<u64>) {
     (narrow, wide)
 }
 
+// Padded form: the scatter probes only padded levels; on homes no level is probed.
 /// The wide and the narrow operand on `vtree`, minimized.
 fn shared_block_operands(vtree: &Arc<Vtree>, rng: &mut Lcg) -> (Tdd, Tdd) {
     let [k, a, x] = blocks();

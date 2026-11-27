@@ -73,6 +73,7 @@ fn next_target(vtree: &Vtree, summed: VtreeIdx) -> Option<VtreeIdx> {
     (!vtree.node(sibling).is_leaf()).then_some(sibling)
 }
 
+// Padded form: its operands are padded sum-outs.
 /// Conjoin `g` with a literal over one of its free variables, chosen by
 /// `k`, and minimize; `None` when no variable is free.
 fn conjoin_free_literal(eng: &Engine, g: &Tdd, k: usize) -> Option<(Tdd, i32)> {

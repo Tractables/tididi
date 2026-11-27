@@ -36,6 +36,7 @@ fn restrict_ancestor_marginal_operand_gate() {
     same_as_stored(ancestor_marginal_operand_gate);
 }
 
+// Padded form: the gate reads a summed-out ancestor level by the full vtree's nodes.
 /// The cases of [`restrict_ancestor_marginal_operand_gate`]: the restricted
 /// diagrams.
 fn ancestor_marginal_operand_gate() -> Vec<Tdd> {

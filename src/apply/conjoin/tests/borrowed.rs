@@ -252,6 +252,7 @@ fn a_refused_conjunction_hands_back_what_it_was_given() {
     assert!(refusals > 100, "only {refusals} refusals");
 }
 
+// Projection form: the unchecked wrapper names a projection of a home, so nothing is admitted.
 /// [`conjoin_onto`] with each operand borrowed in turn and both, one on
 /// the destination and one, on a projection of its home, placed there, against the same call with both
 /// owned; refused at each unit of work, it is refused where the owned one
@@ -270,7 +271,7 @@ fn a_borrowed_operand_conjoins_onto_as_an_owned_one() {
         let vars: Vec<u32> = (1 + offset..=4 + offset).collect();
         let small = Vtree::projection(&home, vars.iter().map(|&v| VarId(v))).unwrap();
         let on_small = compile_clauses_on(&eng, &crate::vtree::Home::unchecked(&small), &super::renamed_cnf(rand_cnf(&mut rng, 4, CnfShape { clauses: 6, width: 3 }), &vars));
-        let on_into = compile_clauses_on(&eng, &crate::vtree::Home::unchecked(&into), &rand_cnf(&mut rng, 8, CnfShape { clauses: 12, width: 3 }));
+        let on_into = compile_clauses_on(&eng, &home, &rand_cnf(&mut rng, 8, CnfShape { clauses: 12, width: 3 }));
         let placed = |t: &Tdd| super::placed_on(&eng, t, &into);
         for (a, b, what) in [(&on_small, &on_into, "placed and on into"), (&on_into, &on_small, "on into and placed")] {
             let (owned, owned_work) = on_fresh(false, |eng| super::and_on(eng, given(a, false), given(b, false), &into).map_err(|r| r.error).unwrap());
@@ -438,6 +439,7 @@ fn reserves(eng: &Engine, run: impl Fn() -> bool) -> u32 {
         .expect("granted within the bound")
 }
 
+// Projection form: the unchecked wrapper names a projection of a home, so nothing is admitted.
 #[test]
 fn borrowed_operands_on_two_allocations_of_one_layout_are_not_copied() {
     let eng = Engine::new();
