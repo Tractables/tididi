@@ -8,7 +8,6 @@
 
 use crate::Engine;
 use crate::diagram::ChildRef;
-use std::sync::Arc;
 
 use num_bigint::BigUint;
 
@@ -19,6 +18,7 @@ use crate::diagram::{
     POS_LEAF_IDX, TddLevel, TddNodeId,
 };
 use crate::vtree::{Vtree, VtreeIdx};
+use std::sync::Arc;
 
 fn count(t: &Tdd) -> BigUint {
     // The constant-false function is the ZERO sentinel in `output`; no stored
@@ -84,6 +84,7 @@ fn count(t: &Tdd) -> BigUint {
     c[t.output.vtree.idx()][t.output.local.idx()].clone()
 }
 
+// Padded form: it walks a marginal level at a node of the full vtree.
 #[test]
 fn a_hand_written_traversal_agrees_with_the_model_counter() {
     let eng = Engine::new();
