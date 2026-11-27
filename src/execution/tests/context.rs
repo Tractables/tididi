@@ -17,21 +17,21 @@ fn shared_context_keeps_diagrams_send_and_sync() {
 #[test]
 fn nested_batches_have_independent_limits_and_return_one_idle_engine() {
     let context = Arc::new(Context::new());
-    let tree = context.bind(Vtree::balanced(3));
+    let tree = crate::vtree::Home::new(context.bind(Vtree::balanced(3)));
     let limited = LimitConfig::none().with_memory_budget_bytes(Some(0));
     context.with_limits(limited, |outer| {
-        assert_eq!(outer.clause(&crate::vtree::Home::unchecked(&tree), [1, 2]).unwrap_err(), OperationError::OverBudget);
+        assert_eq!(outer.clause(&tree, [1, 2]).unwrap_err(), OperationError::OverBudget);
         context.run(|inner| {
             assert!(!std::ptr::eq(outer, inner));
-            let f = inner.clause(&crate::vtree::Home::unchecked(&tree), [1, 2]).unwrap();
+            let f = inner.clause(&tree, [1, 2]).unwrap();
             assert_canonical(&f);
             assert_eq!(inner.model_count(&f).unwrap(), 6u32.into());
         });
-        assert_eq!(outer.clause(&crate::vtree::Home::unchecked(&tree), [1, 2]).unwrap_err(), OperationError::OverBudget);
+        assert_eq!(outer.clause(&tree, [1, 2]).unwrap_err(), OperationError::OverBudget);
     });
     assert!(context.idle.lock().unwrap().is_some());
     context.run(|engine| {
-        let f = engine.clause(&crate::vtree::Home::unchecked(&tree), [1, 2]).unwrap();
+        let f = engine.clause(&tree, [1, 2]).unwrap();
         assert_canonical(&f);
     });
 }
@@ -39,14 +39,14 @@ fn nested_batches_have_independent_limits_and_return_one_idle_engine() {
 #[test]
 fn concurrent_batches_can_run_on_the_same_context() {
     let context = Arc::new(Context::new());
-    let tree = context.bind(Vtree::balanced(3));
+    let tree = crate::vtree::Home::new(context.bind(Vtree::balanced(3)));
     let ready = Barrier::new(2);
     std::thread::scope(|threads| {
         for literal in [1, 2] {
             let (context, tree, ready) = (&context, &tree, &ready);
             threads.spawn(move || context.run(|engine| {
                 ready.wait();
-                let f = engine.literal(&crate::vtree::Home::unchecked(tree), literal).unwrap();
+                let f = engine.literal(tree, literal).unwrap();
                 assert_canonical(&f);
                 assert_eq!(engine.model_count(&f).unwrap(), 4u32.into());
             }));
@@ -60,7 +60,7 @@ fn returned_and_unwound_batches_release_callback_captures() {
     use crate::limits::{StopCallback, StopDecision};
     for unwind in [false, true] {
         let context = Arc::new(Context::new());
-        let tree = context.bind(Vtree::balanced(2));
+        let tree = crate::vtree::Home::new(context.bind(Vtree::balanced(2)));
         let captured = tree.clone();
         let weak = Arc::downgrade(&tree);
         let callback = StopCallback::new(move |_, _| {
@@ -129,7 +129,7 @@ fn stop_callback_can_reenter_the_same_context() {
     use crate::limits::{StopCallback, StopDecision};
     use std::sync::atomic::{AtomicUsize, Ordering};
     let context = Arc::new(Context::new());
-    let tree = context.bind(Vtree::balanced(3));
+    let tree = crate::vtree::Home::new(context.bind(Vtree::balanced(3)));
     let calls = Arc::new(AtomicUsize::new(0));
     let callback = {
         let context = Arc::clone(&context);
@@ -137,7 +137,7 @@ fn stop_callback_can_reenter_the_same_context() {
         let calls = Arc::clone(&calls);
         StopCallback::new(move |_, _| {
             context.run(|engine| {
-                let f = engine.literal(&crate::vtree::Home::unchecked(&tree), 1).unwrap();
+                let f = engine.literal(&tree, 1).unwrap();
                 assert_canonical(&f);
                 assert_eq!(engine.model_count(&f).unwrap(), 4u32.into());
             });
@@ -146,7 +146,7 @@ fn stop_callback_can_reenter_the_same_context() {
         })
     };
     let f = context.with_limits(LimitConfig::none().with_stop_callback(Some(callback)), |engine| {
-        engine.clause(&crate::vtree::Home::unchecked(&tree), [1, 2]).unwrap()
+        engine.clause(&tree, [1, 2]).unwrap()
     });
     assert_canonical(&f);
     assert!(calls.load(Ordering::Relaxed) > 0);
@@ -178,9 +178,9 @@ fn ordinary_diagram_methods_can_reenter_from_a_stop_callback() {
         let tree = tree.clone();
         let calls = Arc::clone(&calls);
         StopCallback::new(move |_, _| {
-            let x = crate::literal(&crate::vtree::Home::unchecked(&tree), 1).unwrap();
-            let y = crate::literal(&crate::vtree::Home::unchecked(&tree), 2).unwrap();
-            let z = crate::literal(&crate::vtree::Home::unchecked(&tree), 3).unwrap();
+            let x = crate::literal(&tree, 1).unwrap();
+            let y = crate::literal(&tree, 2).unwrap();
+            let z = crate::literal(&tree, 3).unwrap();
             assert_canonical(&x);
             assert_canonical(&y);
             assert_canonical(&z);
@@ -205,10 +205,10 @@ fn ordinary_diagram_methods_can_reenter_from_a_stop_callback() {
 #[test]
 fn sharing_context_does_not_make_distinct_trees_compatible() {
     let context = Arc::new(Context::new());
-    let first = context.bind(Vtree::balanced(3));
-    let second = context.bind(Vtree::balanced(3));
-    let f = Tdd::clause(&crate::vtree::Home::unchecked(&first), [1, 2]).unwrap();
-    let g = Tdd::clause(&crate::vtree::Home::unchecked(&second), [1, 2]).unwrap();
+    let first = crate::vtree::Home::new(context.bind(Vtree::balanced(3)));
+    let second = crate::vtree::Home::new(context.bind(Vtree::balanced(3)));
+    let f = Tdd::clause(&first, [1, 2]).unwrap();
+    let g = Tdd::clause(&second, [1, 2]).unwrap();
     assert_canonical(&f);
     assert_canonical(&g);
     assert!(Arc::ptr_eq(f.context(), g.context()));
@@ -249,7 +249,7 @@ fn accepted_rotation_keeps_context_and_detaches_only_the_changed_tree() {
         assert_eq!(eval(&rotated, &assignment), eval(&original, &assignment));
     }
     assert_eq!(rotated.model_count().unwrap(), 15u32.into());
-    let companion = crate::literal(&crate::vtree::Home::unchecked(rotated.vtree()), 1).unwrap();
+    let companion = crate::literal(&rotated.vtree().home().unwrap(), 1).unwrap();
     assert_canonical(&companion);
     let mut combined = crate::and(rotated, companion).unwrap();
     combined.minimize().unwrap();
