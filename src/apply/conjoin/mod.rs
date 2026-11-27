@@ -978,7 +978,7 @@ fn marginalizing_where(eng: &Engine, f: Cow<'_, Tdd>, g: Cow<'_, Tdd>, summable:
     let projected = f.vtree().on_home() || g.vtree().on_home();
     if projected {
         if (f.has_marginal_level() || g.has_marginal_level()) && !Arc::ptr_eq(f.vtree(), g.vtree()) {
-            Vtree::leaf_sets(f.vtree(), g.vtree())?;
+            Vtree::leaf_sets_unbuilt(f.vtree(), g.vtree())?;
             projected::check_summed_leaves(&f, &g)?;
         }
         if f.vtree().num_nodes() == 0 || g.vtree().num_nodes() == 0 {

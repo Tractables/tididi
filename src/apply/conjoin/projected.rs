@@ -136,12 +136,12 @@ fn conjoin_nested<'a>(eng: &Engine, f: Cow<'a, Tdd>, g: Cow<'a, Tdd>) -> Result<
 pub(super) fn conjoin_projections_kept<'a>(eng: &Engine, f: Cow<'a, Tdd>, g: Cow<'a, Tdd>) -> Result<Tdd, AndRefused<'a>> {
     let plain = |t: &Tdd| !t.has_marginal_level();
     if f.vtree().num_nodes() != 0 && g.vtree().num_nodes() != 0 && plain(&f) && plain(&g) {
-        let into = match Vtree::leaf_sets(f.vtree(), g.vtree()) {
+        let into = match Vtree::leaf_sets_unbuilt(f.vtree(), g.vtree()) {
             Err(error) => return Err(AndRefused { error, f, g }),
-            Ok(LeafSets::Equal(_)) => None,
-            Ok(LeafSets::AInB) => Some(Arc::clone(g.vtree())),
-            Ok(LeafSets::BInA) => Some(Arc::clone(f.vtree())),
-            Ok(LeafSets::Union(_)) => return conjoin_borrowing(eng, f, g),
+            Ok(Some(LeafSets::Equal(_))) => None,
+            Ok(Some(LeafSets::AInB)) => Some(Arc::clone(g.vtree())),
+            Ok(Some(LeafSets::BInA)) => Some(Arc::clone(f.vtree())),
+            Ok(Some(LeafSets::Union(_)) | None) => return conjoin_borrowing(eng, f, g),
         };
         let mut out = match into {
             None => conjoin_kept(eng, f, g, Operands::default(), Operands::default(), Operands::default(), Operands::default())?,
@@ -218,7 +218,7 @@ pub(super) fn check_shared_regions(f: &Tdd, g: &Tdd) -> Result<(), OperationErro
 /// `f ∧ g` where one operand is a constant on the empty projection: false,
 /// or the other operand.
 pub(super) fn conjoin_constant(eng: &Engine, f: Cow<'_, Tdd>, g: Cow<'_, Tdd>) -> Result<Tdd, OperationError> {
-    Vtree::leaf_sets(f.vtree(), g.vtree())?;
+    Vtree::leaf_sets_unbuilt(f.vtree(), g.vtree())?;
     let (constant, other) = match f.vtree().num_nodes() {
         0 => (f, g),
         _ => (g, f),
