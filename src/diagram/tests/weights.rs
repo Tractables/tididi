@@ -87,24 +87,28 @@ fn a_weighted_level_cannot_be_copied_without_its_weights() {
     assert!(crate::diagram::LevelView::unweighted(f.level(left)).is_none());
 }
 
+/// On a home a summed-out node is a region holding the summed values, with
+/// no empty level under it, whether it is the projection's root or under an
+/// unsummed level.
 #[test]
-fn subsumed_empty_columns_remain_valid_in_both_arithmetics() {
+fn summed_out_regions_pass_the_level_check_in_every_arithmetic() {
     for arithmetic in [
         Arithmetic::ExactRational,
         Arithmetic::SignedLog,
         Arithmetic::ScaledFloat,
     ] {
         let eng = Engine::new();
-        let vtree = Arc::new(Vtree::balanced(8).with_weights(Weights::new(RationalWeights::unit(8), arithmetic)).unwrap());
-        let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap();
-        crate::marginal::tests::marginalize_levels(&eng, &mut f, &[vtree.root()]).unwrap();
-        crate::test_helpers::assert_canonical(&f);
-        assert!(
-            vtree
-                .internal_bottomup()
-                .any(|(t, _, _)| t != vtree.root() && f.level(t).slot_count() == 0)
-        );
-        crate::diagram::builder::check_levels(&vtree, &f.levels, f.output(), f.weights()).unwrap();
+        let home = Home::weighted(Vtree::balanced(8), Weights::new(RationalWeights::unit(8), arithmetic)).unwrap();
+        for clause in [&[1, 2][..], &[1, 2, 3, 4]] {
+            let mut f = Tdd::clause(&home, clause.iter().copied()).unwrap();
+            eng.marginalize(&mut f, |v| v.0 <= 2).unwrap();
+            crate::test_helpers::assert_canonical(&f);
+            let vtree = f.vtree();
+            let regions: Vec<_> = vtree.bottomup().filter(|&t| f.level(t).is_marginal()).collect();
+            assert_eq!(regions.len(), 1, "{clause:?}");
+            assert!(vtree.node(regions[0]).is_region() && f.level(regions[0]).slot_count() > 0, "{clause:?}");
+            crate::diagram::builder::check_levels(vtree, &f.levels, f.output(), f.weights()).unwrap();
+        }
     }
 }
 
@@ -132,14 +136,11 @@ fn copied_pinned_leaf_columns_are_checked_in_both_arithmetics() {
     ] {
         let eng = Engine::new();
         let weights = vec![LiteralWeights { negative: rat(1, 2), positive: rat(1, 3) }; 2];
-        let tree = Arc::new(
-            Vtree::balanced(2)
-                .with_weights(Weights::new(RationalWeights::from_literals(&weights), arithmetic))
-                .unwrap(),
-        );
-        let mut f = Tdd::clause(&crate::vtree::Home::unchecked(&tree), [1]).unwrap();
-        let leaf = tree.leaf_bottomup().next().unwrap().0;
+        let home = Home::weighted(Vtree::balanced(2), Weights::new(RationalWeights::from_literals(&weights), arithmetic)).unwrap();
+        let mut f = Tdd::clause(&home, [1, 2]).unwrap();
+        let leaf = f.vtree().leaf_of(crate::vtree::VarId(1)).unwrap();
         crate::marginal::tests::marginalize_levels(&eng, &mut f, &[leaf]).unwrap();
+        let tree = Arc::clone(f.vtree());
         crate::test_helpers::assert_canonical(&f);
         let copied = copy_levels(&eng, &tree, &f).finish(f.output()).unwrap();
         crate::test_helpers::assert_canonical(&copied);
@@ -248,17 +249,16 @@ fn a_false_result_carries_no_column_into_a_later_conjunction() {
         LiteralWeights { positive: rat(3, 11), negative: rat(5, 13) },
     ];
     let weights = Weights::new(RationalWeights::from_literals(&literals), Arithmetic::ExactRational);
-    let vtree = Arc::new(Vtree::balanced(4).with_weights(weights).unwrap());
-    let (t, _) = vtree.children(vtree.root());
-    let a = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [3]).unwrap();
-    let x12 = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1]).unwrap() & Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [2]).unwrap();
-    let g = crate::test_helpers::and_marginalizing_under(&eng, a.clone(), x12, &[t]).unwrap();
-    let z = eng.and(Tdd::zero(&crate::vtree::Home::unchecked(&vtree)), g).unwrap();
+    let vtree = Home::weighted(Vtree::balanced(4), weights).unwrap();
+    let a = Tdd::clause(&vtree, [3]).unwrap();
+    let x12 = Tdd::clause(&vtree, [1]).unwrap() & Tdd::clause(&vtree, [2]).unwrap();
+    let g = eng.and_marginalizing_where(a.clone(), x12, |v| v.0 <= 2).unwrap();
+    let z = eng.and(Tdd::zero(&vtree), g).unwrap();
     assert!(z.is_zero());
     let h = eng.or(z.clone(), a).unwrap();
     let top = eng.negate(&z).unwrap();
-    let mut k = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 2]).unwrap();
-    crate::marginal::tests::marginalize_levels(&eng, &mut k, &[t]).unwrap();
+    let mut k = Tdd::clause(&vtree, [1, 2]).unwrap();
+    eng.marginalize(&mut k, |v| v.0 <= 2).unwrap();
 
     let total = |l: &LiteralWeights<num_rational::BigRational>| &l.positive + &l.negative;
     let [w1, w2, w3, w4] = &literals;
