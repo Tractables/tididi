@@ -161,7 +161,7 @@ fn full_cube(home: &crate::vtree::Home, positive: bool) -> Tdd {
 
 /// The tree a pool search moves, kept as the search keeps its copy: the
 /// members' home's root when a member is on it, else the projection on
-/// every member's leaves, rotated in place so its nodes keep their indices
+/// every leaf of the home, rotated in place so its nodes keep their indices
 /// across moves. The members' vtrees are rebuilt from a new home after each
 /// kept move, so their indices do not follow the search's.
 struct Moved(Vtree);
@@ -171,13 +171,7 @@ impl Moved {
         let home = members[0].home();
         let union = match members.iter().any(|m| m.vtree().link_home().is_none()) {
             true => Arc::clone(&home),
-            false => {
-                let vars: Vec<_> = members.iter().flat_map(|m| m.vtree().leaf_bottomup().map(|(_, var)| var)).collect();
-                match vars.is_empty() {
-                    true => Vtree::empty_projection(&home),
-                    false => Vtree::projection(&home, vars).unwrap(),
-                }
-            }
+            false => Vtree::projection(&home, home.leaf_bottomup().map(|(_, var)| var)).unwrap(),
         };
         Moved(Vtree::clone(&union))
     }
@@ -841,6 +835,27 @@ fn a_refused_restart_returns_the_descents_pool_and_charges() {
     assert!(charged > 0, "no refusal inside a restart's work");
 }
 
+/// Make `mv` on `members` and keep it where their embedded pairs
+/// ([`Tdd::embedded_pair_count`]) end below their total before plus
+/// `slack`, as the search scores a pool, else put the members back. A cube
+/// on the home's root rides along, its pairs the same on every tree, so
+/// that the move is made at a home node no member has a level at.
+fn rotate_scored(eng: &crate::Engine, members: &mut [Tdd], moved: &Moved, mv: PoolMove, slack: i64) -> bool {
+    let embedded = |members: &[Tdd]| members.iter().map(Tdd::embedded_pair_count).sum::<usize>() as i64;
+    let (before, start) = (embedded(members), members.to_vec());
+    let mut cube = full_cube(&members[0].home(), true);
+    let mut refs: Vec<&mut Tdd> = members.iter_mut().chain([&mut cube]).collect();
+    let at = moved.at_home(&refs, mv);
+    if !eng.rotate_pool_if(&mut refs, at, usize::MAX, |_| true).unwrap() {
+        return false;
+    }
+    if embedded(members) < before + slack {
+        return true;
+    }
+    members.clone_from_slice(&start);
+    false
+}
+
 /// The descent without the refused moves skipped: every move of every
 /// sweep probed, in the search's order. Returns the moves kept and probed.
 fn full_descent(eng: &crate::Engine, members: &mut [Tdd], config: &PoolSearchConfig) -> (usize, usize) {
@@ -867,7 +882,7 @@ fn full_sweeps(eng: &crate::Engine, members: &mut [Tdd], moved: &mut Moved, conf
                 for &crossed in crossings {
                     let mv = PoolMove { rotation: RotationMove { pivot: v, kind }, crossed };
                     probes += 1;
-                    if with_members(members, |refs| eng.rotate_pool_if(refs, moved.at_home(refs, mv), usize::MAX, |p| p.live_pairs_delta() < 0)).unwrap() {
+                    if rotate_scored(eng, members, moved, mv, 0) {
                         moved.kept(mv);
                         accepts += 1;
                         kept += 1;
@@ -902,7 +917,7 @@ struct Kept {
 /// back from a copy of the pool.
 fn full_search_with_restarts(eng: &crate::Engine, members: &mut Vec<Tdd>, config: &PoolSearchConfig) -> Kept {
     use crate::vtree::rng::Lcg;
-    let pairs = |members: &[Tdd]| members.iter().map(Tdd::pair_count).sum::<usize>();
+    let pairs = |members: &[Tdd]| members.iter().map(Tdd::embedded_pair_count).sum::<usize>();
     for m in members.iter_mut() {
         eng.reduce(m, crate::reduce::ReductionPlan::default()).unwrap();
     }
@@ -924,7 +939,7 @@ fn full_search_with_restarts(eng: &crate::Engine, members: &mut Vec<Tdd>, config
                 let crossed = config.crossed && rng.below(2) == 0;
                 let slack = (pairs(members) as u64 * u64::from(config.restarts.slack_permille) / 1000) as i64 + 1;
                 let mv = PoolMove { rotation: RotationMove { pivot, kind }, crossed };
-                if with_members(members, |refs| eng.rotate_pool_if(refs, moved.at_home(refs, mv), usize::MAX, |p| p.live_pairs_delta() < slack)).unwrap() {
+                if rotate_scored(eng, members, &moved, mv, slack) {
                     moved.kept(mv);
                     kept += 1;
                 }
@@ -1161,7 +1176,7 @@ fn a_replayed_refusal_decides_and_charges_as_probing_again() {
 #[test]
 fn a_pool_search_makes_the_moves_and_charges_it_made_before() {
     use crate::test_helpers::{compile_clauses_on, vtree_shapes, CnfShape, Lcg};
-    const PINNED: u64 = 0x023b_7d6d_c8ba_ff6c;
+    const PINNED: u64 = 0x06df_df8a_617c_de30;
     let eng = crate::Engine::new();
     let mut rng = Lcg::new(0x9001);
     let mut hash = 0xcbf2_9ce4_8422_2325u64;
@@ -1216,3 +1231,4 @@ fn a_pool_search_makes_the_moves_and_charges_it_made_before() {
 
 #[path = "pool/home.rs"]
 mod home;
+
