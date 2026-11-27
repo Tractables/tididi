@@ -25,8 +25,8 @@ fn random_tree(vars: &[VarId], rng: &mut Lcg) -> Arc<Vtree> {
 /// same function, canonical, and — canonical form being unique — the same
 /// size.
 fn check_move(clauses: &[Vec<i32>], source: &Arc<Vtree>, target: &Arc<Vtree>) {
-    let mut moved = compile_clauses(&crate::vtree::Home::unchecked(source), clauses);
-    let direct = compile_clauses(&crate::vtree::Home::unchecked(target), clauses);
+    let mut moved = compile_clauses(&source.home().unwrap(), clauses);
+    let direct = compile_clauses(&target.home().unwrap(), clauses);
     let stats = moved.restructure_to(target, usize::MAX).expect("an unbounded move completes");
     assert!(Arc::ptr_eq(&moved.home(), target));
     assert!(moved.is_canonical(), "the certificate after {} rotations", stats.rotations);
@@ -60,7 +60,7 @@ fn a_comb_turns_in_n_minus_two_rotations() {
         let left = leaves.iter().cloned().reduce(|t, l| Vtree::join(&t, &l).unwrap()).unwrap();
         let (source, target) = (Arc::clone(&Home::new(right)), Arc::clone(&Home::new(left)));
         let clauses: Vec<Vec<i32>> = (1..n as i32).map(|i| vec![i, -(i + 1)]).collect();
-        let mut moved = compile_clauses(&crate::vtree::Home::unchecked(&source), &clauses);
+        let mut moved = compile_clauses(&source.home().unwrap(), &clauses);
         let stats = moved.restructure_to(&target, usize::MAX).unwrap();
         assert_eq!(stats.rotations, n as usize - 2, "n = {n}");
         check_move(&clauses, &source, &target);
@@ -118,7 +118,7 @@ fn a_move_past_its_bound_keeps_the_function() {
     let source = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::linear_from_order(&vars).unwrap()));
     let target = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::balanced_over(&[VarId(1), VarId(8), VarId(2), VarId(7), VarId(3), VarId(6), VarId(4), VarId(5)]).unwrap()));
     let mut rng = Lcg::new(3);
-    let mut f = std::iter::repeat_with(|| compile_clauses(&crate::vtree::Home::unchecked(&source), &rand_cnf(&mut rng, 8, CnfShape { clauses: 10, width: 3 })))
+    let mut f = std::iter::repeat_with(|| compile_clauses(&source.home().unwrap(), &rand_cnf(&mut rng, 8, CnfShape { clauses: 10, width: 3 })))
         .find(|f| f.vtree().num_leaves() == 8)
         .unwrap();
     let count = f.model_count().unwrap();
@@ -190,7 +190,7 @@ fn other_variables_are_refused() {
 fn the_empty_function_moves() {
     let source = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::linear(4)));
     let target = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::balanced(4)));
-    let mut f = compile_clauses(&crate::vtree::Home::unchecked(&source), &[vec![1], vec![-1]]);
+    let mut f = compile_clauses(&source.home().unwrap(), &[vec![1], vec![-1]]);
     f.restructure_to(&target, usize::MAX).unwrap();
     assert!(f.is_zero());
     assert!(Arc::ptr_eq(&f.home(), &target));
@@ -222,7 +222,7 @@ fn summed_out_blocks_move_as_units() {
 fn a_rotation_at_a_summed_out_level_is_refused() {
     let vars: Vec<VarId> = (1..=4).map(VarId).collect();
     let source = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::linear_from_order(&vars).unwrap()));
-    let f = compile_clauses(&crate::vtree::Home::unchecked(&source), &[vec![1, 2], vec![-3, 4]]);
+    let f = compile_clauses(&source.home().unwrap(), &[vec![1, 2], vec![-3, 4]]);
     let eng = crate::Engine::new();
     let g = crate::test_helpers::and_marginalizing_under(&eng, f, crate::Tdd::one(&crate::vtree::Home::new(std::sync::Arc::clone(&source))), &[source.root()]).unwrap();
     let mut moved = g;
@@ -241,7 +241,7 @@ fn the_move_leaves_both_vtrees_untouched() {
     let target = random_tree(&vars, &mut rng);
     let (source_text, target_text) = (source.to_text(), target.to_text());
     let clauses = rand_cnf(&mut rng, 6, CnfShape { clauses: 7, width: 3 });
-    let f = compile_clauses(&crate::vtree::Home::unchecked(&source), &clauses);
+    let f = compile_clauses(&source.home().unwrap(), &clauses);
     let mut g = f.clone();
     g.restructure_to(&target, usize::MAX).unwrap();
     assert_eq!(source.to_text(), source_text);
@@ -265,13 +265,14 @@ fn moves_more_than_thirty_two_independent_units() {
 fn reseating_counts_its_mirrors() {
     let source = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::join(&Vtree::leaf(VarId(1)), &Vtree::leaf(VarId(2))).unwrap()));
     let target = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::join(&Vtree::leaf(VarId(2)), &Vtree::leaf(VarId(1))).unwrap()));
-    let mut f = compile_clauses(&crate::vtree::Home::unchecked(&source), &[vec![1, -2]]);
+    let mut f = compile_clauses(&source.home().unwrap(), &[vec![1, -2]]);
     let stats = f.restructure_to(&target, usize::MAX).unwrap();
     assert_canonical(&f);
     assert_eq!((stats.rotations, stats.mirrors), (0, 1));
     assert_eq!(f.model_count().unwrap(), 3u32.into());
 }
 
+// Projection form: the unchecked wrapper names the moved diagram's projection.
 #[test]
 fn every_refusal_or_stop_keeps_a_move_retryable() {
     use crate::limits::{LimitConfig, StopAt, StopRules};
@@ -279,7 +280,7 @@ fn every_refusal_or_stop_keeps_a_move_retryable() {
         let source = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::linear(n)));
         let target = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::random(n, 17)));
         let clauses = vec![vec![1, -3], vec![2, n as i32]];
-        let original = compile_clauses(&crate::vtree::Home::unchecked(&source), &clauses);
+        let original = compile_clauses(&source.home().unwrap(), &clauses);
         for stopping in [false, true] {
             let eng = crate::Engine::new();
             let mut completed = false;
@@ -305,7 +306,7 @@ fn every_refusal_or_stop_keeps_a_move_retryable() {
                         refusals += 1;
                         eng.restructure_to(&mut f, &target, usize::MAX).unwrap();
                         assert_canonical(&f);
-                        assert!(f.equivalent(&compile_clauses(&crate::vtree::Home::unchecked(&target), &clauses)).unwrap());
+                        assert!(f.equivalent(&compile_clauses(&target.home().unwrap(), &clauses)).unwrap());
                     }
                     other => panic!("unexpected move result: {other:?}"),
                 }

@@ -1,8 +1,8 @@
-use crate::test_helpers::bare_roots;
-use std::sync::Arc;
 
 use crate::test_helpers::{assert_canonical, compile_clauses, test_cases, vtree_shapes};
 use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
+use std::sync::Arc;
+use crate::test_helpers::bare_roots;
 
 /// `vtree`'s shape with every variable renamed through `rename` and the two
 /// children of every node `swap` names exchanged.
@@ -40,6 +40,7 @@ fn renamed(clauses: &[Vec<i32>], rename: impl Fn(VarId) -> VarId) -> Vec<Vec<i32
         .collect()
 }
 
+// Padded form: the mirrored tree is a root, not a home.
 #[test]
 fn a_mirrored_copy_is_the_diagram_compiled_on_the_mirrored_tree() {
     for (num_vars, clauses) in test_cases() {
