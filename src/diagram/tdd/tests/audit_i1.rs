@@ -552,7 +552,7 @@ impl FoldMonoid for Sum {
 fn prefix_fold_case() -> Result<Tdd, String> {
     let chain = |low: Vtree| Vtree::join(&leaf(1), &Vtree::join(&leaf(2), &Vtree::join(&leaf(3), &low).unwrap()).unwrap()).unwrap();
     let vtree = Home::new(chain(Vtree::join(&leaf(4), &leaf(5)).unwrap()));
-    let into = Arc::new(chain(Vtree::join(&leaf(4), &Vtree::join(&leaf(5), &leaf(6)).unwrap()).unwrap()));
+    let into = Home::new(chain(Vtree::join(&leaf(4), &Vtree::join(&leaf(5), &leaf(6)).unwrap()).unwrap()));
     let row = |store: u64, day: u64, amount: u64| store | (day >> 1) << 1 | (day & 1) << 2 | amount << 3;
     let vars: Vec<VarId> = (1..=5).map(VarId).collect();
     let hm = Home::new(Arc::clone(&vtree));

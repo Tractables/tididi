@@ -354,6 +354,41 @@ fn a_file_holds_one_diagram() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// A file the stream reader and the file reader both refuse.
+fn refused_by_both_readers(bytes: &[u8], home: &Home, path: &std::path::Path, what: &str) {
+    match read_tdd_binary(&mut &bytes[..], home) {
+        Err(IoError::Format(_)) => {}
+        other => panic!("{what}, read_tdd_binary: expected a format error, got {other:?}"),
+    }
+    std::fs::write(path, bytes).unwrap();
+    match crate::io::load_tdd_binary(path, home) {
+        Err(IoError::Format(_)) => {}
+        other => panic!("{what}, load_tdd_binary: expected a format error, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_corrupted_file_is_refused_by_every_reader() {
+    let home = Home::new(Vtree::balanced(4));
+    let path = std::env::temp_dir().join(format!("tididi-binary-corrupt-{}.tddb", std::process::id()));
+    let x2_or_x3 = Tdd::clause(&home, [2, 3]).unwrap();
+    let files = [
+        ("a diagram over its whole home", binary(&compile_clauses(&home, &[vec![1, -2], vec![3, 4]]))),
+        ("a diagram on a projection", binary(&x2_or_x3)),
+        ("the true diagram", binary(&Tdd::one(&home))),
+    ];
+    for (name, bytes) in &files {
+        assert!(read_tdd_binary(&mut &bytes[..], &home).is_ok(), "{name}");
+        for at in [24, bytes.len() / 2, bytes.len() - 9, bytes.len() - 1] {
+            let mut bad = bytes.clone();
+            bad[at] ^= 0x10;
+            refused_by_both_readers(&bad, &home, &path, &format!("{name}, byte {at} changed"));
+        }
+        refused_by_both_readers(&bytes[..bytes.len() - 1], &home, &path, &format!("{name}, truncated"));
+    }
+    let _ = std::fs::remove_file(&path);
+}
+
 #[test]
 fn every_truncation_is_refused() {
     let vtree = Home::new(Vtree::balanced(6));

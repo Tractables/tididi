@@ -48,6 +48,10 @@ Breaking changes:
   projection.
 - `Engine::tag_level` refuses a code that sets a bit past the code
   variables (`TagError::Tags`); such codes collided before.
+- `FoldCodes::into` is a `Home` in place of an `Arc<Vtree>`:
+  `Engine::prefix_fold` returns its result on the projection of that home
+  on the key, the order and the code variables, which the home may extend.
+  An `into` that was not a home gave a result on no home.
 - No operation minimizes its result by default. Each one ends with its own
   kernel and the close it needs (levels in closed form, a constant on the
   empty projection, the leaves it named true dropped); its documentation
