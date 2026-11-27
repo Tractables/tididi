@@ -22,6 +22,7 @@ mod pair_rows;
 mod pass_numbered;
 mod pass_composed;
 mod pass_rows;
+mod pass_owed;
 mod relabel;
 mod probe;
 mod projected;
@@ -809,6 +810,12 @@ thread_local! {
     /// Whether no level a pass level carried whole is recorded as its
     /// carrier's on this thread ([`pass_tight_off`]).
     static PASS_TIGHT_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Whether no pass level on this thread is recorded for the loose
+    /// levels and the contraction owed under it ([`pass_levels_off`]).
+    static PASS_LEVELS_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The pass levels on this thread so recorded, and those of them that
+    /// lost a product ([`pass_levels_census`]).
+    static PASS_LEVELS: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0; 2]) };
     /// The pass levels on this thread so carried ([`pass_numbered_census`]).
     static PASS_NUMBERED: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0; 2]) };
     /// Whether no pass level on this thread is written as its description
@@ -912,6 +919,29 @@ pub(super) fn pass_tight_forced_off() -> bool {
 /// carrier's: the oracle for the loose levels that leaves out.
 pub(super) fn pass_tight_off<R>(f: impl FnOnce() -> R) -> R {
     with_flag(&PASS_TIGHT_OFF, f)
+}
+
+pub(super) fn pass_levels_forced_off() -> bool {
+    PASS_LEVELS_OFF.with(std::cell::Cell::get)
+}
+
+pub(super) fn note_pass_level(dropped: bool) {
+    PASS_LEVELS.with(|c| {
+        let [levels, lost] = c.get();
+        c.set([levels + 1, lost + dropped as u64]);
+    });
+}
+
+/// Run `f` with no pass level recorded for what its children owe: the
+/// oracle that lists them as any built level's.
+pub(super) fn pass_levels_off<R>(f: impl FnOnce() -> R) -> R {
+    with_flag(&PASS_LEVELS_OFF, f)
+}
+
+/// The pass levels on this thread so far recorded for what their children
+/// owe, and those of them where a carrier pair lost a product.
+pub(super) fn pass_levels_census() -> [u64; 2] {
+    PASS_LEVELS.with(std::cell::Cell::get)
 }
 
 /// The pass levels on this thread so far carried whole for keeping their

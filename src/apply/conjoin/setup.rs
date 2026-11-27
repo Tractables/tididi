@@ -214,6 +214,13 @@ pub(super) struct SweepLists {
     /// the contexts the operand's nodes have, and are named where the
     /// operand's are.
     pub(super) as_operand: Vec<(usize, u8)>,
+    /// The pass levels the cells of
+    /// [`take_pass_level`](super::relabel::take_pass_level) wrote over an
+    /// internal passed child, as `(level, passed child, dropped)`, `dropped`
+    /// where a carrier pair lost its product with some passing node: which
+    /// of their children are named where the operands' are and keep the
+    /// operands' distinct contexts (`loose_levels`, `split_built`).
+    pub(super) pass_levels: Vec<(usize, VtreeIdx, bool)>,
     /// The levels the sparse leaf arm joined under a vtree leaf where g's
     /// level held each live product of the other child for every label an
     /// f pair can have ([`apply_sparse_level`](super::sparse::apply_sparse_level)):
@@ -302,6 +309,7 @@ impl SweepLists {
         self.relabel_moved.clear();
         self.lent.clear();
         self.as_operand.clear();
+        self.pass_levels.clear();
         self.outer_held.clear();
         self.built.clear();
         self.owed_twins.clear();
@@ -336,6 +344,7 @@ impl SweepLists {
         visit(&mut self.moved);
         visit(&mut self.lent);
         visit(&mut self.as_operand);
+        visit(&mut self.pass_levels);
         visit(&mut self.outer_held);
         visit(&mut self.built);
         visit(&mut self.owed_twins);

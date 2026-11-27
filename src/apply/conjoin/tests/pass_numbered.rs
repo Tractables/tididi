@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use super::{pass_numbered_census, pass_numbered_off, pass_tight_off};
+use super::{pass_levels_off, pass_numbered_census, pass_numbered_off, pass_tight_off};
 use crate::limits::{LimitConfig, SparseRoute};
 use crate::vtree::rng::Lcg;
 use crate::vtree::{Home, VarId, Vtree};
@@ -74,11 +74,13 @@ fn a_pass_level_that_keeps_the_carrier_numbering_is_the_carrier_level() {
                 let w = eng.limits().work_units();
                 // Both arms owe the same levels, so that the debug build's
                 // check of the levels owed no contraction costs them alike.
-                let h = pass_tight_off(|| eng.and_restoring(x, y).map_err(|r| r.error).unwrap());
+                let h = pass_levels_off(|| pass_tight_off(|| eng.and_restoring(x, y).map_err(|r| r.error).unwrap()));
                 let numbered = eng.limits().work_units() - w;
                 let [levels, failed] = std::array::from_fn(|k| pass_numbered_census()[k] - census[k]);
                 let w = eng.limits().work_units();
-                let listed = pass_tight_off(|| pass_numbered_off(|| eng.and_restoring(x, y).map_err(|r| r.error).unwrap()));
+                let listed = pass_levels_off(|| {
+                    pass_tight_off(|| pass_numbered_off(|| eng.and_restoring(x, y).map_err(|r| r.error).unwrap()))
+                });
                 let listed_units = eng.limits().work_units() - w;
                 assert!(eng.equivalent(&on_home(&h), &expected).unwrap(), "{at}");
                 crate::test_helpers::assert_same_shape(&h, &listed, &at);

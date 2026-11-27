@@ -778,6 +778,7 @@ fn apply_and_held(
         // contraction's worklists.
         run.lists.as_operand.sort_unstable();
         run.lists.outer_held.sort_unstable();
+        run.lists.pass_levels.sort_unstable_by_key(|e| e.0);
         // The operands' loose levels are carried unread, with their counts:
         // a prune reads the result's once, where reading them here would
         // read them again at each conjunction.

@@ -52,6 +52,21 @@ use crate::vtree::{Vtree, VtreeIdx};
 /// are the operand's, index for index, so the nodes of `c` they name are those the operand's level `p`
 /// names of its level `c`: all of its nodes, which are as many as `c`'s.
 ///
+/// A level `c` whose parent `p` is a pass level over an internal passed
+/// child `c'`
+/// ([`SweepLists::pass_levels`](super::super::setup::SweepLists::pass_levels))
+/// is tight under (1) alone where `c` is `c'`, and where `c` is the other
+/// child and each carrier pair met every passing node in a live product.
+/// Proof. The passing operand's level `p` holds the identity over its
+/// nodes at `c'`, and it is constant true under the other child. A node of
+/// `c'` is a live product of carrier node `a` and passing node `b`; the
+/// carrier's level `p` has a pair `(a, y)` in a node `j`, and the passing
+/// operand's level `p` a pair `(b, ·)` in a node `i`, so the cell `(i, j)`
+/// holds that product with `y`. A node of the other child is a carrier
+/// node `y` there, with a pair `(a, y)` of the carrier's level `p` in a
+/// node `j`, and the cell `(i, j)` holds `y` with `a`'s product with `i`'s
+/// node, which is live where none was lost.
+///
 /// A level `c` whose sibling `s` is a vtree leaf is also tight when `f`'s
 /// level `c` is tight in `f`, as in (1), and the sparse leaf arm built `p`
 /// with `g`'s level `p` holding each live product of `c` for every label
@@ -145,6 +160,12 @@ pub(super) fn loose_levels(
                 .ok()
                 .map(|i| run.lists.as_operand[i].1);
             let held = run.lists.outer_held.binary_search(&p.idx()).is_ok();
+            let pass = run
+                .lists
+                .pass_levels
+                .binary_search_by_key(&p.idx(), |e| e.0)
+                .ok()
+                .map(|i| run.lists.pass_levels[i]);
             let named_as_operand = |c: VtreeIdx| {
                 as_operand.is_some_and(|by| {
                     let widths = if by == 1 {
@@ -160,7 +181,11 @@ pub(super) fn loose_levels(
                     continue;
                 }
                 let tight_f = tight_in(c, 1, run.f_widths);
-                if tight_f && tight_in(c, 2, run.g_widths) && kills_none(s) {
+                let named = match pass {
+                    Some((_, passed, dropped)) => c == passed || !dropped,
+                    None => kills_none(s),
+                };
+                if tight_f && tight_in(c, 2, run.g_widths) && named {
                     continue;
                 }
                 if tight_f && held && !internal(s) {
@@ -331,6 +356,21 @@ fn adds_no_twins(
 /// owing the contraction the level, holds once each; where it owes it, so
 /// does the result.
 ///
+/// A pass level over an internal passed child `c'`
+/// ([`SweepLists::pass_levels`](super::super::setup::SweepLists::pass_levels))
+/// adds no twins either where its other child is a vtree leaf or each
+/// carrier pair met every passing node in a live product. Each live cell
+/// `(i, j)`, passing node `i` with carrier node `j`, is its own node, as is
+/// each live product at `c'` of a carrier node `a` with a passing node
+/// `b`. A node `(a, b)` of `c'` has the contexts `((i, j), y)` for the
+/// carrier's pairs `(a, y)` of `j` and the passing nodes `i` over `b`, lost
+/// products or not. Where none was lost, a node `y` of the other child has
+/// the contexts `((i, j), (a, b))` for the carrier's pairs `(a, y)` of `j`
+/// and every `i`, `b` the node `i` is over. Two nodes with equal contexts
+/// are then products of carrier nodes with equal contexts, and of one
+/// passing node. On a leaf `c'` two labels can conjoin to one label, and
+/// two carrier pairs then to one product.
+///
 /// [`SweepLists::collect_built`]: super::super::setup::SweepLists::collect_built
 pub(super) fn split_built(vtree: &Vtree, run: &mut ApplyRun, chain: &[VtreeIdx]) {
     run.lists.collect_built(run.cone.built, chain);
@@ -340,6 +380,11 @@ pub(super) fn split_built(vtree: &Vtree, run: &mut ApplyRun, chain: &[VtreeIdx])
             .as_operand
             .binary_search_by_key(&t.idx(), |e| e.0)
             .is_ok()
+            || lists.pass_levels.binary_search_by_key(&t.idx(), |e| e.0).is_ok_and(|i| {
+                let (_, passed, dropped) = lists.pass_levels[i];
+                let (left, right) = vtree.children(t);
+                !dropped || vtree.node(if passed == left { right } else { left }).is_leaf()
+            })
             || adds_no_twins(vtree, &run.f_identity[..], &run.g_identity[..], t);
         if twin_free {
             lists.twin_free.push(t);

@@ -89,7 +89,9 @@ fn a_level_walked_from_implied_nodes_is_the_level_walked_from_stored_ones() {
             None => config,
         });
         let mark = eng.limits().mark();
-        let out = eng.and(f.clone(), g.clone());
+        // Both arms owe the same levels, so that the debug build's check of
+        // the levels owed no contraction costs them alike.
+        let out = pass_levels_off(|| eng.and(f.clone(), g.clone()));
         (out, eng.limits().work_since(mark))
     };
     let mut conjunctions = 0;

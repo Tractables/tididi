@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use super::{block_composed_census, block_composed_off, pass_composed_census, pass_composed_off};
+use super::{block_composed_census, block_composed_off, pass_composed_census, pass_composed_off, pass_levels_off};
 use crate::vtree::rng::Lcg;
 use crate::vtree::{Home, VarId, Vtree};
 use crate::{Engine, Tdd};
@@ -75,12 +75,14 @@ fn check(eng: &Engine, home: &Home, (f, g): (&Tdd, &Tdd), at: &str, route: Route
     for (x, y) in [(f, g), (g, f)] {
         let census = route.census();
         let w = eng.limits().work_units();
-        let h = eng.and_restoring(x, y).map_err(|r| r.error).unwrap();
+        // Both arms owe the same levels, so that the debug build's check of
+        // the levels owed no contraction costs them alike.
+        let h = pass_levels_off(|| eng.and_restoring(x, y).map_err(|r| r.error).unwrap());
         let described = eng.limits().work_units() - w;
         let now = route.census();
         fired = [fired[0] + now[0] - census[0], fired[1] + now[1] - census[1]];
         let w = eng.limits().work_units();
-        let emitted = route.off(|| eng.and_restoring(x, y).map_err(|r| r.error).unwrap());
+        let emitted = pass_levels_off(|| route.off(|| eng.and_restoring(x, y).map_err(|r| r.error).unwrap()));
         assert_eq!(described, eng.limits().work_units() - w, "{at}: work units");
         assert!(eng.equivalent(&on_home(&h), &expected).unwrap(), "{at}");
         crate::test_helpers::assert_same_shape(&h, &emitted, at);

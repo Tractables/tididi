@@ -463,6 +463,7 @@ pub(super) fn take_pass_level(
         gate: lim.gate_with(APPLY_POLL_STRIDE),
         width_cap: lim.level_width_cap(),
         inline: 0,
+        dropped: false,
     };
     // Each read is built once per passing node and moves its offsets in: one
     // that borrowed them reloaded them after every pair the cell wrote.
@@ -481,6 +482,10 @@ pub(super) fn take_pass_level(
         (false, Some(Grid::Slab(slab))) => rows.emit::<false, true, _>(level, &mut map, |i| { let b = base(i); move |k| unsafe { *slab.get_unchecked(b + k as usize * sk) } })?,
         (true, Some(Grid::Lists)) => rows.emit::<true, true, _>(level, &mut map, |i| { let row = &cols[i * stride..]; move |k| unsafe { *row.get_unchecked(k as usize) } })?,
         (false, Some(Grid::Lists)) => rows.emit::<false, true, _>(level, &mut map, |i| { let row = &cols[i * stride..]; move |k| unsafe { *row.get_unchecked(k as usize) } })?,
+    }
+    if !cp_leaf && !pass_levels_forced_off() {
+        note_pass_level(rows.dropped);
+        run.lists.pass_levels.push((ti, cp, rows.dropped));
     }
     let (mut gate, inline) = (rows.gate, rows.inline);
     gate.flush()?;
@@ -667,6 +672,9 @@ struct PassRows<'a> {
     gate: crate::limits::PollGate<'a>,
     width_cap: usize,
     inline: usize,
+    /// Whether a carrier pair lost its product with some passing node. A
+    /// label `literals` leaves out is no node, and loses nothing.
+    dropped: bool,
 }
 
 impl PassRows<'_> {
@@ -701,9 +709,11 @@ impl PassRows<'_> {
                 let c = if LEFT { pair.left.raw() } else { pair.right.raw() };
                 let nodes = level.nodes.stored_mut();
                 let before = nodes.len();
+                let mut dead = false;
                 map.extend((0..self.passing).map(|i| {
                     let product = passed(i)(c);
                     if DEAD && product == NO_PRODUCT {
+                        dead = true;
                         return NO_PRODUCT;
                     }
                     nodes.push(EncodedNode::inline(match LEFT {
@@ -713,6 +723,7 @@ impl PassRows<'_> {
                     (nodes.len() - 1) as u32
                 }));
                 self.inline += nodes.len() - before;
+                self.dropped |= dead;
                 Ok(())
             }),
         }
@@ -767,6 +778,7 @@ impl PassRows<'_> {
             {
                 let (y, other) = passed_side::<LEFT>(pair);
                 let found = products(y);
+                self.dropped |= found.len() / 2 < self.meets();
                 lim.reserve(list, found.len() / 2)?;
                 for found in found.chunks_exact(2) {
                     list.push(ProductEntry {
@@ -779,7 +791,13 @@ impl PassRows<'_> {
                 self.inline += found.len() / 2;
                 return Ok(());
             }
-            let total: usize = pairs.iter().map(|pair| products(passed_side::<LEFT>(pair).0).len() / 2).sum();
+            let (mut total, mut fewest) = (0, usize::MAX);
+            for pair in pairs {
+                let n = products(passed_side::<LEFT>(pair).0).len() / 2;
+                total += n;
+                fewest = fewest.min(n);
+            }
+            self.dropped |= fewest < self.meets();
             if total == 0 {
                 return Ok(());
             }
@@ -823,11 +841,15 @@ impl PassRows<'_> {
         // bucket is written.
         let mut ends: Transient<'_, Vec<usize>> = Transient::new(lim, Vec::new());
         lim.try_resize(&mut *ends, self.passing + 1, 0)?;
+        let (mut dropped, meets) = (false, self.meets());
         carrier.for_each_node_pair(|_, pair| {
-            for found in products(passed_side::<LEFT>(&pair).0).chunks_exact(2) {
+            let found = products(passed_side::<LEFT>(&pair).0);
+            dropped |= found.len() / 2 < meets;
+            for found in found.chunks_exact(2) {
                 ends[found[0] as usize + 1] += 1;
             }
         });
+        self.dropped |= dropped;
         for i in 0..self.passing {
             ends[i + 1] += ends[i];
         }
@@ -864,6 +886,14 @@ impl PassRows<'_> {
             start = end;
         }
         Ok(())
+    }
+
+    /// The passing nodes each carrier pair meets: those `literals` keeps.
+    fn meets(&self) -> usize {
+        match self.literals {
+            Some(rows) => (0..self.passing).filter(|&i| rows >> i & 1 == 1).count(),
+            None => self.passing,
+        }
     }
 
     /// Write the cell `(f, g)`, whose pairs are those of `run` in order, as
@@ -908,6 +938,7 @@ impl PassRows<'_> {
         if let [pair] = pairs {
             let product = passed(if LEFT { pair.left.raw() } else { pair.right.raw() });
             if DEAD && product == NO_PRODUCT {
+                self.dropped = true;
                 map.push(NO_PRODUCT);
             } else {
                 map.push(level.nodes.stored().len() as u32);
@@ -949,6 +980,7 @@ impl PassRows<'_> {
         }
         // Safety: the first `survivors` pairs past `start` were written.
         unsafe { out.set_len(start + survivors) };
+        self.dropped |= survivors < pairs.len();
         if survivors == 0 {
             map.push(NO_PRODUCT);
             return Ok(());
