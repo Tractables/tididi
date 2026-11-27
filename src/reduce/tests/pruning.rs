@@ -3,7 +3,6 @@
 //! The fixtures these read are in `mod.rs`.
 
 use crate::vtree::Home;
-use crate::test_helpers::bare_roots;
 use std::sync::Arc;
 
 use crate::reduce::prune::{PruneScope, Seeds, Select, Start, below_root_walk_applies, few_dropped, keep_marked, FEW_DROPPED, new_indices, prune_walk, prune_complement, settle_loose, settle_reads_all, UNREACHED};
@@ -178,7 +177,7 @@ fn a_contraction_drops_the_nodes_no_pair_names() {
     let eng = &crate::Engine::new();
     let mut rng = Lcg::new(0x51d2_7a03);
     let (mut before, mut after) = ([0usize; 2], [0usize; 2]);
-    for (shape, wide) in bare_roots(vtree_shapes(14)) {
+    for (shape, wide) in vtree_shapes(14) {
         for case in 0..64 {
             let marginal = case % 2 == 1;
             let (f, g) = (placed(eng, &mut rng, &wide), placed(eng, &mut rng, &wide));

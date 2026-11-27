@@ -266,8 +266,8 @@ fn test_minimize_sat_2vars_reduces_width() {
 fn a_variable_the_function_ignores_leaves_no_literal_references_behind() {
     use crate::test_helpers::check::check_determinism;
 
-    let vtree = Arc::clone(&Home::new(Vtree::balanced(2)));
-    let mut tdd = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &[vec![1, 2], vec![1, -2]]);
+    let vtree = Home::new(Vtree::balanced(2));
+    let mut tdd = compile_clauses(&vtree, &[vec![1, 2], vec![1, -2]]);
     tdd.minimize().unwrap();
     assert_canonical(&tdd);
 
