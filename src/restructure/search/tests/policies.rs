@@ -1,5 +1,4 @@
 //! Acceptance policies, wider neighborhoods and the multistart driver.
-use std::sync::Arc;
 use crate::vtree::Home;
 
 
@@ -18,13 +17,14 @@ fn bounded() -> RotationSearchConfig {
     RotationSearchConfig { max_inner_pairs: 1 << 20, ..RotationSearchConfig::default() }
 }
 
-/// Seven variables on a balanced vtree, minimized. A single-rotation descent
-/// stops here with pairs a wider neighborhood and a tabu walk both remove.
+/// Six of seven variables on a balanced home, minimized. A single-rotation
+/// descent stops here with pairs a wider neighborhood and a tabu walk both
+/// remove (29 pairs against 25).
 fn plateau() -> Tdd {
-    let vtree = Arc::new(Vtree::balanced(7));
+    let vtree = Home::new(Vtree::balanced(7));
     let mut tdd = compile_clauses(
         &vtree,
-        &[vec![5], vec![3, -4], vec![5, 1, 7], vec![-6, 7, 5], vec![-7, -2]],
+        &[vec![-5, 2], vec![4, 5, 2], vec![4, -3, 2], vec![1, -5], vec![-6, -3]],
     );
     tdd.minimize().expect("an unarmed engine refuses nothing");
     tdd
@@ -383,3 +383,4 @@ fn refusals_in_a_multistart_keep_the_function() {
     }
     assert!(refused_at.iter().all(|&n| n > 0), "every round must be refused somewhere: {refused_at:?}");
 }
+

@@ -3,7 +3,6 @@
 //! The fixtures these read are in `mod.rs`.
 
 use crate::vtree::Home;
-use crate::test_helpers::bare_roots;
 use std::sync::Arc;
 
 use crate::reduce::prune::{PruneScope, Seeds, Select, Start, below_root_walk_applies, few_dropped, keep_marked, FEW_DROPPED, new_indices, prune_walk, prune_complement, settle_loose, settle_reads_all, UNREACHED};
@@ -178,7 +177,7 @@ fn a_contraction_drops_the_nodes_no_pair_names() {
     let eng = &crate::Engine::new();
     let mut rng = Lcg::new(0x51d2_7a03);
     let (mut before, mut after) = ([0usize; 2], [0usize; 2]);
-    for (shape, wide) in bare_roots(vtree_shapes(14)) {
+    for (shape, wide) in vtree_shapes(14) {
         for case in 0..64 {
             let marginal = case % 2 == 1;
             let (f, g) = (placed(eng, &mut rng, &wide), placed(eng, &mut rng, &wide));
@@ -232,6 +231,7 @@ fn restricted(rng: &mut crate::test_helpers::Lcg, wide: &Arc<Vtree>) -> (Vec<u32
     (vars, small)
 }
 
+// Padded form: placed on a bare root, free levels built.
 /// A diagram over a random few of the variables of `wide`, compiled on
 /// `wide` restricted to them and minimized, then moved onto `wide`.
 fn placed(eng: &crate::Engine, rng: &mut crate::test_helpers::Lcg, wide: &Arc<Vtree>) -> crate::Tdd {
@@ -239,7 +239,7 @@ fn placed(eng: &crate::Engine, rng: &mut crate::test_helpers::Lcg, wide: &Arc<Vt
     use crate::vtree::VarId;
     let (vars, small) = restricted(rng, wide);
     let k = vars.len() as u32;
-    let mut f = compile_clauses_on(eng, &small, &rand_cnf(rng, k, CnfShape { clauses: k as usize, width: 4 }));
+    let mut f = compile_clauses_on(eng, &crate::vtree::Home::unchecked(&small), &rand_cnf(rng, k, CnfShape { clauses: k as usize, width: 4 }));
     eng.minimize(&mut f).unwrap();
     crate::test_helpers::moved(eng, f, wide, |v| VarId(vars[v.idx()])).unwrap().0
 }
@@ -249,6 +249,7 @@ fn placed(eng: &crate::Engine, rng: &mut crate::test_helpers::Lcg, wide: &Arc<Vt
 /// the conjunction of two diagrams on a few of the variables, not pruned,
 /// placed on the whole vtree. The pass-through chains the embedding builds
 /// carry the looseness of the level at their foot up to their top.
+// Padded form: placed on a bare root, free levels built.
 #[test]
 fn an_embedding_lists_the_levels_holding_an_unnamed_node() {
     use crate::test_helpers::{CnfShape, Lcg, compile_clauses_on, rand_cnf, vtree_shapes};
@@ -261,7 +262,7 @@ fn an_embedding_lists_the_levels_holding_an_unnamed_node() {
         for case in 0..40 {
             let (vars, small) = restricted(&mut rng, &wide);
             let k = vars.len() as u32;
-            let [mut f, mut g] = [(); 2].map(|()| compile_clauses_on(eng, &small, &rand_cnf(&mut rng, k, CnfShape { clauses: k as usize, width: 3 })));
+            let [mut f, mut g] = [(); 2].map(|()| compile_clauses_on(eng, &crate::vtree::Home::unchecked(&small), &rand_cnf(&mut rng, k, CnfShape { clauses: k as usize, width: 3 })));
             eng.minimize(&mut f).unwrap();
             eng.minimize(&mut g).unwrap();
             let source = eng.and(f, g).unwrap();
@@ -691,22 +692,20 @@ fn the_word_passes_number_and_keep_every_marked_slot() {
 /// root's level names node 0, so that every node below the root is named,
 /// as the walk below the root requires. Returns the diagram, `v` and `w`.
 fn two_decisions(eng: &crate::Engine, implicit: bool, named: bool) -> (crate::diagram::Tdd, crate::vtree::VtreeIdx, crate::vtree::VtreeIdx) {
-    use crate::diagram::{ChildPair, NodeIdx, TddNodeId, NEG_LEAF_IDX, POS_LEAF_IDX};
+    use crate::diagram::{ChildPair, NodeIdx, NEG_LEAF_IDX, POS_LEAF_IDX};
 
-    let vtree = Arc::new(Vtree::linear(4));
+    let vtree = Home::new(Vtree::linear(4));
     let r = vtree.root();
     let (_, v) = vtree.children(r);
     let (_, w) = vtree.children(v);
     assert!(!vtree.node(w).is_leaf() && vtree.node(vtree.children(w).0).is_leaf());
-    let mut tdd = crate::build::constant_one(eng, &vtree);
+    let mut tdd = crate::test_helpers::unfilled(eng, &vtree);
     let literal = [POS_LEAF_IDX, NEG_LEAF_IDX];
     let below = &mut tdd.levels[w.idx()];
-    below.clear();
     for m in 0..4 {
         below.push_internal_node(&[ChildPair::new(literal[m / 2], literal[m % 2])]);
     }
     let level = &mut tdd.levels[v.idx()];
-    level.clear();
     for i in 0..2 {
         level.push_internal_node(&[ChildPair::new(POS_LEAF_IDX, NodeIdx(2 * i)), ChildPair::new(NEG_LEAF_IDX, NodeIdx(2 * i + 1))]);
     }
@@ -714,12 +713,10 @@ fn two_decisions(eng: &crate::Engine, implicit: bool, named: bool) -> (crate::di
         crate::test_helpers::describe(level);
     }
     let root = &mut tdd.levels[r.idx()];
-    root.clear();
     root.push_internal_node(&[ChildPair::new(POS_LEAF_IDX, NodeIdx(1))]);
     if named {
         root.push_internal_node(&[ChildPair::new(POS_LEAF_IDX, NodeIdx(0))]);
     }
-    tdd.output = TddNodeId { vtree: r, local: NodeIdx(0) };
     // Levels edited in place: which hold an unnamed node is not known.
     tdd.dirty.set_loose(None);
     (tdd, v, w)
@@ -906,61 +903,6 @@ fn unnamed_by_pairs(tdd: &crate::Tdd) -> crate::reduce::Unnamed {
 #[test]
 fn the_unnamed_count_is_the_nodes_no_pair_of_the_parent_level_names() {
     use crate::reduce::ReductionPlan;
-    use crate::test_helpers::{assert_canonical, assert_same_shape, bare_roots, vtree_shapes, rand_cnf, CnfShape, Lcg};
-    let eng = crate::Engine::new();
-    let (mut counted, mut nonzero, mut unknown) = (0, 0, 0);
-    for seed in 0..24u64 {
-        let num_vars = 6 + (seed % 5) as u32;
-        let mut rng = Lcg::new(seed ^ 0x0dd_c0de);
-        let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 14, width: 3 });
-        for (label, vtree) in bare_roots(vtree_shapes(num_vars)) {
-            let mut f = eng.cube(&crate::vtree::Home::unchecked(&vtree), std::iter::empty::<i32>()).unwrap();
-            for (i, c) in clauses.iter().enumerate() {
-                f = match rng.below(2) {
-                    0 => eng.and(f, eng.clause(&crate::vtree::Home::unchecked(&vtree), c.iter().copied()).unwrap()).unwrap(),
-                    _ => eng.and_clause(f, c).unwrap(),
-                };
-                if rng.below(3) == 0 {
-                    eng.reduce(&mut f, ReductionPlan::Contract).unwrap();
-                }
-                let label = format!("seed {seed}, {label}, clause {i}");
-                if let Some(listed) = f.dirty.loose() {
-                    for t in unnamed_levels(&f) {
-                        assert!(listed.contains(t), "{label}: level {t} holds an unnamed node and is not listed");
-                    }
-                }
-                let Some(unnamed) = eng.unnamed_nodes(&mut f).unwrap() else {
-                    unknown += usize::from(!f.is_zero());
-                    continue;
-                };
-                counted += 1;
-                nonzero += usize::from(unnamed.nodes > 0);
-                assert_eq!(unnamed, unnamed_by_pairs(&f), "{label}");
-                assert_eq!(eng.unnamed_nodes(&mut f).unwrap(), Some(unnamed), "{label}: second read");
-                if rng.below(3) == 0 {
-                    eng.reduce(&mut f, ReductionPlan::Contract).unwrap();
-                    let contracted = eng.unnamed_nodes(&mut f).unwrap();
-                    assert_eq!(contracted, Some(unnamed_by_pairs(&f)), "{label}: contracted after a read");
-                }
-                if rng.below(4) == 0 {
-                    eng.reduce(&mut f, ReductionPlan::Prune).unwrap();
-                    assert_eq!(eng.unnamed_nodes(&mut f).unwrap(), Some(crate::reduce::Unnamed::default()), "{label}: pruned");
-                    assert_eq!(unnamed_by_pairs(&f), crate::reduce::Unnamed::default(), "{label}: pruned");
-                }
-            }
-            eng.minimize(&mut f).unwrap();
-            assert_canonical(&f);
-            assert_same_shape(&f, &compile_clauses(&vtree, &clauses), &format!("seed {seed}, {label}"));
-        }
-    }
-    // A clause conjunction drops most of the nodes it leaves unnamed, so
-    // about one count in six is nonzero.
-    assert!(counted > unknown && nonzero > counted / 10, "{nonzero} of {counted} counts nonzero, {unknown} unknown");
-}
-
-#[test]
-fn the_unnamed_count_is_the_nodes_no_pair_of_the_parent_level_names_on_a_home() {
-    use crate::reduce::ReductionPlan;
     use crate::test_helpers::{assert_canonical, assert_same_shape, vtree_shapes, rand_cnf, CnfShape, Lcg};
     let eng = crate::Engine::new();
     let (mut counted, mut nonzero, mut unknown) = (0, 0, 0);
@@ -970,7 +912,6 @@ fn the_unnamed_count_is_the_nodes_no_pair_of_the_parent_level_names_on_a_home() 
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 14, width: 3 });
         for (label, shape) in vtree_shapes(num_vars) {
             let home = crate::vtree::Home::new(Vtree::clone(&shape));
-            let vtree = Arc::clone(&home);
             let mut f = eng.cube(&home, std::iter::empty::<i32>()).unwrap();
             for (i, c) in clauses.iter().enumerate() {
                 f = match rng.below(2) {
@@ -1007,7 +948,7 @@ fn the_unnamed_count_is_the_nodes_no_pair_of_the_parent_level_names_on_a_home() 
             }
             eng.minimize(&mut f).unwrap();
             assert_canonical(&f);
-            assert_same_shape(&f, &compile_clauses(&vtree, &clauses), &format!("seed {seed}, {label}"));
+            assert_same_shape(&f, &compile_clauses(&home, &clauses), &format!("seed {seed}, {label}"));
         }
     }
     // A clause conjunction drops most of the nodes it leaves unnamed, so
@@ -1019,7 +960,7 @@ fn the_unnamed_count_is_the_nodes_no_pair_of_the_parent_level_names_on_a_home() 
 #[test]
 fn a_marginal_level_leaves_the_unnamed_count_unknown() {
     let eng = crate::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(6));
+    let vtree = Home::new(Vtree::balanced(6));
     let mut f = compile_clauses(&vtree, &[vec![1, 2, -3], vec![-4, 5], vec![3, -6]]);
     assert!(eng.unnamed_nodes(&mut f).unwrap().is_some());
     let below = vtree.children(vtree.root()).0;

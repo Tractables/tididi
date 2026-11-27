@@ -4,7 +4,6 @@
 use super::*;
 use crate::apply::conjoin_indexed::{and_indexed_counted, sum_indexed_counted, IndexedWork};
 use crate::diagram::{ChildPair, ColumnAlgebra, LeafLabel, Literal, NodeIdx, PairIndex, SlotPairs};
-use crate::test_helpers::bare_roots;
 use crate::test_helpers::check::{check_all_fast, check_determinism, check_no_false_nodes};
 use crate::vtree::VtreeIdx;
 
@@ -27,7 +26,7 @@ fn vars_under(vtree: &Vtree, t: VtreeIdx) -> Vec<VarId> {
 
 /// A random set of codes over the variables under a random internal node,
 /// `⊤` over every other variable.
-fn local_set(vtree: &Arc<Vtree>, rng: &mut Lcg) -> Tdd {
+fn local_set(vtree: &crate::vtree::Home, rng: &mut Lcg) -> Tdd {
     let internal: Vec<VtreeIdx> = vtree.internal_bottomup().map(|(t, _, _)| t).collect();
     let t = internal[rng.below(internal.len() as u64) as usize];
     let mut vars = vars_under(vtree, t);
@@ -245,19 +244,21 @@ fn brute_slot(f: &Tdd, g: &Tdd, alg: &Moments, at: VtreeIdx, x: u32, nvars: u32)
     acc
 }
 
-/// Per vtree shape and every internal level `at`, the column against brute
-/// force for any `g`, and, for `g` over the variables under `at`, `f`'s
-/// levels above folded over it against `and` followed by
-/// `evaluate_columns`, under counts and under a weighted sum.
+/// Per home shape and every internal node `at`, with the operands placed on
+/// one projection: the column against brute force for any `g`, and, for `g`
+/// over the variables under `at`, `f`'s levels above folded over it against
+/// `and` followed by `evaluate_columns`, under counts and under a weighted
+/// sum.
 #[test]
 fn sum_indexed_is_the_conjunctions_value() {
+    use std::borrow::Cow;
     let eng = Engine::new();
     let mut rng = Lcg::new(0x05ad_2026_1011);
+    let mut compared = 0;
     for nvars in [3u32, 5, 6] {
-        for (shape, vtree) in bare_roots(vtree_shapes(nvars)) {
-            for (t, _, _) in vtree.internal_bottomup() {
-                let under = vars_under(&vtree, t);
-                // Count alone, then a weighted sum over the block under `at`.
+        for (shape, home) in vtree_shapes(nvars) {
+            for (h, _, _) in home.internal_bottomup() {
+                let under = vars_under(&home, h);
                 let mut weight = vec![0u128; nvars as usize + 1];
                 let count = Moments { weight: weight.clone() };
                 for (i, v) in under.iter().enumerate() {
@@ -265,14 +266,22 @@ fn sum_indexed_is_the_conjunctions_value() {
                 }
                 let sum = Moments { weight };
                 for round in 0..3 {
-                    let label = format!("{shape} n={nvars} at {} round {round}", t.idx());
+                    let label = format!("{shape} n={nvars} at {} round {round}", h.idx());
                     let f = match round {
-                        0 => rand_conj(&vtree, nvars, 4, 3, true, &mut rng),
-                        1 => local_set(&vtree, &mut rng),
-                        _ => eng.and(rand_conj(&vtree, nvars, 3, 3, false, &mut rng), local_set(&vtree, &mut rng)).unwrap(),
+                        0 => rand_conj(&home, nvars, 4, 3, true, &mut rng),
+                        1 => local_set(&home, &mut rng),
+                        _ => eng.and(rand_conj(&home, nvars, 3, 3, false, &mut rng), local_set(&home, &mut rng)).unwrap(),
                     };
-                    let any = rand_conj(&vtree, nvars, 4, 3, false, &mut rng);
-                    let inside = rand_conj_over(&vtree, &under.iter().map(|v| v.0).collect::<Vec<_>>(), 4, 3, false, &mut rng);
+                    let any = rand_conj(&home, nvars, 4, 3, false, &mut rng);
+                    let inside = rand_conj_over(&home, &under.iter().map(|v| v.0).collect::<Vec<_>>(), 4, 3, true, &mut rng);
+                    let [f, any, inside] = crate::apply::extend::on_one(&eng, [Cow::Owned(f), Cow::Owned(any), Cow::Owned(inside)])
+                        .unwrap()
+                        .map(Cow::into_owned);
+                    let vtree = f.vtree();
+                    let Some(t) = vtree.node_at_home(h).filter(|&t| !vtree.node(t).is_leaf()) else { continue };
+                    if vtree.leaf_bottomup().count() < nvars as usize {
+                        continue;
+                    }
                     for alg in [&count, &sum] {
                         let index = PairIndex::new(&any).unwrap();
                         let col = eng.sum_indexed(&f, &any, &index, t, alg).unwrap();
@@ -289,10 +298,12 @@ fn sum_indexed_is_the_conjunctions_value() {
                         };
                         assert_eq!(got, want, "{label}: folded above");
                     }
+                    compared += 1;
                 }
             }
         }
     }
+    assert!(compared >= 60, "too few cases on a projection with every variable: {compared}");
 }
 
 /// Operands on two projections of one home: the conjunction, on a
@@ -405,9 +416,13 @@ fn errors_name_the_operand_the_index_does_not_fit() {
 fn the_index_finds_each_pair_by_its_sides() {
     let eng = Engine::new();
     let mut rng = Lcg::new(0x1d_2026_1011);
-    for (shape, vtree) in bare_roots(vtree_shapes(6)) {
-        let mut g = rand_conj(&vtree, 6, 5, 3, true, &mut rng);
+    for (shape, home) in vtree_shapes(6) {
+        let mut g = rand_conj(&home, 6, 5, 3, true, &mut rng);
         g.minimize().unwrap();
+        let vtree = Arc::clone(g.vtree());
+        if vtree.num_nodes() < 3 {
+            continue;
+        }
         let index = PairIndex::new(&g).unwrap();
         assert_eq!(index.pair_count(), g.pair_count(), "{shape}");
         assert!(index.heap_bytes() >= 16 * index.pair_count(), "{shape}");
@@ -425,7 +440,7 @@ fn the_index_finds_each_pair_by_its_sides() {
             assert_eq!(listed, (0..level.node_count()).map(|x| level.pair_count_at(x)).sum::<usize>());
         }
         assert_eq!(index.owner(vtree.root(), ChildPair::new(NodeIdx(u32::MAX >> 1), NodeIdx(0))), None);
-        let leaf = vtree.leaf_of(VarId(1)).unwrap();
+        let (leaf, _) = vtree.leaf_bottomup().next().unwrap();
         assert_eq!(index.owner(leaf, ChildPair::new(NodeIdx(0), NodeIdx(0))), None);
         let _ = eng.and_indexed(&g, &g, &index).unwrap();
     }

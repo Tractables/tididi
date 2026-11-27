@@ -10,6 +10,13 @@ use crate::Engine;
 use crate::diagram::{ChildPair, ImplicitLevel, NodeIdx, Tdd, TddLevel, TddNodeId, FLOOR, NEG_LEAF_IDX, POS_LEAF_IDX};
 use crate::vtree::{Vtree, VtreeIdx};
 
+/// A diagram on the root of `home` with every level empty, for a test to
+/// fill; its output is node 0 of the root's level.
+pub(crate) fn unfilled(eng: &Engine, home: &crate::vtree::Home) -> Tdd {
+    let output = TddNodeId { vtree: home.root(), local: NodeIdx(0) };
+    Tdd::from_levels_unchecked(Arc::clone(home), crate::diagram::take_levels(eng, home.num_nodes()), output)
+}
+
 /// A diagram over the right-linear vtree of four variables, `r = (x1, v)`,
 /// `v = (x2, w)`, `w = (x3, x4)`, with an x-decision level of `n` nodes at
 /// `v`: node `i` holds `(x2, 4i)`, `(¬x2, 4i + 1)`, `(x2, 4i + 2)` and

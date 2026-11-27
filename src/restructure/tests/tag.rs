@@ -1,4 +1,3 @@
-use crate::test_helpers::bare_roots;
 use crate::vtree::Home;
 use std::sync::Arc;
 
@@ -81,8 +80,12 @@ fn an_into_off_every_home_is_refused_by_name() {
 #[test]
 fn tagged_nodes_carry_their_codes() {
     for (num_vars, clauses) in test_cases().into_iter().filter(|(n, _)| (2..=8).contains(n)) {
-        for (_, vtree) in bare_roots(vtree_shapes(num_vars)) {
-            let f = compile_clauses(&vtree, &clauses);
+        for (_, home) in vtree_shapes(num_vars) {
+            let f = compile_clauses(&home, &clauses);
+            let vtree = f.vtree().clone();
+            if vtree.num_leaves() < 2 {
+                continue;
+            }
             let (left, right) = vtree.children(vtree.root());
             for at in [vtree.root(), left, right] {
                 if vtree.node(at).is_leaf() {
@@ -97,8 +100,11 @@ fn tagged_nodes_carry_their_codes() {
 #[test]
 fn unreduced_diagrams_tag_to_canonical_ones() {
     for f in random_diagrams(11, 16, 3..9) {
+        if f.vtree().num_leaves() < 3 {
+            continue;
+        }
         let (left, _) = f.vtree().children(f.vtree().root());
-        if f.is_zero() || f.vtree().node(left).is_leaf() {
+        if f.vtree().node(left).is_leaf() {
             continue;
         }
         check(&f, left, &cycling(&f, left));
@@ -109,17 +115,21 @@ fn unreduced_diagrams_tag_to_canonical_ones() {
 fn a_level_summed_beside_the_tagged_one_is_not_read() {
     let eng = Engine::new();
     for (num_vars, clauses) in test_cases().into_iter().filter(|(n, _)| (4..=8).contains(n)) {
-        for (_, vtree) in bare_roots(vtree_shapes(num_vars)) {
+        for (_, home) in vtree_shapes(num_vars) {
+            let mut f = compile_clauses(&home, &clauses);
+            let vtree = f.vtree().clone();
+            if vtree.num_leaves() < 4 {
+                continue;
+            }
             let (left, right) = vtree.children(vtree.root());
             if vtree.node(left).is_leaf() || vtree.node(right).is_leaf() {
                 continue;
             }
-            let mut f = compile_clauses(&vtree, &clauses);
-            if f.is_zero() {
-                continue;
-            }
             crate::test_helpers::marginalize_under(&eng, &mut f, &[right]).unwrap();
-            assert!(f.level(right).is_marginal());
+            // The summed subtree is a region now, which renumbers the tree.
+            let vtree = f.vtree().clone();
+            let (left, right) = vtree.children(vtree.root());
+            assert!(vtree.node(right).is_region());
             check(&f, left, &cycling(&f, left));
             // A summed level under the tagged one is refused.
             let (into, local, code) = destination(&f, vtree.root());
@@ -275,14 +285,14 @@ fn wide_codes_share_the_cube_nodes_they_agree_on() {
     };
     for f in random_diagrams(23, 8, 3..7) {
         let vtree = f.vtree().clone();
+        if vtree.num_leaves() < 2 {
+            continue;
+        }
         let (left, _) = vtree.children(vtree.root());
         let at = match vtree.node(left).is_leaf() {
             true => vtree.root(),
             false => left,
         };
-        if f.is_zero() {
-            continue;
-        }
         let slots = f.level(at).nodes().len();
         let (sub, local, m) = subtree_projection(&vtree, at);
         // Widths under one word, over one, and past the widest key.
@@ -310,8 +320,11 @@ fn wide_codes_share_the_cube_nodes_they_agree_on() {
 fn every_refused_reserve_of_a_tagging_leaves_the_operand() {
     let mut refused = 0;
     for (num_vars, clauses) in test_cases().into_iter().filter(|(n, _)| (4..=8).contains(n)).take(4) {
-        let vtree = bare_roots(vtree_shapes(num_vars)).into_iter().next().unwrap().1;
-        let f = compile_clauses(&vtree, &clauses);
+        let f = compile_clauses(&vtree_shapes(num_vars).into_iter().next().unwrap().1, &clauses);
+        let vtree = f.vtree().clone();
+        if vtree.num_leaves() < 2 {
+            continue;
+        }
         let count = f.model_count().unwrap();
         let (left, right) = vtree.children(vtree.root());
         for at in [vtree.root(), left, right] {

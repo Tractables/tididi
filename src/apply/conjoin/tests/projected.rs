@@ -85,7 +85,7 @@ fn and_on_projections_is_and_on_the_home() {
     let eng = Engine::new();
     for seed in 0..30u64 {
         let hm = Home::new(rotated_home(2 + (seed % 12) as u32 * 2, seed));
-        let home = Arc::clone(&hm);
+        let home = hm.clone();
         let mut rng = Lcg::new(seed ^ 0x5bd1_e995);
         for (fv, gv) in leaf_set_pairs(&home, &mut rng) {
             let (f, g) = (cnf_on(&eng, &hm, &fv, &mut rng), cnf_on(&eng, &hm, &gv, &mut rng));
@@ -121,7 +121,7 @@ fn join_at_the_root_carries_what_the_operands_owe() {
     let mut owed = 0;
     for seed in 0..40u64 {
         let hm = Home::new(rotated_home(4 + (seed % 10) as u32 * 2, seed));
-        let home = Arc::clone(&hm);
+        let home = hm.clone();
         let mut rng = Lcg::new(seed ^ 0x2545_f491);
         let (l, r) = home.children(home.root());
         let (fv, gv) = (part(&vars_under(&home, l), &mut rng), part(&vars_under(&home, r), &mut rng));
@@ -162,7 +162,7 @@ fn and_clause_extends_to_the_clause_variables() {
     let eng = Engine::new();
     for seed in 0..30u64 {
         let hm = Home::new(rotated_home(3 + (seed % 10) as u32 * 2, seed));
-        let home = Arc::clone(&hm);
+        let home = hm.clone();
         let all = vars_under(&home, home.root());
         let mut rng = Lcg::new(seed ^ 0x2545_f491);
         for _ in 0..6 {
@@ -217,7 +217,7 @@ fn reductions_and_counts_run_on_projections() {
     let eng = Engine::new();
     for seed in 0..10u64 {
         let hm = Home::new(rotated_home(8 + seed as u32, seed));
-        let home = Arc::clone(&hm);
+        let home = hm.clone();
         let mut rng = Lcg::new(seed ^ 0x1234_5678);
         for (fv, gv) in leaf_set_pairs(&home, &mut rng) {
             let (f, g) = (cnf_on(&eng, &hm, &fv, &mut rng), cnf_on(&eng, &hm, &gv, &mut rng));
@@ -338,7 +338,7 @@ fn and_across_projections_lists_its_loose_levels() {
     let (mut known, mut unreached_known) = (0, 0);
     for seed in 0..60u64 {
         let hm = Home::new(rotated_home(2 + (seed % 10) as u32, seed));
-        let home = Arc::clone(&hm);
+        let home = hm.clone();
         let mut rng = Lcg::new(seed ^ 0x3c6e_f372);
         for (fv, gv) in leaf_set_pairs(&home, &mut rng) {
             let (f, g) = (operand(&eng, &hm, &fv, &mut rng), operand(&eng, &hm, &gv, &mut rng));
@@ -432,7 +432,7 @@ fn a_pass_level_with_carrier_g_emits_its_live_cells() {
     let before = pass_listed_g_census();
     for seed in 0..400u64 {
         let hm = Home::new(rotated_home(10 + (seed % 12) as u32 * 2, seed));
-        let home = Arc::clone(&hm);
+        let home = hm.clone();
         let mut rng = Lcg::new(seed ^ 0x2545_f491);
         for (fv, gv) in leaf_set_pairs(&home, &mut rng) {
             let (f, g) = (cnf(&hm, &fv, &mut rng), cnf(&hm, &gv, &mut rng));

@@ -120,7 +120,7 @@ fn a_pass_through_level_keeps_apart_what_the_projection_merges() {
     let home = left_linear_home();
     let projection = Vtree::projection(&home, [1, 2, 4].map(VarId)).unwrap();
     let mut f = from_cubes(&eng, &home, &projection, &[&[1, 2], &[-1, 4]]);
-    let home_vtree = Arc::clone(&home);
+    let home_vtree = home.clone();
     let mut g = on_root_copy(&f, &home_vtree);
     let summed = home_vtree.node(home_vtree.leaf_of(VarId(1)).unwrap()).parent().unwrap();
 

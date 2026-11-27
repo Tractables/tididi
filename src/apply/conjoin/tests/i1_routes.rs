@@ -20,7 +20,7 @@ fn operands() -> Vec<(String, Tdd, Tdd)> {
         let n = 6 + rng.below(5) as u32;
         for (shape, home) in vtree_shapes(n).into_iter().filter(|(s, _)| matches!(*s, "balanced" | "linear")) {
             let hm = home;
-            let home = Arc::clone(&hm);
+            let home = hm.clone();
             let make = |rng: &mut Lcg| {
                 let mut f = rand_conj(&home, n, 2 + rng.below(6), 3, false, rng);
                 f.minimize().unwrap();

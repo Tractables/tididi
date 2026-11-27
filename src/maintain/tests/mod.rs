@@ -10,9 +10,9 @@ use crate::vtree::VarId;
 
 /// What the update stands in for, built by the general operations: `f ∨ M`
 /// through a compiled cube diagram, and `f ∧ ¬M` through the clause walk.
-fn rebuilt(vtree: &Arc<Vtree>, f: &Tdd, model: &[i32], insert: bool) -> Tdd {
+fn rebuilt(vtree: &crate::vtree::Home, f: &Tdd, model: &[i32], insert: bool) -> Tdd {
     let mut out = if insert {
-        let cube = Tdd::cube(&crate::vtree::Home::unchecked(vtree), model).expect("the cube is over the vtree");
+        let cube = Tdd::cube(vtree, model).expect("the cube is over the vtree");
         crate::or(f.clone(), cube).expect("the disjunction fits")
     } else {
         let clause: Vec<i32> = model.iter().map(|lit| -lit).collect();
@@ -29,17 +29,12 @@ fn apply_update(batch: &mut Maintenance<'_>, model: &[i32], insert: bool) -> Res
 /// On implicit levels and on stored ones alike ([`same_as_stored`]).
 #[test]
 fn an_edit_and_a_rebuild_reach_the_same_diagram() {
-    same_as_stored(|| an_edit_and_a_rebuild(false));
+    same_as_stored(an_edit_and_a_rebuild);
 }
 
-#[test]
-fn an_edit_and_a_rebuild_on_a_home_hold_what_the_stored_route_holds() {
-    same_as_stored(|| an_edit_and_a_rebuild(true));
-}
-
-/// The cases of [`an_edit_and_a_rebuild_reach_the_same_diagram`], on homes
-/// or on roots: the edited diagrams, minimized.
-fn an_edit_and_a_rebuild(homes: bool) -> Vec<Tdd> {
+/// The cases of [`an_edit_and_a_rebuild_reach_the_same_diagram`]: the
+/// edited diagrams, minimized.
+fn an_edit_and_a_rebuild() -> Vec<Tdd> {
     let mut out = Vec::new();
     // Both routes over every assignment of every small case. `check_determinism`
     // is quadratic in the level widths, so the sweep stops at five variables.
@@ -47,13 +42,11 @@ fn an_edit_and_a_rebuild(homes: bool) -> Vec<Tdd> {
     for (num_vars, clauses) in test_cases() {
         if num_vars > 5 { continue; }
         for (shape, shape_home) in sweep_shapes(num_vars) {
-            let shape_vtree = Arc::new(Vtree::clone(&shape_home));
-            let compiled = |vtree: &Arc<Vtree>| {
+            let compiled = |vtree: &crate::vtree::Home| {
                 let mut f = compile_clauses(vtree, &clauses);
                 f.minimize().expect("minimizing fits");
                 f
             };
-            let on_root = compiled(&shape_vtree);
             for bits in 0..(1u64 << num_vars) {
                 let model = assignment(num_vars, bits);
                 for insert in [true, false] {
@@ -62,11 +55,8 @@ fn an_edit_and_a_rebuild(homes: bool) -> Vec<Tdd> {
                     // level returns none, so on a shared context the two
                     // routes would describe arenas of other capacities.
                     let context = Arc::new(crate::Context::new());
-                    let home = crate::vtree::Home::new(Vtree::clone(&shape_vtree).with_context(context));
-                    let (vtree, f) = match homes {
-                        true => (Arc::clone(&home), compiled(&home)),
-                        false => (Arc::clone(&shape_vtree), on_root.clone()),
-                    };
+                    let home = crate::vtree::Home::new(Vtree::clone(&shape_home).with_context(context));
+                    let (vtree, f) = (home.clone(), compiled(&home));
                     let mut got = f.clone();
                     let mut batch = got.maintain().expect("the index fits");
                     apply_update(&mut batch, &model, insert).expect("the update fits");
@@ -494,9 +484,9 @@ fn a_batch_on_a_projection_follows_the_diagram_across_projections() {
     use crate::vtree::Home;
     let eng = Engine::new();
     let home = Home::new(Vtree::join(&Vtree::join(&Vtree::leaf(VarId(1)), &Vtree::leaf(VarId(2))).unwrap(), &Vtree::leaf(VarId(3))).unwrap());
-    let all = Arc::clone(&home);
+    let all = home.clone();
     let on_home = |f: &Tdd| crate::test_helpers::embedded(f, &all, |v| v).unwrap().0;
-    let mut f = eng.literal(&crate::vtree::Home::unchecked(&all), 2).unwrap();
+    let mut f = eng.literal(&all, 2).unwrap();
     f.trim(&home).unwrap();
     let mut expected = on_home(&f);
     let steps: [(&[i32], bool); 6] = [(&[1, 3], true), (&[1, -2, 3], true), (&[2], false), (&[1, 2, 3], true), (&[-1], true), (&[3], false)];

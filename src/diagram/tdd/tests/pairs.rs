@@ -87,6 +87,7 @@ fn assert_counts_hold(f: &Tdd, what: &str) {
     assert_eq!(f.pair_count(), census(f), "{what}");
 }
 
+// Padded form: a refused conjunction needs the wide padded levels; on homes none is refused.
 /// Conjoined unreduced, one random clause at a time; every other
 /// conjunction's operands keep the counts a read left them, which the
 /// levels it moves bring along.

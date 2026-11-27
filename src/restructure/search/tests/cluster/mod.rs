@@ -6,8 +6,9 @@ mod deadline;
 #[test]
 fn invalid_root_preserves_diagram_and_attempts() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(2));
-    let mut tdd = eng.one(&crate::vtree::Home::unchecked(&vtree));
+    let home = crate::vtree::Home::new(Vtree::balanced(2));
+    let mut tdd = eng.cube(&home, [1, 2]).unwrap();
+    let vtree = Arc::clone(tdd.vtree());
     let before = tdd.model_count().unwrap();
     let invalid = VtreeIdx(vtree.num_nodes() as u32);
     let mut tried = vec![1];
@@ -22,8 +23,9 @@ fn invalid_root_preserves_diagram_and_attempts() {
 #[test]
 fn short_attempt_storage_grows_without_losing_prior_entries() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(2));
-    let mut tdd = eng.one(&crate::vtree::Home::unchecked(&vtree));
+    let home = crate::vtree::Home::new(Vtree::balanced(2));
+    let mut tdd = eng.cube(&home, [1, 2]).unwrap();
+    let vtree = Arc::clone(tdd.vtree());
     let mut tried = vec![1];
     assert_eq!(eng.rotate_marginal_cluster(&mut tdd, vtree.root(), 8, &mut tried), Ok(0));
     assert_eq!(tried, [1, 0, 0]);
@@ -32,6 +34,7 @@ fn short_attempt_storage_grows_without_losing_prior_entries() {
 }
 
 /// Refusals after a committed rotation must keep its vtree with the rebuilt levels.
+// Padded form: the padded sum-out.
 #[test]
 fn allocation_refusals_preserve_cluster_counts() {
     let (mut original, root) = deadline::worthwhile_candidate_tdd();
@@ -64,6 +67,7 @@ fn allocation_refusals_preserve_cluster_counts() {
 /// The small fixture's rotation would shrink the diagram by 2 pairs, under
 /// `CLUSTER_MIN_GAIN`: the pass tries it, declines it and leaves the diagram
 /// as it was.
+// Padded form: the padded sum-out.
 #[test]
 fn a_rotation_that_saves_less_than_the_minimum_gain_is_declined() {
     let (mut tdd, root) = deadline::one_candidate_tdd();

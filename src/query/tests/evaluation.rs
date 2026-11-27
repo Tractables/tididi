@@ -8,6 +8,7 @@ use crate::limits::{LimitConfig, StopCallback, StopDecision};
 use crate::OperationError;
 use crate::test_helpers::assert_canonical;
 
+// Padded form: its levels are named by the full vtree's nodes.
 /// A clause with a free variable, built before any resource limit is armed.
 fn fixture() -> Tdd {
     let f = Tdd::clause(&crate::vtree::Home::unchecked(&Arc::new(Vtree::balanced(8))), [1, 3, -5]).unwrap();
@@ -160,6 +161,7 @@ impl EvalAlgebra for TrackedBoolean<'_> {
     fn mul(&self, a: &Value, b: &Value) -> Value { Value::new(a.truth && b.truth, &self.usage) }
 }
 
+// Padded form: the peak is compared with a column per level of the full vtree.
 #[test]
 fn algebra_columns_use_less_memory_than_allocating_every_level() {
     for tree in [Vtree::balanced(128), Vtree::linear(128)] {
@@ -235,13 +237,13 @@ fn an_overriding_sum_of_products_is_used_and_agrees_with_the_default() {
     let mut rng = crate::vtree::rng::Lcg::new(29);
     let vars: Vec<VarId> = (1..=12).map(VarId).collect();
     for tree in [Vtree::balanced(14), Vtree::linear(14), Vtree::random(14, 3)] {
-        let vtree = Arc::new(tree);
+        let vtree = crate::vtree::Home::new(tree);
         for round in 0..6u64 {
             // Few values of the last variables, so that right children repeat.
             let rows: Vec<u64> = (0..200 + 150 * round)
                 .map(|_| (rng.next_u64() & 0x3ff) | (rng.next_u64() % 3) << 10)
                 .collect();
-            let f = eng.from_models(&crate::vtree::Home::unchecked(&vtree), &vars, &rows).unwrap();
+            let f = eng.from_models(&vtree, &vars, &rows).unwrap();
             assert_canonical(&f);
             let regrouped = Regrouped { pairs: Cell::new(0), products: Cell::new(0) };
             let value = eng.evaluate(&f, &regrouped).unwrap();
@@ -282,8 +284,8 @@ fn an_overriding_mul_add_is_used_and_agrees_with_the_default() {
     }
     let eng = Engine::new();
     for tree in [Vtree::balanced(8), Vtree::linear(8)] {
-        let vtree = Arc::new(tree);
-        let f = Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [1, 3, -5]).unwrap() & Tdd::clause(&crate::vtree::Home::unchecked(&vtree), [-2, 6]).unwrap();
+        let vtree = crate::vtree::Home::new(tree);
+        let f = Tdd::clause(&vtree, [1, 3, -5]).unwrap() & Tdd::clause(&vtree, [-2, 6]).unwrap();
         assert_canonical(&f);
         let fused = Counts { fused: Cell::new(0) };
         let value = eng.evaluate(&f, &fused).unwrap();
@@ -376,6 +378,7 @@ impl EvalAlgebra for PlainCounts {
     fn mul(&self, a: &u128, b: &u128) -> u128 { a * b }
 }
 
+// Padded form: it values every variable of the vtree, which a projection does not hold.
 #[test]
 fn column_evaluation_agrees_with_evaluate_and_folds_every_node() {
     let eng = Engine::new();
@@ -467,10 +470,10 @@ fn evaluating_at_a_level_values_each_node_over_its_subtree() {
     let mut rng = crate::vtree::rng::Lcg::new(7);
     let vars: Vec<VarId> = (1..=9).map(VarId).collect();
     for tree in [Vtree::balanced(9), Vtree::linear(9), Vtree::random(9, 3), Vtree::random(9, 11)] {
-        let vtree = Arc::new(tree);
+        let vtree = crate::vtree::Home::new(tree);
         for round in 0..4u64 {
             let rows: Vec<u64> = (0..20 + 40 * round).map(|_| rng.next_u64() & 0x1ff).collect();
-            let f = eng.from_models(&crate::vtree::Home::unchecked(&vtree), &vars, &rows).unwrap();
+            let f = eng.from_models(&vtree, &vars, &rows).unwrap();
             assert_canonical(&f);
             for t in (0..vtree.num_nodes()).map(|t| VtreeIdx(t as u32)) {
                 let values = f.evaluate_at(t, &PlainCounts).unwrap();

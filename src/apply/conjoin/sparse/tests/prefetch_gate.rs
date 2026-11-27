@@ -16,6 +16,7 @@ use crate::vtree::Vtree;
 use crate::Engine;
 use std::sync::Arc;
 
+// Padded form: the prefetch sites run only on wide padded levels.
 #[test]
 fn a_walk_that_prefetches_returns_what_the_walk_without_returns() {
     let eng = Engine::new();

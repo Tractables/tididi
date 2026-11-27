@@ -637,8 +637,8 @@ impl crate::Engine {
         self.clause_on(vtree, &clause)
     }
 
-    /// [`Engine::clause`] on any vtree, as [`Engine::cube_on`] builds.
-    pub(crate) fn clause_on(&self, vtree: &Arc<Vtree>, clause: &[Literal]) -> Result<Tdd, OperationError> {
+    /// [`Engine::clause`] of literals already converted.
+    pub(crate) fn clause_on(&self, vtree: &crate::vtree::Home, clause: &[Literal]) -> Result<Tdd, OperationError> {
         let one = self.cube_on(vtree, std::iter::empty::<Literal>())?;
         conjoin_clause_on(self, one, clause)
     }

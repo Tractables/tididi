@@ -4,6 +4,7 @@ use crate::{Engine, OperationError};
 use crate::limits::{LimitConfig, StopAt, StopRules};
 use crate::test_helpers::assert_canonical;
 
+// Padded form: it assembles one level per node of the full vtree.
 #[test]
 fn checked_assembly_charges_worklists_even_when_levels_are_already_allocated() {
     let tree = Arc::new(Vtree::balanced(4));
@@ -33,6 +34,7 @@ fn checked_assembly_polls_while_seeding_worklists() {
     assert_eq!(eng.limits().meters().work_units, 3);
 }
 
+// Padded form: it assembles one level per node of the full vtree.
 #[test]
 fn operation_assembly_reads_the_vtree_weights_and_recycles_refused_results() {
     use crate::diagram::{Assembly, Arithmetic, RationalWeights, Weights};

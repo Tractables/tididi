@@ -72,11 +72,13 @@ fn node_variables_match_evaluation_on_seeded_diagrams() {
     for f in random_diagrams(0xc0de, 40, 3..7) { check(&f); }
 }
 
+// Padded form: the padded sum-out.
 #[test]
 fn node_variables_match_evaluation_with_summed_out_levels() {
     for (f, _) in marginal_diagrams(0x5eed, 40, 4..7) { check(&f); }
 }
 
+// Padded form: three of the four are padded fixtures.
 #[test]
 fn node_variables_match_evaluation_on_the_hand_built_diagrams() {
     // The boundary fixtures are the ones that read count slots.

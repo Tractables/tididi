@@ -27,9 +27,10 @@ fn expand_full_single_clause() {
 
 #[test]
 fn expand_full_preserves_determinism() {
-    let vtree = Arc::new(Vtree::balanced(4));
-    let mut tdd = clause_to_tdd(&vtree, &clause(&[(1, true), (3, false)]));
+    let home = crate::vtree::Home::new(Vtree::balanced(4));
+    let mut tdd = clause_to_tdd(&home, &clause(&[(1, true), (3, false)]));
     tdd.minimize().unwrap();
+    let vtree = Arc::clone(tdd.vtree());
     let widths_before: Vec<usize> = tdd.levels.iter().map(|l| l.slot_count()).collect();
     expand_full_unmarked(&crate::Engine::new(), &mut tdd).unwrap();
 

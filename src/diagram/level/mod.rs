@@ -689,19 +689,23 @@ impl TddLevel {
     /// and pairs and keeps no range table, and `out` stores its pairs: the
     /// arenas keep their allocations and grow through `lim` only where they
     /// are too small, so a level taken from the pool is filled without an
-    /// allocation. Any other level is cloned over `out`. Refused, `out` is
-    /// an empty level.
+    /// allocation. An implicit level's copy stands for those arenas
+    /// ([`try_copy_described_over`](Self::try_copy_described_over)). Any
+    /// other level is cloned over `out`. Refused, `out` is an empty level.
     pub(crate) fn try_copy_over(
         &self,
         lim: &crate::limits::Limits,
         out: &mut TddLevel,
     ) -> Result<(), crate::limits::OperationError> {
-        let (LevelState::Structural(held), Some(pairs)) = (&self.state, self.pairs.stored()) else {
+        let LevelState::Structural(held) = &self.state else {
             return self.try_clone_over(lim, 0, 0, out);
         };
         if !self.ranges.is_empty() || out.pairs.stored().is_none() {
             return self.try_clone_over(lim, 0, 0, out);
         }
+        let Some(pairs) = self.pairs.stored() else {
+            return self.try_copy_described_over(lim, out);
+        };
         let copied = copy_into(lim, self.nodes.stored(), out.nodes.stored_mut())
             .and_then(|()| copy_into(lim, pairs, out.pairs.stored_mut()));
         if let Err(e) = copied {
@@ -713,6 +717,49 @@ impl TddLevel {
         out.dead_pairs = self.dead_pairs;
         out.uneven = self.uneven;
         out.state = LevelState::Structural(held.clone());
+        Ok(())
+    }
+
+    /// [`try_copy_over`](Self::try_copy_over) of an implicit structural
+    /// level: its description, standing for the arenas a stored copy written
+    /// into `out`'s would hold, of `out`'s capacities where they hold the
+    /// copy, so that the capacities a pooled level carries into a copy are
+    /// the same on both routes. Nodes the description does not imply are
+    /// written into `out`'s node arena. Refused, `out` is an empty level.
+    #[cold]
+    #[inline(never)]
+    fn try_copy_described_over(
+        &self,
+        lim: &crate::limits::Limits,
+        out: &mut TddLevel,
+    ) -> Result<(), crate::limits::OperationError> {
+        let (pair_room, node_room) = (out.pairs.capacity(), out.node_capacity());
+        let mut nodes = std::mem::take(out.nodes.stored_mut());
+        let implied = self.implied_by().map(ImplicitLevel::nodes);
+        let copied = match implied {
+            // Implied nodes are charged as stored ones copied at their count.
+            Some(n) => {
+                nodes = Vec::new();
+                lim.charge_bytes((n as u64).saturating_mul(std::mem::size_of::<EncodedNode>() as u64))
+            }
+            None => copy_into(lim, self.nodes.stored(), &mut nodes),
+        }
+        .and_then(|()| self.pairs.try_clone_on(lim, 0));
+        let mut pairs = match copied {
+            Ok(pairs) => pairs,
+            Err(e) => {
+                *out = TddLevel::new();
+                return Err(e);
+            }
+        };
+        pairs.raise_capacities(pair_room, if implied.is_some() { node_room } else { 0 });
+        out.nodes = NodeArena::from(nodes);
+        out.pairs = pairs;
+        out.ranges.clear();
+        out.value_ref_sides = self.value_ref_sides;
+        out.dead_pairs = self.dead_pairs;
+        out.uneven = self.uneven;
+        out.state = self.state.clone();
         Ok(())
     }
 

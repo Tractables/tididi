@@ -9,12 +9,12 @@ use crate::OperationError;
 fn checked_satisfiability_agrees_with_every_three_variable_truth_table() {
     let engine = Engine::new();
     for tree in [Vtree::balanced(3), Vtree::linear(3)] {
-        let tree = Arc::new(tree);
+        let tree = crate::vtree::Home::new(tree);
         for truth in 0u16..256 {
-            let mut f = engine.zero(&crate::vtree::Home::unchecked(&tree));
+            let mut f = engine.zero(&tree);
             for assignment in 0..8 {
                 if truth & (1 << assignment) == 0 { continue; }
-                let cube = engine.cube(&crate::vtree::Home::unchecked(&tree), (0..3).map(|var| {
+                let cube = engine.cube(&tree, (0..3).map(|var| {
                     Literal::new(VarId(var + 1), assignment & (1 << var) != 0)
                 })).unwrap();
                 assert_canonical(&cube);
@@ -22,7 +22,7 @@ fn checked_satisfiability_agrees_with_every_three_variable_truth_table() {
             }
             assert_canonical(&f);
             assert_eq!(engine.is_sat(&f), Ok(truth != 0), "truth table {truth}");
-            let not_third = engine.literal(&crate::vtree::Home::unchecked(&tree), -3).unwrap();
+            let not_third = engine.literal(&tree, -3).unwrap();
             assert_canonical(&not_third);
             let mut constrained = engine.and(f, not_third).unwrap();
             assert_eq!(engine.is_sat(&constrained), Ok(truth & 0x0f != 0));
@@ -99,6 +99,7 @@ fn edited_marginal_fixture(engine: &Engine) -> Tdd {
     f
 }
 
+// Padded form: the padded sum-out, its reduction pending.
 /// A weight-marginal diagram with its reduction still pending.
 fn edited_weighted_fixture(engine: &Engine) -> Tdd {
     let weights = RationalWeights::from_literals(&vec![

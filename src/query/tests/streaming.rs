@@ -1,6 +1,5 @@
 //! The streaming fold against the materialized count.
 
-use std::sync::Arc;
 
 use num_bigint::BigUint;
 use num_rational::BigRational;
@@ -20,7 +19,7 @@ fn interior_targets(vtree: &Vtree) -> Vec<bool> {
         .collect()
 }
 
-fn rand_unminimized_tdd(eng: &Engine, vtree: &Arc<Vtree>, rng: &mut Lcg, nvars: u32) -> Tdd {
+fn rand_unminimized_tdd(eng: &Engine, vtree: &crate::vtree::Home, rng: &mut Lcg, nvars: u32) -> Tdd {
     let shape = CnfShape {
         clauses: 4,
         width: nvars as usize,

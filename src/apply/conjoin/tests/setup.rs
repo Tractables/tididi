@@ -29,14 +29,14 @@ fn dense_preflight_reads_the_budget_left_in_the_operation() {
 fn the_cone_is_the_levels_no_free_level_is_over() {
     use crate::restructure::embed::{Free, place_moving};
     use crate::test_helpers::{compile_clauses, vtree_shapes};
-    use std::sync::Arc;
+    
     let eng = Engine::new();
     // A diagram on `into` restricted to `vars`, which embeds in it.
     let over = |into: &Vtree, vars: &[u32], clauses: &[Vec<i32>]| {
         let source = into
             .project_to_vars(|v| vars.contains(&v.0).then_some(v), into.num_vars())
             .unwrap();
-        let mut tdd = compile_clauses(&Arc::new(source), clauses);
+        let mut tdd = compile_clauses(&crate::vtree::Home::new(source), clauses);
         tdd.minimize().unwrap();
         tdd
     };

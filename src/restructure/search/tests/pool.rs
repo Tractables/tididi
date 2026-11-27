@@ -1,8 +1,7 @@
 //! [`Engine::rotate_pool_if`] and [`Engine::pool_search`]: every member keeps
 //! its function under every move, a declined move puts every member back,
-//! and the pool always shares one vtree allocation.
+//! and the pool always shares one home.
 
-use crate::test_helpers::bare_roots;
 use std::sync::Arc;
 
 use crate::restructure::search::{PoolMove, PoolRestarts, PoolSearchConfig, RotationMove};
@@ -120,21 +119,95 @@ pub(super) fn replays_refusal() -> bool {
     on
 }
 
-/// Five functions of six variables on one balanced vtree, a constant and a
-/// literal among them.
+/// Five functions of six variables on the root of one balanced home, each
+/// depending on every variable, so they share the root as their vtree.
+/// Pools on projections are in [`home`].
 fn pool() -> Vec<Tdd> {
-    let vtree = Arc::new(Vtree::balanced(VARS));
+    let home = crate::vtree::Home::new(Vtree::balanced(VARS));
     let mut members = vec![
-        compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3], vec![3, 4], vec![-4, 5], vec![5, -6], vec![1, -6]]),
-        compile_clauses(&vtree, &[vec![1, 6], vec![2, -5], vec![-3, 4]]),
-        compile_clauses(&vtree, &[vec![-1, -4], vec![2, 5], vec![3, 6], vec![-2, -3]]),
-        compile_clauses(&vtree, &[]),
-        compile_clauses(&vtree, &[vec![-4]]),
+        compile_clauses(&home, &[vec![1, 2], vec![-2, 3], vec![3, 4], vec![-4, 5], vec![5, -6], vec![1, -6]]),
+        compile_clauses(&home, &[vec![1, 6], vec![2, -5], vec![-3, 4]]),
+        compile_clauses(&home, &[vec![-1, -4], vec![2, 5], vec![3, 6], vec![-2, -3]]),
+        compile_clauses(&home, &[vec![1, 2, 3, 4, 5, 6]]),
+        compile_clauses(&home, &[vec![-4], vec![1, 2, 3, 5, 6]]),
     ];
     for m in &mut members {
         m.minimize().expect("an unarmed engine refuses nothing");
+        on_root(m);
     }
     members
+}
+
+/// `f`, which depends on every leaf of its home, on the home's root.
+fn on_root(f: &mut Tdd) {
+    let root: Arc<Vtree> = Arc::clone(&f.home());
+    if Arc::ptr_eq(f.vtree(), &root) {
+        return;
+    }
+    match Vtree::leaf_sets(f.vtree(), &root) {
+        Ok(crate::vtree::LeafSets::Equal(same)) => f.reseat(&same),
+        other => panic!("not on every leaf of its home: {other:?}"),
+    }
+}
+
+/// A cube of every variable of `home`, each true iff `positive`, on the
+/// home's root.
+fn full_cube(home: &crate::vtree::Home, positive: bool) -> Tdd {
+    let literals: Vec<(u32, bool)> = (1..=home.num_leaves()).map(|v| (v, positive)).collect();
+    let mut f = cube(home, &literals);
+    on_root(&mut f);
+    f
+}
+
+/// The tree a pool search moves, kept as the search keeps its copy: the
+/// members' home's root when a member is on it, else the projection on
+/// every member's leaves, rotated in place so its nodes keep their indices
+/// across moves. The members' vtrees are rebuilt from a new home after each
+/// kept move, so their indices do not follow the search's.
+struct Moved(Vtree);
+
+impl Moved {
+    fn new(members: &[Tdd]) -> Self {
+        let home = members[0].home();
+        let union = match members.iter().any(|m| m.vtree().link_home().is_none()) {
+            true => Arc::clone(&home),
+            false => {
+                let vars: Vec<_> = members.iter().flat_map(|m| m.vtree().leaf_bottomup().map(|(_, var)| var)).collect();
+                match vars.is_empty() {
+                    true => Vtree::empty_projection(&home),
+                    false => Vtree::projection(&home, vars).unwrap(),
+                }
+            }
+        };
+        Moved(Vtree::clone(&union))
+    }
+
+    fn internals(&self) -> Vec<VtreeIdx> {
+        self.0.internal_bottomup().map(|(v, _, _)| v).collect()
+    }
+
+    /// `mv`, at a node of this tree, at the node of the members' home over
+    /// the same leaves, as [`Engine::rotate_pool_if`](crate::Engine::rotate_pool_if)
+    /// takes it.
+    fn at_home(&self, members: &[&mut Tdd], mut mv: PoolMove) -> PoolMove {
+        let home = members[0].home();
+        let (mut lo, mut hi, mut stack) = (u32::MAX, 0, vec![mv.rotation.pivot]);
+        while let Some(t) = stack.pop() {
+            match *self.0.node(t) {
+                crate::vtree::VtreeNode::Leaf { var, .. } => {
+                    let rank = home.rank(var).expect("the home has the members' leaves");
+                    (lo, hi) = (lo.min(rank), hi.max(rank));
+                }
+                crate::vtree::VtreeNode::Internal { left, right, .. } => stack.extend([left, right]),
+            }
+        }
+        mv.rotation.pivot = home.node_over(lo, hi);
+        mv
+    }
+
+    fn kept(&mut self, mv: PoolMove) {
+        super::move_in_place(&mut self.0, mv).expect("a kept move applies").commit_in_probe(&mut self.0);
+    }
 }
 
 /// Which of the 2^VARS assignments satisfy `f`, found by conjoining `f` with
@@ -143,7 +216,7 @@ fn truth_table(f: &Tdd) -> Vec<bool> {
     (0..1u32 << VARS)
         .map(|bits| {
             let literals: Vec<(u32, bool)> = (0..VARS).map(|i| (i + 1, bits >> i & 1 == 1)).collect();
-            !and2(f, &cube(f.vtree(), &literals)).is_zero()
+            !and2(f, &cube(&f.home(), &literals)).is_zero()
         })
         .collect()
 }
@@ -317,7 +390,7 @@ fn a_crossed_move_changes_the_order_of_the_leaves() {
 #[test]
 fn members_on_different_vtrees_are_refused() {
     let mut a = pool();
-    let other = Arc::new(Vtree::balanced(VARS));
+    let other = crate::vtree::Home::new(Vtree::balanced(VARS));
     let mut b = compile_clauses(&other, &[vec![1, 2]]);
     let eng = crate::Engine::new();
     let mut refs: Vec<&mut Tdd> = vec![&mut a[0], &mut b];
@@ -369,16 +442,31 @@ fn a_probe_charges_its_rebuilds_to_the_work_clock() {
 /// a score reads: the pairs of its two levels and the rebuild's fixed
 /// units. It charges so also where a score's cap refused the move before
 /// every member was scored, as on seeded pools of four functions on every
-/// vtree shape of six to eight variables some probes do.
+/// home shape of six to eight variables some probes do. The probe is called
+/// on the members' shared tree, so the seeded functions take a clause of
+/// every variable, and a pool with a member that still misses a variable is
+/// skipped.
 #[test]
 fn a_refused_score_charges_the_pairs_it_reads() {
-    use crate::test_helpers::{vtree_shapes, CnfShape, Lcg};
+    use crate::test_helpers::{compile_clauses_on, rand_cnf, vtree_shapes, CnfShape, Lcg};
     let eng = crate::Engine::new();
     let mut rng = Lcg::new(0xca9);
     let mut pools = vec![pool()];
     for n in 6..9 {
-        for (_, vtree) in bare_roots(vtree_shapes(n)) {
-            pools.push(seeded_pool(&eng, &mut rng, &vtree, n, CnfShape { clauses: n as usize, width: 3 }));
+        for (_, home) in vtree_shapes(n) {
+            let mut members: Vec<Tdd> = (0..4)
+                .map(|_| {
+                    let mut cnf = rand_cnf(&mut rng, n, CnfShape { clauses: n as usize, width: 3 });
+                    cnf.push((1..=n as i32).collect());
+                    let mut f = compile_clauses_on(&eng, &home, &cnf);
+                    f.minimize().expect("an unarmed engine refuses nothing");
+                    f
+                })
+                .collect();
+            if members.iter().all(|m| m.vtree().num_leaves() == home.num_leaves()) {
+                members.iter_mut().for_each(on_root);
+                pools.push(members);
+            }
         }
     }
     let (mut refused, mut capped) = (0, 0);
@@ -456,8 +544,8 @@ fn invalid_pivot_is_refused_without_changing_members() {
 fn a_stop_before_acceptance_restores_the_pool() {
     use crate::limits::{LimitConfig, StopAt, StopRules};
     let eng = crate::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(6));
-    let original = Tdd::one(&crate::vtree::Home::unchecked(&vtree));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(6));
+    let original = full_cube(&vtree, true);
     let mut f = original.clone();
     let start = eng.limits().work_units();
     let rules = StopRules { unconditional: Some(StopAt::WorkUnits(start + 1)), after_pairs: None };
@@ -475,8 +563,8 @@ fn a_stop_before_acceptance_restores_the_pool() {
 #[test]
 fn search_stops_before_another_applicable_move() {
     let eng = crate::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(6));
-    let mut f = Tdd::one(&crate::vtree::Home::unchecked(&vtree));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(6));
+    let mut f = full_cube(&vtree, true);
     let config = PoolSearchConfig { max_work_units: 1, ..PoolSearchConfig::default() };
     let stats = eng.pool_search(&mut [&mut f], &config).unwrap();
     // The move, and the one member's two levels of a pair each, scored and
@@ -493,11 +581,8 @@ fn search_stops_before_another_applicable_move() {
 #[test]
 fn a_declined_move_puts_every_member_back() {
     let eng = crate::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(VARS));
-    let mut original = vec![Tdd::one(&crate::vtree::Home::unchecked(&vtree)), Tdd::one(&crate::vtree::Home::unchecked(&vtree)), compile_clauses(&vtree, &[vec![-4]])];
-    for m in &mut original {
-        m.minimize().unwrap();
-    }
+    let vtree = crate::vtree::Home::new(Vtree::balanced(VARS));
+    let original = vec![full_cube(&vtree, true), full_cube(&vtree, true), full_cube(&vtree, false)];
     let mv = PoolMove { rotation: RotationMove { pivot: vtree.root(), kind: RotationKind::Left }, crossed: false };
     let mut members = original.clone();
     let start = eng.limits().work_units();
@@ -762,7 +847,7 @@ fn full_descent(eng: &crate::Engine, members: &mut [Tdd], config: &PoolSearchCon
     for m in members.iter_mut() {
         eng.reduce(m, crate::reduce::ReductionPlan::default()).unwrap();
     }
-    let (accepts, probes, _) = full_sweeps(eng, members, config);
+    let (accepts, probes, _) = full_sweeps(eng, members, &mut Moved::new(members), config);
     for m in members.iter_mut() {
         eng.reduce(m, crate::reduce::ReductionPlan::default()).unwrap();
     }
@@ -771,18 +856,19 @@ fn full_descent(eng: &crate::Engine, members: &mut [Tdd], config: &PoolSearchCon
 
 /// The sweeps of [`full_descent`], without its reductions. Returns the moves
 /// kept and probed, and whether a sweep kept nothing.
-fn full_sweeps(eng: &crate::Engine, members: &mut [Tdd], config: &PoolSearchConfig) -> (usize, usize, bool) {
+fn full_sweeps(eng: &crate::Engine, members: &mut [Tdd], moved: &mut Moved, config: &PoolSearchConfig) -> (usize, usize, bool) {
     let crossings: &[bool] = if config.crossed { &[false, true] } else { &[false] };
     let (mut accepts, mut probes) = (0, 0);
     for _ in 0..config.max_sweeps {
-        let internals: Vec<VtreeIdx> = members[0].vtree().internal_bottomup().map(|(v, _, _)| v).collect();
+        let internals = moved.internals();
         let mut kept = 0;
         for v in internals {
             'pivot: for kind in [RotationKind::Left, RotationKind::Right] {
                 for &crossed in crossings {
                     let mv = PoolMove { rotation: RotationMove { pivot: v, kind }, crossed };
                     probes += 1;
-                    if with_members(members, |refs| eng.rotate_pool_if(refs, mv, usize::MAX, |p| p.live_pairs_delta() < 0)).unwrap() {
+                    if with_members(members, |refs| eng.rotate_pool_if(refs, moved.at_home(refs, mv), usize::MAX, |p| p.live_pairs_delta() < 0)).unwrap() {
+                        moved.kept(mv);
                         accepts += 1;
                         kept += 1;
                         break 'pivot;
@@ -821,13 +907,14 @@ fn full_search_with_restarts(eng: &crate::Engine, members: &mut Vec<Tdd>, config
         eng.reduce(m, crate::reduce::ReductionPlan::default()).unwrap();
     }
     let mut won = Kept::default();
-    let (moves, _, converged) = full_sweeps(eng, members, config);
+    let mut moved = Moved::new(members);
+    let (moves, _, converged) = full_sweeps(eng, members, &mut moved, config);
     won.moves = moves;
     if converged {
-        let internals: Vec<VtreeIdx> = members[0].vtree().internal_bottomup().map(|(v, _, _)| v).collect();
+        let internals = moved.internals();
         let mut rng = Lcg::new(config.restarts.seed);
         for _ in 0..config.restarts.count {
-            let start = members.clone();
+            let start = (members.clone(), moved.0.clone());
             let before = pairs(members);
             let (mut kept, mut draws) = (0, 0);
             while kept < config.restarts.kick && draws < config.restarts.kick * 50 {
@@ -837,18 +924,19 @@ fn full_search_with_restarts(eng: &crate::Engine, members: &mut Vec<Tdd>, config
                 let crossed = config.crossed && rng.below(2) == 0;
                 let slack = (pairs(members) as u64 * u64::from(config.restarts.slack_permille) / 1000) as i64 + 1;
                 let mv = PoolMove { rotation: RotationMove { pivot, kind }, crossed };
-                if with_members(members, |refs| eng.rotate_pool_if(refs, mv, usize::MAX, |p| p.live_pairs_delta() < slack)).unwrap() {
+                if with_members(members, |refs| eng.rotate_pool_if(refs, moved.at_home(refs, mv), usize::MAX, |p| p.live_pairs_delta() < slack)).unwrap() {
+                    moved.kept(mv);
                     kept += 1;
                 }
             }
-            let descended = full_sweeps(eng, members, config).0;
+            let descended = full_sweeps(eng, members, &mut moved, config).0;
             let gain = before as u64 * u64::from(config.restarts.min_gain_permille) / 1000;
             if (pairs(members) as u64) < (before as u64).saturating_sub(gain) {
                 won.restarts += 1;
                 won.moves += kept + descended;
                 won.by_their_random_moves += usize::from(descended == 0);
             } else {
-                *members = start;
+                (*members, moved.0) = start;
             }
         }
     }
@@ -861,7 +949,7 @@ fn full_search_with_restarts(eng: &crate::Engine, members: &mut Vec<Tdd>, config
 fn seeded_pool(
     eng: &crate::Engine,
     rng: &mut crate::test_helpers::Lcg,
-    vtree: &Arc<Vtree>,
+    vtree: &crate::vtree::Home,
     n: u32,
     shape: crate::test_helpers::CnfShape,
 ) -> Vec<Tdd> {
@@ -876,10 +964,10 @@ fn seeded_pool(
 }
 
 fn assert_same_pool_outcome(searched: &[Tdd], full: &[Tdd], label: &str) {
-    assert_eq!(searched[0].vtree().to_text(), full[0].vtree().to_text(), "{label}");
-    let first = Arc::clone(searched[0].vtree());
+    assert_eq!(searched[0].home().to_text(), full[0].home().to_text(), "{label}");
+    let first = searched[0].home();
     for (s, f) in searched.iter().zip(full) {
-        assert!(Arc::ptr_eq(s.vtree(), &first), "{label}");
+        assert!(Arc::ptr_eq(&s.home(), &first), "{label}");
         assert_eq!(s.pair_count(), f.pair_count(), "{label}");
         assert_canonical(s);
     }
@@ -897,7 +985,7 @@ fn restarts_end_where_restarts_descending_from_scratch_end() {
     let mut rng = Lcg::new(0x7e57);
     let (mut restarts, mut won, mut pools) = (0, 0, 0);
     for n in 6..10 {
-        for (shape, vtree) in bare_roots(vtree_shapes(n)) {
+        for (shape, vtree) in vtree_shapes(n) {
             let members = seeded_pool(&eng, &mut rng, &vtree, n, CnfShape { clauses: n as usize, width: 3 });
             for (crossed, min_gain_permille) in [(false, 0), (true, 0), (true, 100)] {
                 let config = PoolSearchConfig {
@@ -925,7 +1013,7 @@ fn restarts_end_where_restarts_descending_from_scratch_end() {
 /// Seeded pools of four small functions on every vtree shape of six to eight
 /// variables, under several seeds: a restart whose random moves alone make
 /// the pool smaller, its descent and the search's keeping no move, is kept
-/// with the vtree its moves made, which every member then shares, as in the
+/// with the home its moves made, which every member then shares, as in the
 /// search written out.
 #[test]
 fn a_restart_kept_for_its_random_moves_alone_leaves_their_vtree() {
@@ -934,7 +1022,7 @@ fn a_restart_kept_for_its_random_moves_alone_leaves_their_vtree() {
     let mut rng = Lcg::new(0x7e57);
     let (mut by_their_random_moves, mut pools) = (0, 0);
     for n in 6..9 {
-        for (shape, vtree) in bare_roots(vtree_shapes(n)) {
+        for (shape, vtree) in vtree_shapes(n) {
             let members = seeded_pool(&eng, &mut rng, &vtree, n, CnfShape { clauses: 2, width: 2 });
             for seed in 0..8 {
                 let config = PoolSearchConfig {
@@ -1006,14 +1094,14 @@ fn skipping_refused_moves_keeps_the_moves_of_the_full_descent_on_seeded_pools() 
     let config = PoolSearchConfig { max_sweeps: usize::MAX, ..PoolSearchConfig::default() };
     let (mut kept, mut skipped) = (0, 0);
     for n in 6..10 {
-        for (shape, vtree) in bare_roots(vtree_shapes(n)) {
+        for (shape, vtree) in vtree_shapes(n) {
             let members = seeded_pool(&eng, &mut rng, &vtree, n, CnfShape { clauses: n as usize, width: 3 });
             let mut searched = members.clone();
             let stats = with_members(&mut searched, |refs| eng.pool_search(refs, &config)).unwrap();
             let mut full = members;
             let (accepts, probes) = full_descent(&eng, &mut full, &config);
             assert_eq!(stats.accepts, accepts, "{n} variables, {shape}");
-            assert_eq!(searched[0].vtree().to_text(), full[0].vtree().to_text(), "{n} variables, {shape}");
+            assert_eq!(searched[0].home().to_text(), full[0].home().to_text(), "{n} variables, {shape}");
             for (s, f) in searched.iter().zip(&full) {
                 assert_eq!(s.pair_count(), f.pair_count(), "{n} variables, {shape}");
             }
@@ -1052,7 +1140,7 @@ fn a_replayed_refusal_decides_and_charges_as_probing_again() {
                 let (probing, without, _) = run(false);
                 let label = format!("{n} variables, {shape}, budget {budget}");
                 assert_eq!(replaying, probing, "{label}");
-                assert_eq!(with[0].vtree().to_text(), without[0].vtree().to_text(), "{label}");
+                assert_eq!(with[0].home().to_text(), without[0].home().to_text(), "{label}");
                 for (a, b) in with.iter().zip(&without) {
                     assert_eq!(a.pair_count(), b.pair_count(), "{label}");
                 }
@@ -1067,13 +1155,13 @@ fn a_replayed_refusal_decides_and_charges_as_probing_again() {
 /// of six to ten variables, four random functions with a literal, the
 /// constant and a two-literal clause beside them, under plain, bounded,
 /// budgeted and restarting searches, the moves kept in order, the
-/// statistics (work units included), the final vtree and every member's
+/// statistics (work units included), the final home and every member's
 /// pairs hash to a pinned value. A change that moves this hash changes which
 /// moves the search makes or what it charges.
 #[test]
 fn a_pool_search_makes_the_moves_and_charges_it_made_before() {
     use crate::test_helpers::{compile_clauses_on, vtree_shapes, CnfShape, Lcg};
-    const PINNED: u64 = 0x1196_f88f_128b_4d92;
+    const PINNED: u64 = 0x023b_7d6d_c8ba_ff6c;
     let eng = crate::Engine::new();
     let mut rng = Lcg::new(0x9001);
     let mut hash = 0xcbf2_9ce4_8422_2325u64;
@@ -1084,7 +1172,7 @@ fn a_pool_search_makes_the_moves_and_charges_it_made_before() {
     };
     let mut accepted = 0usize;
     for n in 6..11u32 {
-        for (_, vtree) in bare_roots(vtree_shapes(n)) {
+        for (_, vtree) in vtree_shapes(n) {
             let mut members = seeded_pool(&eng, &mut rng, &vtree, n, CnfShape { clauses: n as usize, width: 3 });
             for clauses in [vec![vec![2]], vec![], vec![vec![1, -(n as i32)]]] {
                 let mut f = compile_clauses_on(&eng, &vtree, &clauses);
@@ -1115,7 +1203,7 @@ fn a_pool_search_makes_the_moves_and_charges_it_made_before() {
                     accepted += a.borrow().len();
                 });
                 fold(format!("{stats:?}").as_bytes());
-                fold(searched[0].vtree().to_text().as_bytes());
+                fold(searched[0].home().to_text().as_bytes());
                 for m in &searched {
                     fold(&m.pair_count().to_le_bytes());
                 }

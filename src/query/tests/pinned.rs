@@ -10,20 +10,14 @@ use crate::test_helpers::clause_to_tdd;
 use crate::build::constant_one;
 
 use crate::test_helpers::{literals, rand_cnf, CnfShape, Lcg};
-use crate::vtree::{VarId, Vtree, VtreeIdx};
+use crate::vtree::{Home, VarId, Vtree, VtreeIdx};
 use crate::diagram::Tdd;
 use num_bigint::BigUint;
-use std::sync::Arc;
 
 
-/// Decide whether a variable lies beneath any summed-out level.
+/// Decide whether a variable lies in a region of the diagram's tree.
 fn is_summed_out(tdd: &Tdd, var: VarId) -> bool {
-    let mut level = tdd.vtree.leaf_of(var);
-    while let Some(t) = level {
-        if tdd.levels[t.idx()].is_marginal() { return true; }
-        level = tdd.vtree.node(t).parent();
-    }
-    false
+    tdd.vtree.region_of(var).is_some()
 }
 
 /// One fresh counter under retention policy `R`: pin, pass, read the root.
@@ -49,7 +43,7 @@ fn random_pin(rng: &mut Lcg) -> Option<bool> {
     }
 }
 
-fn rand_unminimized_cnf(eng: &Engine, vtree: &Arc<Vtree>, nvars: u32, rng: &mut Lcg) -> Tdd {
+fn rand_unminimized_cnf(eng: &Engine, vtree: &Home, nvars: u32, rng: &mut Lcg) -> Tdd {
     let shape = CnfShape { clauses: 4, width: nvars as usize };
     let mut acc = constant_one(eng, vtree);
     for clause in rand_cnf(rng, nvars, shape) {
@@ -143,7 +137,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
 /// A diagram over six variables in which every variable matters, so that a
 /// stale count anywhere between a changed leaf and the root shows at the
 /// output: the chain of implications x1→x2→…→x6 with one extra clause.
-fn six_var_diagram(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
+fn six_var_diagram(eng: &Engine, vtree: &Home) -> Tdd {
     let clauses: [Vec<i32>; 6] = [
         vec![-1, 2], vec![-2, 3], vec![-3, 4], vec![-4, 5], vec![-5, 6], vec![1, 3, 5],
     ];
@@ -162,7 +156,7 @@ fn six_var_diagram(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
 #[test]
 fn recompute_after_two_pin_changes_matches_oracle() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(6));
+    let vtree = Home::new(Vtree::balanced(6));
     let tdd = six_var_diagram(&eng, &vtree);
     for convention in [PinSemantics::Cofactor, PinSemantics::Evidence] {
         let mut pins: Vec<Option<bool>> = vec![None; 6];
@@ -211,7 +205,7 @@ fn recompute_after_two_pin_changes_matches_oracle() {
 #[test]
 fn pin_reset_to_same_value_records_nothing() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(6));
+    let vtree = Home::new(Vtree::balanced(6));
     let tdd = six_var_diagram(&eng, &vtree);
     let pins: Vec<Option<bool>> = vec![Some(true), None, Some(false), None, None, None];
     let mut ctr = eng.counter_with(&tdd, Retention::All, PinSemantics::Evidence).unwrap();
@@ -274,7 +268,7 @@ fn pinned_hybrid_on_marginalized_diagrams() -> Vec<Tdd> {
     let mut with_marginal = 0u32;
 
     for &nvars in &[3u32, 4, 5, 6] {
-        let vtree = Arc::new(Vtree::balanced(nvars));
+        let vtree = Home::new(Vtree::balanced(nvars));
         // A NON-root internal node: marginalizing its subtree leaves the levels
         // above it explicit, so a fold reads a marginal child (and the pinned
         // vars split into "summed out below the marginal root" and "still Boolean").
@@ -292,14 +286,6 @@ fn pinned_hybrid_on_marginalized_diagrams() -> Vec<Tdd> {
             if tdd.is_zero() {
                 continue;
             }
-            // `marginalize_subtree` skips width-0 internal levels, which would
-            // then trip the marginal-parent precondition above them. Skip such
-            // fixtures rather than trip an assert unrelated to what's under test.
-            if (0..vtree.num_nodes())
-                .any(|vi| !vtree.node(VtreeIdx(vi as u32)).is_leaf() && tdd.levels[vi].slot_count() == 0)
-            {
-                continue;
-            }
             marginalize_subtree(&mut tdd, marginal_root);
             tdd.minimize().unwrap();
             // `model_count` has an implicit `!is_zero` precondition (a structurally
@@ -308,7 +294,7 @@ fn pinned_hybrid_on_marginalized_diagrams() -> Vec<Tdd> {
             if tdd.is_zero() {
                 continue;
             }
-            if tdd.levels[marginal_root.idx()].is_marginal() {
+            if tdd.has_marginal_level() {
                 with_marginal += 1;
             }
 

@@ -5,7 +5,6 @@
 //! This file contains small-formula unit tests that exercise those checkers by
 //! building fixtures directly from `Tdd::clause` / `apply_and`.
 
-use std::sync::Arc;
 
 use crate::vtree::{Home, Vtree};
 
@@ -225,10 +224,10 @@ fn test_no_false_nodes_multi_apply_before_minimize() {
 fn unchecked_two_var_tdd(
     setup: impl FnOnce(&Vtree, &mut [crate::diagram::TddLevel]) -> crate::diagram::TddNodeId,
 ) -> Tdd {
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(2));
     let mut levels = vec![crate::diagram::TddLevel::new(); vtree.num_nodes()];
     let output = setup(&vtree, &mut levels);
-    Tdd::from_levels_unchecked(vtree, levels, output)
+    Tdd::from_levels_unchecked(std::sync::Arc::clone(&vtree), levels, output)
 }
 
 #[test]
@@ -360,7 +359,7 @@ fn a_scattered_variable_formula_counts_the_same_on_every_vtree() {
         vec![1, -9],
         vec![-3, -9, 11],
     ];
-    let reference = (compile_clauses(&Arc::new(Vtree::balanced(12)), &clauses)).model_count().unwrap();
+    let reference = (compile_clauses(&crate::vtree::Home::new(Vtree::balanced(12)), &clauses)).model_count().unwrap();
     for (shape, vtree) in vtree_shapes(12) {
         assert_eq!(
             (compile_clauses(&vtree, &clauses)).model_count().unwrap(),
@@ -378,7 +377,7 @@ fn canonicity_rejects_a_duplicated_node() {
     use crate::diagram::ChildPair;
 
     let eng = &crate::Engine::new();
-    let vtree = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::random(4, 42)));
+    let vtree = crate::vtree::Home::new(Vtree::random(4, 42));
     let tdd = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3], vec![-3, 4]]);
 
     let target = vtree

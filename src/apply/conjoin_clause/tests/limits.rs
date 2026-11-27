@@ -3,7 +3,6 @@
 //! charged for the pairs it reads and writes.
 
 use crate::vtree::Home;
-use crate::test_helpers::bare_roots;
 
 use crate::limits::LimitConfig;
 use crate::test_helpers::{compile_clauses_on, rand_cnf, stopping_engine, vtree_shapes, CnfShape, Lcg};
@@ -42,10 +41,10 @@ fn the_rebuild_charges_the_pairs_it_reads_and_writes() {
     let mut rng = Lcg::new(0xc1a0_5e11);
     let n = 14u32;
     let mut charged = 0u64;
-    for (name, vtree) in bare_roots(vtree_shapes(n)) {
+    for (name, home) in vtree_shapes(n) {
         for case in 0..6 {
             let eng = Engine::new();
-            let f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, CnfShape { clauses: 24, width: 3 }));
+            let f = compile_clauses_on(&eng, &home, &rand_cnf(&mut rng, n, CnfShape { clauses: 24, width: 3 }));
             let mut vars: Vec<u32> = (1..=n).collect();
             let width = 2 + case % 2;
             for k in 0..width {
@@ -55,18 +54,22 @@ fn the_rebuild_charges_the_pairs_it_reads_and_writes() {
             let clause: Vec<Literal> = vars[..width].iter()
                 .map(|&v| if rng.coin() { Literal::pos(VarId(v)) } else { Literal::neg(VarId(v)) })
                 .collect();
-            // The levels whose subtree holds a clause variable.
-            let mut spine = Vec::new();
-            for lit in &clause {
-                let mut cur = vtree.node(vtree.leaf_of(lit.var).unwrap()).parent();
-                while let Some(t) = cur {
-                    if !spine.contains(&t.idx()) {
-                        spine.push(t.idx());
+            // The levels of `g`'s vtree whose subtree holds a clause variable.
+            let spine = |g: &Tdd| {
+                let vtree = g.vtree();
+                let mut spine = Vec::new();
+                for leaf in clause.iter().filter_map(|lit| vtree.leaf_of(lit.var)) {
+                    let mut cur = vtree.node(leaf).parent();
+                    while let Some(t) = cur {
+                        if !spine.contains(&t.idx()) {
+                            spine.push(t.idx());
+                        }
+                        cur = vtree.node(t).parent();
                     }
-                    cur = vtree.node(t).parent();
                 }
-            }
-            let read = spine_pairs(&f, &spine);
+                spine
+            };
+            let read = spine_pairs(&f, &spine(&f));
             let mark = eng.limits().mark();
             let out = eng.and_clause(f, &clause).unwrap();
             let work = eng.limits().work_since(mark);
@@ -75,8 +78,8 @@ fn the_rebuild_charges_the_pairs_it_reads_and_writes() {
                 assert!(work >= read, "{name}, case {case}: charged {work} for {read} pairs read");
                 continue;
             }
-            let pairs = read + spine_pairs(&out, &spine);
-            let slack = (2 * width + 3 * vtree.num_nodes()) as u64;
+            let pairs = read + spine_pairs(&out, &spine(&out));
+            let slack = (2 * width + 3 * home.num_nodes()) as u64;
             assert!(
                 (pairs..=pairs + slack).contains(&work),
                 "{name}, case {case}, clause {clause:?}: charged {work} for {pairs} pairs read and written"

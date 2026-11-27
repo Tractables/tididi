@@ -123,11 +123,6 @@ fn close_constant_cold(eng: &Engine, f: &mut Tdd) {
 fn settle_cold(eng: &Engine, f: &mut Tdd, dropped: &mut Vec<VtreeIdx>) -> Result<(), OperationError> {
     let home = f.vtree.home().expect("settle passes on a diagram on a home");
     if f.has_marginal_level() {
-        // A summed internal level that is not a region comes only from the
-        // test helper `marginalize_subtree`, on a home's root; it stays.
-        if f.vtree.bottomup().any(|t| !f.vtree.node(t).is_leaf() && f.levels[t.idx()].is_marginal()) {
-            return Ok(());
-        }
         return trim(eng, f, &home, None, &[]).map(|_| ());
     }
     dropped.sort_unstable();

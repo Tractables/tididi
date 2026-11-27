@@ -98,7 +98,8 @@ impl Engine {
     /// sibling;
     /// [`DistinctError::Key`] for variables that are not exactly the leaves
     /// of one node;
-    /// [`DistinctError::Operation`] with [`OperationError::LevelNotInVtree`]
+    /// [`DistinctError::Operation`] with [`OperationError::NotOnHome`] for a
+    /// diagram off every home, [`OperationError::LevelNotInVtree`]
     /// for a `key` that is not a node of the home,
     /// [`OperationError::MarginalLevel`] for a diagram that has discarded the
     /// structure at a level, and for a refused allocation or an armed stop.
@@ -113,25 +114,8 @@ impl Engine {
         tdd.require_structure()?;
         let vtree = tdd.vtree();
         let key = key_node(lim, vtree, key.into())?;
-        if let Some(home) = vtree.home() {
-            return distinct_on_home(self, tdd, &home, key, m);
-        }
-        if key.idx() >= vtree.num_nodes() {
-            return Err(OperationError::LevelNotInVtree(key).into());
-        }
-        if vtree.node(key).parent().is_none() {
-            return Err(DistinctError::Root);
-        }
-        let mut gate = lim.gate();
-        let into = project_onto_key_subtree(lim, vtree, key)?;
-        if m == 0 {
-            return Ok(crate::build::constant_on(self, &into, true)?);
-        }
-        if tdd.is_zero() {
-            return Ok(crate::build::constant_zero(self, &into));
-        }
-        let size = capped_counts(self, tdd, vtree.sibling(key), m)?;
-        threshold(self, &mut gate, tdd, key, &size, m, &into)
+        let home = vtree.home().ok_or(OperationError::NotOnHome)?;
+        distinct_on_home(self, tdd, &home, key, m)
     }
 
     /// `∃` of every variable outside `key`'s subtree, as a diagram on a
@@ -386,25 +370,6 @@ fn threshold(
     })?;
     eng.minimize(&mut result)?;
     Ok(result)
-}
-
-/// The result's vtree on a root: `key`'s subtree, its variable ids kept.
-fn project_onto_key_subtree(lim: &Limits, vtree: &Vtree, key: VtreeIdx) -> Result<Arc<Vtree>, DistinctError> {
-    let below: Vec<VtreeIdx> = vtree.subtree(key).collect();
-    // The result keeps the diagram's ids on a vtree of the subtree's
-    // nodes, which may be too few to declare them.
-    crate::vtree::check_var_space(vtree.num_vars(), below.len()).map_err(DistinctError::Vtree)?;
-    let mut keep = Vec::new();
-    lim.try_resize(&mut keep, vtree.num_vars() as usize + 1, false)?;
-    for &t in &below {
-        if vtree.node(t).is_leaf() {
-            keep[vtree.leaf_var(t).0 as usize] = true;
-        }
-    }
-    let into = vtree
-        .project_to_vars(|v| keep[v.0 as usize].then_some(v), vtree.num_vars())
-        .expect("a subtree keeps a variable");
-    Ok(Arc::new(into))
 }
 
 /// The nodes of `parent`'s level the output reaches, level by level down the

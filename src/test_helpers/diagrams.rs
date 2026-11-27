@@ -33,7 +33,7 @@ fn draw_vars(rng: &mut Lcg, vars: &Range<u32>) -> u32 {
 /// second.
 pub fn chain() -> (Tdd, [VtreeIdx; 3]) {
     let eng = Engine::new();
-    let vtree = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::linear(4)));
+    let vtree = crate::vtree::Home::new(Vtree::linear(4));
     let root = vtree.root();
     let a = vtree.children(root).1;
     let b = vtree.children(a).1;
@@ -167,7 +167,7 @@ pub fn random_diagrams(seed: u64, count: usize, vars: Range<u32>) -> Vec<Tdd> {
     while out.len() < count {
         let n = draw_vars(&mut rng, &vars);
         let shape = CnfShape { clauses: n as usize, width: 4 };
-        for (_, vtree) in bare_roots(vtree_shapes(n)) {
+        for (_, vtree) in vtree_shapes(n) {
             let eng = Engine::new();
             let f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, shape));
             assert_canonical(&f);
@@ -182,6 +182,23 @@ pub fn random_diagrams(seed: u64, count: usize, vars: Range<u32>) -> Vec<Tdd> {
     out
 }
 
+/// `f`, a diagram on a home, copied onto the local twin of its tree the way
+/// a restructure copies one before it rotates: a root of its own over
+/// `1..=k`, the leaf of `f`'s `i`-th smallest variable named `i`. Rotation
+/// internals take only diagrams on such roots.
+pub fn on_local_twin(f: &Tdd) -> Tdd {
+    let own = f.vtree();
+    assert!(own.on_home(), "a twin is copied from a diagram on a home");
+    let mut vars: Vec<VarId> = own.leaf_bottomup().map(|(_, v)| v).collect();
+    assert!(!vars.is_empty(), "the empty projection has no tree to copy");
+    vars.sort_unstable();
+    let name = |leaf: VtreeIdx| VarId(vars.binary_search(&own.leaf_var(leaf)).expect("a leaf of the tree") as u32 + 1);
+    let mut copy = f.clone();
+    copy.vtree = Arc::new(own.local_twin(name, vars.len() as u32));
+    copy
+}
+
+// Padded form: the padded sum-out.
 /// Seeded diagrams holding inline marginal references, over a number of
 /// variables drawn from `vars`: each drawn clause set compiled on every vtree
 /// shape, then one internal subtree below the output and one leaf outside it
@@ -194,6 +211,7 @@ pub fn marginal_diagrams(seed: u64, count: usize, vars: Range<u32>) -> Vec<(Tdd,
         let shape = CnfShape { clauses: n as usize, width: 4 };
         for (_, vtree) in bare_roots(vtree_shapes(n)) {
             let eng = Engine::new();
+            let vtree = crate::vtree::Home::unchecked(&vtree);
             let mut f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, shape));
             let inner: Vec<VtreeIdx> = vtree.internal_bottomup().map(|(t, _, _)| t).filter(|&t| t != vtree.root()).collect();
             if f.is_zero() || inner.is_empty() { continue; }

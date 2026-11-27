@@ -271,35 +271,43 @@ fn check_header(bytes: &[u8]) -> Result<(usize, u32), IoError> {
     Ok((total, version))
 }
 
-/// [`decode_levels`] onto the projection of `vtree`'s home on the leaves the
+/// Check the header, the length and the checksum of one whole file, then
+/// read its body onto the projection of `vtree`'s home on the leaves the
 /// file declares. A seated diagram the trim would change, its counts
 /// attached, is checked for a repeated pair and then trimmed, which rescales
 /// the counts.
-// The header is checked here a second time rather than in a helper shared
-// with `decode_levels`: a second caller of anything inlined there changes
-// the code of the level reader, by about 1% of a query that reads its
-// diagrams from binary files.
 #[inline(never)]
 fn decode(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
     if vtree.has_regions() {
         return Err(malformed(super::REGION_REFUSED));
     }
     let home = vtree.home().expect("a vtree on a home");
-    let (total, _) = check_header(bytes)?;
+    let (total, version) = check_header(bytes)?;
     if bytes.len() < total {
         return Err(truncated(bytes.len(), total));
     }
-    let covered = &bytes[..total - TRAILER_BYTES];
-    let stored = u64::from_le_bytes(bytes[covered.len()..total].try_into().expect("eight bytes"));
-    if stored != xxh64(covered) {
-        return Err(malformed(format!("checksum mismatch: the file records {stored:#018x}")));
+    if bytes.len() > total {
+        return Err(malformed(format!(
+            "{} bytes follow the checksum, which ends the diagram",
+            bytes.len() - total
+        )));
     }
-    let mut body = Body { bytes: &covered[HEADER_BYTES..], with_trailer: &bytes[HEADER_BYTES..total], at: 0 };
+    let (covered, trailer) = bytes.split_at(total - TRAILER_BYTES);
+    let stored = u64::from_le_bytes(trailer.try_into().expect("eight bytes"));
+    let computed = xxh64(covered);
+    if stored != computed {
+        return Err(malformed(format!(
+            "checksum mismatch: the file records {stored:#018x}, its bytes hash to \
+             {computed:#018x}"
+        )));
+    }
+    let with_trailer = &bytes[HEADER_BYTES..];
+    let mut body = Body { bytes: &covered[HEADER_BYTES..], with_trailer, at: 0 };
     let own = read_projection(&mut body, &home)?;
     if own.num_nodes() == 0 {
         return decode_without_leaf(bytes, &own);
     }
-    let mut tdd = decode_levels(bytes, &own)?;
+    let mut tdd = parse_body(with_trailer, &own, version == COUNTS_FORMAT_VERSION)?;
     if crate::reduce::keeps_every_leaf(&tdd) {
         return Ok(tdd);
     }
@@ -325,31 +333,6 @@ fn decode_without_leaf(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError>
         }
     }
     Err(malformed("a vtree with no node holds only a constant, and the file is neither"))
-}
-
-/// Check the header, the length and the checksum of one whole file, then
-/// parse its body.
-fn decode_levels(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
-    let (total, version) = check_header(bytes)?;
-    if bytes.len() < total {
-        return Err(truncated(bytes.len(), total));
-    }
-    if bytes.len() > total {
-        return Err(malformed(format!(
-            "{} bytes follow the checksum, which ends the diagram",
-            bytes.len() - total
-        )));
-    }
-    let (covered, trailer) = bytes.split_at(total - TRAILER_BYTES);
-    let stored = u64::from_le_bytes(trailer.try_into().expect("eight bytes"));
-    let computed = xxh64(covered);
-    if stored != computed {
-        return Err(malformed(format!(
-            "checksum mismatch: the file records {stored:#018x}, its bytes hash to \
-             {computed:#018x}"
-        )));
-    }
-    parse_body(&bytes[HEADER_BYTES..], vtree, version == COUNTS_FORMAT_VERSION)
 }
 
 /// `XXH64` with seed 0, the checksum the trailer records.

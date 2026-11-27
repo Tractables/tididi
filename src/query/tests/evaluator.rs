@@ -81,6 +81,7 @@ impl EvalAlgebra for Tracked {
     fn mul(&self, a: &u64, b: &u64) -> u64 { a * b }
 }
 
+// Padded form: it edits a leaf level of the full vtree under a constant.
 #[test]
 fn unchanged_branches_are_cached_and_algebra_panics_are_retryable() {
     let vtree = Arc::new(Vtree::balanced(8));

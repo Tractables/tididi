@@ -255,7 +255,7 @@ fn a_declined_search_keeps_the_vtree() {
 fn a_home_root_held_alone_is_no_home_while_it_moves() {
     for accept in [false, true] {
         let mut f = {
-            let root = Arc::clone(&Home::new(Vtree::balanced(8)));
+            let root = Home::new(Vtree::balanced(8));
             Tdd::clause(&crate::vtree::Home::new(std::sync::Arc::clone(&root)), [1, 2, -3, -4, 5, 6, -7, 8]).unwrap()
         };
         let before = Arc::as_ptr(f.vtree());

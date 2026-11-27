@@ -21,6 +21,7 @@ fn binary(f: &Tdd) -> Vec<u8> {
     bytes
 }
 
+// Projection form: the unchecked wrapper names the home or projection the caller reads onto.
 /// `f` read back from its text and from its binary file over `vtree`.
 fn both_readers(f: &Tdd, vtree: &Arc<Vtree>) -> [Result<Tdd, IoError>; 2] {
     [read_tdd(&mut text(f).as_slice(), &crate::vtree::Home::unchecked(vtree)), read_tdd_binary(&mut binary(f).as_slice(), &crate::vtree::Home::unchecked(vtree))]
@@ -41,6 +42,7 @@ fn assert_same_nodes(a: &Tdd, b: &Tdd, what: &str) {
     }
 }
 
+// Padded form: hand-built on the full vtree.
 /// x1 ∧ x3 over ((x1 x2) (x3 x4)), x2 and x4 named `One`: on `vtree` as
 /// `finish` seats it.
 fn x1_x3_padded(eng: &Engine, vtree: &Arc<Vtree>) -> Result<Tdd, crate::diagram::TddBuildError> {
@@ -53,6 +55,7 @@ fn x1_x3_padded(eng: &Engine, vtree: &Arc<Vtree>) -> Result<Tdd, crate::diagram:
     b.finish(TddNodeId { vtree: vtree.root(), local: out })
 }
 
+// Projection form: the unchecked wrapper names a projection of a home.
 #[test]
 fn a_diagram_on_a_projection_reads_back_node_for_node() {
     let home = Home::new(Vtree::balanced(6));
@@ -72,6 +75,7 @@ fn a_diagram_on_a_projection_reads_back_node_for_node() {
     }
 }
 
+// Projection form: the unchecked wrapper names a projection of a home.
 #[test]
 fn a_smooth_file_reads_onto_the_projection_on_its_support() {
     let eng = Engine::new();
@@ -103,6 +107,7 @@ fn finish_drops_a_leaf_every_pair_names_one() {
     assert_eq!(f.model_count().unwrap(), 4u32.into());
 }
 
+// Padded form: the donor is built on a copy of the home as a plain root.
 #[test]
 fn finish_trims_a_summed_out_leaf_to_a_region() {
     let eng = Engine::new();
@@ -128,6 +133,7 @@ fn finish_trims_a_summed_out_leaf_to_a_region() {
     assert_eq!(f.model_count().unwrap(), num_bigint::BigUint::from(2u32));
 }
 
+// Root form: one file is written from a constant on a copy of the home as a plain root.
 #[test]
 fn a_false_file_reads_to_the_constant() {
     let home = Home::new(Vtree::balanced(4));
@@ -156,6 +162,7 @@ fn a_false_file_reads_to_the_constant() {
     assert!(matches!(read_tdd(&mut "p tdd 1 4 7 6 ONE\n".as_bytes(), &home), Err(IoError::Format(_))));
 }
 
+// Root form: the files are written from diagrams on plain roots of other shapes.
 #[test]
 fn a_file_of_another_tree_is_a_format_error() {
     let home = Home::new(Vtree::balanced(4));
@@ -263,6 +270,7 @@ fn only_a_file_that_names_every_leaf_of_its_projection_skips_the_trim() {
     }
 }
 
+// Root form: the file is written from a diagram on a plain root.
 #[test]
 fn a_vtree_with_a_region_is_refused() {
     let home = Home::new(Vtree::balanced(4));

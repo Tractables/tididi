@@ -237,6 +237,7 @@ fn test_content_merge_stands_down_without_a_marginal_level() {
 /// The fixture forces the compaction to be a real move rather than a
 /// truncation: the root's first pair is dropped, which orphans the lowest slot
 /// its sides named, so every surviving slot above must shift down.
+// Padded form: the padded sum-out.
 #[test]
 fn minimize_relocates_weight_store_rows_with_their_slots() {
     use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, ChildDecoder, Weights};
@@ -256,7 +257,7 @@ fn minimize_relocates_weight_store_rows_with_their_slots() {
     let root = vtree.root();
     let (left, right) = vtree.children(root);
 
-    let mut tdd = compile_clauses(&vtree, &[vec![1, 2], vec![2, -3], vec![3, 4], vec![-1, 4]]);
+    let mut tdd = compile_clauses(&crate::vtree::Home::unchecked(&vtree), &[vec![1, 2], vec![2, -3], vec![3, 4], vec![-1, 4]]);
     crate::marginal::tests::marginalize_levels(&eng, &mut tdd, &[left, right]).expect("no wall is installed in a test");
     assert!(
         tdd.levels[left.idx()].is_weight_marginal() && tdd.levels[right.idx()].is_weight_marginal(),

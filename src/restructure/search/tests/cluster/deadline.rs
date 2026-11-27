@@ -31,6 +31,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// `root = (A, w)` and `w = (B, C)` with A and B already forgotten, so a
 /// LEFT rotation at the root would bring the two marginal levels under one
 /// parent. Returns the diagram, its root, and its model count.
+// Padded form: the padded sum-out.
 pub(super) fn one_candidate_tdd() -> (Tdd, VtreeIdx) {
     let eng = Engine::new();
     let vt_str = "vtree 9\n\
@@ -49,7 +50,7 @@ pub(super) fn one_candidate_tdd() -> (Tdd, VtreeIdx) {
     ];
     let mut acc: Option<Tdd> = None;
     for c in &clauses {
-        let clause = clause_to_tdd(&vtree, c);
+        let clause = clause_to_tdd(&crate::vtree::Home::unchecked(&vtree), c);
         acc = Some(match acc {
             Some(prev) => {
                 let mut r = apply_and(prev, clause);
@@ -80,6 +81,7 @@ pub(super) fn one_candidate_tdd() -> (Tdd, VtreeIdx) {
 /// variables, with A and B forgotten; D's contexts give `v` and `w` enough
 /// nodes for the rotation to save 358 pairs. The 38 clauses, each one literal
 /// of D, one of A or B and one of C, come from a fixed generator.
+// Padded form: the padded sum-out.
 pub(super) fn worthwhile_candidate_tdd() -> (Tdd, VtreeIdx) {
     fn balanced(vars: std::ops::Range<i32>, lines: &mut Vec<String>) -> usize {
         let id = lines.len();
@@ -121,7 +123,7 @@ pub(super) fn worthwhile_candidate_tdd() -> (Tdd, VtreeIdx) {
     };
     let mut acc: Option<Tdd> = None;
     for _ in 0..38 {
-        let clause = clause_to_tdd(&vtree, &[lit(1..11), lit(11..15), lit(15..24)]);
+        let clause = clause_to_tdd(&crate::vtree::Home::unchecked(&vtree), &[lit(1..11), lit(11..15), lit(15..24)]);
         acc = Some(match acc {
             Some(prev) => {
                 let mut r = apply_and(prev, clause);

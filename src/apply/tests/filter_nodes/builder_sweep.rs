@@ -185,7 +185,7 @@ fn every_outcome_matches_a_builder_sweep_under_either_reduction() {
                     assert_eq!(ours, stats);
                     assert!(output.is_none());
                     builder.abandon(&eng);
-                    assert_eq!(image(&tdd), image(&Tdd::zero(&crate::vtree::Home::unchecked(f.vtree()))));
+                    assert_eq!(image(&tdd), image(&crate::build::constant_zero(&eng, f.vtree())));
                     outcomes[2] += 1;
                 }
             }

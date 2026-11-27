@@ -252,6 +252,7 @@ fn a_refused_conjunction_hands_back_what_it_was_given() {
     assert!(refusals > 100, "only {refusals} refusals");
 }
 
+// Projection form: the unchecked wrapper names a projection of a home, so nothing is admitted.
 /// [`conjoin_onto`] with each operand borrowed in turn and both, one on
 /// the destination and one, on a projection of its home, placed there, against the same call with both
 /// owned; refused at each unit of work, it is refused where the owned one
@@ -269,8 +270,8 @@ fn a_borrowed_operand_conjoins_onto_as_an_owned_one() {
         let offset = 4 * (case % 2);
         let vars: Vec<u32> = (1 + offset..=4 + offset).collect();
         let small = Vtree::projection(&home, vars.iter().map(|&v| VarId(v))).unwrap();
-        let on_small = compile_clauses_on(&eng, &small, &super::renamed_cnf(rand_cnf(&mut rng, 4, CnfShape { clauses: 6, width: 3 }), &vars));
-        let on_into = compile_clauses_on(&eng, &into, &rand_cnf(&mut rng, 8, CnfShape { clauses: 12, width: 3 }));
+        let on_small = compile_clauses_on(&eng, &crate::vtree::Home::unchecked(&small), &super::renamed_cnf(rand_cnf(&mut rng, 4, CnfShape { clauses: 6, width: 3 }), &vars));
+        let on_into = compile_clauses_on(&eng, &home, &rand_cnf(&mut rng, 8, CnfShape { clauses: 12, width: 3 }));
         let placed = |t: &Tdd| super::placed_on(&eng, t, &into);
         for (a, b, what) in [(&on_small, &on_into, "placed and on into"), (&on_into, &on_small, "on into and placed")] {
             let (owned, owned_work) = on_fresh(false, |eng| super::and_on(eng, given(a, false), given(b, false), &into).map_err(|r| r.error).unwrap());
@@ -380,7 +381,7 @@ fn a_borrowed_operand_sums_out_as_an_owned_one() {
                 // Each step joins the next two clauses into the walk's diagram.
                 let mut acc = eng.one(&crate::vtree::Home::unchecked(&tree));
                 for (k, pair) in clauses.chunks(2).enumerate() {
-                    let g = compile_clauses_on(&eng, &tree, pair);
+                    let g = compile_clauses_on(&eng, &crate::vtree::Home::unchecked(&tree), pair);
                     let rest = clauses.get(2 * (k + 1)..).unwrap_or_default();
                     let targets = finished(&tree, &acc, rest);
                     marginal += usize::from(acc.has_marginal_level());
@@ -438,6 +439,7 @@ fn reserves(eng: &Engine, run: impl Fn() -> bool) -> u32 {
         .expect("granted within the bound")
 }
 
+// Projection form: the unchecked wrapper names a projection of a home, so nothing is admitted.
 #[test]
 fn borrowed_operands_on_two_allocations_of_one_layout_are_not_copied() {
     let eng = Engine::new();
@@ -445,7 +447,7 @@ fn borrowed_operands_on_two_allocations_of_one_layout_are_not_copied() {
     let on = || Vtree::projection(&home, (1..=8).map(VarId)).unwrap();
     let (a, b) = (on(), on());
     assert!(!Arc::ptr_eq(&a, &b));
-    let clause = |vtree: &Arc<Vtree>, lits: &[i32]| eng.clause_on(vtree, &lits.iter().map(|&l| crate::Literal::try_from(l).unwrap()).collect::<Vec<_>>()).unwrap();
+    let clause = |vtree: &Arc<Vtree>, lits: &[i32]| eng.clause_on(&crate::vtree::Home::unchecked(vtree), &lits.iter().map(|&l| crate::Literal::try_from(l).unwrap()).collect::<Vec<_>>()).unwrap();
     let f = eng.and(clause(&a, &[1, -4, 6]), clause(&a, &[-2, 5, 8])).unwrap();
     let (g_apart, g_shared) = (clause(&b, &[2, -6, 7]), clause(&a, &[2, -6, 7]));
     let apart = reserves(&eng, || eng.and(&f, &g_apart).is_ok());

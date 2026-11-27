@@ -1,7 +1,6 @@
 //! `Tdd::ordered_models` against the models read off a truth table, sorted.
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
 
 use super::*;
 use crate::reduce::ReductionPlan;
@@ -37,7 +36,7 @@ fn random_over(order: &[VarId], rng: &mut Lcg) -> Vtree {
 
 /// A random vtree that reads `keys` first, in order, then `others` in a
 /// random order, with each of `unlisted` anywhere.
-fn keys_first(keys: &[VarId], others: &[VarId], unlisted: &[VarId], rng: &mut Lcg) -> Arc<Vtree> {
+fn keys_first(keys: &[VarId], others: &[VarId], unlisted: &[VarId], rng: &mut Lcg) -> crate::vtree::Home {
     let mut order: Vec<VarId> = keys.to_vec();
     let mut rest = others.to_vec();
     for i in (1..rest.len()).rev() {
@@ -48,12 +47,12 @@ fn keys_first(keys: &[VarId], others: &[VarId], unlisted: &[VarId], rng: &mut Lc
         let at = rng.below(order.len() as u64 + 1) as usize;
         order.insert(at, u);
     }
-    Arc::new(random_over(&order, rng))
+    crate::vtree::Home::new(random_over(&order, rng))
 }
 
 /// The key bits as a right spine over a random vtree of the other
 /// variables.
-fn spine_over(num_vars: u32, key_bits: &[VarId], seed: u64) -> Arc<Vtree> {
+fn spine_over(num_vars: u32, key_bits: &[VarId], seed: u64) -> crate::vtree::Home {
     let rest = Vtree::random(num_vars, seed).project_to_vars(|v| (!key_bits.contains(&v)).then_some(v), num_vars);
     let (mut t, skip) = match rest {
         Some(rest) => (rest, 0),
@@ -62,7 +61,7 @@ fn spine_over(num_vars: u32, key_bits: &[VarId], seed: u64) -> Arc<Vtree> {
     for &k in key_bits.iter().rev().skip(skip) {
         t = Vtree::join(&Vtree::leaf(k), &t).unwrap();
     }
-    Arc::new(t)
+    crate::vtree::Home::new(t)
 }
 
 #[test]

@@ -279,10 +279,6 @@ pub(super) fn note_relabelled(_moved: bool) {}
 
 #[cfg(not(test))]
 #[inline(always)]
-pub(super) fn note_read_through() {}
-
-#[cfg(not(test))]
-#[inline(always)]
 pub(super) fn complete_sides_listed() -> bool {
     false
 }

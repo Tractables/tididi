@@ -3,41 +3,18 @@
 
 use std::sync::Arc;
 
-use crate::diagram::{
-    assert_can_make_marginal, ChildPair, NodeIdx, Tdd, TddLevel, TddNodeId,
-};
+use crate::diagram::{ChildPair, NodeIdx, Tdd, TddLevel, TddNodeId};
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
-use super::oracle::{big_to_u128, node_counts};
-
-/// Bottom-up marginalize every internal, non-marginal, width≥1 level in
-/// the subtree rooted at `root` (inclusive). Counts are derived from the
-/// current diagram shape via `node_counts`. Mirrors the marginalization
-/// pass's batch and cascade semantics for a single subtree, without the
-/// streaming-marginal hooks.
+/// Sum out of `tdd`, a diagram on a home, the variables under `root`, a node
+/// of that home.
 pub fn marginalize_subtree(tdd: &mut Tdd, root: VtreeIdx) {
-    let vtree = tdd.vtree.clone();
-    let counts = node_counts(tdd);
-    for &t in vtree.bottomup_slice() {
-        let ti = t.idx();
-        if !vtree.in_subtree(t, root) {
-            continue;
-        }
-        if matches!(*vtree.node(VtreeIdx(ti as u32)), VtreeNode::Leaf { .. }) || tdd.levels[ti].is_marginal() {
-            continue;
-        }
-        let w = tdd.levels[ti].slot_count();
-        if w == 0 {
-            continue;
-        }
-        let u128_counts: Vec<u128> = (0..w).map(|i| big_to_u128(&counts[ti][i])).collect();
-        assert_can_make_marginal(&tdd.levels, &vtree, t);
-        tdd.levels[ti].become_marginal(u128_counts, None);
+    let home = tdd.vtree().home().expect("a diagram on a home");
+    let mut under = vec![false; home.num_vars() as usize];
+    for (leaf, var) in home.leaf_bottomup() {
+        under[var.idx()] = home.in_subtree(leaf, root);
     }
-    // Emulate production marginalization, which tags every persisted marginal-side
-    // slot ref (bit 30) so the 0=inline decode invariant holds. Without this the
-    // strict decode assert fires when a later reader hits a raw slot ref.
-    crate::diagram::inline_small_marginal_refs(&crate::limits::Limits::new(), tdd, None).unwrap();
+    tdd.marginalize(|v| under.get(v.idx()).copied().unwrap_or(false)).expect("an unarmed engine refuses nothing");
 }
 
 // ── Marginal-invariant fixtures ──────────────────────────────────────────────

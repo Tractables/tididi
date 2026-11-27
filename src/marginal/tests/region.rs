@@ -56,10 +56,13 @@ pub(crate) fn reweighted(f: &Tdd, home: &Home, weighted: &Home) -> Tdd {
     Tdd::from_levels_unchecked(vtree, f.levels.to_vec(), f.output)
 }
 
+// Padded form: the padded sum-out.
 /// `f` on a copy of `home`'s tree that is not a home, where the smooth API
 /// sums out by `home`'s node ids.
 pub(crate) fn on_root_copy(f: &Tdd, home: &Arc<Vtree>) -> Tdd {
-    on_home(f, &Arc::new(Vtree::clone(home)))
+    let root = Arc::new(Vtree::clone(home));
+    crate::vtree::Home::unchecked(&root);
+    on_home(f, &root)
 }
 
 pub(crate) fn weights(n: u32, rng: &mut Lcg) -> RationalWeights {
@@ -191,7 +194,7 @@ fn marginalize_matches_the_smooth_form_on_the_home() {
             f = reweighted(&f, &home, &weighted);
             home = weighted;
         }
-        let home_vtree = Arc::clone(&home);
+        let home_vtree = home.clone();
         let mut g = on_root_copy(&f, &home_vtree);
         let mut before = Vec::new();
         for step in 0..1 + rng.below(2) {
@@ -389,7 +392,7 @@ fn summing_out_a_root_of_several_nodes_follows_the_output() {
     use crate::diagram::{ChildPair, TddNodeId, NEG_LEAF_IDX, POS_LEAF_IDX};
     // Three root nodes with 1, 1 and 2 models; the output is the second.
     let eng = Engine::new();
-    let vtree = std::sync::Arc::clone(&crate::vtree::Home::new(Vtree::balanced(2)));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(2));
     let root = vtree.root();
     let mut b = Tdd::builder(&eng, &vtree).unwrap();
     b.push(&eng, root, &[ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX)]).unwrap();
@@ -649,7 +652,7 @@ fn evaluating_at_every_level_composes_to_the_root_beside_regions() {
         let ws = weights(n, &mut rng);
         check_composes(&f, &ws, &format!("case {case} weighted"));
         weighted += usize::from(!f.is_zero() && !f.is_one() && f.vtree().free_leaves() > 0);
-        let home_vtree = Arc::clone(&home);
+        let home_vtree = home.clone();
         let mut g = on_root_copy(&f, &home_vtree);
         let hs = targets(&home_vtree, &[], &mut rng);
         eng.marginalize(&mut f, under(&home, &hs)).unwrap();
@@ -710,7 +713,7 @@ fn every_operation_that_can_drop_a_region_leaves_valid_storage() {
         let mut vars = || -> Vec<VarId> { (1..=n).filter(|_| rng.below(4) != 0).map(VarId).collect() };
         let (fv, gv) = (vars(), vars());
         let (f0, g0) = (operand(&eng, &home, &fv, &mut rng), operand(&eng, &home, &gv, &mut rng));
-        let root = Arc::clone(&home);
+        let root = home.clone();
         let first = targets(&root, &[], &mut rng);
         let second = targets(&root, &first, &mut rng);
         let what = format!("case {case}, {n} variables, targets {first:?} then {second:?}");

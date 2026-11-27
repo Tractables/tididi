@@ -9,10 +9,11 @@ use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Weights};
 use crate::query::count::{PinSemantics, Retention};
 use crate::test_helpers::{assert_canonical, rat};
 
+// Padded form: the outputs sit at leaf levels of the full vtree.
 /// `(x0 ∨ x2) ∧ (¬x1 ∨ x3)` over `balanced(4)`, minimized.
 fn two_clauses(vtree: &Arc<Vtree>) -> Tdd {
-    let t1 = clause_to_tdd(vtree, &[Literal::pos(VarId(1)), Literal::pos(VarId(3))]);
-    let t2 = clause_to_tdd(vtree, &[Literal::neg(VarId(2)), Literal::pos(VarId(4))]);
+    let t1 = clause_to_tdd(&crate::vtree::Home::unchecked(vtree), &[Literal::pos(VarId(1)), Literal::pos(VarId(3))]);
+    let t2 = clause_to_tdd(&crate::vtree::Home::unchecked(vtree), &[Literal::neg(VarId(2)), Literal::pos(VarId(4))]);
     let mut t = apply_and(t1, t2);
     t.minimize().unwrap();
     t

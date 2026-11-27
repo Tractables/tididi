@@ -48,8 +48,7 @@ pub fn reachable_true_labels(tdd: &Tdd) -> Result<Option<String>, String> {
 }
 
 /// The projection form of `docs/invariants.md`: the vtree is a home's root
-/// or a projection (in test builds also a root the test door admitted);
-/// invariant 15 over every stored pair; on a home 22 and 23 (`regions`); 17
+/// or a projection; invariant 15 over every stored pair; on a home 22 and 23 (`regions`); 17
 /// ([`check_loose_levels`](super::check_loose_levels)); on a certified `tdd`
 /// 4 and, with no summed-out level, 20 over the reachable nodes; with
 /// `minimized` and no summed-out level 21, the leaves read against
@@ -59,7 +58,7 @@ pub fn reachable_true_labels(tdd: &Tdd) -> Result<Option<String>, String> {
 pub fn check_trimmed(tdd: &Tdd, minimized: bool) -> Result<(), String> {
     let vtree = tdd.vtree();
     let on_home = vtree.on_home();
-    if !on_home && !crate::vtree::admitted_by_test(vtree) {
+    if !on_home {
         return Err("the vtree is neither a home's root nor a projection".to_string());
     }
     if (tdd.is_zero() || tdd.is_one()) != (vtree.num_nodes() == 0) {

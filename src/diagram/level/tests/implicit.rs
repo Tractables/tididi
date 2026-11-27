@@ -468,6 +468,36 @@ fn an_implicit_arena_reads_as_the_stored_one() {
     }
 }
 
+/// A level copied over a pooled level keeps the pooled arenas' capacities,
+/// stored or implicit: a placement takes its levels from the pool, and the
+/// capacities it leaves do not depend on the route.
+#[test]
+fn a_copy_over_a_pooled_level_keeps_its_capacities_on_both_routes() {
+    let eng = crate::Engine::new();
+    let mut rng = Lcg::new(0x1d1e_0005);
+    for _ in 0..20 {
+        let pairs = random_affine(&mut rng, 4, 4, 2);
+        let stored = level_of(&pairs);
+        let d = ImplicitLevel::fit(&stored).unwrap();
+        let mut implicit = TddLevel::new();
+        implicit.pairs.describe(d.clone(), d.pairs(), d.nodes());
+        for room in [0, 2 * d.pairs(), 3 * d.pairs()] {
+            let pooled = || {
+                let mut out = TddLevel::new();
+                out.pairs.stored_mut().reserve_exact(room);
+                out.nodes.stored_mut().reserve_exact(room);
+                out
+            };
+            let (mut a, mut b) = (pooled(), pooled());
+            stored.try_copy_over(eng.limits(), &mut a).unwrap();
+            implicit.try_copy_over(eng.limits(), &mut b).unwrap();
+            assert_eq!(b.implicit(), Some(&d));
+            assert_eq!((b.pairs.len(), b.pairs.capacity()), (a.pairs.len(), a.pairs.capacity()));
+            assert_eq!(b.node_capacity(), a.node_capacity());
+        }
+    }
+}
+
 /// A level held as a description stands for arenas of a capacity it does
 /// not allocate. Cleared where the allocator refuses that capacity, it
 /// leaves empty arenas, not an abort, and the level pool, which keeps no

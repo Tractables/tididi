@@ -175,7 +175,7 @@ fn parts(
     let eng = Engine::new();
     let parts = (0..m)
         .map(|j| {
-            let mut f = affine_function(&eng, &vtree, m, j, rng);
+            let mut f = affine_function(&eng, &crate::vtree::Home::unchecked(&vtree), m, j, rng);
             for &(v, value) in given {
                 f = eng.condition_var(f, VarId(v), value).unwrap();
             }
@@ -270,7 +270,7 @@ fn carried_operands(n: u32, seed: u64) -> (Arc<Vtree>, Tdd, Tdd, Vec<VtreeIdx>) 
     crate::vtree::Home::unchecked(&vtree);
     let eng = Engine::new();
     let factors: Vec<Tdd> = (0..4)
-        .map(|j| affine_function(&eng, &vtree, 4, j, &mut rng))
+        .map(|j| affine_function(&eng, &crate::vtree::Home::unchecked(&vtree), 4, j, &mut rng))
         .collect();
     let f02 = eng.and(&factors[0], &factors[2]).unwrap();
     let f1 = factors[1].clone();

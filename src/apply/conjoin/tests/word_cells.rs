@@ -2,13 +2,13 @@
 //! loop that reads every candidate off the child grids: the same diagram,
 //! each node's pairs in the same order, and the same work.
 
-use crate::test_helpers::bare_roots;
 use super::pair_rows::{conjoin, split_support_cases};
 use super::*;
 use crate::Engine;
 use crate::limits::{LimitConfig, SparseRoute};
 use crate::test_helpers::{CnfShape, Lcg, compile_clauses_on, rand_cnf, rat, vtree_shapes};
 use crate::vtree::{VarId, Vtree, VtreeIdx};
+use crate::test_helpers::bare_roots;
 
 fn word_cell_arms(run: impl Fn() -> (Tdd, u64)) -> [(&'static str, (Tdd, u64)); 3] {
     [
@@ -200,6 +200,7 @@ fn check_summed_on(f: &Tdd, g: &Tdd, targets: &[VtreeIdx], route: SparseRoute, w
     }
 }
 
+// Padded form: it compares the levels of the full vtree node by node.
 /// Random formulas over 16 variables and dense random functions over 10
 /// and 14 variables on every vtree shape, unweighted and weighted, summing
 /// out every internal level, the root, one level below it, or a random
@@ -219,8 +220,8 @@ fn the_streamed_levels_read_by_vectors_fold_what_the_row_loop_folds() {
                 clauses: 40,
                 width: 3,
             };
-            let f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, 16, shape));
-            let g = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, 16, shape));
+            let f = compile_clauses_on(&eng, &crate::vtree::Home::unchecked(&vtree), &rand_cnf(&mut rng, 16, shape));
+            let g = compile_clauses_on(&eng, &crate::vtree::Home::unchecked(&vtree), &rand_cnf(&mut rng, 16, shape));
             operands.push((
                 format!("{name}, formulas, case {case}"),
                 Arc::clone(&vtree),

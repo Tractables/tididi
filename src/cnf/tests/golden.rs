@@ -60,6 +60,7 @@ fn the_chain_is_encoded_bottom_up_with_node_variables_first() {
     assert!(encoding.erasure_certified());
 }
 
+// Padded form: a padded fixture.
 #[test]
 fn inline_counts_read_as_true_when_positive_and_dead_at_zero() {
     let (f, [v4, v5, root]) = inline_marginal();
@@ -83,6 +84,7 @@ fn inline_counts_read_as_true_when_positive_and_dead_at_zero() {
     assert!(encoding.erasure_certified());
 }
 
+// Padded form: a padded fixture.
 #[test]
 fn the_single_pair_rule_counts_stored_pairs() {
     // One node over (x1, x2) with x2 summed out: `x1 · 5 ∨ ¬x1 · 0`. Only
@@ -127,6 +129,7 @@ fn without_a_structural_leaf_there_is_no_true_variable() {
     assert!(!encoding.erasure_certified());
 }
 
+// Padded form: a padded fixture.
 #[test]
 fn count_slots_read_as_true_and_the_certificate_follows_the_primes() {
     for (second, n2, certified) in [(LeafLabel::Neg, ["clause -9 -1", "clause 9 1"], true), (LeafLabel::Pos, ["clause -9 1", "clause 9 -1"], false)] {

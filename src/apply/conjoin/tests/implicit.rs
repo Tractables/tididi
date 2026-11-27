@@ -15,7 +15,7 @@ use crate::test_helpers::{
 use crate::vtree::{VarId, Vtree};
 
 /// A random function of `vars`, minimized, on `vtree`, built on `eng`.
-fn function_of(vtree: &Arc<Vtree>, vars: &[u32], rng: &mut Lcg) -> Tdd {
+fn function_of(vtree: &crate::vtree::Home, vars: &[u32], rng: &mut Lcg) -> Tdd {
     let mut f = rand_conj_over(vtree, vars, 6, 2, false, rng);
     f.minimize().unwrap();
     f
@@ -202,7 +202,7 @@ fn chains_over_classes(n: u32, m: u32, seed: u64, rounds: usize) -> usize {
 /// node are, and no two slots of a child share their contexts.
 pub(super) fn affine_function(
     eng: &Engine,
-    vtree: &Arc<Vtree>,
+    vtree: &crate::vtree::Home,
     m: u32,
     j: u32,
     rng: &mut Lcg,

@@ -314,6 +314,7 @@ fn push_every_pair_below_root(eng: &Engine, tree: &Vtree, b: &mut crate::diagram
 }
 
 
+// Padded form: hand-built levels on the full vtree.
 /// Over ((x1,x2),x3), the inner level holds the nodes `inner` and the root the
 /// one node `root`; every pair on the right of the root names x3.
 fn assemble(eng: &Engine, inner: &[&[ChildPair]], root: &[u32]) -> (Arc<Vtree>, crate::diagram::TddBuilder, TddNodeId) {
@@ -375,7 +376,7 @@ fn a_pair_repeated_in_a_level_is_refused() {
         }
     }
     let text = "p tdd 1 3 5 4 0\nL 0 1\nL 1 2\nL 3 3\nI 2 0 1 2 1\nI 2 0 1 2 1\nI 4 2 3 1 1\n";
-    let tree = Arc::new(Vtree::from_text("vtree 5\nL 0 1\nL 1 2\nI 2 0 1\nL 3 3\nI 4 2 3\n").unwrap());
+    let tree = crate::vtree::Home::new(Vtree::from_text("vtree 5\nL 0 1\nL 1 2\nI 2 0 1\nL 3 3\nI 4 2 3\n").unwrap());
     match crate::io::read_tdd(&mut text.as_bytes(), &crate::vtree::Home::new(Vtree::clone(&tree))) {
         Err(e) if e.to_string().contains("twice") => {}
         r => wrong.push(format!("first case by hand: text reader {:?}", r.map(|g| g.model_count().unwrap()))),

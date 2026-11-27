@@ -35,7 +35,7 @@ use crate::vtree::{VarId, Vtree};
 /// `Tdd::has_marginal_level()` holds.
 fn tdd_with_a_marginal_level() -> Tdd {
     let eng = Engine::new();
-    let vtree = std::sync::Arc::new(Vtree::balanced(4));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(4));
     let mut tdd =
         compile_clauses_on(&eng, &vtree, &[vec![1, 2], vec![-2, 3], vec![3, 4]]);
 

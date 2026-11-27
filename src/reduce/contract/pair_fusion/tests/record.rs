@@ -1,7 +1,6 @@
 //! A pair fusion that runs to the end is recorded on its parent, and the
 //! next fusion there is skipped until an edit pushes the level.
 
-use crate::test_helpers::bare_roots;
 use super::*;
 use crate::diagram::{
     ChildDecoder, ChildPair, EncodedChildRef, LeafLabel, NodeIdx, TddLevel, TddNodeId, ValueRef,
@@ -13,6 +12,7 @@ use crate::test_helpers::{
 use crate::vtree::Vtree;
 use crate::vtree::rng::Lcg;
 use std::sync::Arc;
+use crate::test_helpers::bare_roots;
 
 /// An engine that stops at its first poll, with a poll at every node: a
 /// fusion that reads a node is stopped, and one that is skipped is not.
@@ -73,7 +73,7 @@ fn a_stopped_fusion_records_nothing() {
 /// mint a group on the other, so it is not recorded.
 #[test]
 fn a_parent_with_both_children_marginal_is_not_recorded() {
-    let vtree = Arc::new(Vtree::balanced(2));
+    let vtree = crate::vtree::Home::new(Vtree::balanced(2));
     let root = vtree.root();
     let (left, right) = vtree.children(root);
     let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
@@ -86,7 +86,7 @@ fn a_parent_with_both_children_marginal_is_not_recorded() {
         .collect();
     levels[root.idx()].push_internal_node(&pairs);
     let mut tdd = Tdd::from_levels_unchecked(
-        vtree,
+        std::sync::Arc::clone(&vtree),
         levels,
         TddNodeId {
             vtree: root,
@@ -106,7 +106,7 @@ fn a_skipped_fusion_is_one_that_finds_no_group() {
     let mut rng = Lcg::new(29);
     let mut recorded = 0;
     for num_vars in 4..9u32 {
-        for (shape, vtree) in bare_roots(vtree_shapes(num_vars)) {
+        for (shape, vtree) in vtree_shapes(num_vars) {
             let eng = Engine::new();
             let clauses = rand_cnf(
                 &mut rng,
@@ -220,6 +220,7 @@ fn assert_minimizes_same_without_fused_records(eng: &Engine, mut kept: Tdd, labe
     assert_same_shape(&kept, &forced, label);
 }
 
+// Padded form: a fusion record sits over a summed-out level, which on a home is a region.
 /// Random formulas on every vtree shape with a level marginalized and the
 /// result minimized, each conjoined with a clause over two variables outside
 /// that level, as a diagram and as a clause, and with the same clause
@@ -243,7 +244,7 @@ fn a_conjunction_records_the_levels_it_builds_beside_a_recorded_carrier() {
                     width: 3,
                 },
             );
-            let mut f = compile_clauses_on(&eng, &vtree, &clauses);
+            let mut f = compile_clauses_on(&eng, &crate::vtree::Home::unchecked(&vtree), &clauses);
             if f.is_zero() {
                 continue;
             }
@@ -266,7 +267,7 @@ fn a_conjunction_records_the_levels_it_builds_beside_a_recorded_carrier() {
             let b = outside.iter().copied().find(|&x| x != a).unwrap();
             let mut sign = |x: i32| if rng.below(2) == 0 { x } else { -x };
             let clause = vec![sign(a), sign(b)];
-            let g = compile_clauses_on(&eng, &vtree, std::slice::from_ref(&clause));
+            let g = compile_clauses_on(&eng, &crate::vtree::Home::unchecked(&vtree), std::slice::from_ref(&clause));
             let label = format!("{shape} over {num_vars} variables");
 
             let kept = eng.and(f.clone(), g.clone()).unwrap();

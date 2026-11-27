@@ -676,7 +676,7 @@ fn the_vtree_check_agrees_with_transport() {
             g.trim(&Home::new(Arc::clone(&home))).unwrap();
             g
         } else {
-            rand_conj(&Arc::new(Vtree::random(n, seed + 1000)), n, 3, 2, false, &mut rng)
+            rand_conj(&Home::new(Vtree::random(n, seed + 1000)), n, 3, 2, false, &mut rng)
         };
         let shift = rng.below(2) as u32;
         let wide = Home::new(Vtree::random(n + shift, seed + 2000));

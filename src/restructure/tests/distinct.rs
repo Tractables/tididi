@@ -74,15 +74,14 @@ fn unreduced_diagrams_count_as_their_functions_do() {
 fn a_projection_onto_a_subtree_is_the_quantified_diagram() {
     let eng = Engine::new();
     for f in random_diagrams(5, 16, 3..9) {
-        let vtree = f.vtree();
-        for key in keys(vtree) {
-            let kept = vars_under(vtree, key);
-            let dropped: Vec<VarId> = vtree.leaf_bottomup().map(|(_, v)| v).filter(|v| !kept.contains(v)).collect();
+        let home = f.vtree().home().expect("a diagram on a home");
+        for key in keys(&home) {
+            let kept = vars_under(&home, key);
+            let dropped: Vec<VarId> = f.vtree().leaf_bottomup().map(|(_, v)| v).filter(|v| !kept.contains(v)).collect();
             let g = eng.project_to_subtree(&f, key).unwrap();
             assert_canonical(&g);
-            let (back, _) = crate::test_helpers::embedded(&g, vtree, |v| v).unwrap();
             let expected = eng.exists_vars(f.clone(), &dropped).unwrap();
-            assert!(eng.equivalent(&back, &expected).unwrap(), "key {key:?}");
+            assert!(eng.equivalent(&g, &expected).unwrap(), "key {key:?}");
         }
     }
 }

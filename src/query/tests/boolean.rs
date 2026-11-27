@@ -2,17 +2,21 @@ use super::*;
 use crate::diagram::{NodeIdx, TddNodeId};
 
 /// Each node of the root's left child made the output of a copy of its
-/// diagram. Keying a level frees its children's keys, the output's level
-/// among them once the root is keyed; the comparison reads the outputs'
-/// keys after the last level.
+/// diagram on a projection, where minimizing the copy empties the levels
+/// outside that child's subtree. Keying a level frees its children's keys,
+/// the output's level among them once the root is keyed; the comparison
+/// reads the outputs' keys after the last level.
 #[test]
 fn outputs_below_the_root_are_compared_by_their_keys() {
     let clauses = [[1, 2, 3], [-1, 4, 5], [2, -3, 6], [-4, -5, 1], [3, -6, -2], [-1, -2, 4]];
-    let vtree = Arc::new(Vtree::balanced(6));
-    let mut f = clauses.iter().fold(constant_one(&Engine::new(), &vtree), |f, clause| {
-        apply_and(f, Tdd::clause(&crate::vtree::Home::unchecked(&vtree), *clause).unwrap())
-    });
+    let home = crate::vtree::Home::new(Vtree::balanced(6));
+    let mut f = clauses
+        .iter()
+        .map(|clause| Tdd::clause(&home, *clause).unwrap())
+        .reduce(apply_and)
+        .unwrap();
     f.minimize().unwrap();
+    let vtree = Arc::clone(&f.vtree);
     let below = vtree.children(vtree.root()).0;
     let n = f.levels[below.idx()].node_count() as u32;
     assert!(n >= 2, "the root's left child holds several nodes");
