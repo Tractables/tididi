@@ -138,3 +138,45 @@ fn the_minimization_after_a_conjunction_on_disjoint_variables_changes_nothing() 
     assert!(fired > 50, "{fired} conjunctions with a pass level");
     assert!(saved > 0, "the minimizations saved no work");
 }
+
+/// A chain of conjunctions whose result is only contracted between them,
+/// so that its passed children hold nodes no pair names, with the pass
+/// levels written cell by cell: the minimized result is canonical and the
+/// diagram of the conjunction that lists every pass level as any built
+/// level. (The contraction can leave two nodes no pair names under a pass
+/// level, which a whole search of it drops: they share the empty context,
+/// and the prune drops them.)
+#[test]
+fn a_chain_of_contracted_conjunctions_through_the_pass_cells_stays_canonical() {
+    use crate::reduce::ReductionPlan;
+    use crate::test_helpers::{assert_canonical, assert_same_shape};
+    let eng = Engine::new();
+    let n = 16u32;
+    let before = pass_levels_census();
+    let subset = |rng: &mut Lcg| -> Vec<u32> {
+        let vars: Vec<u32> = (1..=n).filter(|_| rng.below(3) > 0).collect();
+        if vars.len() < 2 { vec![1, n] } else { vars }
+    };
+    for seed in 0..60u64 {
+        let mut rng = Lcg::new(seed ^ 0x3c6e_f372);
+        let home = Home::new(Arc::new(Vtree::random(n, seed)));
+        let vars = subset(&mut rng);
+        let mut acc = cnf(&eng, &home, &vars, vars.len() / 2, &mut rng);
+        for step in 0..6 {
+            let vars = subset(&mut rng);
+            let g = cnf(&eng, &home, &vars, vars.len() / 3, &mut rng);
+            let at = format!("seed {seed} step {step}");
+            let listed = step % 2 == 1;
+            let mut h = conjoin(&eng, (&acc, &g), listed, false);
+            let mut every = conjoin(&eng, (&acc, &g), listed, true);
+            eng.reduce(&mut h, ReductionPlan::Contract).unwrap();
+            eng.reduce(&mut every, ReductionPlan::Contract).unwrap();
+            let ((m, _), (every, _)) = (minimized(&eng, h.clone()), minimized(&eng, every));
+            assert_canonical(&m);
+            assert_same_shape(&m, &every, &at);
+            acc = h;
+        }
+    }
+    let [levels, lost] = std::array::from_fn(|k| pass_levels_census()[k] - before[k]);
+    assert!(levels > 100 && lost > 20, "{levels} pass levels recorded, {lost} lost a product");
+}

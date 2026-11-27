@@ -369,7 +369,9 @@ fn adds_no_twins(
 /// and every `i`, `b` the node `i` is over. Two nodes with equal contexts
 /// are then products of carrier nodes with equal contexts, and of one
 /// passing node. On a leaf `c'` two labels can conjoin to one label, and
-/// two carrier pairs then to one product.
+/// two carrier pairs then to one product. A node no pair names is no twin
+/// here: the products of one with two nodes of the other operand share the
+/// empty context, and a loose `c'` leaves them to the prune.
 ///
 /// [`SweepLists::collect_built`]: super::super::setup::SweepLists::collect_built
 pub(super) fn split_built(vtree: &Vtree, run: &mut ApplyRun, chain: &[VtreeIdx]) {
