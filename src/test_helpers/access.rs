@@ -104,6 +104,7 @@ pub(crate) fn rotate_right(vtree: &mut Vtree, v: VtreeIdx) -> Option<RotationInf
 /// only way to reach the differing-root operand shape a tightly-rooted segment
 /// would take. The root level must hold a single identity pair, the `g ∧ ⊤`
 /// shape a single-region function compiles to.
+#[cfg_attr(not(debug_assertions), expect(dead_code, reason = "its one caller is a debug-build test"))]
 pub(crate) fn reroot_to_child(t: &Tdd, child: ChildSide) -> Tdd {
     let root = t.output.vtree;
     let (lc, rc) = match *t.vtree.node(root) {
